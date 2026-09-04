@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Temnia — Studio</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <div class="studio" id="studio" data-mode="edit" data-view="stage">
+    <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+    <div class="topbar">
+      <button class="project-switch" data-action="projects" aria-label="Open projects">
+        <span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="wordmark">temnia</span><span class="slash">/</span>
+        <span class="project-name">Rethinking space <span class="episode">EP. 08</span></span>
+        <span data-icon="chevron"></span>
+      </button>
+      <div class="mode-switch" role="group" aria-label="Work mode">
+        <div class="mode-selection" aria-hidden="true"></div>
+        <button data-mode="edit" aria-pressed="true"><span data-icon="edit"></span>Edit</button>
+        <button data-mode="review" aria-pressed="false"><span data-icon="review"></span>Review</button>
+        <button data-mode="feedback" aria-pressed="false"><span data-icon="feedback"></span>Feedback<span class="count" id="feedback-count">2</span></button>
+      </div>
+      <div class="top-actions"><span class="collaborator" title="Sample editor">AK</span><button class="top-share" data-action="handoff">Review & delivery <span data-icon="arrow-up-right"></span></button></div>
+    </div>
+
+    <main>
+      <div class="room-topline">
+        <div class="room-context"><span class="live-dot"></span><span>FORM & FEEL</span><span class="dim">/</span><span class="muted">September collection</span></div>
+        <div class="view-switch" role="group" aria-label="Workspace view"><button data-view="stage" aria-pressed="true"><span data-icon="monitor"></span>Stage</button><button data-view="canvas" aria-pressed="false"><span data-icon="canvas"></span>Canvas</button></div>
+        <button class="text-button" data-action="command"><span data-icon="command"></span><span class="command-label">Jump to anything</span><kbd>⌘ K</kbd></button>
+      </div>
+      <section class="room" id="room" aria-label="Editing workspace">
+        <div class="stage-world" id="stage-world">
+          <aside class="chapter-compass" id="chapter-compass"></aside>
+          <div class="source-tile" id="source-tile"><div class="source-stack back"></div><div class="source-stack front"><img src="assets/studio-source.png" alt="Generated sample interview frame"><span class="source-corner">A</span></div><div class="source-tile-label"><span class="mini-dot"></span>Original master <span class="mono">52:14</span></div></div>
+          <section class="monitor" id="monitor" aria-label="Video preview">
+            <div class="monitor-chrome"><div class="row"><span class="purple-dot"></span><span id="monitor-title">04 · Room for people</span></div><div class="row"><span class="mono" id="monitor-version">v3</span><button class="tiny-button" data-action="focus" aria-label="Toggle focus view"><span data-icon="expand"></span></button></div></div>
+            <div class="picture" id="picture">
+              <img src="assets/studio-source.png" alt="Generated cinematic interview still: an architect in a blue sweater in her workshop" id="source-picture">
+              <div class="safe-zone" id="safe-zone" hidden><span>Platform safe area</span></div>
+              <span class="picture-label">SOURCE A <span>·</span> <span id="picture-range">19:27 — 31:51</span></span>
+              <button class="picture-evidence" data-action="evidence" aria-label="Open the original source evidence"><span data-icon="link"></span><span>Source linked</span></button>
+              <div class="caption" id="caption"><span>Good spaces leave room</span><br><span>for <em>people.</em></span></div>
+              <button class="frame-note" id="frame-note" data-action="select-note" aria-label="Open feedback on this frame" hidden>1</button>
+              <div class="picture-shade"></div>
+            </div>
+            <div class="transport">
+              <button class="tiny-button" data-action="back" aria-label="Back five seconds"><span data-icon="skip-back"></span></button>
+              <button class="play-button" data-action="play" aria-label="Play sample timeline"><span data-icon="play"></span></button>
+              <button class="tiny-button" data-action="forward" aria-label="Forward five seconds"><span data-icon="skip-forward"></span></button>
+              <span class="transport-time"><b id="play-time">26:12</b><span>/ 52:14</span></span>
+              <input type="range" class="scrub" id="scrub" min="0" max="3134" step="1" value="1572" aria-label="Source playhead in seconds">
+              <button class="tiny-button" data-action="aspect" aria-label="Change aspect ratio"><span class="mono" id="aspect-label">16:9</span></button>
+              <button class="tiny-button" data-action="evidence" aria-label="Inspect source"><span data-icon="external"></span></button>
+            </div>
+          </section>
+          <section class="floating-panel" id="floating-panel" aria-label="Contextual editing tools"></section>
+          <div class="room-bottom-hint" id="room-bottom-hint"><span data-icon="spark"></span><span>Your edit, with the whole story behind it.</span></div>
+        </div>
+        <div class="canvas-surface" id="canvas-surface" hidden>
+          <div class="canvas-heading"><span class="eyebrow">EPISODE CANVAS</span><h1>One source. A whole collection.</h1></div>
+          <div class="canvas-viewport" id="canvas-viewport"><div class="canvas-world" id="canvas-world"></div></div>
+          <div class="canvas-tools"><span>Drag a node to arrange · Drag the background to pan</span><div class="row"><button data-action="zoom-out" aria-label="Zoom out">−</button><span class="mono" id="zoom-value">100%</span><button data-action="zoom-in" aria-label="Zoom in">+</button><button data-action="fit">Fit</button></div></div>
+        </div>
+      </section>
+      <section class="reel-deck" id="reel-deck" aria-label="Chapter reel">
+        <div class="reel-heading"><div class="row"><span class="eyebrow" id="reel-title">THE WHOLE EPISODE</span><span class="deck-divider"></span><span id="coverage-state">6 chapters <span class="dim">·</span> 1 deliberate drop</span></div><div class="row"><button class="text-button" data-action="restore"><span class="drop-symbol"></span><span id="drop-label">15s excluded</span></button><button class="text-button" data-action="boundary"><span data-icon="join"></span>Refine a boundary</button></div></div>
+        <div class="chapter-reel" id="chapter-reel"></div>
+      </section>
+    </main>
+    <footer class="os-footer">
+      <div class="footer-status"><span class="save-dot"></span><span id="save-state">All changes saved in this session</span></div>
+      <nav class="tool-dock" id="tool-dock" aria-label="Studio tools"></nav>
+      <div class="prototype-label">DESIGN EXPLORATION 02<br><span>Generated sample frame · Local interactions</span></div>
+    </footer>
+    <div class="tool-popover" id="tool-popover" hidden></div>
+    <div class="notification" id="notification" role="status" hidden></div>
+  </div>
+  <div class="dialog-backdrop" id="dialog-backdrop" hidden></div>
+  <svg width="0" height="0" aria-hidden="true" class="filter-defs"><defs><filter id="liquid"><feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/><feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 20 -8" result="goo"/><feComposite in="SourceGraphic" in2="goo" operator="atop"/></filter></defs></svg>
+  <script src="studio.js"></script>
+</body>
+</html>

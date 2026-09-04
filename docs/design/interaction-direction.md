@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-05
 
-**Status:** design proposal for review, not an approved architecture or a PRD revision.
+**Status:** rejected in user review on 2026-09-05. Retained as exploration 01; see `studio-direction.md` and `temnia-studio.html` for exploration 02. Neither proposal revises the PRD.
 
 **Basis:** all 32 sections of `docs/prd.md`, the dated decisions in `AGENTS.md`, and the user's request for an OS-like editing workspace.
 
