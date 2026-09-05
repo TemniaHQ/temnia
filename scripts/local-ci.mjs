@@ -192,7 +192,8 @@ async function waitForHttp(url, attempts = 60) {
 }
 
 function dockerRun(name, args) {
-  capture("docker", ["rm", "-f", name], { stdio: "ignore" });
+  // A leftover container from an interrupted run may or may not exist.
+  spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
   return capture("docker", ["run", "-d", "--name", name, ...args]);
 }
 
