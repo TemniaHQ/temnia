@@ -20,7 +20,7 @@ The rebuild is a second attempt. The first codebase (`mitosia-legacy`, 120 commi
 |---|---|---|
 | Who reads | Builders, indie hackers, AI engineers, people who follow Claude Code and agent-harness work | Agency owners, podcast producers, marketing leads, potential design partners |
 | What they want | The engineering: the bug, the design choice, the number, the diff | The why: what this means for how an agency runs client work |
-| Length | Rajesh is on X Premium+, so long-form posts are available. Default to ≤ 280 chars; use one long post (not a thread) when there is a real story, with the hook in the first ~280 chars since that is all that shows before "Show more" | 100–200 words; first line is the hook; short paragraphs; no hashtag walls |
+| Length | Rajesh is on X Premium+, so long-form posts are available. Default to ≤ 280 chars; use one long post (not a thread) when there is a real story, with the hook in the first ~280 chars since that is all that shows before "Show more" | 100–200 words, hard cap 3,000 characters (LinkedIn refuses longer posts; the Day 0 draft hit this at 3,869); first line is the hook; short paragraphs; no hashtag walls |
 | Media | Screenshot, terminal capture, 10–20 s screen recording | One clean image or a short clip; carousels for the weekly review |
 | Voice | First person, terse, specific, a little dry. Reads like Rajesh typing, not like a generated post | First person, plain, direct, no corporate gloss |
 
