@@ -265,7 +265,7 @@ USPTO wordmark `temnia`: **no results** — Live 0, Dead 0. WIPO Global Brand Da
 - [x] IP India Public Search → Wordmark → Start With `TEMN`, classes 42 and 9 — 42 empty; 9 → TEMNOLITE (cables), low risk
 - [x] WIPO Global Brand Database (`branddb.wipo.int`): `TEMNIA` — nothing beginning TEMN- in phonetic results
 - [x] USPTO (`tmsearch.uspto.gov`): `temnia` — no results, live or dead
-- [ ] Reserve the X handle and LinkedIn page — same string on both (`temnia` / `temniahq` / `temniaai`, whichever is free on both)
+- [x] Handles — X **@TemniaHQ** (`@temnia` taken), LinkedIn **/company/temnia** (2026-09-03). Kept the better LinkedIn slug rather than matching X; display name is "Temnia" on both. YouTube: `@temnia` is held by a personal channel ("666TÊMØNĪÅ666") — claim **@TemniaHQ** (free 2026-09-03) on a Brand Account channel named Temnia. Still to grab: Instagram, Threads, TikTok (`temnia` → `temniahq`). Page *names* are not unique anywhere — the TM filing plus a consistent domain ↔ handle trail is the defence; revisit `@temnia` via X's trademark process after registration.
 - [ ] Say it aloud to three people; if two spell it wrong, reconsider
 - [ ] On final: rename the GitHub org and repo, update AGENTS.md, this file, [build-in-public.md](build-in-public.md) §11, [trademark-filing.md](trademark-filing.md), and the PRD title; file TM-A × 2 for TEMNIA
 - [ ] `mitosia.com`: keep one year as a redirect, then lapse; never register `mitosia.ai` / `.io`
