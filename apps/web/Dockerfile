@@ -28,6 +28,9 @@ COPY --from=pruner /app/out/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
 RUN pnpm install --frozen-lockfile
 COPY --from=pruner /app/out/full/ .
+# turbo prune copies workspace packages and the lockfile, not root config files;
+# every package's tsconfig extends this one.
+COPY tsconfig.base.json ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm turbo run build --filter=@temnia/web
 
