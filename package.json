@@ -1,0 +1,31 @@
+{
+  "name": "temnia",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "check": "ultracite check",
+    "ci:local": "node scripts/local-ci.mjs",
+    "dev": "turbo run dev",
+    "fix": "ultracite fix",
+    "lint": "turbo run lint",
+    "pr:verified": "node scripts/verified-pr.mjs pr",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "push:verified": "node scripts/verified-pr.mjs push",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "turbo": "2.10.12",
+    "typescript": "7.0.2",
+    "ultracite": "7.10.8"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24",
+      "onFail": "download"
+    }
+  }
+}

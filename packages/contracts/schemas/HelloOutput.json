@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "HelloInput": {
+      "$id": "#/$defs/HelloInput",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Who to greet."
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        }
+      },
+      "required": [
+        "name",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "title": "HelloInput"
+    },
+    "HelloOutput": {
+      "$id": "#/$defs/HelloOutput",
+      "type": "object",
+      "properties": {
+        "greeting": {
+          "type": "string"
+        },
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Echoed from the input scope, never invented."
+        },
+        "workerHost": {
+          "type": "string"
+        },
+        "workerLanguage": {
+          "type": "string",
+          "const": "python"
+        }
+      },
+      "required": [
+        "greeting",
+        "organizationId",
+        "workerHost",
+        "workerLanguage"
+      ],
+      "additionalProperties": false,
+      "title": "HelloOutput"
+    }
+  },
+  "$id": "HelloOutput.json",
+  "$ref": "#/$defs/HelloOutput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

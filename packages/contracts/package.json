@@ -1,0 +1,26 @@
+{
+  "name": "@temnia/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cross-language contracts: Zod schemas are the single source of truth; JSON Schema is emitted for the Python pipeline, which generates pydantic models from it. CI fails on drift.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "schemas": "node --experimental-strip-types scripts/emit-schemas.ts",
+    "schemas:check": "node --experimental-strip-types scripts/emit-schemas.ts --check",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@types/node": "^24",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

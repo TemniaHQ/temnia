@@ -1,0 +1,49 @@
+name: Local gate provenance
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: local-gate-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Validation runs on the developer machine before push (docs/tech-stack.md §2,
+  # "local gate"). This GitHub-owned job is the required check: it accepts only
+  # a successful `local-ci` status for this exact SHA, created by the PR author
+  # and linked to the immutable commit. A raw or --no-verify push can never
+  # become mergeable. Re-enable hosted validation when a second committer joins.
+  checks:
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify exact-commit local attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          expected_url="https://github.com/${REPOSITORY}/commit/${HEAD_SHA}"
+          for attempt in {1..18}; do
+            status=$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/statuses" | jq -r \
+              --arg author "$PR_AUTHOR" --arg target "$expected_url" \
+              '[.[] | select(.context == "local-ci" and .creator.login == $author and .target_url == $target)][0].state // empty')
+            if [ "$status" = "success" ]; then
+              echo "Exact commit ${HEAD_SHA} passed the repository-owned local gate."
+              exit 0
+            fi
+            if [ "$attempt" -lt 18 ]; then
+              echo "Waiting for exact-commit local-ci attestation (${attempt}/18)..."
+              sleep 5
+            fi
+          done
+          echo "::error::No successful local-ci attestation from ${PR_AUTHOR} exists for exact commit ${HEAD_SHA}."
+          echo "Run pnpm push:verified; this check waits up to 90 seconds for its status."
+          exit 1

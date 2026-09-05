@@ -1,3 +1,26 @@
+# OS
 .DS_Store
+
+# Dependencies and build output
 node_modules/
 dist/
+.next/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets: never committed. .env.example is the documented shape.
+.env
+.env.*
+!.env.example
+
+# Test artefacts
+coverage/
+test-results/
+playwright-report/

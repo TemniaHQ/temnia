@@ -1,0 +1,4 @@
+# Staging dynamic config. Deliberately minimal; no dev-only cache shortcuts.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}

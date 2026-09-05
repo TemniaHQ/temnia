@@ -1,0 +1,32 @@
+{
+  "name": "@temnia/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The one schema owner. Drizzle declares every table, its organization scope, and its RLS policy; drizzle-kit emits the migrations; Python is DML-only against the migrated database.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@temnia/contracts": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@types/node": "^24",
+    "@types/pg": "^8",
+    "drizzle-kit": "0.31.10",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

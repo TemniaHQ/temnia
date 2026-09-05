@@ -1,0 +1,19 @@
+# Secrets are runtime env, never image layers.
+.env
+.env.*
+
+# Rebuilt inside the image.
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/.venv
+**/__pycache__
+
+# Not part of any deploy artefact.
+.git
+.github
+.githooks
+.claude
+docs
+*.md

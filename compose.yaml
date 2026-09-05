@@ -1,0 +1,124 @@
+# Local development services. Ports sit in the 56xxx block so they never collide
+# with the other stacks on this machine (5432 native Postgres, 5433 a Podman VM,
+# 55433/55490 the archived legacy repo, 543xx Supabase). Deployed environments
+# use the compose files under deploy/ instead; nothing here leaves the laptop.
+name: temnia-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temnia
+      POSTGRES_PASSWORD: temnia
+      POSTGRES_DB: temnia
+    ports:
+      - "56432:5432"
+    volumes:
+      # Postgres 18 expects the single mount at /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+      - ./infra/dev/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temnia -d temnia"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  garage:
+    image: dxflrs/garage:v2.3.0
+    restart: unless-stopped
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: GK746d6e696164657600000000
+      GARAGE_DEFAULT_SECRET_KEY: 7f5fbe4a561d5196e4422e7fe9b8b8880846f9e153aacd3a142fd3d27f8f2bd2
+      GARAGE_DEFAULT_BUCKET: temnia-media
+    ports:
+      - "56900:3900" # S3 API
+      - "56903:3903" # admin API and metrics
+    volumes:
+      - ./infra/dev/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  temporal-setup:
+    image: temporalio/admin-tools:1.31.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      POSTGRES_SEEDS: postgres
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+    volumes:
+      - ./infra/temporal/setup.sh:/setup.sh:ro
+    entrypoint: ["/bin/sh", "/setup.sh"]
+
+  temporal:
+    # temporalio/server, not the deprecated auto-setup image: schema setup is the
+    # one-shot service above, namespace registration the one below.
+    image: temporalio/server:1.31.2
+    restart: unless-stopped
+    depends_on:
+      temporal-setup:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      BIND_ON_IP: 0.0.0.0
+      TEMPORAL_ADDRESS: temporal:7233
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/dynamicconfig.yaml
+      LOG_LEVEL: warn
+    ports:
+      - "56233:7233"
+    volumes:
+      - ./infra/dev/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/dynamicconfig.yaml:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.31.2
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: default
+      DEFAULT_NAMESPACE_RETENTION: 72h
+    volumes:
+      - ./infra/temporal/namespace.sh:/namespace.sh:ro
+    entrypoint: ["/bin/sh", "/namespace.sh"]
+
+  temporal-ui:
+    image: temporalio/ui:2.53.3
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "56080:8080"
+
+volumes:
+  postgres-data:
+  garage-meta:
+  garage-data:

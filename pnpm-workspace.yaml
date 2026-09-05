@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Refuse to install package versions published less than 24h ago: the window
+# in which most compromised npm releases are detected and unpublished.
+minimumReleaseAge: 1440
+
+# Dependencies allowed to run install scripts. esbuild fetches its platform
+# binary; protobufjs (via @temporalio/client) runs a compatibility postinstall.
+allowBuilds:
+  esbuild: true
+  protobufjs: true

@@ -1,0 +1,7 @@
+# Development-only dynamic config for the self-hosted Temporal server.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Dev setup only. Never in a deployed environment.
+    constraints: {}
