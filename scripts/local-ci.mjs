@@ -33,7 +33,7 @@ const STAGES = [
   "pnpm check",
   "uv sync --frozen (pipeline)",
   "contracts: schemas:check + pipeline contracts:check",
-  "docker compose up --wait",
+  "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
   "turbo run build lint typecheck test",
   "docker build apps/web + apps/pipeline",
@@ -227,7 +227,9 @@ async function runFullGate(sha) {
     run("pnpm", ["--filter", "@temnia/contracts", "schemas:check"]);
     run("pnpm", ["--filter", "@temnia/pipeline", "contracts:check"]);
 
-    run("docker", ["compose", "up", "-d", "--wait", "--wait-timeout", "300"]);
+    // `pnpm services` waits on the long-running services only: compose's --wait
+    // reports a finished one-shot (schema setup, namespace) as a failure.
+    run("pnpm", ["services"]);
     psql(`CREATE DATABASE ${quoteIdentifier(database)}`);
     databaseCreated = true;
     psql(

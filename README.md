@@ -20,8 +20,8 @@ design is [docs/tech-stack.md](docs/tech-stack.md), and the working rules are [A
 ## Run it
 
 ```bash
-docker compose up -d --wait
 pnpm install
+pnpm services
 pnpm --filter @temnia/pipeline sync
 pnpm --filter @temnia/pipeline worker
 ```

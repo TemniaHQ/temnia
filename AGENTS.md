@@ -172,8 +172,10 @@ they are made.
 
 ### Local development
 
-- `docker compose up -d --wait` starts Postgres 18 + pgvector (**56432**), Garage (**56900** S3,
-  **56903** admin, bucket `temnia-media`), Temporal (**56233**), and the Temporal UI (**56080**).
+- `pnpm services` starts Postgres 18 + pgvector (**56432**), Garage (**56900** S3, **56903** admin,
+  bucket `temnia-media`), Temporal (**56233**), and the Temporal UI (**56080**). It is `docker compose
+  up -d --wait` restricted to the long-running services, because compose's `--wait` treats the finished
+  one-shot schema and namespace jobs as failures and exits 1.
   The 56xxx block is deliberate: 5432, 5433, 55433, 5549x, and 543xx belong to other stacks on the
   development machine. `next dev` uses **3000**.
 - `pnpm dev` runs the web app; `pnpm --filter @temnia/pipeline worker` runs the Python worker. The
