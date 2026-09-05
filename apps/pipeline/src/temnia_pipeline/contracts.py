@@ -22,8 +22,8 @@ class HelloOutput(BaseModel):
     organizationId: Annotated[
         UUID, Field(description="Echoed from the input scope, never invented.")
     ]
-    workerLanguage: Literal["python"]
     workerHost: str
+    workerLanguage: Literal["python"]
 
 
 class Scope(BaseModel):
@@ -42,7 +42,7 @@ class HelloInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    scope: Scope
     name: Annotated[
         str, Field(description="Who to greet.", max_length=80, min_length=1)
     ]
+    scope: Scope
