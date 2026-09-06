@@ -48,9 +48,12 @@ services:
   garage-cors:
     # One-shot: the browser PUTs upload parts straight to Garage, which needs a
     # CORS rule that exposes ETag (without it every multipart completes with no
-    # part tags). Garage has no CLI for CORS; the S3 API sets it. One rule per
-    # origin: Garage echoes a rule's whole origin list in the response header,
-    # and a browser rejects a comma-joined list.
+    # part tags). Garage has no CLI for CORS; the S3 API sets it. Any origin:
+    # the gate serves the page from 127.0.0.1 on a random port, and Garage
+    # echoes a rule's whole origin list in the response header (a browser
+    # rejects a comma-joined list), so one rule with "*" is the only shape that
+    # covers dev and the gate. The part PUTs carry no credentials, which is what
+    # "*" requires. R2 gets the one real origin (docs/runbooks/staging.md).
     image: amazon/aws-cli:2.32.9
     depends_on:
       garage:

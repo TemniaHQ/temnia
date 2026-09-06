@@ -8,7 +8,7 @@ import signal
 
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.worker import Worker
+from temporalio.worker import SandboxedWorkflowRunner, SandboxRestrictions, Worker
 
 from temnia_pipeline import db
 from temnia_pipeline.activities import say_hello
@@ -45,6 +45,14 @@ async def run_worker(settings: TemporalSettings) -> None:
         workflows=[HelloWorkflow, IngestWorkflow, ReaperWorkflow],
         activities=[say_hello, *ingest.activities(), *reaper.activities()],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
+        # The contract models are pydantic; passing pydantic through the sandbox
+        # is the documented setup for the pydantic data converter and stops the
+        # "imported after initial workflow load" warnings on every worker start.
+        workflow_runner=SandboxedWorkflowRunner(
+            restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                "pydantic", "pydantic_core"
+            )
+        ),
     )
     await ensure_reaper_schedule(client, settings.task_queue)
     log.info(

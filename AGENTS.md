@@ -189,9 +189,12 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    migrations and the seed before its first request when `MIGRATE_DATABASE_URL` is set, and refuses to
    boot in production without it; a failure exits non-zero and Dokploy keeps the previous container.
    Nothing runs at build time.
-9. **Garage CORS is one rule per origin.** Garage echoes a matching rule's whole origin list in
-   `access-control-allow-origin`, and browsers reject a comma-joined list; the first upload attempt
-   failed on exactly that. The rule is applied by a compose one-shot (`garage-cors`).
+9. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
+   list in `access-control-allow-origin`, and browsers reject a comma-joined list (the first upload
+   attempt failed on exactly that); the gate then serves the page from `127.0.0.1` on a random port,
+   which no fixed origin list covers. Part PUTs carry no credentials, so `*` is valid, and the
+   bucket is local with dev-only keys. Applied by a compose one-shot (`garage-cors`); R2 gets the one
+   real origin (runbook §1).
 
 ## Working rules (S0, 2026-09-06)
 
