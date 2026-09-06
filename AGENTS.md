@@ -150,11 +150,15 @@ they are made.
 ### Git workflow
 
 - **Never commit or push directly to `main`.** Every change lands through a pull request:
-  branch → commit → `pnpm pr:verified -- <gh pr create args>` → the required `checks` job green →
-  squash or rebase merge. This holds for docs and one-line fixes. The agent finishing a change owns
-  the whole sequence, including the local gate and attestation, and never hands those steps back.
-  For an existing PR use `pnpm push:verified`; raw `git push`, `--no-verify`, or a hand-made status
-  are not delivery workflows.
+  branch → commit → `pnpm pr:verified -- <gh pr create args>` → the required `checks` job green.
+  This holds for docs and one-line fixes. The agent finishing a change owns the local gate and the
+  attestation and never hands those steps back. For an existing PR use `pnpm push:verified`; raw
+  `git push`, `--no-verify`, or a hand-made status are not delivery workflows.
+- **Merging is Rajesh's call** (2026-09-06). A PR stays open while a discussion or a changeset is
+  being iterated on; follow-up edits go to the same branch with `pnpm push:verified`, not to a new
+  PR. Rajesh merges when he is satisfied. The agent does not merge, and does not open a second PR
+  for a small follow-up to work that is still under review. (Reversed the earlier rule under which
+  the agent merged its own PRs; PRs #4 to #9 were docs follow-ups that should have been one.)
 - Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
 - **Validation is local while Temnia has one committer** (tech-stack §2; reverse this before adding
   a collaborator). `pnpm ci:local` attests a clean commit only: frozen install, Ultracite, `uv sync`,
