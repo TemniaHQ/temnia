@@ -87,21 +87,57 @@ function putPart(
   });
 }
 
-export function startUpload(
+/**
+ * Opens (or adopts) the upload session. A 409 means an earlier upload of
+ * this file signed a part less than the grace window ago, typically the
+ * same user's paused tab; the server says how long is left, the caller is
+ * told so it can show a countdown, and the request is repeated after that.
+ */
+async function openSession(
   file: File,
   projectId: string,
-  onProgress: (progress: UploadProgress) => void
+  onWait: (seconds: number) => void
+): Promise<UploadSession> {
+  const body = JSON.stringify({
+    lastModified: file.lastModified,
+    name: file.name,
+    projectId,
+    size: file.size,
+    type: file.type || "video/mp4",
+  });
+  for (;;) {
+    // biome-ignore lint/performance/noAwaitInLoops: each retry waits for the server's own countdown
+    const response = await fetch("/api/uploads", {
+      body,
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    if (response.ok) {
+      return (await response.json()) as UploadSession;
+    }
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      retryAfterSeconds?: number;
+    };
+    if (response.status !== 409) {
+      throw new Error(
+        payload.error ?? `POST /api/uploads failed with ${response.status}`
+      );
+    }
+    const seconds = Math.max(1, payload.retryAfterSeconds ?? 5);
+    onWait(seconds);
+    await new Promise((wake) => setTimeout(wake, seconds * 1000));
+  }
+}
+
+export async function startUpload(
+  file: File,
+  projectId: string,
+  onProgress: (progress: UploadProgress) => void,
+  onWait: (seconds: number) => void = () => undefined
 ): Promise<UploadHandle> {
-  return json<UploadSession>("/api/uploads", {
-    body: JSON.stringify({
-      lastModified: file.lastModified,
-      name: file.name,
-      projectId,
-      size: file.size,
-      type: file.type || "video/mp4",
-    }),
-    method: "POST",
-  }).then((session) => new Transfer(file, session, onProgress).handle());
+  const session = await openSession(file, projectId, onWait);
+  return new Transfer(file, session, onProgress).handle();
 }
 
 class Transfer {
