@@ -1,10 +1,17 @@
 # The Temporal stack on staging, deployed by Dokploy as a compose service.
 # Persistence is its own Postgres with a local volume (docs/tech-stack.md §7);
-# the product database is a separate Dokploy service. Everything joins
-# dokploy-network so the web and pipeline services reach `temporal:7233` by name
-# and Traefik can publish the UI behind Cloudflare Access.
+# the product database is a separate Dokploy service.
 #
-# Env supplied by Dokploy at runtime: TEMPORAL_DB_PASSWORD.
+# Networks: the internal services stay on this stack's own default network, so
+# names like `temporal-postgres` never appear on the shared overlay. Only the
+# frontend and the UI join `dokploy-network`, where the frontend carries an
+# environment-specific alias (TEMPORAL_HOST) that the web and pipeline services
+# dial. Compose always adds the plain service name as an alias too, so a second
+# stack from this file on the same box (production at M3) must rename its
+# services or run elsewhere; the alias keeps the environments' own addresses
+# unambiguous either way.
+#
+# Env supplied by Dokploy at runtime: TEMPORAL_DB_PASSWORD, TEMPORAL_HOST.
 services:
   temporal-postgres:
     image: postgres:18
@@ -16,7 +23,7 @@ services:
     volumes:
       - temporal-postgres-data:/var/lib/postgresql
     networks:
-      - dokploy-network
+      - default
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
       interval: 5s
@@ -40,7 +47,7 @@ services:
       - ../../infra/temporal/setup.sh:/setup.sh:ro
     entrypoint: ["/bin/sh", "/setup.sh"]
     networks:
-      - dokploy-network
+      - default
 
   temporal:
     image: temporalio/server:1.31.2
@@ -63,7 +70,10 @@ services:
     volumes:
       - ./dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/dynamicconfig.yaml:ro
     networks:
-      - dokploy-network
+      default:
+      dokploy-network:
+        aliases:
+          - ${TEMPORAL_HOST:-temporal-staging}
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
       interval: 5s
@@ -84,7 +94,7 @@ services:
       - ../../infra/temporal/namespace.sh:/namespace.sh:ro
     entrypoint: ["/bin/sh", "/namespace.sh"]
     networks:
-      - dokploy-network
+      - default
 
   temporal-ui:
     image: temporalio/ui:2.53.3
@@ -96,6 +106,7 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: https://temporal.temnia.dev
     networks:
+      - default
       - dokploy-network
     # Dokploy adds the Traefik labels for the UI domain; Cloudflare Access fronts it.
 
@@ -103,5 +114,6 @@ volumes:
   temporal-postgres-data:
 
 networks:
+  default:
   dokploy-network:
     external: true

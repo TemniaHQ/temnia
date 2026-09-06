@@ -13,7 +13,7 @@ memory, not here.
 |---|---|---|---|
 | `web` | Application, Dockerfile `apps/web/Dockerfile`, context `.` | `TemniaHQ/temnia` `main`, watch paths `apps/web/**`, `packages/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`, `turbo.json` | `staging.temnia.dev` |
 | `pipeline` | Application, Dockerfile `apps/pipeline/Dockerfile`, context `apps/pipeline` | same repo, watch paths `apps/pipeline/**` | no hostname; Temporal worker only |
-| `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.temnia.dev` (UI); `temporal:7233` inside `dokploy-network` |
+| `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.temnia.dev` (UI); `temporal-staging:7233` inside `dokploy-network` |
 | `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-staging-postgres:5432` inside `dokploy-network` |
 | `cloudflared` | Application, image `cloudflare/cloudflared:2026.8.3` | Dokploy-managed | outbound only |
 
@@ -21,9 +21,10 @@ Object storage is Cloudflare R2 (bucket `temnia-staging-media`); Garage is local
 
 Runtime env per target (set in Dokploy, never in the image):
 
-- `web`: `TEMPORAL_ADDRESS=temporal:7233`, `TEMPORAL_NAMESPACE=default`. From S1: `DATABASE_URL` (app role), `MIGRATE_DATABASE_URL` (owner), `STORAGE_*`.
-- `pipeline`: `TEMPORAL_ADDRESS=temporal:7233`, `TEMPORAL_NAMESPACE=default`, `TEMPORAL_TASK_QUEUE=temnia-pipeline`. From S1: `PIPELINE_DATABASE_URL` (pipeline role), `STORAGE_*`.
-- `temporal`: `TEMPORAL_DB_PASSWORD`.
+- `web`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`. From S1: `DATABASE_URL` (app role), `MIGRATE_DATABASE_URL` (owner), `STORAGE_*`.
+- `pipeline`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`, `TEMPORAL_TASK_QUEUE=temnia-pipeline`. From S1: `PIPELINE_DATABASE_URL` (pipeline role), `STORAGE_*`.
+- `temporal`: `TEMPORAL_DB_PASSWORD`, `TEMPORAL_HOST=temporal-staging` (the alias the others dial; a
+  production stack gets its own).
 - `cloudflared`: `TUNNEL_TOKEN`.
 
 An env change reaches a container only through a deploy that changes the image, and a container
@@ -104,10 +105,16 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
 
 ## 3. Deploy targets (Rajesh once, then automatic)
 
-Create the four Temnia services in the `temnia` project's `staging` environment:
+The four services live in the `temnia` project's `staging` environment. They were created by
+[`infra/dokploy/create-staging.py`](../../infra/dokploy/create-staging.py), run on the box against the
+local API with the key in `/root/.dokploy-api-key` (`ssh temnia-vps python3 - < infra/dokploy/create-staging.py`);
+it is idempotent by name. What it creates, and what to enter if doing it by hand:
 
 - **postgres**: Dokploy Database → PostgreSQL, image `pgvector/pgvector:0.8.6-pg18-trixie`,
-  database `temnia`, user `temnia`, generated password, name `temnia-staging-postgres`. After the
+  database `temnia`, user `temnia`, generated password, name `temnia-staging-postgres`, env
+  `PGDATA=/var/lib/postgresql/data/pgdata` (Dokploy mounts the volume at the pre-18 path and the
+  Postgres 18 image refuses it otherwise). Never read the record back through the API in a way that
+  prints it: the response carries the password. After the
   first start, create the two application roles the same way `infra/dev/postgres-init/01-roles.sql`
   does, with generated passwords (`temnia_app`, `temnia_pipeline`; the `temporal` role is not
   needed here because the Temporal stack has its own Postgres).
