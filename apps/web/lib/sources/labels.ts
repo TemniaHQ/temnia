@@ -53,6 +53,20 @@ export function formatDuration(ms: number | null): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
 
+/** Seconds between two timestamps as "1m 42s", or "—" when either is missing. */
+export function formatElapsed(from: string | null, to: string | null): string {
+  if (!(from && to)) {
+    return "—";
+  }
+  const total = Math.max(
+    0,
+    Math.round((Date.parse(to) - Date.parse(from)) / 1000)
+  );
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;

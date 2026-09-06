@@ -12,7 +12,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatBytes, formatDuration, statusLabel } from "@/lib/sources/labels";
+import {
+  formatBytes,
+  formatDuration,
+  formatElapsed,
+  statusLabel,
+} from "@/lib/sources/labels";
 
 const SourcePlayer = dynamic(
   () => import("./source-player").then((m) => m.SourcePlayer),
@@ -25,6 +30,7 @@ const SourcePlayer = dynamic(
 interface SourceSummary {
   audioChannels: number | null;
   audioCodec: string | null;
+  createdAt: string;
   durationMs: number | null;
   fps: string | null;
   height: number | null;
@@ -34,6 +40,7 @@ interface SourceSummary {
   sizeBytes: number;
   status: "uploading" | "uploaded" | "processing" | "ready" | "failed";
   title: string;
+  uploadedAt: string | null;
   videoCodec: string | null;
   width: number | null;
 }
@@ -79,6 +86,8 @@ export function SourceWorkspace({
     ],
     ["Master", `${source.originalFilename} · ${formatBytes(source.sizeBytes)}`],
     ["Ready", source.readyAt ? new Date(source.readyAt).toLocaleString() : "—"],
+    ["Uploaded in", formatElapsed(source.createdAt, source.uploadedAt)],
+    ["Ingested in", formatElapsed(source.uploadedAt, source.readyAt)],
   ];
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
