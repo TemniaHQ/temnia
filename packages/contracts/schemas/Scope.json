@@ -191,6 +191,7 @@
       "enum": [
         "probe",
         "hls",
+        "publish",
         "thumbnails",
         "audio",
         "peaks",
