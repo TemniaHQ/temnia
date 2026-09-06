@@ -36,6 +36,27 @@ function command(name, args, { capture = false } = {}) {
 
 const git = (...args) => command("git", args, { capture: true });
 
+/**
+ * A push to a branch whose PR is already merged or closed strands the commits
+ * (it happened twice on 2026-09-06). Refuse, and say what to do instead.
+ */
+function assertBranchPrOpen(branch) {
+  const result = spawnSync(
+    "gh",
+    ["pr", "view", branch, "--json", "number,state", "--jq", ".number, .state"],
+    { cwd: ROOT, encoding: "utf8" }
+  );
+  if (result.status !== 0) {
+    return; // no PR for this branch yet
+  }
+  const [number, state] = result.stdout.trim().split("\n");
+  if (state === "MERGED" || state === "CLOSED") {
+    throw new Error(
+      `PR #${number} for ${branch} is ${state.toLowerCase()}. Branch from main and open a new PR; pushing here would strand the commits.`
+    );
+  }
+}
+
 function branchAndSha() {
   const branch = git("branch", "--show-current");
   if (!branch) {
@@ -202,6 +223,7 @@ function attest(branch, sha) {
 
 function pushVerified() {
   const { branch, sha } = branchAndSha();
+  assertBranchPrOpen(branch);
   command("pnpm", ["ci:local"]);
   receiptFor(sha);
   command("git", ["push", "--set-upstream", "origin", branch]);
