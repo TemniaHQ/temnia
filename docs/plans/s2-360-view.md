@@ -26,6 +26,10 @@ Four things in the plan are wrong or missing, and the view is built on the corre
    three-source fixture set exists in either old repo. S2 ports it and builds the parity chain.
 4. **Nothing in the repo can run transcription without Modal.** There is no provider seam, no mock
    injection point in the gate, and no Modal or Hugging Face secret anywhere. All three are built here.
+5. **A verification pass on 2026-09-07 (the orchestrator re-researching the same briefs) corrected
+   seven further items**, folded in below: the synthetic fixture, Temporal-owned liveness, the
+   one-directional duration check, `fill_nearest`, the player context, the Modal environment and
+   retention facts, and the viewer's virtualisation rules.
 
 ## 1. Sequencing: four PRs, one open at a time
 
@@ -60,9 +64,10 @@ detected"). Unsupported language: 36 languages have alignment models; any other 
 deterministic `TranscriptionFailure` with the code shown to the user, no retry. Language detection
 on a music intro can misfire; the source's language is detected on the first 30 seconds of speech
 after VAD, and the transcript stores the detected code so a wrong guess is visible. Words without
-timestamps (numbers, symbols) or without a speaker (a known whisperx bug) arrive from the provider
+timestamps (numbers, symbols) or without a speaker (no diarization overlap; `fill_nearest=True` assigns the nearest turn and nulls are still tolerated) arrive from the provider
 and are normalised: timing interpolated between neighbours and flagged, speaker taken from the
-enclosing segment, else null. Overlapping speech: diarization assigns one speaker per word; no
+enclosing segment, else null. A word ending after the media's end plus two seconds fails the
+attempt (wrong or corrupt object); a transcript ending early is silence, not truncation. Overlapping speech: diarization assigns one speaker per word; no
 overlap model in S2. Duplicate: one transcript row per source (unique on source id); a second start
 while one runs is refused by the workflow id policy. Re-run: a retry after failure is attempt N+1
 and a new machine revision, never an overwrite. Corrections: two tabs editing the same revision;
@@ -71,7 +76,10 @@ by design. Deletion: deleting the source deletes the transcript prefix and rows 
 
 **Substrate (C).** Empty transcript renders empty grids, not an error. A one-speaker monologue
 produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap alone. A word with
-`startMs == endMs` is legal. Shots absent (synthetic sources): shot snap is a no-op.
+`startMs == endMs` is legal. Shots absent (synthetic sources): shot snap is a no-op. The UI's display paragraphs (TypeScript, the legacy `paragraphs.ts`
+rules) and the substrate's grid paragraphs (Python) are separate implementations by design, as they
+were in the legacy; S5 addresses cuts by the substrate's ids, so the transcript JSON carries them
+once PR C lands.
 
 ## 3. Scale
 
@@ -81,9 +89,10 @@ produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap 
   which is the benchmark for both numbers.
   Function limits: timeout 3 hours, 4 CPUs, 8 GiB memory, default 512 GiB ephemeral disk.
 - Transcript JSON for 2.5 hours: about 28 thousand words, roughly 2 MB. Served once through the
-  media proxy with an ETag; searched and rendered in memory in the browser. Rendering uses speaker
-  turns as blocks with `content-visibility: auto`; no virtualisation dependency until the staging
-  transcript shows the tab taking over 200 ms to become interactive.
+  media proxy with an ETag; searched and rendered in memory in the browser. Rendering follows the legacy
+  viewer's measured rules: rows are paragraphs, virtualised with `@tanstack/react-virtual` (a
+  library, not a UI component), time-to-word by binary search, an active-word change re-renders two
+  rows, follow-scroll pauses on user scroll and a Jump-to-current control re-engages it.
 - WhisperX on an L4: ASR plus alignment reported at 20 to 70x realtime, diarization near 10x; a
   2.5-hour episode is plausibly 15 to 40 minutes. Function timeout 4 hours.
 - Audio in: the S1 audio extract (`audio/audio.m4a`) is read from R2 inside the function by a
@@ -96,12 +105,12 @@ produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap 
 | Step | Expected | Bound | Liveness | Retry does |
 |---|---|---|---|---|
 | Spawn ladder on Modal | seconds | 60 s activity timeout | n/a | Retry spawn; auth failure is terminal and matches the boot probe |
-| Ladder runs and publishes | 10–30 min plus the upload | 3 h function timeout; activity heartbeat timeout 90 s | Function writes stage and percent to a Modal Dict every 5 s, through the upload as well (the S1 publish-heartbeat lesson); worker polls every 10 s, heartbeats, writes the progress row | Reattach to the call id in heartbeat details; complete ladder in R2 reused via manifest |
+| Ladder runs and publishes | 10–30 min plus the upload | 3 h function timeout; activity heartbeat timeout 5 min (the ladder's convention) | Function writes stage and percent to a Modal Dict every 5 s, through the upload as well (the S1 publish-heartbeat lesson); worker polls every 10 s, heartbeats, writes the progress row | Reattach to the call id in heartbeat details; complete ladder in R2 reused via manifest |
 | Ladder verify | seconds | 5 min | heartbeat | Function runs `assert_covers` before upload; worker re-checks the manifest against the probe and lists the playlists in R2 |
 | Spawn transcription | seconds | 60 s | n/a | as above |
-| WhisperX runs | 15–40 min | 4 h function timeout; heartbeat timeout 90 s | Dict progress: model load, VAD, ASR percent, align, diarize | Reattach by call id; a failed call respawns up to 3 times with backoff; deterministic failures (language, corrupt audio) are terminal on attempt one |
+| WhisperX runs | 15–40 min | 4 h function timeout; heartbeat timeout 5 min | Dict progress: model load, VAD, ASR percent, align, diarize | Reattach by call id; a failed call respawns up to 3 times with backoff; deterministic failures (language, corrupt audio) are terminal on attempt one |
 | Normalise and write revision | seconds | 5 min | heartbeat | Idempotent: revision N for attempt N; a re-run writes N+1 |
-| Reaper | every 15 min | n/a | `transcript.heartbeat_at` | A processing transcript with no heartbeat for 10 minutes is failed with "Transcription stalled" and can be retried |
+| Liveness | continuous | Temporal heartbeat timeout, 5 min | the activity's heartbeat; `transcript.heartbeat_at` mirrors it for the UI | Temporal retries the activity (4 attempts, backoff 2.0, the ingest policy); after the last, the workflow writes the failure to the row. The reaper does not sweep transcripts: on Temporal, stalled work needs no reaper (reaper.py's own rule) |
 
 A worker restart mid-ladder or mid-transcription no longer loses the GPU work: the call id in the
 last heartbeat lets the retried activity reattach. That is the operational reason to prefer spawn
@@ -109,7 +118,9 @@ over a blocking remote call.
 
 ## 5. User states
 
-Transcript tab on the source page. Every state has words and an action; a raw server message is
+Transcript tab on the source page. The tab reaches the player through `@videojs/react`'s
+`PlayerContextProvider` and `usePlayer`, wrapping both panes, not a hand-lifted ref. Every state has
+words and an action; a raw server message is
 never shown.
 
 | State | The user reads | Can do |
@@ -117,7 +128,8 @@ never shown.
 | Source not ready | "The transcript starts after processing finishes." | wait; the tab polls every 3.5 s while the source or transcript is in flight |
 | Pending | "Queued for transcription." | wait |
 | Processing | "Transcribing · Aligning words · 62%" with a progress bar | wait |
-| Stalled (heartbeat older than 2 min) | "Transcription has not reported progress for a while. It will be retried automatically." | wait; Retry button if the reaper has failed it |
+| Retrying (an attempt failed, another is coming) | "Transcription stopped unexpectedly and is being retried." | wait; the row never flashes Failed between attempts |
+| Stalled (heartbeat older than 5 min) | "Transcription has not reported progress for a while. It will be retried." | wait |
 | Failed, retryable | "Transcription failed: the transcription service was unavailable." | Retry |
 | Failed, terminal | "This recording is in a language we cannot align yet (code: xx)." | nothing until S12; the code is visible |
 | Ready, empty | "No speech was detected in this recording." | Retry |
@@ -139,13 +151,17 @@ transcript status badge on the list is S7's concern (source intelligence).
   write on the staging bucket, revocable independently of the worker's) and `temnia-hf`
   (`HF_TOKEN` for the gated pyannote models).
 - **Deploy.** `uv run modal deploy` from the pipeline package publishes app `temnia-media` with
-  functions `ladder`, `transcribe`, and `version`. The deployed version is the git SHA baked at
+  functions `ladder`, `transcribe`, and `version`; lookups pass `environment_name` from
+  `MODAL_ENVIRONMENT`. Spawned results stay retrievable for 24 hours and Dict entries expire after
+  seven idle days, both longer than any reattach. The deployed version is the git SHA baked at
   deploy. The worker's boot probe calls `version` when either backend is `modal` and refuses to boot
   on a mismatch or an auth failure, which Dokploy reports as a failed deploy. A wrong token is loud at
   boot, never a silent queue. The runbook gains the deploy step and the env lines.
 - **Local dev and the gate.** `TRANSCODE_BACKEND=local` and `TRANSCRIPTION_PROVIDER=recorded` are
   the defaults in the env example and in `scripts/local-ci.mjs`. The gate runs real ffmpeg on the
-  24-second fixture and replays a recorded WhisperX response for it. No Modal call in CI, ever.
+  24-second fixture and replays a recorded WhisperX response for a new real-speech fixture (30 to
+  60 seconds, two speakers, rights cleared): the 24-second master is synthetic audio with no speech
+  (measured: zero silences in 24 seconds, nothing to transcribe). No Modal call in CI, ever.
 - **Disk.** The VPS work volume stops holding ladders; only the master download and the audio
   extract remain on it. Modal ephemeral disk holds the ladder for the call's lifetime.
 - **Restart mid-flight.** See §4: reattach by call id. A Modal outage fails transcription after the
@@ -181,7 +197,7 @@ transcript status badge on the list is S7's concern (source intelligence).
 | Boot probe | Unit test: wrong token and wrong version refuse boot with the exact message |
 | Provider normaliser | Unit tests on the recorded 24-second response and a hand-built edge fixture (missing start, end, speaker; NaN score; empty segment; unsupported language) |
 | Contract | Zod and the generated pydantic model agree on the transcript v1 shape; the contract drift check in the gate |
-| Transcription end to end | Gate: recorded provider on the 24-second fixture reaches Ready with revision 1 in Garage and ledger rows (`transcription_seconds`, `storage_bytes`) written under RLS as the pipeline role |
+| Transcription end to end | Gate: recorded provider on the real-speech fixture reaches Ready with revision 1 in Garage and ledger rows (`transcription_seconds`, `storage_bytes`) written under RLS as the pipeline role |
 | Reaper | Database test: a processing transcript with a stale heartbeat is failed and retryable |
 | Tenancy | Isolation suite probes for both tables; schema contract test updated for the new enum and columns |
 | Transcript tab | Playwright: every state above (driven by the recorded provider and a stalled fixture), click-to-seek changes `video.currentTime`, follow highlights the word at 5 s, search finds the expected count, edit a word then reload shows revision 2, rename then export shows the name in the VTT, two contexts produce the stale-revision message, every dialog and menu opened |
@@ -208,6 +224,12 @@ transcript status badge on the list is S7's concern (source intelligence).
 | Silent truncation at 58% | Already ported in S1; the Modal function runs the same assertion |
 | M1 failed on boundaries because the model could not address the timeline | Applies to S4; the reason the renderings must be byte-identical (stable `P042`, `s0417` ids) |
 | Lead-in capture, two-turn (the Brett Lee finding) | Ported in the grid port and covered by parity |
+| One-directional duration check: words past the media end plus 2 s fail the run; ending early is fine | Ported into the normaliser |
+| Stall TTL 15 min, reaper scoped to processing, pending is a queue state | Replaced: Temporal heartbeat timeouts own liveness (reaper.py) |
+| A retry parks the row in pending, never flashing Failed between attempts | Ported as the Retrying state |
+| The CI fixture has no speech | Ported: a real-speech fixture for the recorded provider; Temnia's 24-second master is synthetic too |
+| Viewer: virtualised paragraph rows, binary search, follow-scroll rules | Ported with `@tanstack/react-virtual` |
+| The AI SDK's transcribe() rejected for dropping speakers and confidence and re-uploading audio | Not applicable in Python; the principle (URL in, speakers and confidence kept) holds |
 | Reviewer calibration at 75 to 80 percent | Not S2 |
 
 ## 10. Rajesh's part (blocking)
@@ -234,3 +256,5 @@ transcript status badge on the list is S7's concern (source intelligence).
   prefix.
 - The recorded-response provider replaces a synthetic mock.
 - Hybrid ladder: CPU decode and scale, NVENC for the video rungs, libx264 for the I-frame rendition.
+- The transcript tab reuses the legacy viewer's rules with `@tanstack/react-virtual`.
+- A real-speech e2e fixture joins the synthetic 24-second master.
