@@ -159,10 +159,14 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    role carries one declared cross-tenant read, `organization_enumerable_by_pipeline` (ids only), so
    the reaper can enumerate organizations and then scope into each.
 3. **The uploader is in-house, not Uppy.** Uppy 6.0 (2026-08-26) rewrote `@uppy/aws-s3` to send
-   Create, ListParts, Complete, and Abort from the browser on presigned URLs; R2 supports presigned
-   GET/PUT/HEAD/DELETE only, so that design cannot run on the deployed store. Temnia's browser half
-   only PUTs file slices to server-signed part URLs; every control call is a route handler, which is
-   also what makes resume server-side: the fingerprint (project, name, size, lastModified) finds the
+   Create, ListParts, Complete, and Abort from the browser on presigned URLs. The S1 research recorded
+   that R2 cannot serve those (presigned GET/PUT/HEAD/DELETE only). **That was wrong**: a probe from
+   the staging pipeline container on 2026-09-07 had R2 accept presigned CreateMultipartUpload (POST),
+   ListParts (GET), CompleteMultipartUpload (POST), and AbortMultipartUpload (DELETE); R2's documented
+   exclusion is HTML-form POST policies, a different mechanism. Uppy 6 would run on R2. The decision
+   stands on what the in-house client buys, not on a store limit: Temnia's browser half only PUTs
+   file slices to server-signed part URLs; every control call is a route handler, which is what makes
+   resume server-side: the fingerprint (project, name, size, lastModified) finds the
    active upload from any browser, ListParts says what the store holds, and a grace window
    (`UPLOAD_ADOPT_GRACE_SECONDS`, 60 s) stops two writers interleaving. Listing parts is never a
    liveness signal; signing is. Part size is a deterministic function of file size.
@@ -233,6 +237,15 @@ The view covers:
   the sprint's scale run on staging before the sprint is called done.
 - **Legacy lessons**: every item in a legacy report is ticked in the PR description as ported,
   replaced by something better, or dropped with a reason. Reading a lesson is not applying it.
+
+### A third-party limit is probed before it decides anything (2026-09-07)
+
+When research says a service cannot do something and that claim picks a design, the claim is
+verified against the real service (one presigned request, one API call, one query) before it is
+recorded here. The S1 uploader decision carried "R2 does not support presigned multipart control
+calls" for a day, into this file, the tech-stack record, the log, and a post draft; Rajesh asked for
+a re-check before posting and a five-line probe against the staging bucket disproved it. A wrong
+limit that survives into a decision record is worse than no research.
 
 ### Git workflow
 
