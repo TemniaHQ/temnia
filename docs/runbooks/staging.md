@@ -163,8 +163,9 @@ rebuilds only the targets whose files changed.
 3b. From S1: the web container's log opens with `release: migrations applied, seed rows present`;
    `/projects` lists projects; a master uploaded on a project page reaches `Ready` and plays on its
    source page with the waveform painted. The sprint's scale run is
-   `node scripts/upload-master.mjs <2h master> --project <id> --base https://staging.temnia.dev --header "cf-access-token: <service token>"`
-   (a Cloudflare Access service token; the browser session cookie is not usable from a script).
+   `node scripts/upload-master.mjs <2h master> --project <id> --base https://staging.temnia.dev --header "CF-Access-Client-Id: <id>" --header "CF-Access-Client-Secret: <secret>"`
+   (a Cloudflare Access service token behind a Service Auth policy on the `staging.temnia.dev`
+   application; the browser session cookie is not usable from a script).
 4. If a target "deployed" but behaves as before, read the dead container's log before anything
    else:
 
