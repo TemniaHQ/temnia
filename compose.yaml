@@ -45,6 +45,31 @@ services:
       timeout: 5s
       retries: 20
 
+  garage-cors:
+    # One-shot: the browser PUTs upload parts straight to Garage, which needs a
+    # CORS rule that exposes ETag (without it every multipart completes with no
+    # part tags). Garage has no CLI for CORS; the S3 API sets it. Any origin:
+    # the gate serves the page from 127.0.0.1 on a random port, and Garage
+    # echoes a rule's whole origin list in the response header (a browser
+    # rejects a comma-joined list), so one rule with "*" is the only shape that
+    # covers dev and the gate. The part PUTs carry no credentials, which is what
+    # "*" requires. R2 gets the one real origin (docs/runbooks/staging.md).
+    image: amazon/aws-cli:2.32.9
+    depends_on:
+      garage:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      AWS_ACCESS_KEY_ID: GK746d6e696164657600000000
+      AWS_SECRET_ACCESS_KEY: 7f5fbe4a561d5196e4422e7fe9b8b8880846f9e153aacd3a142fd3d27f8f2bd2
+      AWS_DEFAULT_REGION: garage
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    volumes:
+      - ./infra/dev/garage/cors.json:/cors.json:ro
+    command:
+      ["s3api", "put-bucket-cors", "--endpoint-url", "http://garage:3900", "--bucket", "temnia-media", "--cors-configuration", "file:///cors.json"]
+
   temporal-setup:
     image: temporalio/admin-tools:1.31.2
     depends_on:

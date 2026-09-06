@@ -28,6 +28,14 @@ const RECEIPT_VERSION = 1;
 const COMPOSE_PROJECT = "temnia-dev";
 const COMPOSE_NETWORK = `${COMPOSE_PROJECT}_default`;
 const POSTGRES_HOST_PORT = 56_432;
+const GARAGE_HOST_PORT = 56_900;
+const GARAGE_ACCESS_KEY = "GK746d6e696164657600000000";
+const GARAGE_SECRET_KEY =
+  "7f5fbe4a561d5196e4422e7fe9b8b8880846f9e153aacd3a142fd3d27f8f2bd2";
+// Three parts from the 12 MB resume fixture; R2's minimum part size.
+const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
+// The resume e2e waits this out before re-selecting the file.
+const GATE_ADOPT_GRACE_SECONDS = 2;
 const STAGES = [
   "pnpm install --frozen-lockfile",
   "pnpm check",
@@ -35,9 +43,9 @@ const STAGES = [
   "contracts: schemas:check + pipeline contracts:check",
   "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
-  "turbo run build lint typecheck test",
+  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract)",
   "docker build apps/web + apps/pipeline",
-  "playwright: web image → Temporal → pipeline image",
+  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
 ];
 let receivedSignal;
 
@@ -213,6 +221,11 @@ async function runFullGate(sha) {
   const pipelineImage = `temnia-pipeline:gate-${stamp}`;
   const webContainer = `temnia-gate-web-${stamp}`;
   const workerContainer = `temnia-gate-worker-${stamp}`;
+  // The gate's worker and web app share the compose Temporal server with a
+  // developer's own `pnpm worker`; on one namespace both would poll the same
+  // task queue and the gate's ingest activities could land on a worker bound
+  // to the dev database. A namespace per run keeps them apart.
+  const namespace = `temnia-gate-${stamp}`;
   let databaseCreated = false;
   let containersStarted = false;
   let failure;
@@ -245,7 +258,38 @@ async function runFullGate(sha) {
       TEMPORAL_ADDRESS: "127.0.0.1:56233",
       TEST_DATABASE_URL: ownerUrl,
     };
+    const storageEnv = [
+      "-e",
+      "STORAGE_ENDPOINT=http://garage:3900",
+      "-e",
+      `STORAGE_PUBLIC_ENDPOINT=http://127.0.0.1:${GARAGE_HOST_PORT}`,
+      "-e",
+      "STORAGE_REGION=garage",
+      "-e",
+      "STORAGE_BUCKET=temnia-media",
+      "-e",
+      `STORAGE_ACCESS_KEY_ID=${GARAGE_ACCESS_KEY}`,
+      "-e",
+      `STORAGE_SECRET_ACCESS_KEY=${GARAGE_SECRET_KEY}`,
+    ];
     run("pnpm", ["--filter", "@temnia/db", "db:migrate"], { env });
+    run("docker", [
+      "run",
+      "--rm",
+      "--network",
+      COMPOSE_NETWORK,
+      "temporalio/admin-tools:1.31.2",
+      "temporal",
+      "operator",
+      "namespace",
+      "create",
+      "--address",
+      "temporal:7233",
+      "--namespace",
+      namespace,
+      "--retention",
+      "24h",
+    ]);
     run("pnpm", ["turbo", "run", "build", "lint", "typecheck", "test"], {
       env,
     });
@@ -266,8 +310,15 @@ async function runFullGate(sha) {
       COMPOSE_NETWORK,
       "-e",
       "TEMPORAL_ADDRESS=temporal:7233",
+      "-e",
+      `TEMPORAL_NAMESPACE=${namespace}`,
+      "-e",
+      `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
+      ...storageEnv,
       pipelineImage,
     ]);
+    // The web image runs the release phase (migrations + seed) at start; the
+    // database was already migrated above, so this also proves idempotence.
     dockerRun(webContainer, [
       "--network",
       COMPOSE_NETWORK,
@@ -275,6 +326,17 @@ async function runFullGate(sha) {
       `${webPort}:3000`,
       "-e",
       "TEMPORAL_ADDRESS=temporal:7233",
+      "-e",
+      `TEMPORAL_NAMESPACE=${namespace}`,
+      "-e",
+      `DATABASE_URL=postgres://temnia_app:temnia_app@postgres:5432/${database}`,
+      "-e",
+      `MIGRATE_DATABASE_URL=postgres://temnia:temnia@postgres:5432/${database}`,
+      "-e",
+      `UPLOAD_PART_SIZE_BYTES=${GATE_PART_SIZE_BYTES}`,
+      "-e",
+      `UPLOAD_ADOPT_GRACE_SECONDS=${GATE_ADOPT_GRACE_SECONDS}`,
+      ...storageEnv,
       webImage,
     ]);
     containersStarted = true;
@@ -291,7 +353,12 @@ async function runFullGate(sha) {
     ]);
     try {
       run("pnpm", ["--filter", "@temnia/web", "e2e"], {
-        env: { ...env, E2E_BASE_URL: baseUrl },
+        env: {
+          ...env,
+          E2E_BASE_URL: baseUrl,
+          UPLOAD_ADOPT_GRACE_SECONDS: String(GATE_ADOPT_GRACE_SECONDS),
+          UPLOAD_PART_SIZE_BYTES: String(GATE_PART_SIZE_BYTES),
+        },
       });
     } catch (error) {
       process.stderr.write(
@@ -310,6 +377,26 @@ async function runFullGate(sha) {
     spawnSync("docker", ["image", "rm", "-f", webImage, pipelineImage], {
       stdio: "ignore",
     });
+    spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--network",
+        COMPOSE_NETWORK,
+        "temporalio/admin-tools:1.31.2",
+        "temporal",
+        "operator",
+        "namespace",
+        "delete",
+        "--address",
+        "temporal:7233",
+        "--namespace",
+        namespace,
+        "--yes",
+      ],
+      { stdio: "ignore" }
+    );
     if (databaseCreated) {
       try {
         psql(

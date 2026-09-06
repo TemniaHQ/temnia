@@ -7,11 +7,33 @@
 from __future__ import annotations
 from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+from enum import StrEnum
 from uuid import UUID
 
 
 class Model(RootModel[Any]):
     root: Any
+
+
+class ArtifactKind(StrEnum):
+    master = "master"
+    hls = "hls"
+    peaks = "peaks"
+    thumbnails = "thumbnails"
+    audio = "audio"
+    shots = "shots"
+
+
+class ArtifactRecord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    contentType: Annotated[str, Field(min_length=1)]
+    kind: ArtifactKind
+    metadata: dict[str, Any]
+    sizeBytes: Annotated[int, Field(ge=0, le=9007199254740991)]
+    storageKey: Annotated[str, Field(min_length=1)]
+    storagePrefix: str | None
 
 
 class HelloOutput(BaseModel):
@@ -24,6 +46,31 @@ class HelloOutput(BaseModel):
     ]
     workerHost: str
     workerLanguage: Literal["python"]
+
+
+class IngestStage(StrEnum):
+    probe = "probe"
+    hls = "hls"
+    thumbnails = "thumbnails"
+    audio = "audio"
+    peaks = "peaks"
+    shots = "shots"
+    finalize = "finalize"
+
+
+class ProbeResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    audioChannels: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    audioCodec: str | None
+    durationMs: Annotated[int, Field(gt=0, le=9007199254740991)]
+    fps: Annotated[float | None, Field(gt=0.0)]
+    height: Annotated[int | None, Field(gt=0, le=9007199254740991)]
+    sizeBytes: Annotated[int, Field(ge=0, le=9007199254740991)]
+    variableFrameRate: bool
+    videoCodec: str | None
+    width: Annotated[int | None, Field(gt=0, le=9007199254740991)]
 
 
 class Scope(BaseModel):
@@ -46,3 +93,47 @@ class HelloInput(BaseModel):
         str, Field(description="Who to greet.", max_length=80, min_length=1)
     ]
     scope: Scope
+
+
+class IngestInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifactPrefix: Annotated[
+        str,
+        Field(
+            description="Prefix every derived artifact is written under; ends with '/'.",
+            min_length=1,
+        ),
+    ]
+    masterKey: Annotated[
+        str, Field(description="The uploaded master's storage key.", min_length=1)
+    ]
+    scope: Scope
+    sourceId: UUID
+
+
+class IngestOutput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifacts: list[ArtifactRecord]
+    organizationId: Annotated[
+        UUID, Field(description="Echoed from the input scope, never invented.")
+    ]
+    probe: ProbeResult
+    processingSeconds: Annotated[
+        int,
+        Field(
+            description="Wall-clock seconds the worker spent.",
+            ge=0,
+            le=9007199254740991,
+        ),
+    ]
+    sourceId: UUID
+    storageBytes: Annotated[
+        int,
+        Field(
+            description="Sum of the artifact rows written.", ge=0, le=9007199254740991
+        ),
+    ]

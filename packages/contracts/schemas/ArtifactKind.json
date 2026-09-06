@@ -1,0 +1,20 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "$id": "#/$defs/ArtifactKind",
+      "type": "string",
+      "enum": [
+        "master",
+        "hls",
+        "peaks",
+        "thumbnails",
+        "audio",
+        "shots"
+      ],
+      "title": "ArtifactKind"
+    }
+  },
+  "$id": "ArtifactKind.json",
+  "$ref": "#/$defs/ArtifactKind",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

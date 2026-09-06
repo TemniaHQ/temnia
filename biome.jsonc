@@ -21,6 +21,15 @@
       "!packages/db/drizzle"
     ]
   },
+  "linter": {
+    "rules": {
+      "performance": {
+        // The React Compiler is on (next.config.ts); it memoises handlers, so
+        // a function defined in the component body is a stable prop already.
+        "noJsxPropsBind": "off"
+      }
+    }
+  },
   "overrides": [
     {
       // A package entry point re-exports its modules on purpose.

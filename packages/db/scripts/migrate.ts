@@ -1,39 +1,16 @@
 /**
- * Applies pending migrations from ./drizzle. Idempotent and safe to run from
- * several containers at once: a session-level advisory lock serialises runners.
- * Deployed images run this before serving; a failure aborts the container so a
- * broken deploy is loud instead of quietly serving a stale schema.
+ * `pnpm --filter @temnia/db db:migrate`: apply pending migrations and the seed
+ * to MIGRATE_DATABASE_URL (the owner connection).
  */
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import pg from "pg";
-
-const LOCK_KEY = 0x74_65_6d_6e; // "temn"
+import { migrateDatabase } from "../src/migrate.ts";
 
 async function main(): Promise<void> {
   const url = process.env.MIGRATE_DATABASE_URL;
   if (!url) {
     throw new Error("MIGRATE_DATABASE_URL is required");
   }
-  const client = new pg.Client({ connectionString: url });
-  await client.connect();
-  try {
-    await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
-    const migrationsFolder = join(
-      dirname(fileURLToPath(import.meta.url)),
-      "..",
-      "drizzle"
-    );
-    await migrate(drizzle(client), { migrationsFolder });
-    process.stdout.write("migrations applied\n");
-  } finally {
-    await client
-      .query("SELECT pg_advisory_unlock($1)", [LOCK_KEY])
-      .catch(() => undefined);
-    await client.end();
-  }
+  await migrateDatabase(url);
+  process.stdout.write("migrations applied, seed rows present\n");
 }
 
 main().catch((error: unknown) => {

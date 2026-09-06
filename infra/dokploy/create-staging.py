@@ -114,7 +114,16 @@ def main() -> None:
     else:
         web_id = application(env_id, github_id,
             "web", "temnia-staging-web", "apps/web/Dockerfile", ".",
-            f"TEMPORAL_ADDRESS={TEMPORAL_ADDRESS}\nTEMPORAL_NAMESPACE=default", WEB_WATCH,
+            f"TEMPORAL_ADDRESS={TEMPORAL_ADDRESS}\nTEMPORAL_NAMESPACE=default\n"
+            # S1: filled in by hand after the roles and the R2 bucket exist (runbook §1);
+            # the container refuses to boot until MIGRATE_DATABASE_URL is real.
+            "DATABASE_URL=postgres://temnia_app:CHANGE_ME@temnia-staging-postgres:5432/temnia\n"
+            "MIGRATE_DATABASE_URL=postgres://temnia:CHANGE_ME@temnia-staging-postgres:5432/temnia\n"
+            "STORAGE_ENDPOINT=https://CHANGE_ME.r2.cloudflarestorage.com\n"
+            "STORAGE_PUBLIC_ENDPOINT=https://CHANGE_ME.r2.cloudflarestorage.com\n"
+            "STORAGE_REGION=auto\nSTORAGE_BUCKET=temnia-staging-media\n"
+            "STORAGE_ACCESS_KEY_ID=CHANGE_ME\nSTORAGE_SECRET_ACCESS_KEY=CHANGE_ME",
+            WEB_WATCH,
         )
         call("domain.create", {
             "host": "staging.temnia.dev",
@@ -129,7 +138,12 @@ def main() -> None:
     else:
         pipeline_id = application(env_id, github_id,
             "pipeline", "temnia-staging-pipeline", "apps/pipeline/Dockerfile", "apps/pipeline",
-            f"TEMPORAL_ADDRESS={TEMPORAL_ADDRESS}\nTEMPORAL_NAMESPACE=default\nTEMPORAL_TASK_QUEUE=temnia-pipeline",
+            f"TEMPORAL_ADDRESS={TEMPORAL_ADDRESS}\nTEMPORAL_NAMESPACE=default\n"
+            "TEMPORAL_TASK_QUEUE=temnia-pipeline\n"
+            "PIPELINE_DATABASE_URL=postgres://temnia_pipeline:CHANGE_ME@temnia-staging-postgres:5432/temnia\n"
+            "STORAGE_ENDPOINT=https://CHANGE_ME.r2.cloudflarestorage.com\n"
+            "STORAGE_REGION=auto\nSTORAGE_BUCKET=temnia-staging-media\n"
+            "STORAGE_ACCESS_KEY_ID=CHANGE_ME\nSTORAGE_SECRET_ACCESS_KEY=CHANGE_ME",
             PIPELINE_WATCH,
         )
         print(f"application pipeline ({pipeline_id}) configured")
