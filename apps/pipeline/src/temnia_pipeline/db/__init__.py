@@ -72,11 +72,11 @@ async def scoped(
 async def claim_source(
     conn: AsyncConnection[dict[str, Any]], source_id: UUID, workflow_id: str
 ) -> bool:
-    """Move an `uploaded` (or retried `failed`) source to `processing`.
+    """Move an `uploaded` (or a retried `failed`, or a re-ingested `ready`) source to `processing`.
 
-    Returns False when the row is not claimable, which makes a retried
-    workflow start idempotent. Prior artifact rows are cleared: a re-run
-    overwrites the same keys.
+    Returns False when the row is still `uploading`, which makes a workflow
+    started too early a no-op. Prior artifact rows are cleared: a re-run
+    overwrites the same keys, and finalize meters only the net-new bytes.
     """
     row = await (
         await conn.execute(
@@ -85,7 +85,7 @@ async def claim_source(
                SET status = 'processing', ingest_workflow_id = %s, ingest_stage = 'probe',
                    ingest_percent = NULL, ingest_heartbeat_at = now(), error_message = NULL,
                    updated_at = now()
-             WHERE id = %s AND status IN ('uploaded', 'failed', 'processing')
+             WHERE id = %s AND status IN ('uploaded', 'failed', 'processing', 'ready')
          RETURNING id
             """,
             (workflow_id, source_id),
@@ -152,9 +152,12 @@ async def finalize_source(  # noqa: PLR0913
     """Insert artifact rows, mark the source ready, and write the ledger entries.
 
     The storage figure is read back from the rows just written (SUM), so the
-    per-artifact attribution and the ledger cannot drift. Processing is metered
-    in media seconds (the cost driver); wall-clock seconds ride along in detail.
-    Returns the summed storage bytes.
+    per-artifact attribution and the ledger cannot drift. It is metered as a
+    delta against earlier *artifact* entries for the source (a re-ingest
+    overwrites in place); the master's own entry, written at upload
+    completion, is a different category and is never netted against.
+    Processing is metered in media seconds (the cost driver); wall-clock
+    seconds ride along in detail. Returns the summed storage bytes.
     """
     for record in artifacts:
         await conn.execute(
@@ -191,6 +194,7 @@ async def finalize_source(  # noqa: PLR0913
             """
             SELECT COALESCE(SUM(quantity), 0)::bigint AS total FROM usage_ledger
              WHERE source_id = %s AND kind = 'storage_bytes'
+               AND detail->>'category' = 'artifacts'
             """,
             (source_id,),
         )
