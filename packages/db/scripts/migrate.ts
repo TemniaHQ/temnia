@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
+// biome-ignore lint/performance/noNamespaceImport: drizzle takes the whole schema as one object
+import * as schema from "../src/schema/index.ts";
+import { seed } from "../src/seed.ts";
 
 const LOCK_KEY = 0x74_65_6d_6e; // "temn"
 
@@ -26,8 +29,11 @@ async function main(): Promise<void> {
       "..",
       "drizzle"
     );
-    await migrate(drizzle(client), { migrationsFolder });
+    const db = drizzle(client, { schema });
+    await migrate(db, { migrationsFolder });
     process.stdout.write("migrations applied\n");
+    await seed(db);
+    process.stdout.write("seed rows present\n");
   } finally {
     await client
       .query("SELECT pg_advisory_unlock($1)", [LOCK_KEY])

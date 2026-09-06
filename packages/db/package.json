@@ -9,7 +9,7 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "node --experimental-strip-types scripts/generate.ts",
     "db:migrate": "node --experimental-strip-types scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "lint": "biome check .",
