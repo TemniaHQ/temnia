@@ -18,11 +18,30 @@ memory, not here.
 | `cloudflared` | Application, image `cloudflare/cloudflared:2026.8.3` | Dokploy-managed | outbound only |
 
 Object storage is Cloudflare R2 (bucket `temnia-staging-media`); Garage is local development only.
+R2 one-time setup (Rajesh, dashboard or `wrangler`): create the bucket; an API token with object read
+and write on it; the CORS rule below (browsers PUT upload parts straight to R2, and without
+`ExposeHeaders: ETag` every multipart completes with no part tags); and confirm the bucket's
+"Default Multipart Abort Rule" (7 days) is enabled, which is the backstop behind the reaper.
+
+```json
+[{"AllowedOrigins": ["https://staging.temnia.dev"], "AllowedMethods": ["PUT", "GET", "HEAD"],
+  "AllowedHeaders": ["content-type"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600}]
+```
 
 Runtime env per target (set in Dokploy, never in the image):
 
-- `web`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`. From S1: `DATABASE_URL` (app role), `MIGRATE_DATABASE_URL` (owner), `STORAGE_*`.
-- `pipeline`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`, `TEMPORAL_TASK_QUEUE=temnia-pipeline`. From S1: `PIPELINE_DATABASE_URL` (pipeline role), `STORAGE_*`.
+- `web`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`,
+  `DATABASE_URL=postgres://temnia_app:<pw>@temnia-staging-postgres:5432/temnia`,
+  `MIGRATE_DATABASE_URL=postgres://temnia:<pw>@temnia-staging-postgres:5432/temnia` (required: the
+  container refuses to boot without it and applies migrations before serving), `STORAGE_ENDPOINT`
+  (the R2 S3 endpoint `https://<account>.r2.cloudflarestorage.com`), `STORAGE_PUBLIC_ENDPOINT` (same
+  for R2), `STORAGE_REGION=auto`, `STORAGE_BUCKET=temnia-staging-media`, `STORAGE_ACCESS_KEY_ID`,
+  `STORAGE_SECRET_ACCESS_KEY` (an R2 API token scoped to the bucket, object read and write).
+- `pipeline`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`,
+  `TEMPORAL_TASK_QUEUE=temnia-pipeline`,
+  `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:<pw>@temnia-staging-postgres:5432/temnia`, the same
+  `STORAGE_*` (without `STORAGE_PUBLIC_ENDPOINT`), and a volume on `/var/lib/temnia/work` sized for
+  the largest master plus its ladder (the worker refuses a download without 1.5x the master free).
 - `temporal`: `TEMPORAL_DB_PASSWORD`, `TEMPORAL_HOST=temporal-staging` (the alias the others dial; a
   production stack gets its own).
 - `cloudflared`: `TUNNEL_TOKEN`.
@@ -141,6 +160,11 @@ rebuilds only the targets whose files changed.
 3. On the page, run the hello workflow: the result names the seeded organization id and a Python
    worker host. In the Temporal UI the workflow shows one completed activity on task queue
    `temnia-pipeline`.
+3b. From S1: the web container's log opens with `release: migrations applied, seed rows present`;
+   `/projects` lists projects; a master uploaded on a project page reaches `Ready` and plays on its
+   source page with the waveform painted. The sprint's scale run is
+   `node scripts/upload-master.mjs <2h master> --project <id> --base https://staging.temnia.dev --header "cf-access-token: <service token>"`
+   (a Cloudflare Access service token; the browser session cookie is not usable from a script).
 4. If a target "deployed" but behaves as before, read the dead container's log before anything
    else:
 

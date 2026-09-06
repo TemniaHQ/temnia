@@ -141,6 +141,58 @@ for, so infra names on the product domain advertise the control plane; cookies s
 registrable domain cannot leak between staging and production; and the product zone stays clean for
 custom hostnames. The staging VPS is reinstalled from scratch for this (runbook `docs/runbooks/staging.md`).
 
+**2026-09-06 — S1 build decisions (each researched fresh; the comparison is in the PR that
+adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
+1. **Forced RLS is completed by `packages/db/scripts/generate.ts`, not by drizzle-kit.** drizzle-kit
+   0.31 emits the policy and `ENABLE ROW LEVEL SECURITY` from `pgPolicy`, but has no notion of
+   `FORCE` (without which the table owner bypasses every policy) or of grants. The wrapper appends
+   both for every table a new migration creates, so the tenancy rule still holds mechanically; the
+   isolation suite is what catches a wrapper that was skipped. Policies read
+   `NULLIF(current_setting('app.organization_id', true), '')::uuid`: a pooled connection reports `''`,
+   not NULL, once any earlier transaction has set the GUC, and `''::uuid` is an error, not a fail-closed
+   NULL.
+2. **Identity tables follow Better Auth 1.7.3, keyed by Drizzle property, not by column name.** The
+   adapter resolves columns by the Drizzle property key, so keys are Better Auth's (`emailVerified`,
+   `createdAt`) and columns are this repository's snake_case. Two deliberate departures from the CLI's
+   output, reconciled by hand at S24 because the CLI overwrites rather than merges: `timestamptz` and
+   `uuidv7()` defaults. `user` is scoped through `member`; `organization` by its own id. The pipeline
+   role carries one declared cross-tenant read, `organization_enumerable_by_pipeline` (ids only), so
+   the reaper can enumerate organizations and then scope into each.
+3. **The uploader is in-house, not Uppy.** Uppy 6.0 (2026-08-26) rewrote `@uppy/aws-s3` to send
+   Create, ListParts, Complete, and Abort from the browser on presigned URLs; R2 supports presigned
+   GET/PUT/HEAD/DELETE only, so that design cannot run on the deployed store. Temnia's browser half
+   only PUTs file slices to server-signed part URLs; every control call is a route handler, which is
+   also what makes resume server-side: the fingerprint (project, name, size, lastModified) finds the
+   active upload from any browser, ListParts says what the store holds, and a grace window
+   (`UPLOAD_ADOPT_GRACE_SECONDS`, 60 s) stops two writers interleaving. Listing parts is never a
+   liveness signal; signing is. Part size is a deterministic function of file size.
+4. **Player: hls.js 1.7 on a plain video element with peaks.js 4; Video.js v10 is not adopted.** v10
+   is still beta.32 with breaking changes between betas, its React package exposes no `Hls`
+   instance, and the legacy needed a passive adapter to survive its mount-time MSE attach. hls.js 1.7
+   parses I-frame playlists and exposes `createIFramePlayer()` for the S8 scrubber. Peaks is
+   initialised after `loadedmetadata` because of bbc/peaks.js#574. Revisit at v10 GA.
+5. **ffmpeg 8.1.2 is the exact release, copied from `mwader/static-ffmpeg:8.1.2` by image digest.**
+   No tarball mirror to maintain (the legacy's pin 404'd when BtbN pruned a dated build); PyAV 18.1's
+   wheels bundle the same 8.1.2. Re-examined at S3 against 9.0.x as planned.
+6. **The ladder is fMP4 with a separate intra-only I-frame rendition.** ffmpeg's `iframes_only` flag
+   cannot produce a companion playlist over the ladder's own segments (verified on 8.1.2: it writes
+   whole-segment byte ranges, and with `single_file` every offset is `@0`), so the same pass writes a
+   360p one-frame-per-GOP rendition as a single file with byte ranges, and Python adds the
+   `#EXT-X-I-FRAMES-ONLY` and master entries. Every playlist is duration-verified against the probe
+   before upload (tolerance `max(12 s, 1%)`); the master is read from local disk, which removes the
+   network cause of the legacy's 58% truncation, and the assertion stays.
+7. **Python talks to Postgres through psycopg 3 with hand-written SQL; no model generator yet.** The
+   pipeline's DML is six statements. `tests/test_schema_contract.py` asserts every column and enum it
+   touches against the migrated catalogue, which is the drift check the 2026-09-05 decision asked for.
+   sqlacodegen (4.0.4, SQLAlchemy 2) is the graduation path when the surface grows.
+8. **Migrations are the release phase in `apps/web/instrumentation.ts`.** The server applies pending
+   migrations and the seed before its first request when `MIGRATE_DATABASE_URL` is set, and refuses to
+   boot in production without it; a failure exits non-zero and Dokploy keeps the previous container.
+   Nothing runs at build time.
+9. **Garage CORS is one rule per origin.** Garage echoes a matching rule's whole origin list in
+   `access-control-allow-origin`, and browsers reject a comma-joined list; the first upload attempt
+   failed on exactly that. The rule is applied by a compose one-shot (`garage-cors`).
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
@@ -192,7 +244,10 @@ they are made.
   The 56xxx block is deliberate: 5432, 5433, 55433, 5549x, and 543xx belong to other stacks on the
   development machine. `next dev` uses **3000**.
 - `pnpm dev` runs the web app; `pnpm --filter @temnia/pipeline worker` runs the Python worker. The
-  home page's hello workflow needs both plus compose.
+  home page's hello workflow needs both plus compose; an upload needs `apps/web/.env.local` (copy
+  `.env.example`) and the worker finds `ffmpeg` on PATH (the image carries the pinned 8.1.2).
+  `node scripts/upload-master.mjs <file> --project <id>` pushes a file through the real upload API and
+  follows the ingest, which is how the sprint's scale run is done without a browser.
 - Toolchain is pinned in the repo: `packageManager` pnpm 12.3.4 (pnpm self-switches), Node 24 via
   `devEngines.runtime` (pnpm downloads it; `pnpm exec node` is v24 whatever the host has), Python
   3.13 via uv (`apps/pipeline/.python-version`). Nothing else needs a version manager.
@@ -207,17 +262,20 @@ they are made.
 
 - Every organization-owned table carries `organization_id`, is declared in `packages/db/src/schema`
   with `pgPolicy` for the isolation predicate, and gets forced RLS in the migration that creates it.
-  `packages/db/tests/isolation.test.ts` asserts those catalogue facts for every table in `public` and
-  fails the gate on the first table that lacks them; S1 adds the two-organization probes.
+  `packages/db/tests/isolation.test.ts` asserts those catalogue facts for every table in `public`,
+  probes every table as the app role under two seeded organizations (a row written under A is
+  invisible, unwritable, and undeletable under B; a row claiming A's scope cannot be inserted under
+  B; an unscoped transaction sees nothing), and fails on any table without a probe.
 - The organization id always comes from `resolveScope()` (`apps/web/lib/scope/resolve-scope.ts`),
   never from input. Until S24 it returns the seeded Temnia organization and user from
   `@temnia/contracts`. Any access path that does not go through the resolver is a bug.
 - The app connects as `temnia_app` and the pipeline as `temnia_pipeline`: no superuser, no
   `BYPASSRLS`, owns nothing. Migrations run as the owner through `MIGRATE_DATABASE_URL` only.
 - Drizzle is the only DDL owner. `pnpm --filter @temnia/db db:generate` authors a migration,
-  `db:migrate` applies it (advisory-locked, idempotent). No `drizzle-kit push` against a shared
-  database. Python never declares tables; from S1 its row models are generated from the migrated
-  database and CI fails on drift.
+  `db:migrate` applies it (advisory-locked, idempotent), and `generate` appends the `FORCE ROW LEVEL
+  SECURITY` and role grants drizzle-kit does not emit (decision 1, 2026-09-06). No `drizzle-kit push`
+  against a shared database. Python never declares tables; its DML runs through psycopg 3 inside
+  `db.scoped()` and `apps/pipeline/tests/test_schema_contract.py` fails the gate on drift.
 
 ### Cross-language contracts
 
@@ -236,6 +294,9 @@ they are made.
   pytest-asyncio; the Temporal time-skipping test server backs workflow tests.
 - Never run two `uv` commands on the same project concurrently; they race on the environment. If
   the project directory moves, delete `.venv` and sync again (script shebangs embed the old path).
+- Every ffmpeg and ffprobe string lives under `src/temnia_pipeline/media/`. A workflow module may not
+  import the database or storage clients: the workflow sandbox re-imports it and refuses them
+  (`ReaperWorkflow` lives in `workflows.py`, its activity in `reaper.py`).
 - Temporal workflows import the contract models at runtime inside
   `workflow.unsafe.imports_passed_through()`; the SDK resolves run-method type hints to
   deserialise payloads, so `TYPE_CHECKING`-only imports break at runtime.
@@ -265,5 +326,11 @@ they are made.
   model calls. `@temporalio/client` stays in `serverExternalPackages`.
 - Next 16.3 type-checks with the project-local TypeScript 7 CLI during `next build`; package
   `typecheck` scripts run `tsc --noEmit` (TS 7 native).
-- Deployed images never bake env or run migrations at build time. The web image gets a release-phase
-  migration entrypoint with the first table (S1).
+- Deployed images never bake env or run migrations at build time. The web image applies migrations
+  and the seed at boot from `instrumentation.ts` when `MIGRATE_DATABASE_URL` is set (required in
+  production).
+- Media reaches the browser only through `/api/media/[...key]`, which answers only inside the
+  caller's organization prefix (404 otherwise, never 403). No presigned read URL reaches a client.
+- The browser uploads parts straight to storage on server-signed URLs; every multipart control call
+  is a route handler under `/api/uploads`. The reaper (`ReaperWorkflow`, a Temporal schedule every
+  15 minutes) aborts uploads idle for 24 hours, storage first.

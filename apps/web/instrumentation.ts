@@ -10,6 +10,11 @@ export async function register(): Promise<void> {
   }
   const url = process.env.MIGRATE_DATABASE_URL;
   if (!url) {
+    if (process.env.NODE_ENV === "production") {
+      // A deployed image without the owner connection would serve a schema
+      // nobody migrated; fail the boot instead (Dokploy keeps the old container).
+      throw new Error("MIGRATE_DATABASE_URL is required in production");
+    }
     return;
   }
   const { migrateDatabase } = await import("@temnia/db/migrate");

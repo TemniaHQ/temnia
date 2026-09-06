@@ -91,7 +91,7 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 
 | Slot | Pick | Compared | Verdict |
 |---|---|---|---|
-| Player | **Video.js v10 React** (beta.32, pinned) with hls.js 1.7 | Vidstack, Media Chrome, Plyr | §0 row 22 |
+| Player | **hls.js 1.7.2 on a plain `<video>`** (S1); Video.js v10 re-evaluated at its GA | Video.js v10 React (beta.32), Media Chrome 4.19 + hls-video-element, Vidstack (maintenance only) | §14, 2026-09-06 (S1): v10 is still beta with breaking changes between betas and no `Hls` accessor in its React package; hls.js 1.7 parses I-frame playlists and exposes `createIFramePlayer()` for the S8 scrubber; Media Chrome is the chrome option when custom controls need one |
 | Waveform | **peaks.js 4** with server-generated peaks | wavesurfer.js 7 | peaks.js is built for pre-computed peaks over long sources; upstream is slow (our bbc/peaks.js#574 is open). wavesurfer with pre-decoded peaks is the fallback if the S8 timeline needs it |
 | Frame access | **MediaBunny 1.55** (MPL) at S8 | — | Active (release 2026-09-04); keyframe-only decode through the I-frame playlists |
 | Preview | **Remotion Player** at S8 | — | One composition for preview and render |
@@ -137,11 +137,12 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 
 | Slot | Pick | Compared | Verdict |
 |---|---|---|---|
-| ffmpeg | **8.1.x** pinned via the mirrored BtbN static build; re-examined at S3 against 9.0.1 | — | §0 row 20; PyAV wheels stay on 8.1.2 |
+| ffmpeg | **8.1.2 exact**, `COPY --from=mwader/static-ffmpeg:8.1.2@sha256:33f770f8…` (S1); re-examined at S3 against 9.0.x | BtbN monthly tag (kept two years; dated builds pruned after 14 days), Debian trixie apt (7.1), `static-ffmpeg` on PyPI (8.0) | §14, 2026-09-06 (S1): an image digest is immutable and needs no mirror; PyAV 18.1 wheels bundle the same 8.1.2 |
 | Library access | **PyAV 18.1** where a library call beats the CLI (probe, keyframe maps) | ffmpeg-python | The CLI remains for the HLS ladder |
-| Object storage client | **obstore** | boto3, aioboto3 | §0 row 10 |
+| Object storage client | **obstore 0.11** for get, put, list, delete; **boto3** for the one call it lacks (AbortMultipartUpload) | aioboto3 (pins a year-old aiobotocore), s3fs | §0 row 10; §14 2026-09-06 (S1) |
+| Database access | **psycopg 3.3** (`AsyncConnectionPool`, `set_config` per transaction), hand-written SQL, `tests/test_schema_contract.py` as the drift check | SQLAlchemy 2 + sqlacodegen 4.0.4 (the graduation path), asyncpg (one release a year, prepared-statement trap behind poolers) | §14, 2026-09-06 (S1): six DML statements do not justify a model generator |
 | Peaks | own generator (port of the legacy rules: media-duration span, scaled samples-per-pixel) | audiowaveform (moved to Codeberg, April 2026 release) | Our rules are the value; audiowaveform is a fallback |
-| Shot grid | ffprobe scene scores | PySceneDetect | Unchanged |
+| Shot grid | ffmpeg `scdet` metadata (0–100 scale; emit floor 3, decision threshold 10) on the lowest local rung | `select=gt(scene,T)` + showinfo, PySceneDetect 0.7.1 (hard-imports OpenCV, second decode) | §14, 2026-09-06 (S1): one decode shared with thumbnails; the stored `[{t, score}]` shape lets a later detector swap invisibly |
 | Loudness and sensors | ffmpeg `loudnorm`, `blackdetect`, `freezedetect`; pyloudnorm for checks | — | Unchanged |
 | Transcription | **WhisperX 3.8.5** (large-v3, wav2vec2 alignment, pyannote diarization) on **Modal**, behind the provider seam with a deterministic mock | AssemblyAI Universal-3.5 Pro, Deepgram Nova-3, ElevenLabs Scribe, Gladia, Parakeet | Decided (§0 row 18). Word timings and speaker ids land in the same canonical transcript JSON; the adapter contract is unchanged, so a hosted fallback slots in without touching the substrate |
 | Transcription calibration | model size, VAD, alignment, and diarization settings tuned against the sentence grid at S12 | — | Between lanes, never during one; a hosted provider is compared only if the bar is missed |
@@ -221,4 +222,13 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 | 2026-09-06 (S0) | Garage 2.3 single-node with `--single-node --default-bucket` confirmed: layout, bucket, and key come from env on first boot | Quick start, verified in compose |
 | 2026-09-06 (S0) | Contracts chain built: Zod 4 `z.toJSONSchema(z.globalRegistry)` with `$defs` refs → one `contracts.json` → `datamodel-code-generator` 0.76 → pydantic v2. Zod's uuid `pattern` is stripped because pydantic refuses a regex on a `UUID` field | §2 cross-language contracts |
 | 2026-09-06 (S0) | `@temporalio/client` 1.23.0 (1.22 in v1.0 was superseded before S0 started) | npm `latest` |
+| 2026-09-06 (S1) | Better Auth is **1.7.3**, the CLI is the `auth` package, and the Drizzle adapter is `@better-auth/drizzle-adapter`; columns resolve by Drizzle property key, so snake_case DB names need no field mapping | Verified from source and a real `auth generate` run; §5 row 1 |
+| 2026-09-06 (S1) | drizzle-kit 0.31 emits no `FORCE ROW LEVEL SECURITY` and no grants; `packages/db/scripts/generate.ts` completes each migration | AGENTS.md 2026-09-06 decision 1 |
+| 2026-09-06 (S1) | Uploader is **in-house** (server-signed part URLs, server-side control calls and resume); Uppy 6.0 rejected | Uppy 6 (2026-08-26) rewrote `@uppy/aws-s3` to do Create/ListParts/Complete/Abort from the browser on presigned URLs, which R2 does not support (presigned GET/PUT/HEAD/DELETE only); tus needs another service; nothing on npm worth a dependency |
+| 2026-09-06 (S1) | Player is **hls.js 1.7.2 + peaks.js 4.0.0** on a plain video element; Video.js v10 deferred to GA | §4 |
+| 2026-09-06 (S1) | ffmpeg **8.1.2 by image digest** (`mwader/static-ffmpeg`), no tarball mirror | §8 |
+| 2026-09-06 (S1) | HLS is **fMP4** (`independent_segments`, 2 s GOP, capped CRF, audio group via `var_stream_map`) with a **separate intra-only I-frame rendition**; ffmpeg's `iframes_only` flag verified unusable as a companion playlist on 8.1.2 | AGENTS.md decision 6 |
+| 2026-09-06 (S1) | Python DB access is **psycopg 3** with a schema-contract test; sqlacodegen deferred | §8 |
+| 2026-09-06 (S1) | `@aws-sdk/client-s3` **3.1127.0** with `requestChecksumCalculation`/`responseChecksumValidation: WHEN_REQUIRED` (the SDK's default CRC32 headers poison presigned part URLs on R2) | Verified offline against the presigner |
+| 2026-09-06 (S1) | Garage CORS: **one rule per origin**, applied by a compose one-shot on `amazon/aws-cli` | Garage echoes a rule's whole origin list; browsers reject the comma-joined header |
 | 2026-09-06 (S0) | Staging VPS reinstalled: Ubuntu 26.04 LTS, Docker 29.8 from Docker's repository, Dokploy 0.30.5; the box is built by `infra/vps/build.sh` and publishes no port but SSH | Rajesh chose a clean OS so the box is reproducible; Dokploy's installer pins a Docker version the 26.04 channel lacks, so Docker is installed first |
