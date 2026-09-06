@@ -23,7 +23,7 @@ The legacy repository is the only measured record of building this product, and 
 | M1 measured on day 20 and **failed at 18%**, wrong boundaries in 9 of 14 rejections; the cutting room was redesigned and rebuilt the same day and never re-measured | 2026-08-28 | The core bet is tested at S5 with the minimum beneath it, and nothing widens until it holds (§4 rule 8) |
 | 120 commits of platform preceded the first editorial measurement | 2026-08-08 → 08-28 | Tenancy hierarchy, identity, and every SaaS surface move *after* the editing core |
 | Segments cost $0.43–1.01 per source-hour, discovery $0.43–0.97; the real cost problem was failure amplification (24 attempts for 4 calls), not model price | 2026-08-30 | The economics layer (S3) ships before any real prompt runs |
-| Sentence grid, paragraphs, and lead-in rules were ported to Python bit-for-bit with a permanent parity chain (A1) | 2026-08-31 | S2 re-hosts that chain instead of re-deriving it |
+| A1 ported the eval scorers, review metrics, the JavaScript number-formatting shim, and five grid helpers, with a permanent snapshot parity chain (mitosia-legacy PR #118, 2026-08-31); the substrate itself (sentence grid, paragraphs, the two-turn lead-in, coarse and fine renderings) stayed in TypeScript, and no three-source fixture set exists | 2026-08-31 | S2 re-hosts the scorer chain and ports the substrate, building the three-source byte-parity gate (found 2026-09-06) |
 | Positioning leads with the chapter cut; shorts hang off the spine | 2026-09-04 | M1 is the chapter lane; moments follow at S6 |
 
 ## 3. Milestones

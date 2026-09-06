@@ -97,20 +97,24 @@ Scaffold consequences: the pipeline joins Turborepo through a `package.json` shi
 `uv run` (native uv workspaces arrive when `experimentalPythonWorkspaces` leaves canary; corrected at S0,
 see `docs/tech-stack.md` §0 row 13); `@temporalio/client` is listed in Next.js `serverExternalPackages`.
 
-**2026-09-05 — Icons stay Hugeicons; transcription is WhisperX on Modal from S2.** On reviewing the
+**2026-09-05 — Icons stay Hugeicons; transcription is WhisperX on Modal from S2 (corrected
+2026-09-06 after re-research).** On reviewing the
 tech-stack research (`docs/tech-stack.md`), Rajesh made two slot decisions. (1) **Hugeicons** stays
 because the icons look better; the cost is accepted: shadcn's Base UI registry output imports Lucide,
 so each vendored component is swapped with the official migration tool. (2) **WhisperX** (large-v3,
 wav2vec2 alignment, pyannote diarization) running on **Modal** is the transcription engine from the
 first S2 run, behind the provider seam with a deterministic mock. Basis: the independent March 2026
 benchmark on podcasts and interviews put WhisperX ahead of both hosted providers on word error and
-diarization; an L4 handles large-v3 with alignment and diarization at roughly twenty audio-hours per
-GPU-hour. Consequences: the sprint plan's S12 is a calibration round (model size, VAD, alignment,
+diarization; Modal lists the L4 at about $0.80/hour (2026-09-06), and the audio-hours-per-GPU-hour
+figure has no primary source, so the first staging run is the benchmark. Consequences: the sprint
+plan's S12 is a calibration round (model size, VAD, alignment,
 diarization settings against the sentence grid), not an ownership A/B; a hosted adapter (AssemblyAI
 Universal-3.5 Pro is the candidate) is built only as fallback if the bar is missed; PRD §6's
-Deepgram-primary line is retired at its next revision. Known trap: whisperx 3.8.5 wheels still carry a
-`use_auth_token` path that breaks against pyannote 4.x (m-bain/whisperX#1406), so pin pyannote 3.x or
-patch until a fixed wheel ships. The model gateway is still decided by the S3 transport probe; its
+Deepgram-primary line is retired at its next revision. whisperx 3.8.6 (2026-05-25, BSD-2) requires
+pyannote-audio 4.x and defaults to `pyannote/speaker-diarization-community-1` (gated on Hugging Face,
+CC-BY-4.0, commercial use allowed with attribution); issue #1406 is a dead `use_auth_token` keyword on
+the Whisper model loader, inert under whisperx's `huggingface-hub<1` pin; no pin and no patch are
+needed. The model gateway is still decided by the S3 transport probe; its
 catalogue coverage for Kimi K3, GLM, Nano Banana, and the Seedance, Veo, Kling, and Wan video models is
 recorded in `docs/tech-stack.md` §9.
 
@@ -198,6 +202,9 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    exit test is written; the transcode activity then calls a Modal function (NVENC, the same ffmpeg
    command) once the Modal account exists for transcription, so both land on one deployment. The
    `veryfast` top-rung preset was offered as a stopgap and declined in favour of the one move.
+   Modal's L4 lists at about $0.80/hour (2026-09-06); the ladder runs there as a hybrid, CPU decode
+   and scale with NVENC for the video rungs, because NVENC cannot decode ProRes masters, and the
+   function publishes the ladder to R2 itself, since the publish was 21 of the VPS's 67 minutes.
 10. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
    list in `access-control-allow-origin`, and browsers reject a comma-joined list (the first upload
    attempt failed on exactly that); the gate then serves the page from `127.0.0.1` on a random port,

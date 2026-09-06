@@ -27,7 +27,7 @@ Twenty-five slots differ from the legacy stack. Rows 1–3 were decided with the
 | 15 | React Compiler | off | **on** (`reactCompiler: true`) | Compiler 1.0 stable since Oct 2025; Next 16 promotes the option to stable but leaves it off by default |
 | 16 | pnpm | 10 | **12.3.4** (S0) | The `latest` tag was already 12.3.4 on 2026-09-05 (12.0.0 shipped 2026-08-26, four patch releases since), so the revisit trigger fired at S0. Drop-in as promised; two S0 findings: `allowBuilds` replaces `onlyBuiltDependencies`, and pnpm 10 cannot self-switch *up* to the native 12 binary (ENOEXEC), so 12 is installed with the official installer |
 | 17 | Node | 24 | **24 LTS** now; 26 at its LTS in Oct 2026 | 26 ships the Temporal date API natively |
-| 18 | Transcription | Deepgram, then AssemblyAI; WhisperX as a later A/B | **WhisperX on Modal from S2** (decided by Rajesh, 2026-09-05) | Independent March 2026 benchmark on podcasts and interviews: WhisperX (large-v3 + pyannote) best on both WER and diarization; AssemblyAI and Deepgram within a point of each other. whisperx 3.8.5 (May 2026), BSD-2; an L4 at about $0.28/hour handles large-v3 with alignment and diarization at roughly twenty audio-hours per GPU-hour. Known wheel issue: one `use_auth_token` path still breaks against pyannote 4.x (m-bain/whisperX#1406), so pin pyannote 3.x or patch. S12 becomes a calibration round, not an ownership A/B |
+| 18 | Transcription | Deepgram, then AssemblyAI; WhisperX as a later A/B | **WhisperX on Modal from S2** (decided by Rajesh, 2026-09-05) | Independent March 2026 benchmark on podcasts and interviews: WhisperX (large-v3 + pyannote) best on both WER and diarization; AssemblyAI and Deepgram within a point of each other. whisperx 3.8.6 (2026-05-25), BSD-2, requires pyannote-audio 4.x and defaults to `pyannote/speaker-diarization-community-1` (gated on Hugging Face, CC-BY-4.0, commercial use allowed with attribution); issue #1406 is a dead `use_auth_token` keyword on the Whisper model loader, inert under whisperx's `huggingface-hub<1` pin, so no pin and no patch are needed. Modal lists the L4 at about $0.80/hour (2026-09-06); throughput is unverified until measured on staging. S12 becomes a calibration round, not an ownership A/B |
 | 19 | Temporal local dev | `auto-setup` image | **`temporalio/server` + `admin-tools` schema setup** in compose; the CLI's `start-dev` for quick local runs | auto-setup is deprecated upstream |
 | 20 | ffmpeg pin | 8.1.x, three places | **Re-examined at S3** | ffmpeg 9.0 shipped 2026-08-04 (9.0.1 on 08-12); PyAV wheels are on 8.1.2; BtbN keeps monthly builds two years, dailies fourteen days |
 | 21 | Python | 3.12 | **3.13**; 3.14 once every wheel resolves | PyAV 18.1 ships cp314 and abi3 wheels; the Temporal SDK's 3.14 wheels were not confirmed today; 3.13 is supported to Oct 2029 |
@@ -208,7 +208,7 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 - ty stable, or Pyrefly earns it: re-check the type checker.
 - The S3 transport probe: the gateway decision, recorded in AGENTS.md.
 - The S12 calibration round: WhisperX settings, recorded in AGENTS.md; a hosted fallback adapter only if the bar is missed.
-- whisperX ships a wheel without the `use_auth_token` path: unpin pyannote.
+- The first staging run measures WhisperX throughput on Modal's L4 (about $0.80/hour, 2026-09-06): replace the unsourced twenty-audio-hours-per-GPU-hour figure with the measured number.
 
 ## 14. Revisions
 
