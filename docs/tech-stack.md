@@ -1,6 +1,6 @@
 # Temnia Tech Stack
 
-**Status:** v1.0, **accepted by Rajesh on 2026-09-05** — every slot researched on this date under the "legacy is reference only" rule (AGENTS.md, 2026-09-05). The three structural decisions (one runtime, media in Python, one schema owner), the icon and transcription slots, and the no-default-vendor rule are recorded as dated decisions in AGENTS.md; every other slot here is the default for its sprint until a revisit trigger (§13) fires or the sprint's build list re-researches it. Version numbers are as published on the research date; they are pins to start from, not commitments. Changes to this file are made in the PR that acts on them, with what was compared.
+**Status:** v1.1, 2026-09-06 (S0 build revisions, listed in §14); v1.0 **accepted by Rajesh on 2026-09-05** — every slot researched on this date under the "legacy is reference only" rule (AGENTS.md, 2026-09-05). The three structural decisions (one runtime, media in Python, one schema owner), the icon and transcription slots, and the no-default-vendor rule are recorded as dated decisions in AGENTS.md; every other slot here is the default for its sprint until a revisit trigger (§13) fires or the sprint's build list re-researches it. Version numbers are as published on the research date; they are pins to start from, not commitments. Changes to this file are made in the PR that acts on them, with what was compared.
 **Inputs:** [prd.md](prd.md) v1.2, [sprint-plan.md](sprint-plan.md) v0.2, the dated decisions in [AGENTS.md](../AGENTS.md), and the session record in [log/2026-09-05.md](log/2026-09-05.md). The legacy `tech-stack.md` was read once for the list of slots and never for the answers; where a legacy incident is evidence it is cited as an incident.
 **Precedence:** the PRD owns *what*; the sprint plan owns *sequence*; this file owns *system design*. Where a later architecture document (pipeline, clip-cut) disagrees on its own subject, it wins and this file is updated.
 
@@ -17,15 +17,15 @@ Twenty-five slots differ from the legacy stack. Rows 1–3 were decided with the
 | 5 | Staging database | Neon (Singapore) | **Postgres on the VPS**; Neon for production only | The legacy moved staging to Neon so Trigger.dev cloud workers could reach it. With every worker on the VPS that reason is gone, and Neon has no Mumbai region, so staging would pay the Mumbai–Singapore round trip for nothing |
 | 6 | Origin exposure | iptables origin lock, two ACME resolvers, wildcard cert | **Cloudflare Tunnel** into Traefik | No open ports, no origin-IP lock to maintain, no DNS-01 wildcard. Dokploy documents the setup; Cloudflare terminates TLS |
 | 7 | Secrets | Infisical (self-hosted) | **1Password** service accounts for humans, local `.env`, and CI; Dokploy env at runtime | Rajesh already runs 1Password; `op run` and the official Actions step cover local and CI. Infisical would be one more container. Per-tenant credential encryption at S29 is application-level either way |
-| 8 | Icons | Hugeicons | **Hugeicons** (kept) | v0.1 proposed Lucide on registry friction. Rajesh kept Hugeicons on 2026-09-05 because the icons look better. Cost accepted: shadcn-generated Lucide imports are swapped per vendored component with the official migration tool |
+| 8 | Icons | Hugeicons | **Hugeicons** (kept) | v0.1 proposed Lucide on registry friction. Rajesh kept Hugeicons on 2026-09-05 because the icons look better. **S0 correction:** shadcn's registry maps icons for six libraries including Hugeicons (`r/icons/index.json`), so `iconLibrary: hugeicons` in `components.json` makes every added component import `@hugeicons/react` directly; no swap step exists |
 | 9 | Model gateway | OpenRouter, fixed | **Decided by the S3 transport probe**; Vercel AI Gateway first candidate, OpenRouter second | Vercel: zero token markup, per-request ZDR free on Pro, both OpenAI-compatible and Anthropic Messages-compatible endpoints, and image and video model types in the catalogue. OpenRouter: 5.5% credit fee, free ZDR, three documented outages in eight months, no SLA. Catalogue coverage in §9 |
 | 10 | Python S3 client | boto3 | **obstore** | Rust-backed, 2.8× aioboto3 throughput, automatic multipart, presign, R2 documented, sync and async |
 | 11 | Quote-card renderer | Satori | **Takumi** (S23) | Satori-compatible API, Rust, 2–10× faster, gradients and shadows |
 | 12 | Drizzle line | latest | **0.45.x pinned** | 1.0 is at rc.4 with no stable; Better Auth's adapter has open issues against it |
-| 13 | Python in Turborepo | not in the workspace | **package.json shim on stable 2.10.12**; native uv workspaces when the flag ships stable | Turborepo's uv-workspace support exists only in 2.10.13-canary.1 as of today |
+| 13 | Python in Turborepo | not in the workspace | **package.json shim on stable 2.10.12**; native uv workspaces when the flag ships stable | Turborepo's uv-workspace support exists only in 2.10.13-canary.1 as of today (confirmed at S0 from the release notes: the uv metadata, virtualenv, and lockfile-scoping commits all land in that canary) |
 | 14 | TypeScript | 5.x | **7.0** (native compiler) via Next's `experimental.useTypeScriptCli` | Stable since 2026-07-08, 8–12× faster full builds; Next 16.3 supports it |
 | 15 | React Compiler | off | **on** (`reactCompiler: true`) | Compiler 1.0 stable since Oct 2025; Next 16 promotes the option to stable but leaves it off by default |
-| 16 | pnpm | 10 | **11.x** (npm `latest`); 12 when `latest` flips | 12 is a Rust rewrite released 2026-08-26, drop-in by design, still on the `next-12` tag |
+| 16 | pnpm | 10 | **12.3.4** (S0) | The `latest` tag was already 12.3.4 on 2026-09-05 (12.0.0 shipped 2026-08-26, four patch releases since), so the revisit trigger fired at S0. Drop-in as promised; two S0 findings: `allowBuilds` replaces `onlyBuiltDependencies`, and pnpm 10 cannot self-switch *up* to the native 12 binary (ENOEXEC), so 12 is installed with the official installer |
 | 17 | Node | 24 | **24 LTS** now; 26 at its LTS in Oct 2026 | 26 ships the Temporal date API natively |
 | 18 | Transcription | Deepgram, then AssemblyAI; WhisperX as a later A/B | **WhisperX on Modal from S2** (decided by Rajesh, 2026-09-05) | Independent March 2026 benchmark on podcasts and interviews: WhisperX (large-v3 + pyannote) best on both WER and diarization; AssemblyAI and Deepgram within a point of each other. whisperx 3.8.5 (May 2026), BSD-2; an L4 at about $0.28/hour handles large-v3 with alignment and diarization at roughly twenty audio-hours per GPU-hour. Known wheel issue: one `use_auth_token` path still breaks against pyannote 4.x (m-bain/whisperX#1406), so pin pyannote 3.x or patch. S12 becomes a calibration round, not an ownership A/B |
 | 19 | Temporal local dev | `auto-setup` image | **`temporalio/server` + `admin-tools` schema setup** in compose; the CLI's `start-dev` for quick local runs | auto-setup is deprecated upstream |
@@ -49,18 +49,18 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 | Slot | Pick | Compared | Verdict |
 |---|---|---|---|
 | Monorepo | **Turborepo 2.10.12** + pnpm workspaces | Nx, moonrepo | Rajesh's choice; Vercel remote cache is free, self-hosted caches exist. The Python app is a workspace member through a `package.json` whose scripts call `uv run`, with `inputs` pinned to `src`, `tests`, `pyproject.toml`, `uv.lock`, until `experimentalPythonWorkspaces` leaves canary |
-| Package manager | **pnpm 11.x**, `minimumReleaseAge: 1440` | pnpm 12, Bun | 12 is drop-in but three weeks old on a non-`latest` tag; move when `latest` flips. The 24-hour release-age gate stays (supply-chain window) |
-| Node | **24 LTS** | 22, 26 | 24 is Active LTS to 2028; 26 enters LTS in Oct 2026 and gets adopted then |
+| Package manager | **pnpm 12.3.4**, `minimumReleaseAge: 1440`, `allowBuilds` allow-list | pnpm 11, Bun | `latest` was 12 on the research date (§0 row 16). The 24-hour release-age gate stays (supply-chain window) and bit on day one: Playwright 1.63.0 was excluded as too new |
+| Node | **24 LTS**, pinned by `devEngines.runtime` with `onFail: download` | 22, 26; nvm/fnm/volta | 24 is Active LTS to 2028; 26 enters LTS in Oct 2026 and gets adopted then. pnpm downloads and runs the pinned Node itself, so no version manager is installed; the same field makes npm refuse to run in the repo, which is intended |
 | TypeScript | **7.0.x** | 5.9, 6.x | Native compiler stable 2026-07-08; Next 16.3 runs it during `next build` behind `experimental.useTypeScriptCli`. Biome parses TS independently, so lint is unaffected |
 | TS lint/format | **Ultracite 7.10 on Biome 2** | oxlint 1.80 + oxfmt 0.65 | oxlint is faster with more rules; Biome is one binary, one config, and Ultracite's preset carries the strictness. Keep; revisit if type-aware rules matter |
 | Python toolchain | **uv 0.12**, **ruff 0.16** (`select = ["ALL"]`), **pyright strict**, **pytest 9.1** | ty (beta 0.0.78), Pyrefly 1.0 | Pyright is the reference implementation; ty is still beta; Pyrefly 1.0 (May 2026) is the challenger to re-check at S12 |
 | Python | **3.13** | 3.12, 3.14 | See §0 row 21 |
-| TS tests | **Vitest 4.1**, **Playwright 1.62** | — | Vitest 5 is in progress; adopt at a sprint boundary |
+| TS tests | **Vitest 5.0**, **Playwright 1.62** | Vitest 4.1, Playwright 1.63 | Vitest 5.0.0 shipped 2026-09-03 and S0 is a sprint boundary, so it was adopted; 1.63.0 shipped 2026-09-04 inside the 24-hour release-age window and stays out until it matures |
 | Python tests | **pytest 9** with **VCR.py 8 / pytest-recording** cassettes | respx | VCR records httpx; the cassette is the CI contract for every model call |
 | Validation | **Zod 4** | Valibot, ArkType, TypeBox | Zod 4 exports JSON Schema natively and has the ecosystem; bundle size is not the constraint here |
 | Cross-language contracts | **Zod → JSON Schema → `datamodel-code-generator` → pydantic v2** | hand-mirrored pydantic, TypeSpec, protobuf | One source of truth in `packages/contracts`; Python models are generated in a Turborepo task and CI fails on drift. Maintained (July 2026) |
 | Python models for tables | **sqlacodegen 4.0.4** from the migrated database | hand-written pydantic rows, SQLAlchemy reflection at runtime | Same drift-check pattern; SQLAlchemy 2.0.x until 2.1 final (rc1 2026-08-31) |
-| Local gate | exact-commit local validation with per-SHA attestation; GitHub Actions for provenance only | hosted CI | The solo-developer trade-off the legacy made stands until a second committer; it is an ops policy, not a legacy code inheritance |
+| Local gate | exact-commit local validation with per-SHA attestation; GitHub Actions for provenance only | hosted CI | The solo-developer trade-off the legacy made stands until a second committer; it is an ops policy, not a legacy code inheritance. Built at S0 as `scripts/local-ci.mjs`: its last stage runs the two deploy images together against the compose Temporal server and drives the hello workflow through Playwright |
 
 ## 3. Web application
 
@@ -208,3 +208,17 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 - The S3 transport probe: the gateway decision, recorded in AGENTS.md.
 - The S12 calibration round: WhisperX settings, recorded in AGENTS.md; a hosted fallback adapter only if the bar is missed.
 - whisperX ships a wheel without the `use_auth_token` path: unpin pyannote.
+
+## 14. Revisions
+
+| Date | Change | Basis |
+|---|---|---|
+| 2026-09-06 (S0) | pnpm 11 → **12.3.4**; `allowBuilds` replaces `onlyBuiltDependencies` | §13 trigger fired: `latest` was 12 on the research date. Installer, not `npm i -g`, because pnpm 10 cannot self-switch to the native binary |
+| 2026-09-06 (S0) | Vitest 4.1 → **5.0.0** | Released 2026-09-03; sprint boundary; passed the release-age gate |
+| 2026-09-06 (S0) | Playwright stays **1.62.1** | 1.63.0 (2026-09-04) was inside the 24-hour release-age window |
+| 2026-09-06 (S0) | Hugeicons via shadcn's `iconLibrary`, no migration swap | Registry ships a Hugeicons icon map |
+| 2026-09-06 (S0) | Temporal server compose uses `temporalio/server` + an idempotent `admin-tools` schema job and namespace job (POSIX sh: the images carry no bash) | §0 row 19; auto-setup is deprecated |
+| 2026-09-06 (S0) | Garage 2.3 single-node with `--single-node --default-bucket` confirmed: layout, bucket, and key come from env on first boot | Quick start, verified in compose |
+| 2026-09-06 (S0) | Contracts chain built: Zod 4 `z.toJSONSchema(z.globalRegistry)` with `$defs` refs → one `contracts.json` → `datamodel-code-generator` 0.76 → pydantic v2. Zod's uuid `pattern` is stripped because pydantic refuses a regex on a `UUID` field | §2 cross-language contracts |
+| 2026-09-06 (S0) | `@temporalio/client` 1.23.0 (1.22 in v1.0 was superseded before S0 started) | npm `latest` |
+| 2026-09-06 (S0) | Staging VPS reinstalled: Ubuntu 26.04 LTS, Docker 29.8 from Docker's repository, Dokploy 0.30.5; the box is built by `infra/vps/build.sh` and publishes no port but SSH | Rajesh chose a clean OS so the box is reproducible; Dokploy's installer pins a Docker version the 26.04 channel lacks, so Docker is installed first |

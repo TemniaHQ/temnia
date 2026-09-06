@@ -1,0 +1,67 @@
+[project]
+name = "temnia-pipeline"
+version = "0.0.0"
+description = "Temnia media and editorial pipeline: Temporal workers, ffmpeg wrappers, harness sensors."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pydantic>=2.13,<3",
+    "temporalio>=1.32,<2",
+]
+
+[dependency-groups]
+dev = [
+    "datamodel-code-generator>=0.76",
+    "pyright>=1.1.411",
+    "pytest>=9.1,<10",
+    "pytest-asyncio>=1.0",
+    "pytest-timeout>=2.4",
+    "ruff>=0.16.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["src/temnia_pipeline/contracts.py"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # Formatter owns these.
+    "COM812",
+    "ISC001",
+    # Module and package docstrings are not required; public symbols still are.
+    "D100",
+    "D104",
+    # Google style docstrings (see convention below) do not want a blank line after the summary.
+    "D203",
+    "D213",
+    # No copyright headers in this repository.
+    "CPY001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D", "INP001", "PLR2004"]
+"scripts/**" = ["INP001"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+include = ["src", "tests", "scripts"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

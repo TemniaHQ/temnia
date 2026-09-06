@@ -1,0 +1,26 @@
+# Local development object store. Single node, one replica, SQLite metadata.
+# Dev-only secrets: this file is committed on purpose and never used off-laptop.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "822ec62730792fbdbe80ad68bcb1cb996704dc495c115e52e555b52cc3fce321"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "cf0432b216bfd72a7f08000a0cd0b64f78cf5367c4ca0e73"
+metrics_token = "582d54baf4888ec88b5235662e9c01ff60f5a39581f9f6f0"

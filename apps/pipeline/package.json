@@ -1,0 +1,14 @@
+{
+  "name": "@temnia/pipeline",
+  "private": true,
+  "description": "Turborepo shim for the uv project in this directory. Replaced by native uv workspace support when Turborepo's experimentalPythonWorkspaces ships in a stable release (2.10.13-canary.1 has it today).",
+  "scripts": {
+    "contracts": "uv run --frozen python scripts/gen_contracts.py",
+    "contracts:check": "uv run --frozen python scripts/gen_contracts.py --check",
+    "lint": "uv run --frozen ruff format --check . && uv run --frozen ruff check .",
+    "sync": "uv sync --frozen",
+    "test": "uv run --frozen pytest",
+    "typecheck": "uv run --frozen pyright",
+    "worker": "uv run --frozen python -m temnia_pipeline.worker"
+  }
+}

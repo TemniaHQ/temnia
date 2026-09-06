@@ -93,9 +93,9 @@ in `docs/log/2026-09-05.md`; the full per-slot rationale lands in `docs/tech-sta
    database (sqlacodegen 4.x is the researched default) as a Turborepo task, and CI fails on drift.
    Write boundaries are role grants for the app role and the pipeline role, not a tool boundary.
    Drizzle stays on the 0.45 line until Better Auth's adapter supports 1.0 (issues open 2026-09-05).
-Scaffold consequences: the pipeline is a uv workspace member behind Turborepo's
-`experimentalPythonWorkspaces` flag rather than a package.json shim; `@temporalio/client` is listed in
-Next.js `serverExternalPackages`.
+Scaffold consequences: the pipeline joins Turborepo through a `package.json` shim whose scripts call
+`uv run` (native uv workspaces arrive when `experimentalPythonWorkspaces` leaves canary; corrected at S0,
+see `docs/tech-stack.md` §0 row 13); `@temporalio/client` is listed in Next.js `serverExternalPackages`.
 
 **2026-09-05 — Icons stay Hugeicons; transcription is WhisperX on Modal from S2.** On reviewing the
 tech-stack research (`docs/tech-stack.md`), Rajesh made two slot decisions. (1) **Hugeicons** stays
@@ -131,3 +131,135 @@ architectural work. Every slot in it is the default for its sprint until one of 
 triggers fires or the sprint's build list re-researches it; a change is made in the PR that acts on
 it and states what was compared. Decisions already carrying their own dated entries above (runtime,
 media language, schema owner, icons, transcription, no default vendor) are not re-argued through it.
+
+**2026-09-06 — Infrastructure lives on `temnia.dev`; the product lives on `temnia.com`.** Rajesh
+registered `temnia.dev` as the infra domain: `dokploy.temnia.dev`, `staging.temnia.dev`, and
+`temporal.temnia.dev`, all behind the Cloudflare Tunnel and Cloudflare Access. `temnia.com` carries
+only product and marketing hostnames and takes design partners' custom domains through Cloudflare for
+SaaS at S27. Why separate: certificate transparency logs publish every hostname a certificate is issued
+for, so infra names on the product domain advertise the control plane; cookies scoped to the product's
+registrable domain cannot leak between staging and production; and the product zone stays clean for
+custom hostnames. The staging VPS is reinstalled from scratch for this (runbook `docs/runbooks/staging.md`).
+
+## Working rules (S0, 2026-09-06)
+
+Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
+before architectural work. Record durable decisions in the Decisions section above, in the same turn
+they are made.
+
+### Git workflow
+
+- **Never commit or push directly to `main`.** Every change lands through a pull request:
+  branch → commit → `pnpm pr:verified -- <gh pr create args>` → the required `checks` job green →
+  squash or rebase merge. This holds for docs and one-line fixes. The agent finishing a change owns
+  the whole sequence, including the local gate and attestation, and never hands those steps back.
+  For an existing PR use `pnpm push:verified`; raw `git push`, `--no-verify`, or a hand-made status
+  are not delivery workflows.
+- Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
+- **Validation is local while Temnia has one committer** (tech-stack §2; reverse this before adding
+  a collaborator). `pnpm ci:local` attests a clean commit only: frozen install, Ultracite, `uv sync`,
+  both contract drift checks, compose up, drizzle migrate into a disposable database, `turbo run
+  build lint typecheck test`, both Docker images, and a Playwright run in which the web image's
+  server action completes a workflow on a worker from the pipeline image. It writes a receipt for
+  the exact SHA under `.git/local-ci/`; the pre-push hook refuses any other SHA and any push to
+  `main`. `pnpm push:verified` publishes the `local-ci` commit status the GitHub provenance job
+  (`.github/workflows/ci.yml`) requires. A commit without an exact-SHA status cannot be merged.
+- `production` does not exist yet. When it does (M3), it is promoted only by fast-forward from `main`.
+
+### Environments
+
+- `main` = staging, auto-deployed by Dokploy per target with watch paths. The topology, the one-time
+  Cloudflare Tunnel and Access setup, and the deploy verification steps are in
+  `docs/runbooks/staging.md`. Staging is reachable only through Cloudflare Access; the origin
+  publishes no ports.
+- Runtime env is set in Dokploy and reaches a container only through an image-changing deploy;
+  a container that then exits non-zero is rolled back with its old env. Verify against the running
+  service (`docker service inspect … ContainerSpec.Env`), never the API response. Read the dead
+  container's log before anything else.
+- The VPS SSH port is rate-limited to six new connections per thirty seconds. Never poll over SSH.
+- No infra hostname, panel, or console appears in a post or screenshot (`docs/build-in-public.md` §8).
+
+### Local development
+
+- `pnpm services` starts Postgres 18 + pgvector (**56432**), Garage (**56900** S3, **56903** admin,
+  bucket `temnia-media`), Temporal (**56233**), and the Temporal UI (**56080**). It is `docker compose
+  up -d --wait` restricted to the long-running services, because compose's `--wait` treats the finished
+  one-shot schema and namespace jobs as failures and exits 1.
+  The 56xxx block is deliberate: 5432, 5433, 55433, 5549x, and 543xx belong to other stacks on the
+  development machine. `next dev` uses **3000**.
+- `pnpm dev` runs the web app; `pnpm --filter @temnia/pipeline worker` runs the Python worker. The
+  home page's hello workflow needs both plus compose.
+- Toolchain is pinned in the repo: `packageManager` pnpm 12.3.4 (pnpm self-switches), Node 24 via
+  `devEngines.runtime` (pnpm downloads it; `pnpm exec node` is v24 whatever the host has), Python
+  3.13 via uv (`apps/pipeline/.python-version`). Nothing else needs a version manager.
+- Dependency installs run only allow-listed build scripts (`allowBuilds` in `pnpm-workspace.yaml`)
+  and only versions published more than 24 hours ago (`minimumReleaseAge`). A brand-new release
+  is pinned to its previous version, not exempted.
+- `.env` files are gitignored; `apps/web/.env.example` documents the shape. Nothing secret is
+  committed except the dev-only Garage and Postgres credentials in `compose.yaml` and
+  `infra/dev/`, which never leave the laptop.
+
+### Tenancy and RLS
+
+- Every organization-owned table carries `organization_id`, is declared in `packages/db/src/schema`
+  with `pgPolicy` for the isolation predicate, and gets forced RLS in the migration that creates it.
+  `packages/db/tests/isolation.test.ts` asserts those catalogue facts for every table in `public` and
+  fails the gate on the first table that lacks them; S1 adds the two-organization probes.
+- The organization id always comes from `resolveScope()` (`apps/web/lib/scope/resolve-scope.ts`),
+  never from input. Until S24 it returns the seeded Temnia organization and user from
+  `@temnia/contracts`. Any access path that does not go through the resolver is a bug.
+- The app connects as `temnia_app` and the pipeline as `temnia_pipeline`: no superuser, no
+  `BYPASSRLS`, owns nothing. Migrations run as the owner through `MIGRATE_DATABASE_URL` only.
+- Drizzle is the only DDL owner. `pnpm --filter @temnia/db db:generate` authors a migration,
+  `db:migrate` applies it (advisory-locked, idempotent). No `drizzle-kit push` against a shared
+  database. Python never declares tables; from S1 its row models are generated from the migrated
+  database and CI fails on drift.
+
+### Cross-language contracts
+
+- `packages/contracts` (Zod 4) is the single source of truth for anything that crosses the
+  TypeScript–Python seam. `pnpm --filter @temnia/contracts schemas` emits JSON Schema;
+  `pnpm --filter @temnia/pipeline contracts` generates `apps/pipeline/src/temnia_pipeline/contracts.py`
+  (pydantic v2). Both `:check` variants run in the gate; a stale file fails it. Never hand-edit the
+  generated module. Task-queue and workflow names live in `packages/contracts/src/temporal.ts` and
+  must match the Python `@workflow.defn(name=…)` and worker settings.
+
+### Python pipeline
+
+- One uv project at `apps/pipeline`, driven from Turborepo through its `package.json` shim until
+  `experimentalPythonWorkspaces` ships stable. Every command is `uv run --frozen …`; `uv lock` is
+  run on purpose, never implicitly. ruff `select = ["ALL"]`, pyright strict, pytest with
+  pytest-asyncio; the Temporal time-skipping test server backs workflow tests.
+- Never run two `uv` commands on the same project concurrently; they race on the environment. If
+  the project directory moves, delete `.venv` and sync again (script shebangs embed the old path).
+- Temporal workflows import the contract models at runtime inside
+  `workflow.unsafe.imports_passed_through()`; the SDK resolves run-method type hints to
+  deserialise payloads, so `TYPE_CHECKING`-only imports break at runtime.
+
+### UI (hard rule)
+
+- **Never build UI components from scratch.** Search the shadcn registry first and add the official
+  component or block (`pnpm dlx shadcn@4.21.0 add <name> -c apps/web`), then compose. Hand-rolling
+  layout, navigation, or form primitives the registry provides is not allowed; genuinely novel
+  domain UI (timeline, cutting bench) is built from registry primitives and the exception is named
+  in the PR.
+- The registry is configured for **Base UI** (`style: base-nova`) and **Hugeicons**
+  (`iconLibrary: hugeicons` in `apps/web/components.json`), so added components already import
+  `@hugeicons/react`; no Lucide swap is needed. Composition is via the `render` prop, not
+  `asChild`. Keep a block's structural wrappers: Base UI parts are context-coupled and a dropped
+  wrapper crashes only when the menu opens.
+- `apps/web/components/ui/**` is vendored registry output: lint-exempt, regenerated by the CLI,
+  never hand-maintained.
+- Every interactive surface (menu, dialog, popover, form) gets a Playwright test in `apps/web/e2e`
+  that opens it and asserts the outcome; a manual sweep is not sufficient.
+
+### Conventions
+
+- Formatting and linting is Ultracite on Biome: `pnpm check`, `pnpm fix`. Package-level `lint`
+  scripts run `biome check .` and pick up the root `biome.jsonc`.
+- Next.js is a Temporal client only (start, query, signal); it runs no workflow code and makes no
+  model calls. `@temporalio/client` stays in `serverExternalPackages`.
+- Next 16.3 type-checks with the project-local TypeScript 7 CLI during `next build`; package
+  `typecheck` scripts run `tsc --noEmit` (TS 7 native).
+- Deployed images never bake env or run migrations at build time. The web image gets a release-phase
+  migration entrypoint with the first table (S1).

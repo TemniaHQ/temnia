@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "HelloInput": {
+      "$id": "#/$defs/HelloInput",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Who to greet."
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        }
+      },
+      "required": [
+        "name",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "title": "HelloInput"
+    }
+  },
+  "$id": "HelloInput.json",
+  "$ref": "#/$defs/HelloInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
