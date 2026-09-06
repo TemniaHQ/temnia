@@ -77,7 +77,7 @@ Rules for the loop:
 
 - The log is committed to the repo. It is the source of truth for the posts, and later it is the project's own history.
 - **Several posts a day are fine; one idea each** (Rajesh, 2026-09-06). A full day usually yields a shipped post, a how-it-works post, and a went-wrong post on X, and one or two on LinkedIn. Each post block in the log names its pillar and its image so the order and the media are decided when the log is written, not at posting time.
-- **Series title and openers** (2026-09-06): the series is **Building Temnia in public**. X posts open with `Day N.` and nothing else, because the pinned origin post carries the series name. LinkedIn posts open with `Building Temnia in public, day N.` because readers arrive without context. Day 0 is the origin posts; Day 1 is the foundation.
+- **Title** (Rajesh, 2026-09-06): every post on both platforms opens with **`Day N of building Temnia.`** and nothing more; the tools get named in the body where they did something, never in the title. Day 0 is the origin posts; Day 1 is the foundation. (This file's own name, "Building Temnia in public", stays as the strategy's name, not a post opener.)
 - Claude writes the log and both drafts from what actually happened in the session — no embellishing, no rounding numbers up.
 - Rajesh edits for voice and posts. If the edit changes a fact, the log gets corrected too.
 - Days with nothing shippable still post: a "how it works" or "what went wrong" from the log's backlog, or a "numbers" post. The day counter never skips.
@@ -149,7 +149,7 @@ Evidence comes last and, on Day 0, honestly: there is none yet, only the number 
 ## 8. Rules
 
 **Always**
-- **Posts are a developer's account of the day, in order, and the division of labour is the story** (Rajesh, 2026-09-06, after the first drafts read like release notes). Say what the agent did on its own, where Rajesh stepped in and why, and what Rajesh did by hand at a dashboard. Name the agent's mistakes and who caught them, the agent or the human. **No clock times and no play-by-play** (Rajesh, 2026-09-06: "cheap and boring"); a post is a summary with a line of explanation where it earns its place. Measurements and counts that carry meaning stay (a round trip, a merge-to-live, a slot count); when something happened does not. A post that could have been written by the product's marketing team is a rewrite.
+- **Posts are a developer's account of the day, in order, and the division of labour is the story** (Rajesh, 2026-09-06, after the first drafts read like release notes). Say what the agent did on its own, where Rajesh stepped in and why, and what Rajesh did by hand at a dashboard. Name the agent's mistakes and who caught them, the agent or the human. **No clock times and no play-by-play** (Rajesh, 2026-09-06: "cheap and boring"); a post is a summary with a line of explanation where it earns its place. Measurements and counts that carry meaning stay (a round trip, a merge-to-live, a slot count); when something happened does not. The stack appears wherever it carries meaning, with the reasoning stated in the first person (Rajesh, 2026-09-06): readers should see an engineer who understands the system, not someone dependent on the agent. A post that could have been written by the product's marketing team is a rewrite.
 - Write in Rajesh's own voice (2026-09-03). First person, contractions, the odd aside, plain sentences of uneven length. Say "I" not "we" unless there is actually a we. If a reader could guess an AI drafted it, redraft.
 - Real numbers with dates and conditions. "18% on a fresh 90-min source, 2026-08-28" not "low".
 - Say what went wrong the day it went wrong, or the day after. Never bury a failure in a Friday review.
@@ -189,7 +189,7 @@ Review the mix monthly. If "the bet" posts outperform on LinkedIn and "went wron
 | 3 | Day counter | **Day 0 = the origin post**, not the first commit (2026-09-03) |
 | 4 | Posting time | Open |
 | 5 | Reveal the name from Day 0 | **Yes**, after the §11 checklist is done (2026-09-03). Building under a codename accrues audience to a name we would throw away. |
-| 6 | Series title | **Building Temnia in public** (2026-09-06). X opener `Day N.`; LinkedIn opener `Building Temnia in public, day N.` |
+| 6 | Post title | **`Day N of building Temnia.`** on both platforms (2026-09-06). Earlier that day: X `Day N.` and LinkedIn `Building Temnia in public, day N.`; replaced the same evening for one simple form. |
 | 7 | Posts per day | **Several, one idea each** (2026-09-06); the log lists them with pillar and image. |
 
 ## 11. Protect the name before Day 0
