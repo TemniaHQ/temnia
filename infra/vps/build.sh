@@ -11,6 +11,9 @@ export DEBIAN_FRONTEND=noninteractive
 step() { echo "STEP $*"; }
 
 step 1 hostname
+# cloud-init reapplies the hosting panel's hostname on every boot unless told not to;
+# the box owns its name, the panel label is cosmetic.
+printf "preserve_hostname: true\n" > /etc/cloud/cloud.cfg.d/99-temnia-hostname.cfg
 hostnamectl set-hostname temnia-vps
 grep -q "temnia-vps" /etc/hosts || echo "127.0.1.1 temnia-vps" >> /etc/hosts
 

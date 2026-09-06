@@ -45,7 +45,8 @@ install. What the
 script does, in order:
 
 1. hostname `temnia-vps` (the machine carries every environment of the `temnia` Dokploy project, so its
-   name carries none); full package upgrade; unattended security upgrades on; `ufw` removed
+   name carries none), with cloud-init told to preserve it: otherwise every reboot reapplies whatever the
+   Hostinger panel calls the VPS, which is how the box came back as `temnia` after the first reboot; full package upgrade; unattended security upgrades on; `ufw` removed
    (it cannot see Docker-published ports) in favour of raw iptables saved by `netfilter-persistent`.
 2. SSH: key-only root (`/etc/ssh/sshd_config.d/10-temnia.conf`, sorted before cloud-init's drop-in so
    it wins), password and keyboard-interactive off, three tries.
@@ -148,6 +149,12 @@ docker logs $(docker ps -a --filter name=<service> --format '{{.ID}} {{.Status}}
 ```
 
 ## 5. Rules that follow from this setup
+
+- The Hostinger panel's Reboot is a hard reset: no shutdown sequence in the guest, about a minute of
+  502s from Cloudflare while containers restart, then everything returns on its own (restart policies,
+  persisted firewall). Prefer `ssh temnia-vps reboot` when a reboot is needed, and expect the minute.
+- Hostinger manages the VM through the QEMU guest agent: it truncates logs and drops a telemetry
+  script on the box from time to time. Not ours, not a sign of compromise.
 
 - No hostname of the staging box appears in a post or a screenshot ([build-in-public.md](../build-in-public.md) §8).
 - Port 22 is rate-limited (six new connections per thirty seconds). Poll over HTTPS, never in an
