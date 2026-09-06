@@ -158,18 +158,26 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    `uuidv7()` defaults. `user` is scoped through `member`; `organization` by its own id. The pipeline
    role carries one declared cross-tenant read, `organization_enumerable_by_pipeline` (ids only), so
    the reaper can enumerate organizations and then scope into each.
-3. **The uploader is in-house, not Uppy.** Uppy 6.0 (2026-08-26) rewrote `@uppy/aws-s3` to send
-   Create, ListParts, Complete, and Abort from the browser on presigned URLs. The S1 research recorded
-   that R2 cannot serve those (presigned GET/PUT/HEAD/DELETE only). **That was wrong**: a probe from
-   the staging pipeline container on 2026-09-07 had R2 accept presigned CreateMultipartUpload (POST),
-   ListParts (GET), CompleteMultipartUpload (POST), and AbortMultipartUpload (DELETE); R2's documented
-   exclusion is HTML-form POST policies, a different mechanism. Uppy 6 would run on R2. The decision
-   stands on what the in-house client buys, not on a store limit: Temnia's browser half only PUTs
-   file slices to server-signed part URLs; every control call is a route handler, which is what makes
-   resume server-side: the fingerprint (project, name, size, lastModified) finds the
-   active upload from any browser, ListParts says what the store holds, and a grace window
-   (`UPLOAD_ADOPT_GRACE_SECONDS`, 60 s) stops two writers interleaving. Listing parts is never a
-   liveness signal; signing is. Part size is a deterministic function of file size.
+3. **The uploader is Uppy 6 over the app's own control calls (Rajesh, 2026-09-07).** Uppy 6.0
+   (2026-08-26) rewrote `@uppy/aws-s3` to send Create, ListParts, Complete, and Abort from the browser
+   on presigned URLs. The S1 build rejected it on the claim that R2 cannot serve those; a probe from
+   the staging pipeline container on 2026-09-07 disproved it (all four presigned calls succeed on R2
+   and on Garage; R2's documented exclusion is HTML-form POST policies, a different mechanism), and
+   Rajesh chose Uppy, which had worked well in the legacy. The shape: Uppy's Dashboard (inline; core,
+   aws-s3, dashboard, react pinned 6.0.0 exact) owns the browser half. `POST /api/uploads` still
+   creates the source and upload rows and the store's multipart upload, by fingerprint (project,
+   name, size, lastModified) with the adoption grace window (`UPLOAD_ADOPT_GRACE_SECONDS`, 60 s) and
+   a 409 countdown. The browser injects `{key, uploadId}` as the plugin's own resume state
+   (`s3Multipart`, the field Golden Retriever persists and `S3Uploader` reads), so Uppy lists parts
+   and continues rather than creating an upload of its own. `signRequest` is one route that signs
+   only UploadPart (the liveness touch) and ListParts (never liveness). Complete is the app's own
+   idempotent route handed to Uppy as the URL: storage first (HeadObject, else the store's part list
+   and a server-side Complete), one conditional row transition, ledger, ingest start, an S3-shaped
+   XML answer. Abort is never signed: a user's Cancel goes through the DELETE route from the
+   file-removed handler, and an unmount is refused, so in-app navigation keeps every part for the
+   re-pick. Part size is a deterministic function of file size capped at 1000 parts (Uppy reads one
+   ListParts page on resume). No Golden Retriever: its blob store caps at 10 MiB, so a master is
+   always re-picked, which the fingerprint already covers in any browser.
 4. **Player: Video.js v10's React skin over its hls.js media element, with peaks.js 4.** The first
    S1 build used hls.js on a plain video element (v10 is still beta.32 with breaking changes between
    betas). Rajesh reversed that the same day because he likes Video.js's UI, the same kind of call as
