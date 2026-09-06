@@ -1,7 +1,7 @@
 # Staging runbook
 
 **Status:** v0.1, 2026-09-06, written with S0. Staging is the one deployed environment until M3.
-It runs on the existing Hostinger KVM 8 (Mumbai) under Dokploy 0.29, reached only through a
+It runs on the existing Hostinger KVM 8 (Mumbai), reinstalled on 2026-09-06 with Ubuntu 26.04 and Dokploy 0.30.5 on Docker 29.8, reached only through a
 Cloudflare Tunnel, with Cloudflare Access in front of every hostname. Nothing on the box is
 published to the internet: ports 80 and 443 close when the tunnel goes live, and SSH stays the
 recovery path. Facts that are only true on Rajesh's machine (SSH alias, key path) live in Claude's
@@ -34,46 +34,72 @@ service, never the API response:
 docker service inspect <service> --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}'
 ```
 
-## 2. One-time setup (Rajesh, dashboards)
+## 2. The box
+
+The VPS was reinstalled from the Hostinger panel on 2026-09-06 with plain Ubuntu 26.04 LTS, then
+built by [`infra/vps/build.sh`](../../infra/vps/build.sh), copied to root and started as a detached
+systemd unit (the commands are in the script's header; running it through the SSH session fails at
+step 3 because the sshd restart ends the session). Nothing on the box was inherited from the legacy
+install. What the
+script does, in order:
+
+1. hostname `temnia-staging`; full package upgrade; unattended security upgrades on; `ufw` removed
+   (it cannot see Docker-published ports) in favour of raw iptables saved by `netfilter-persistent`.
+2. SSH: key-only root (`/etc/ssh/sshd_config.d/10-temnia.conf`, sorted before cloud-init's drop-in so
+   it wins), password and keyboard-interactive off, three tries.
+3. Docker log rotation defaults (`/etc/docker/daemon.json`) written before Dokploy's installer
+   installs Docker.
+4. Docker from Docker's own repository (the 26.04 channel), then Dokploy's official installer: a
+   single-node swarm, `dokploy-network`, Postgres, Dokploy, Traefik. The installer's own Docker pin
+   (28.5.0 via get.docker.com) does not exist in the 26.04 channel, which is why Docker comes first.
+5. Firewall. `INPUT` (v4 and v6): loopback, established, ICMP, SSH rate-limited to six new
+   connections per thirty seconds per source, everything else new dropped. `DOCKER-USER`: every new
+   connection arriving on the public interface to a Docker-published port is dropped, so Traefik's 80
+   and 443 and the panel's 3000 are unreachable from the internet even though Docker publishes them.
+   Traffic through the Cloudflare tunnel arrives from the `cloudflared` container over the overlay
+   network and never touches that rule.
+
+Consequences: the Dokploy panel is reachable in exactly two ways, the tunnel hostname behind Access,
+and an SSH port forward (`ssh -N -L 3000:127.0.0.1:3000 temnia-vps`, then `http://localhost:3000`).
+The forward is the recovery path if Cloudflare is ever misconfigured; SSH itself is the recovery path
+for everything else, and the box has a root password set in the Hostinger panel for its web console.
+
+Rebuilding from scratch is: reinstall in the panel, add the SSH key to root, run the script, do the
+first-run form through the port forward, redo §2b and §3. About twenty minutes plus image pulls.
+
+## 2b. One-time setup (Rajesh, dashboards)
 
 These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner. Each is done once.
 
-1. **Zone.** Add `temnia.dev` (the infra domain, registered 2026-09-06; `temnia.com` stays the
-   product domain and stays on Spaceship until the product needs it) to the Cloudflare account and
-   move its nameservers at Spaceship to the two Cloudflare assigns. Wait for the zone to become
-   active. SSL/TLS mode **Full (strict)**. `.dev` is HSTS-preloaded in every browser, so nothing on
-   it can be served over plain HTTP; Cloudflare terminates TLS, so that costs nothing here.
+1. **Zone.** `temnia.dev` is the infra domain (registered 2026-09-06; `temnia.com` stays the product
+   domain and stays on Spaceship until the product needs it). Add it to the Cloudflare account, delete
+   the two parking A records the import scanned, move the nameservers at Spaceship, wait for the zone
+   to become active. SSL/TLS mode **Full (strict)**, Always Use HTTPS on. `.dev` is HSTS-preloaded in
+   every browser, so nothing on it can be served over plain HTTP; Cloudflare terminates TLS, so that
+   costs nothing here.
 2. **Tunnel.** Zero Trust → Networks → Connectors → Create a tunnel → Cloudflared. Name it
    `temnia-staging`. Copy the token. Public hostnames, all of type HTTP with service
-   `http://dokploy-traefik:80`: `staging.temnia.dev`, `temporal.temnia.dev`,
-   `dokploy.temnia.dev`.
+   `http://dokploy-traefik:80`: `dokploy.temnia.dev`, `staging.temnia.dev`, `temporal.temnia.dev`.
 3. **Access.** Zero Trust → Access → Applications → self-hosted, one application per hostname
    above. Policy `Rajesh only`: Allow, include the login email. Identity provider: the built-in
    Cloudflare login (account MFA). The Dokploy application keeps two extra **Bypass → Everyone**
    policies scoped to paths `/api/deploy*` and `/api/webhook*`, because GitHub's webhook cannot
    authenticate. Never widen those paths; give scripts a service token and a Service Auth policy.
-4. **Dokploy GitHub App.** Dokploy → Settings → Git → GitHub: install Dokploy's GitHub App on the
-   `TemniaHQ` organization with access to `temnia`. (The legacy install lives on the archived
-   organization and does not carry over.)
+4. **First run.** Through the SSH port forward, create the Dokploy admin account.
 5. **cloudflared on the box.** Dokploy → new project `temnia` → environment `staging` →
    Application `cloudflared`: provider Docker, image `cloudflare/cloudflared:2026.8.3`, env
    `TUNNEL_TOKEN=<token>`, command `tunnel --no-autoupdate run`. Deploy; the log must show four
    registered connections.
-6. **Cut over Dokploy itself.** Dokploy → Web Server → Server Domain: `dokploy.temnia.dev`, HTTPS
-   off, certificate none. Open it through the tunnel and confirm Access prompts, then delete the
-   old panel hostname from the legacy zone.
-7. **Close the origin.** On the VPS, remove the Cloudflare origin-lock rules in `DOCKER-USER`
-   (they allowed 80/443 from Cloudflare ranges) and replace them with a single
-   `-A DOCKER-USER -i eth0 -p tcp -m multiport --dports 80,443 -j DROP`, then
-   `netfilter-persistent save`. Traefik keeps listening; nothing can reach it except the tunnel.
-   Leave `INPUT` alone: SSH rate limiting lives there and SSH is the recovery path.
-8. **Stop issuing certificates.** Remove the `letsencrypt` and `letsencrypt-dns` resolvers and the
-   wildcard default cert from Traefik's config (`/etc/dokploy/traefik/traefik.yml`,
-   `dynamic/wildcard-default.yml`); Cloudflare terminates TLS. Restart Traefik. Delete the
-   `CF_DNS_API_TOKEN` from Traefik's env and revoke it in Cloudflare.
-9. **Retire the legacy staging.** `mitosia-staging-uxa95i` and `mitosia-stagingdb-mo4ted` are
-   the archived repository's services. Stop both in Dokploy; keep the database volume until the
-   `/root/backups` dumps have been copied off the box, then remove the services.
+6. **Panel domain.** Dokploy → Web Server → Server Domain: `dokploy.temnia.dev`, HTTPS off,
+   certificate none. Open it through the tunnel and confirm Access prompts.
+7. **Dokploy GitHub App.** Dokploy → Settings → Git → GitHub: install Dokploy's GitHub App on the
+   `TemniaHQ` organization with access to `temnia`. (The legacy install lived on the archived
+   organization and did not carry over.)
+8. **Old zone.** Delete the `dokploy` and `staging` records and the Access applications on
+   `mitosia.cloud`; revoke the DNS API token the old Traefik used. The domain lapses next year.
+9. **Hostinger firewall (optional second layer).** One rule set allowing only TCP 22 inbound. The
+   box's own iptables already enforce this; the panel firewall just makes it true even if a future
+   change to those rules gets it wrong.
 
 ## 3. Deploy targets (Rajesh once, then automatic)
 
