@@ -218,6 +218,17 @@ Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stac
 before architectural work. Record durable decisions in the Decisions section above, in the same turn
 they are made.
 
+### Sessions orchestrate (Rajesh, 2026-09-06)
+
+The top model in a session plans the work, writes the briefs, reads the agents' reports, and writes
+the synthesis itself: the 360-degree view, the design, every decision, and the final word on a
+review. Research, extraction, exploration, and implementation against a written spec go to cheaper
+agents: Opus for implementation and multi-source synthesis, Sonnet for research and mechanical work.
+The finalization of a document or a decision is never delegated. Agents report to short files in the
+session scratchpad, not raw dumps; independent agents run in parallel. Delegation never lowers the
+verification bar: the agent that finishes a change runs the gate and the orchestrator checks the
+evidence.
+
 ### The 360-degree view comes before the code (Rajesh, 2026-09-06)
 
 Every change, whatever it touches (a page, a route, a workflow, a script, an env block, a runbook
