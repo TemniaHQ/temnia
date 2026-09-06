@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING
 
 from temporalio.exceptions import ApplicationError
 
-from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult, stored_ladder
+from temnia_pipeline.transcode import (
+    CONTRACT_VERSION,
+    LadderJob,
+    LadderProgress,
+    LadderResult,
+    stored_ladder,
+)
 from temnia_pipeline.transcode.modal_client import Done, Failed, Running, Unknown
 
 if TYPE_CHECKING:
@@ -34,9 +40,17 @@ log = logging.getLogger("temnia.transcode.modal")
 
 POLL_SECONDS = 10.0
 
-# Words that mean the encode itself is wrong, not the infrastructure. A source
-# ffmpeg cannot read, or an output that came out short, fails the same way on
-# the next container and on the next worker, so it is terminal on attempt one.
+# The exceptions that mean the encode itself is wrong, not the infrastructure.
+# A source ffmpeg cannot read, or an output that came out short, fails the same
+# way on the next container and on the next worker, so it is terminal on
+# attempt one. `RealModalClient.status` puts the type name in front of the
+# message, which is what makes this a rule about the exception rather than
+# about its wording.
+TERMINAL_TYPES = ("FfmpegError", "TruncatedOutputError")
+_TERMINAL_PREFIXES = tuple(f"{name}:" for name in TERMINAL_TYPES)
+
+# The fallback, for a message that reached us without a type name in front of
+# it: an older deployment, or a failure Modal itself worded.
 TERMINAL_MARKERS = ("ffmpeg", "truncated")
 
 
@@ -88,7 +102,15 @@ def modal_failure(message: str) -> ApplicationError:
 
 
 def classify(message: str) -> ApplicationError:
-    """Terminal when the message blames the encode, retryable otherwise."""
+    """Terminal when the encode itself is wrong, retryable otherwise.
+
+    The exception type decides first, because the wording cannot be trusted to
+    carry the answer: a `TruncatedOutputError` that says only which playlist is
+    short would read as infrastructure and be retried three times at GPU
+    prices. The word markers stay behind it as a fallback.
+    """
+    if message.startswith(_TERMINAL_PREFIXES):
+        return transcode_failure(message)
     lowered = message.lower()
     if any(marker in lowered for marker in TERMINAL_MARKERS):
         return transcode_failure(message)
@@ -138,10 +160,21 @@ class ModalTranscoder:
     async def _poll(
         self, job: LadderJob, call_id: str, on_progress: ProgressCallback
     ) -> LadderResult:
+        # Every tick reports, whether or not the container has written a note.
+        # `on_progress` is the only place the activity heartbeats and the only
+        # way the call id reaches the next attempt, so a tick that stays quiet
+        # is a tick that spends the heartbeat timeout: an L4 can take minutes
+        # to schedule and cold start before its first note, and a Dict read can
+        # fail while the encode is perfectly healthy. Either silence would time
+        # the activity out and hand the retry no call id to reattach to, which
+        # is the second GPU job this whole design exists to avoid. Repeating a
+        # note is free; the activity throttles its own database write.
+        latest = LadderProgress(stage="hls", percent=0)
         while True:
-            progress = await self.client.progress(call_id)
-            if progress is not None:
-                await on_progress(progress, call_id)
+            note = await self.client.progress(call_id)
+            if note is not None:
+                latest = note
+            await on_progress(latest, call_id)
             status = await self.client.status(call_id)
             match status:
                 case Done(result=result):

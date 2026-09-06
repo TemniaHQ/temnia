@@ -23,8 +23,21 @@ from temnia_pipeline.transcode import (
     LadderResult,
     ProgressCallback,
 )
-from temnia_pipeline.transcode.modal import DeploymentError, ModalTranscoder, assert_deployment
-from temnia_pipeline.transcode.modal_client import CallStatus, Done, Failed, Running, Unknown
+from temnia_pipeline.transcode import modal_client as modal_client_module
+from temnia_pipeline.transcode.modal import (
+    DeploymentError,
+    ModalTranscoder,
+    assert_deployment,
+    classify,
+)
+from temnia_pipeline.transcode.modal_client import (
+    CallStatus,
+    Done,
+    Failed,
+    RealModalClient,
+    Running,
+    Unknown,
+)
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -171,6 +184,57 @@ async def test_a_fresh_spawn_reports_progress_and_returns_the_published_ladder()
     assert {call_id for _, call_id in seen} == {"fc-spawn-1"}
 
 
+async def test_every_tick_heartbeats_the_call_id_before_the_first_note_exists() -> None:
+    """The silence between spawn and the first note is where the double spend was.
+
+    An L4 can take minutes to schedule and cold start, and `on_progress` is the
+    only place the activity heartbeats. A tick that reported nothing would run
+    the activity's five-minute heartbeat timeout out and hand the retry no call
+    id, which spawns a second GPU job for the same source.
+    """
+    store = FakeStore()
+    published = manifest()
+    client = FakeModalClient(
+        statuses=[Running(), Running(), Done(result_of(published))],
+        on_spawn=lambda: store.publish(published),
+    )
+    seen: list[tuple[LadderProgress, str | None]] = []
+    await transcoder(client, store).run(JOB, on_progress=collect(seen), resume=None)
+
+    assert [(note.stage, note.percent) for note, _ in seen] == [("hls", 0)] * 3
+    assert [call_id for _, call_id in seen] == ["fc-spawn-1"] * 3
+
+
+async def test_a_tick_with_no_new_note_repeats_the_last_one() -> None:
+    """A Dict read that fails while the encode is healthy must not stop the heartbeat."""
+    store = FakeStore()
+    published = manifest()
+    client = FakeModalClient(
+        statuses=[Running(), Running(), Done(result_of(published))],
+        progress=[LadderProgress(stage="hls", percent=40)],
+        on_spawn=lambda: store.publish(published),
+    )
+    seen: list[tuple[LadderProgress, str | None]] = []
+    await transcoder(client, store).run(JOB, on_progress=collect(seen), resume=None)
+
+    assert [note.percent for note, _ in seen] == [40, 40, 40]
+
+
+async def test_a_reattached_call_heartbeats_its_id_from_the_first_tick() -> None:
+    """The id a retry reattached by has to survive into this attempt's heartbeats."""
+    store = FakeStore()
+    published = manifest()
+    client = FakeModalClient(
+        statuses=[Done(result_of(published))],
+        resumed={"fc-earlier": Running()},
+        on_poll=lambda: store.publish(published),
+    )
+    seen: list[tuple[LadderProgress, str | None]] = []
+    await transcoder(client, store).run(JOB, on_progress=collect(seen), resume="fc-earlier")
+
+    assert [call_id for _, call_id in seen] == ["fc-earlier"]
+
+
 async def test_a_running_call_is_reattached_to_rather_than_spawned_again() -> None:
     store = FakeStore()
     published = manifest()
@@ -265,8 +329,14 @@ async def test_a_result_the_function_never_published_fails_terminally() -> None:
 @pytest.mark.parametrize(
     "message",
     [
+        # The type name the client puts in front is the primary rule, and the
+        # second of these is the case the wording alone would have missed: it
+        # never says "truncated" outside the exception's own name.
+        "FfmpegError: exited 1: Invalid data found when processing input",
+        "TruncatedOutputError: 720p/index.m3u8 covers 60.0s of 151.0s",
+        # Without a prefix, the word markers still catch it.
         "ffmpeg exited 1: Invalid data found when processing input",
-        "TruncatedOutputError: 720p/index.m3u8 covers 60.0s of 151.0s; the output is truncated",
+        "the output is truncated",
     ],
 )
 async def test_an_encode_failure_is_terminal(message: str) -> None:
@@ -363,3 +433,45 @@ async def test_a_rejected_token_refuses_the_boot_and_names_the_variables() -> No
         "and that `uv run modal deploy temnia_pipeline.modal_app` has run for this "
         "environment."
     )
+
+
+class _RaisingGet:
+    """Stands in for the SDK's `FunctionCall.get`, for a call that raised."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    # The parameter is the SDK's, and `status` passes it by name.
+    async def aio(self, timeout: float) -> object:  # noqa: ASYNC109
+        _ = timeout
+        raise self.error
+
+
+class _RaisingCall:
+    """Stands in for the SDK's `FunctionCall`."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.get = _RaisingGet(error)
+
+
+async def test_a_raised_exception_reaches_the_classifier_with_its_type_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`str(error)` alone drops the one fact that decides terminal from retryable.
+
+    This message never contains the word "truncated" outside the exception's
+    own name, and the ladder is not going to come out any longer on the next
+    container, so being retried would be three GPU jobs for one wrong output.
+    """
+    error = hls.TruncatedOutputError("720p/index.m3u8 covers 60.0s of 151.0s")
+
+    def fake_call(call_id: str) -> object:
+        _ = call_id
+        return _RaisingCall(error)
+
+    monkeypatch.setattr(modal_client_module, "_call", fake_call)
+    status = await RealModalClient(SETTINGS).status("fc-1")
+
+    assert isinstance(status, Failed)
+    assert status.message == "TruncatedOutputError: 720p/index.m3u8 covers 60.0s of 151.0s"
+    assert classify(status.message).non_retryable

@@ -11,6 +11,17 @@ TranscodeBackend = Literal["local", "modal"]
 DEFAULT_MODAL_APP = "temnia-media"
 DEFAULT_PROGRESS_DICT = "temnia-ladder-progress"
 
+# Region is not in this list on purpose: R2 wants `auto` and Garage `garage`,
+# neither is a secret, and a wrong one fails at the first request rather than
+# quietly. The other four have no safe default away from the laptop.
+REQUIRED_STORAGE_VARIABLES = (
+    "STORAGE_ENDPOINT",
+    "STORAGE_BUCKET",
+    "STORAGE_ACCESS_KEY_ID",
+    "STORAGE_SECRET_ACCESS_KEY",
+)
+DEFAULT_STORAGE_REGION = "garage"
+
 
 @dataclass(frozen=True, slots=True)
 class TemporalSettings:
@@ -46,7 +57,7 @@ class StorageSettings:
         """Read `STORAGE_*`; the compose defaults are the dev-only Garage key."""
         return cls(
             endpoint=os.environ.get("STORAGE_ENDPOINT", "http://localhost:56900"),
-            region=os.environ.get("STORAGE_REGION", "garage"),
+            region=os.environ.get("STORAGE_REGION", DEFAULT_STORAGE_REGION),
             bucket=os.environ.get("STORAGE_BUCKET", "temnia-media"),
             access_key_id=os.environ.get("STORAGE_ACCESS_KEY_ID", "GK746d6e696164657600000000"),
             secret_access_key=os.environ.get(
@@ -54,6 +65,28 @@ class StorageSettings:
                 "7f5fbe4a561d5196e4422e7fe9b8b8880846f9e153aacd3a142fd3d27f8f2bd2",
             ),
         )
+
+    @classmethod
+    def require_env(cls, source: str) -> StorageSettings:
+        """Read `STORAGE_*` with no fallback, naming what is missing and where from.
+
+        `from_env`'s dev defaults are right on a laptop and wrong anywhere the
+        values arrive from something that can be half configured. A Modal
+        container whose secret is missing a key would otherwise take the Garage
+        defaults, dial localhost, and surface minutes later as a connection
+        error deep inside the download, with a GPU already booked. `source`
+        names the thing that was supposed to set them, because the reader's
+        next move is to open it.
+        """
+        missing = [name for name in REQUIRED_STORAGE_VARIABLES if not os.environ.get(name)]
+        if missing:
+            plural = "is" if len(missing) == 1 else "are"
+            msg = (
+                f"the object store is not configured: {', '.join(missing)} {plural} missing or "
+                f"empty. {source} sets them; check its contents, not just that it exists."
+            )
+            raise RuntimeError(msg)
+        return cls.from_env()
 
 
 @dataclass(frozen=True, slots=True)

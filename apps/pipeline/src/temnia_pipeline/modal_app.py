@@ -133,8 +133,14 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     last, so the worker's completion check cannot pass over a half published
     prefix.
     """
+    # First, before the job is even parsed: a secret that is absent or missing
+    # a key must fail here, by name. Falling back to the dev Garage defaults
+    # would point this container at its own localhost and report it as a
+    # connection error deep inside the download, on a GPU that is already
+    # billing.
+    settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
     request = LadderJob.model_validate(job)
-    store = make_store(StorageSettings.from_env())
+    store = make_store(settings)
     out_dir = WORK_DIR / request.scratch_name / "hls"
     master = WORK_DIR / request.scratch_name / ("master" + Path(request.master_key).suffix)
 

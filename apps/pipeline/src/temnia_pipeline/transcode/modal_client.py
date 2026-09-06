@@ -65,7 +65,7 @@ class Done:
 
 @dataclass(frozen=True, slots=True)
 class Failed:
-    """The call raised. The message decides retryable from terminal."""
+    """The call raised; the message is `TypeName: text` and decides the retry."""
 
     message: str
 
@@ -124,8 +124,12 @@ class RealModalClient:
         except Exception as error:  # noqa: BLE001
             # Anything the function raised arrives here, including the
             # deterministic ffmpeg and truncation failures the caller has to
-            # tell apart from an infrastructure fault.
-            return Failed(str(error))
+            # tell apart from an infrastructure fault. The type name goes in
+            # front of the message because that is the only part that reliably
+            # says which of the two it is; `str(error)` alone leaves the caller
+            # guessing from wording. Safe to show: ffmpeg.py sanitises what it
+            # puts in these messages.
+            return Failed(f"{type(error).__name__}: {error}")
         return Done(LadderResult.model_validate(payload))
 
     async def progress(self, call_id: str) -> LadderProgress | None:
