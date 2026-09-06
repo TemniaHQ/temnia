@@ -27,7 +27,12 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, updatedAt } from "./columns.ts";
-import { currentOrganizationId, currentUserId, tenantRoles } from "./scope.ts";
+import {
+  currentOrganizationId,
+  currentUserId,
+  pipelineRole,
+  tenantRoles,
+} from "./scope.ts";
 
 export const organization = pgTable(
   "organization",
@@ -47,6 +52,15 @@ export const organization = pgTable(
       to: tenantRoles,
       using: sql`${table.id} = ${currentOrganizationId}`,
       withCheck: sql`${table.id} = ${currentOrganizationId}`,
+    }),
+    // The one declared cross-tenant read: the pipeline's reaper enumerates
+    // organizations, then scopes into each. Ids only; every other table stays
+    // behind its scope for this role too.
+    pgPolicy("organization_enumerable_by_pipeline", {
+      as: "permissive",
+      for: "select",
+      to: pipelineRole,
+      using: sql`true`,
     }),
   ]
 ).enableRLS();

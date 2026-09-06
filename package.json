@@ -11,7 +11,7 @@
     "pr:verified": "node scripts/verified-pr.mjs pr",
     "prepare": "node scripts/install-git-hooks.mjs",
     "push:verified": "node scripts/verified-pr.mjs push",
-    "services": "docker compose up -d --wait --wait-timeout 300 postgres garage temporal temporal-ui",
+    "services": "docker compose up -d --wait --wait-timeout 300 postgres garage temporal temporal-ui && docker compose up -d garage-cors",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },

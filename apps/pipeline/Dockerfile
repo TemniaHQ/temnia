@@ -17,11 +17,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 FROM python:3.13-slim AS runner
-RUN useradd --system --create-home --uid 10001 temnia
+# ffmpeg 8.1.2, the exact release, as a static binary from an image pinned by
+# digest (docs/tech-stack.md §8). The same minor PyAV's wheels bundle, so probe
+# and transcode agree on durations. Bumping is this one line plus the pin check
+# in tests/test_ffmpeg_pin.py.
+COPY --from=mwader/static-ffmpeg:8.1.2@sha256:33f770f812cbfc3de96c547157fc9faf8bd95a36481753439ffa761045167585 \
+    /ffmpeg /ffprobe /usr/local/bin/
+RUN useradd --system --create-home --uid 10001 temnia \
+  && mkdir -p /var/lib/temnia/work && chown temnia:temnia /var/lib/temnia/work
 WORKDIR /app
 COPY --from=builder --chown=temnia:temnia /app /app
 ENV PATH=/app/.venv/bin:${PATH} \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIPELINE_WORK_DIR=/var/lib/temnia/work
 USER temnia
-# S1 adds the pinned ffmpeg static build here (docs/tech-stack.md §8).
+VOLUME ["/var/lib/temnia/work"]
 CMD ["python", "-m", "temnia_pipeline.worker"]

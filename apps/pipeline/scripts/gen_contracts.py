@@ -47,6 +47,7 @@ def render() -> str:
                 "--use-annotated",
                 "--field-constraints",
                 "--use-schema-description",
+                "--collapse-root-models",
                 "--disable-timestamp",
                 "--use-double-quotes",
                 "--formatters",

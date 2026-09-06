@@ -6,4 +6,6 @@ export const TASK_QUEUES = {
 /** Workflow type names, shared with the Python worker's `@workflow.defn(name=...)`. */
 export const WORKFLOWS = {
   hello: "HelloWorkflow",
+  ingest: "IngestWorkflow",
+  reaper: "ReaperWorkflow",
 } as const;

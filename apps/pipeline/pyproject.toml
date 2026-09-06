@@ -4,12 +4,18 @@ version = "0.0.0"
 description = "Temnia media and editorial pipeline: Temporal workers, ffmpeg wrappers, harness sensors."
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "av>=18.1,<19",
+    "boto3>=1.40,<2",
+    "numpy>=2.3,<3",
+    "obstore>=0.11.1,<0.12",
+    "psycopg[binary,pool]>=3.3.5,<4",
     "pydantic>=2.13,<3",
     "temporalio>=1.32,<2",
 ]
 
 [dependency-groups]
 dev = [
+    "boto3-stubs[s3]>=1.40",
     "datamodel-code-generator>=0.76",
     "pyright>=1.1.411",
     "pytest>=9.1,<10",
@@ -45,6 +51,12 @@ ignore = [
     "D213",
     # No copyright headers in this repository.
     "CPY001",
+    # __init__ is documented by its class.
+    "D107",
+    # Small synchronous path operations (mkdir, a few KB of JSON) inside
+    # activities that then await a subprocess for minutes; offloading them
+    # to threads would add noise without changing anything measurable.
+    "ASYNC240",
 ]
 
 [tool.ruff.lint.pydocstyle]
