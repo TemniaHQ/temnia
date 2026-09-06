@@ -61,7 +61,7 @@ script does, in order:
    network and never touches that rule.
 
 Consequences: the Dokploy panel is reachable in exactly two ways, the tunnel hostname behind Access,
-and an SSH port forward (`ssh -N -L 3000:127.0.0.1:3000 temnia-vps`, then `http://localhost:3000`).
+and an SSH port forward (`ssh -N -L 3300:127.0.0.1:3000 temnia-vps`, then `http://localhost:3300`; the local side is 3300 so it never looks like `next dev`).
 The forward is the recovery path if Cloudflare is ever misconfigured; SSH itself is the recovery path
 for everything else, and the box has a root password set in the Hostinger panel for its web console.
 
