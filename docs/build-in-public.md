@@ -64,16 +64,20 @@ docs/log/YYYY-MM-DD.md
 ## Tomorrow
 - one line
 
-## X draft
-<post or thread>
-
-## LinkedIn draft
+## Posts
+### X 1 (pillar) · image: <which>
+<post>
+### X 2 (pillar)
+<post>
+### LinkedIn 1 (pillar) · image: <which>
 <post>
 ```
 
 Rules for the loop:
 
-- The log is committed to the repo. It is the source of truth for the post, and later it is the project's own history.
+- The log is committed to the repo. It is the source of truth for the posts, and later it is the project's own history.
+- **Several posts a day are fine; one idea each** (Rajesh, 2026-09-06). A full day usually yields a shipped post, a how-it-works post, and a went-wrong post on X, and one or two on LinkedIn. Each post block in the log names its pillar and its image so the order and the media are decided when the log is written, not at posting time.
+- **Series title and openers** (2026-09-06): the series is **Building Temnia in public**. X posts open with `Day N.` and nothing else, because the pinned origin post carries the series name. LinkedIn posts open with `Building Temnia in public, day N.` because readers arrive without context. Day 0 is the origin posts; Day 1 is the foundation.
 - Claude writes the log and both drafts from what actually happened in the session — no embellishing, no rounding numbers up.
 - Rajesh edits for voice and posts. If the edit changes a fact, the log gets corrected too.
 - Days with nothing shippable still post: a "how it works" or "what went wrong" from the log's backlog, or a "numbers" post. The day counter never skips.
@@ -184,6 +188,8 @@ Review the mix monthly. If "the bet" posts outperform on LinkedIn and "went wron
 | 3 | Day counter | **Day 0 = the origin post**, not the first commit (2026-09-03) |
 | 4 | Posting time | Open |
 | 5 | Reveal the name from Day 0 | **Yes**, after the §11 checklist is done (2026-09-03). Building under a codename accrues audience to a name we would throw away. |
+| 6 | Series title | **Building Temnia in public** (2026-09-06). X opener `Day N.`; LinkedIn opener `Building Temnia in public, day N.` |
+| 7 | Posts per day | **Several, one idea each** (2026-09-06); the log lists them with pillar and image. |
 
 ## 11. Protect the name before Day 0
 
