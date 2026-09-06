@@ -64,6 +64,7 @@ export default async function SourcePage({
         source={{
           audioChannels: source.audioChannels,
           audioCodec: source.audioCodec,
+          createdAt: source.createdAt.toISOString(),
           durationMs: source.durationMs,
           fps: source.fps,
           height: source.height,
@@ -73,6 +74,7 @@ export default async function SourcePage({
           sizeBytes: source.sizeBytes,
           status: source.status,
           title: source.title,
+          uploadedAt: source.uploadedAt?.toISOString() ?? null,
           videoCodec: source.videoCodec,
           width: source.width,
         }}

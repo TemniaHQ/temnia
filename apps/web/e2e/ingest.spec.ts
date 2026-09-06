@@ -9,6 +9,8 @@ const SOURCE_URL = /\/sources\//;
 const PART_URL = /\/temnia-media\//;
 const PART_NUMBER = /partNumber=(\d+)/;
 const STARTED = /uploaded|processing/;
+const UPLOADED_IN = /Uploaded in\s*\d+s/;
+const INGESTED_IN = /Ingested in\s*\d+s/;
 
 async function createProject(page: Page, name: string): Promise<string> {
   await page.goto("/projects");
@@ -39,6 +41,8 @@ test("a master uploaded in parts becomes a playable source", async ({
   await page.waitForURL(SOURCE_URL);
   await expect(page.getByTestId("source-details")).toContainText("640×360");
   await expect(page.getByTestId("source-details")).toContainText("25 fps");
+  await expect(page.getByTestId("source-details")).toContainText(UPLOADED_IN);
+  await expect(page.getByTestId("source-details")).toContainText(INGESTED_IN);
 
   const video = page.locator("video");
   await expect
