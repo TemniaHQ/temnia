@@ -44,6 +44,12 @@ runbook had assumed the bare app name.
   `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:<pw>@temnia-staging-postgres-<suffix>:5432/temnia`, the same
   `STORAGE_*` (without `STORAGE_PUBLIC_ENDPOINT`), and a volume on `/var/lib/temnia/work` sized for
   the largest master plus its ladder (the worker refuses a download without 1.5x the master free).
+  From S2 it also carries `TRANSCODE_BACKEND=modal`, `MODAL_ENVIRONMENT=staging`, `MODAL_TOKEN_ID`,
+  and `MODAL_TOKEN_SECRET` (§2c). With `TRANSCODE_BACKEND=modal` the worker calls the deployed
+  `version` function before it serves the queue and exits non-zero on a bad token or a Modal app
+  deployed from another commit, so Dokploy reports a failed deploy and keeps the previous container.
+  The work volume no longer holds ladders once the backend is `modal`: only the master and the audio
+  extract stay on it.
 - `temporal`: `TEMPORAL_DB_PASSWORD`, `TEMPORAL_HOST=temporal-staging` (the alias the others dial; a
   production stack gets its own).
 - `cloudflared`: `TUNNEL_TOKEN`.
@@ -124,6 +130,44 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
 9. **Hostinger firewall (optional second layer).** One rule set allowing only TCP 22 inbound. The
    box's own iptables already enforce this; the panel firewall just makes it true even if a future
    change to those rules gets it wrong.
+
+## 2c. Modal (Rajesh once, then per deploy)
+
+The HLS ladder runs on a Modal L4 from S2 (AGENTS.md decision 9, corrected in `docs/plans/s2-360-view.md`
+§11). Modal functions are scope-blind compute: they are handed a storage prefix the worker has already
+decided belongs to an organization, and never an organization id.
+
+1. **Environment.** Modal dashboard → Environments → create `staging`. Deployments and lookups are
+   scoped to it, so a later `production` cannot be reached by a staging token.
+2. **Token.** Settings → Service users → create one for the `staging` environment. Its `MODAL_TOKEN_ID`
+   and `MODAL_TOKEN_SECRET` go into the pipeline service's env in Dokploy, nowhere else.
+3. **Secret `temnia-r2`.** Modal dashboard → Secrets → Custom, name `temnia-r2`, in the `staging`
+   environment, with the five keys the function reads: `STORAGE_ENDPOINT`, `STORAGE_REGION`,
+   `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`. Use a **second** R2 API
+   token scoped to `temnia-staging-media` with object read and write, so it can be revoked without
+   touching the worker's.
+4. **Probe the GPU first**, from `apps/pipeline`, before trusting anything else:
+
+   ```bash
+   uv run modal run temnia_pipeline.modal_app::probe
+   ```
+
+   It builds the image, lists the `nvenc` encoders, and times a ten-second 1080p encode. The image is
+   `nvidia/cuda:12.4.1-runtime-ubuntu22.04` plus BtbN's `ffmpeg-n8.1-latest-linux64-gpl-8.1` tarball,
+   pinned by sha256 and verified with `sha256sum -c` during the build: the worker's own ffmpeg is a
+   static musl build with no NVENC, and BtbN rebuilds the `latest` tag in place, so a moved build
+   fails the image rather than encoding with something else. A checksum failure here means the build
+   moved: download it, recompute, and change `FFMPEG_SHA256` and the URL together.
+5. **Deploy**, and redeploy from the same commit whenever the pipeline image is deployed:
+
+   ```bash
+   uv run modal deploy temnia_pipeline.modal_app --env staging
+   ```
+
+6. **If the worker will not start**, its log carries one line beginning `TRANSCODE_BACKEND=modal:`.
+   `cannot reach the Modal app …` is a token or a missing deployment; `… speaks ladder contract 'x'
+   and this worker speaks 'y'` means the two halves came from different commits, so deploy the Modal
+   app again from the commit the image was built from.
 
 ## 3. Deploy targets (Rajesh once, then automatic)
 

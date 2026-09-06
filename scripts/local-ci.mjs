@@ -314,6 +314,11 @@ async function runFullGate(sha) {
       `TEMPORAL_NAMESPACE=${namespace}`,
       "-e",
       `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
+      // The gate encodes with the image's own ffmpeg. No Modal call in CI, ever;
+      // this is explicit rather than left to the default so a change to the
+      // default cannot quietly point the gate at a GPU that costs money.
+      "-e",
+      "TRANSCODE_BACKEND=local",
       ...storageEnv,
       pipelineImage,
     ]);

@@ -35,7 +35,7 @@ Four things in the plan are wrong or missing, and the view is built on the corre
 
 | PR | Lands | Merge gate |
 |---|---|---|
-| A. Ladder on Modal | Transcode seam (`local` for dev and the gate, `modal` on staging), Modal app with NVENC ffmpeg from our mirror, spawn with persisted call id, progress via a Modal Dict, completion marker in R2, worker boot probe of the deployed version | NVENC throwaway probe passed; VMAF within 2 points of the libx264 rung on a 2-minute excerpt; the S1 master re-laddered and published from Modal faster than the VPS's 67 minutes end to end |
+| A. Ladder on Modal | Transcode seam (`local` for dev and the gate, `modal` on staging), Modal app whose image carries BtbN's `ffmpeg-n8.1-latest-linux64-gpl-8.1` build pinned by sha256 (the worker's static musl ffmpeg has no NVENC, and there is no mirror to maintain), spawn with persisted call id, progress via a Modal Dict, completion marker in R2, worker boot probe of the deployed version | NVENC throwaway probe passed; VMAF within 2 points of the libx264 rung on a 2-minute excerpt; the S1 master re-laddered and published from Modal faster than the VPS's 67 minutes end to end |
 | B. Transcript | Tables, contract, provider seam (WhisperX on Modal + recorded provider), `TranscribeWorkflow`, ledger, transcript tab (view, follow, seek, search, low-confidence), corrections, speaker rename, SRT/VTT export | Gate green with the recorded provider; Playwright on every state and dialog; the S1 master transcribed on staging |
 | C. Substrate and parity | Python port of grid, paragraphs, lead-in; vendored TS oracle and dump script; three recorded sources as fixtures; eval runner re-host with its snapshots | Byte parity on three sources; scorer snapshots bit-identical |
 | D. Close S2 and M0 | Staging demo run recorded, two-org probes, PRD retags (§6 Deepgram line, §30 M0 after S2), sprint plan line 26, log, posts | Rajesh's read of the numbers |
@@ -152,7 +152,10 @@ transcript status badge on the list is S7's concern (source intelligence).
   (`HF_TOKEN` for the gated pyannote models).
 - **Deploy.** `uv run modal deploy` from the pipeline package publishes app `temnia-media` with
   functions `ladder`, `transcribe`, and `version`; lookups pass `environment_name` from
-  `MODAL_ENVIRONMENT`. Spawned results stay retrievable for 24 hours and Dict entries expire after
+  `MODAL_ENVIRONMENT`. The image is a CUDA runtime plus BtbN's
+  `ffmpeg-n8.1-latest-linux64-gpl-8.1` tarball, pinned by sha256 and verified during the build
+  because BtbN rebuilds the `latest` tag in place; it is not the worker's `mwader/static-ffmpeg`
+  image, which is a static musl build with no NVENC. Spawned results stay retrievable for 24 hours and Dict entries expire after
   seven idle days, both longer than any reattach. The deployed version is the git SHA baked at
   deploy. The worker's boot probe calls `version` when either backend is `modal` and refuses to boot
   on a mismatch or an auth failure, which Dokploy reports as a failed deploy. A wrong token is loud at
