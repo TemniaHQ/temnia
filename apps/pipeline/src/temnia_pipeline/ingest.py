@@ -34,6 +34,8 @@ from temnia_pipeline.media import derive, hls, peaks
 from temnia_pipeline.media.ffmpeg import FfmpegError
 from temnia_pipeline.media.probe import InvalidMediaError, probe
 from temnia_pipeline.settings import PipelineSettings, StorageSettings
+from temnia_pipeline.transcode import LadderJob
+from temnia_pipeline.transcode.factory import make_transcoder
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,10 +43,13 @@ if TYPE_CHECKING:
 
     from obstore.store import S3Store
 
+    from temnia_pipeline.transcode import LadderProgress, Transcoder
+
 log = logging.getLogger("temnia.ingest")
 
 PROGRESS_INTERVAL_SECONDS = 10.0
 DISK_HEADROOM = 1.5
+CALL_ID = "call_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,15 +59,24 @@ class Context:
     settings: PipelineSettings
     storage: StorageSettings
     store: S3Store
+    transcoder: Transcoder
 
     @classmethod
     def from_env(cls) -> Context:
-        """Build from the environment once per worker."""
+        """Build from the environment once per worker.
+
+        `worker.py` is the only caller, so the transcoder that
+        `TRANSCODE_BACKEND` chooses is built exactly once, at boot, beside the
+        probes that refuse a wrong one.
+        """
         storage_settings = StorageSettings.from_env()
+        settings = PipelineSettings.from_env()
+        store = storage.make_store(storage_settings)
         return cls(
-            settings=PipelineSettings.from_env(),
+            settings=settings,
             storage=storage_settings,
-            store=storage.make_store(storage_settings),
+            store=store,
+            transcoder=make_transcoder(settings, store, settings.work_root),
         )
 
 
@@ -74,6 +88,22 @@ def workflow_id() -> str:
 def work_dir(settings: PipelineSettings, source_id: UUID) -> Path:
     """Scratch directory for one source."""
     return settings.work_root / str(source_id)
+
+
+def resume_call_id() -> str | None:
+    """The backend handle the last heartbeat carried, if there was one.
+
+    Temporal hands a retried activity the details of the last heartbeat of the
+    previous attempt. That is where a Modal call id survives a worker restart,
+    and reattaching to a running GPU call is the difference between a retry
+    that costs nothing and one that pays for the whole encode twice.
+    """
+    for detail in activity.info().heartbeat_details:
+        if isinstance(detail, dict):
+            found = detail.get(CALL_ID)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(found, str) and found:
+                return found
+    return None
 
 
 def failure(message: str) -> ApplicationError:
@@ -134,120 +164,108 @@ class Ingest:
     async def transcode_source(
         self, request: IngestInput, probed: ProbeResult
     ) -> list[ArtifactRecord]:
-        """The HLS ladder, I-frame rendition, and audio extract, verified then uploaded."""
+        """The audio extract here, then the ladder wherever `TRANSCODE_BACKEND` says."""
         master = await self._ensure_master(request, expected_size=probed.sizeBytes)
         _, video = await asyncio.to_thread(probe, master)
-        directory = work_dir(self.ctx.settings, request.sourceId)
-        hls_dir = directory / "hls"
-        duration = probed.durationMs / 1000
+        records: list[ArtifactRecord] = []
+        if probed.audioChannels:
+            records.append(await self._extract_audio(request, master))
+
+        job = LadderJob(
+            master_key=request.masterKey,
+            artifact_prefix=request.artifactPrefix,
+            size_bytes=probed.sizeBytes,
+            video=video,
+            has_audio=bool(probed.audioChannels),
+            expected_seconds=probed.durationMs / 1000,
+        )
         last_report = 0.0
 
-        async def on_progress(seconds: float) -> None:
+        async def on_progress(progress: LadderProgress, call_id: str | None) -> None:
             nonlocal last_report
-            percent = max(0, min(100, int(100 * seconds / duration)))
-            activity.heartbeat(f"hls {percent}%")
+            note = f"{progress.stage} {progress.percent}%"
+            # The call id rides in the heartbeat because that is what a retried
+            # activity reads to reattach to a Modal call still on a GPU.
+            if call_id is None:
+                activity.heartbeat(note)
+            else:
+                activity.heartbeat(note, {CALL_ID: call_id})
             now = time.monotonic()
             if now - last_report >= PROGRESS_INTERVAL_SECONDS:
                 last_report = now
-                await self._progress(request, "hls", percent)
+                await self._progress(request, progress.stage, progress.percent)
 
         await self._progress(request, "hls", 0)
         try:
-            rungs = await hls.transcode_ladder(
-                self.ctx.settings.ffmpeg,
-                master,
-                hls_dir,
-                video,
-                has_audio=probed.audioChannels is not None and probed.audioChannels > 0,
-                expected_seconds=duration,
-                on_progress=on_progress,
-            )
-            renditions: dict[str, float] = {}
-            for rung in rungs:
-                renditions[rung.name] = hls.assert_covers(
-                    hls_dir / rung.name / "index.m3u8", duration
-                )
-            if probed.audioChannels:
-                renditions["audio"] = hls.assert_covers(hls_dir / "audio" / "index.m3u8", duration)
-            if video:
-                hls.assert_covers(
-                    hls_dir / "iframes" / "index.m3u8",
-                    duration,
-                    floor_seconds=hls.KEYFRAME_SECONDS,
+            result = await self.ctx.transcoder.reuse(job)
+            if result is None:
+                result = await self.ctx.transcoder.run(
+                    job, on_progress=on_progress, resume=resume_call_id()
                 )
         except (FfmpegError, hls.TruncatedOutputError) as error:
             raise ApplicationError(str(error), type="TranscodeFailure") from error
 
-        records: list[ArtifactRecord] = []
-        if probed.audioChannels:
-            audio_dir = directory / "audio"
-            audio_dir.mkdir(exist_ok=True)
-            await self._progress(request, "audio", None)
-            activity.heartbeat("audio extract")
-            from temnia_pipeline.media.ffmpeg import run_ffmpeg  # noqa: PLC0415
-
-            audio_file = audio_dir / "audio.m4a"
-            await run_ffmpeg(
-                self.ctx.settings.ffmpeg,
-                [
-                    "-i",
-                    str(master),
-                    "-vn",
-                    "-map",
-                    "0:a:0",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "96k",
-                    "-movflags",
-                    "+faststart",
-                    str(audio_file),
-                ],
-            )
-            size = await storage.upload_file(
-                self.ctx.store, f"{request.artifactPrefix}audio/audio.m4a", audio_file
-            )
-            records.append(
-                ArtifactRecord(
-                    kind=ArtifactKind.audio,
-                    storageKey=f"{request.artifactPrefix}audio/audio.m4a",
-                    storagePrefix=None,
-                    contentType="audio/mp4",
-                    sizeBytes=size,
-                    metadata={"bitrate": "96k"},
-                )
-            )
-
-        last_report = 0.0
-
-        async def on_publish(done: int, total_bytes: int) -> None:
-            nonlocal last_report
-            percent = int(100 * done / total_bytes) if total_bytes else 100
-            activity.heartbeat(f"publish {percent}%")
-            now = time.monotonic()
-            if now - last_report >= PROGRESS_INTERVAL_SECONDS:
-                last_report = now
-                await self._progress(request, "publish", percent)
-
-        await self._progress(request, "publish", 0)
-        total = await storage.upload_tree(
-            self.ctx.store, f"{request.artifactPrefix}hls/", hls_dir, on_progress=on_publish
-        )
         records.append(
             ArtifactRecord(
                 kind=ArtifactKind.hls,
                 storageKey=f"{request.artifactPrefix}hls/master.m3u8",
                 storagePrefix=f"{request.artifactPrefix}hls/",
                 contentType="application/vnd.apple.mpegurl",
-                sizeBytes=total,
+                sizeBytes=result.total_bytes,
                 metadata={
-                    "renditions": {name: round(seconds, 3) for name, seconds in renditions.items()},
+                    "renditions": {
+                        name: round(seconds, 3) for name, seconds in result.renditions.items()
+                    },
                     "segment_seconds": hls.SEGMENT_SECONDS,
                     "iframes": video is not None,
+                    "encoder": result.encoder,
                 },
             )
         )
         return records
+
+    async def _extract_audio(self, request: IngestInput, master: Path) -> ArtifactRecord:
+        """The 96k mono-friendly extract WhisperX and the waveform read.
+
+        It stays on the worker whichever backend runs the ladder: it is
+        seconds of CPU, and `derive_source` wants it on the work volume.
+        """
+        directory = work_dir(self.ctx.settings, request.sourceId)
+        audio_dir = directory / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        await self._progress(request, "audio", None)
+        activity.heartbeat("audio extract")
+        from temnia_pipeline.media.ffmpeg import run_ffmpeg  # noqa: PLC0415
+
+        audio_file = audio_dir / "audio.m4a"
+        await run_ffmpeg(
+            self.ctx.settings.ffmpeg,
+            [
+                "-i",
+                str(master),
+                "-vn",
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "96k",
+                "-movflags",
+                "+faststart",
+                str(audio_file),
+            ],
+        )
+        size = await storage.upload_file(
+            self.ctx.store, f"{request.artifactPrefix}audio/audio.m4a", audio_file
+        )
+        return ArtifactRecord(
+            kind=ArtifactKind.audio,
+            storageKey=f"{request.artifactPrefix}audio/audio.m4a",
+            storagePrefix=None,
+            contentType="audio/mp4",
+            sizeBytes=size,
+            metadata={"bitrate": "96k"},
+        )
 
     @activity.defn(name="derive_source")
     async def derive_source(

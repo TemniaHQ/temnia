@@ -16,9 +16,32 @@ from temnia_pipeline.transcode.modal_client import LADDER_FUNCTION, VERSION_FUNC
 
 BANNED = ("temporalio", "psycopg", "av")
 
+# Also builds a job from a plain dict, which is what the container does with
+# the payload Modal hands it. Pydantic resolves `LadderJob.video` lazily, so a
+# `VideoFacts` that exists only for the type checker passes every test that
+# happens to have the name in scope and fails here, in the one process that
+# does not.
 ISOLATION_PROBE = f"""
 import sys
+from temnia_pipeline.transcode import LadderJob
 import temnia_pipeline.modal_app
+
+LadderJob.model_validate(
+    {{
+        "masterKey": "org/a/source/b/master/master.mov",
+        "artifactPrefix": "org/a/source/b/",
+        "sizeBytes": 1,
+        "video": {{
+            "width": 1920,
+            "height": 1080,
+            "fps": "25",
+            "variableFrameRate": False,
+            "codec": "h264",
+        }},
+        "hasAudio": True,
+        "expectedSeconds": 1.0,
+    }}
+)
 loaded = [name for name in {BANNED!r} if name in sys.modules]
 print(",".join(loaded))
 """

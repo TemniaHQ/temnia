@@ -22,12 +22,16 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from temnia_pipeline.media import hls
+
+# Not a type-checking-only import: pydantic resolves `LadderJob.video` at
+# runtime, and a name that exists only for the type checker leaves the model
+# undefined until some caller happens to have it in scope (AGENTS.md, Python
+# pipeline). `media.facts` is exactly the record and none of the decoder.
+from temnia_pipeline.media.facts import VideoFacts  # noqa: TC001
 from temnia_pipeline.storage import key_exists, read_text
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
-
-    from temnia_pipeline.media.facts import VideoFacts
 
 # Bumped whenever a job or a result changes shape. The worker refuses to boot
 # against a deployed Modal app that answers with a different one, so a half

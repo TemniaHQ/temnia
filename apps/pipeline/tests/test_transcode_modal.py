@@ -16,13 +16,14 @@ from temporalio.exceptions import ApplicationError
 
 from temnia_pipeline.media import hls
 from temnia_pipeline.media.facts import VideoFacts
+from temnia_pipeline.settings import TranscodeSettings
 from temnia_pipeline.transcode import (
     LadderJob,
     LadderProgress,
     LadderResult,
     ProgressCallback,
 )
-from temnia_pipeline.transcode.modal import ModalTranscoder
+from temnia_pipeline.transcode.modal import DeploymentError, ModalTranscoder, assert_deployment
 from temnia_pipeline.transcode.modal_client import CallStatus, Done, Failed, Running, Unknown
 
 if TYPE_CHECKING:
@@ -312,3 +313,53 @@ def test_the_scratch_directory_is_named_after_the_source() -> None:
     assert JOB.scratch_name == "0192e8a0-0000-7000-8000-0000000000aa"
     assert JOB.hls_prefix == PREFIX + "hls/"
     assert JOB.manifest_key == PREFIX + "hls/manifest.json"
+
+
+class AuthErrorClient(FakeModalClient):
+    """A client whose token the server rejects."""
+
+    async def version(self) -> str:
+        msg = "token id 'ak-...' not found"
+        raise RuntimeError(msg)
+
+
+class OldDeploymentClient(FakeModalClient):
+    """A Modal app deployed from an older commit."""
+
+    async def version(self) -> str:
+        return "0"
+
+
+SETTINGS = TranscodeSettings(
+    backend="modal",
+    modal_app="temnia-media",
+    modal_environment="staging",
+    progress_dict="temnia-ladder-progress",
+)
+
+
+async def test_a_matching_deployment_lets_the_worker_boot() -> None:
+    await assert_deployment(FakeModalClient(), SETTINGS)
+
+
+async def test_a_deployment_from_another_commit_refuses_the_boot() -> None:
+    with pytest.raises(DeploymentError) as caught:
+        await assert_deployment(OldDeploymentClient(), SETTINGS)
+
+    assert str(caught.value) == (
+        "the Modal app 'temnia-media' in environment 'staging' speaks ladder contract '0' "
+        "and this worker speaks '1'. Deploy the Modal app and the pipeline image "
+        "from the same commit."
+    )
+
+
+async def test_a_rejected_token_refuses_the_boot_and_names_the_variables() -> None:
+    with pytest.raises(DeploymentError) as caught:
+        await assert_deployment(AuthErrorClient(), SETTINGS)
+
+    assert str(caught.value) == (
+        "cannot reach the Modal app 'temnia-media' in environment 'staging': "
+        "token id 'ak-...' not found. Check MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, "
+        "and that `uv run modal deploy temnia_pipeline.modal_app` has run for this "
+        "environment."
+    )

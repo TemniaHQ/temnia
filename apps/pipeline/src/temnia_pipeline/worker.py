@@ -25,6 +25,30 @@ log = logging.getLogger("temnia.worker")
 MAX_CONCURRENT_ACTIVITIES = 2
 
 
+async def assert_transcode_backend(ctx: Context) -> None:
+    """On the Modal backend, prove the deployment before the queue is served.
+
+    A bad token or a Modal app deployed from another commit must be a failed
+    deploy, not a source that sits in the queue: Dokploy keeps the previous
+    container when this one exits non-zero. The local backend has nothing to
+    probe; ffmpeg is in the image.
+    """
+    if ctx.settings.transcode.backend != "modal":
+        return
+    from temnia_pipeline.transcode.modal import (  # noqa: PLC0415
+        DeploymentError,
+        assert_deployment,
+    )
+    from temnia_pipeline.transcode.modal_client import RealModalClient  # noqa: PLC0415
+
+    try:
+        await assert_deployment(RealModalClient(ctx.settings.transcode), ctx.settings.transcode)
+    except DeploymentError as error:
+        log.error("TRANSCODE_BACKEND=modal: %s", error)  # noqa: TRY400
+        raise SystemExit(1) from error
+    log.info("transcode backend: modal, app %s", ctx.settings.transcode.modal_app)
+
+
 async def run_worker(settings: TemporalSettings) -> None:
     """Connect, serve the pipeline queue, and drain on SIGTERM or SIGINT."""
     client = await Client.connect(
@@ -39,6 +63,7 @@ async def run_worker(settings: TemporalSettings) -> None:
 
     ctx = Context.from_env()
     await db.assert_reachable(ctx.settings.database_url)
+    await assert_transcode_backend(ctx)
     ingest = Ingest(ctx)
     reaper = Reaper(ctx)
     worker = Worker(

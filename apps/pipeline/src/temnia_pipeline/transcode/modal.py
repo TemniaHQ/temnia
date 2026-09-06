@@ -20,12 +20,13 @@ from typing import TYPE_CHECKING
 
 from temporalio.exceptions import ApplicationError
 
-from temnia_pipeline.transcode import LadderJob, LadderResult, stored_ladder
+from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult, stored_ladder
 from temnia_pipeline.transcode.modal_client import Done, Failed, Running, Unknown
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
 
+    from temnia_pipeline.settings import TranscodeSettings
     from temnia_pipeline.transcode import ProgressCallback
     from temnia_pipeline.transcode.modal_client import ModalClient
 
@@ -39,8 +40,41 @@ POLL_SECONDS = 10.0
 TERMINAL_MARKERS = ("ffmpeg", "truncated")
 
 
-class ModalFailureError(RuntimeError):
-    """Modal could not run the call; another attempt is worth making."""
+class DeploymentError(RuntimeError):
+    """The deployed app is missing, unreachable, or speaks a different contract."""
+
+
+def _where(settings: TranscodeSettings) -> str:
+    app = f"Modal app {settings.modal_app!r}"
+    if settings.modal_environment is None:
+        return app
+    return f"{app} in environment {settings.modal_environment!r}"
+
+
+async def assert_deployment(client: ModalClient, settings: TranscodeSettings) -> None:
+    """Refuse to boot against a Modal app that is absent or out of step.
+
+    The failure has to be at boot. A worker that starts with a bad token and
+    only discovers it on the first source turns a wrong environment variable
+    into a silent queue; Dokploy rolls back a container that exits non-zero,
+    which is the behaviour we want. Same reason as the database probe.
+    """
+    try:
+        deployed = await client.version()
+    except Exception as error:
+        msg = (
+            f"cannot reach the {_where(settings)}: {error}. Check MODAL_TOKEN_ID and "
+            "MODAL_TOKEN_SECRET, and that `uv run modal deploy temnia_pipeline.modal_app` "
+            "has run for this environment."
+        )
+        raise DeploymentError(msg) from error
+    if deployed != CONTRACT_VERSION:
+        msg = (
+            f"the {_where(settings)} speaks ladder contract {deployed!r} and this worker "
+            f"speaks {CONTRACT_VERSION!r}. Deploy the Modal app and the pipeline image "
+            "from the same commit."
+        )
+        raise DeploymentError(msg)
 
 
 def transcode_failure(message: str) -> ApplicationError:
