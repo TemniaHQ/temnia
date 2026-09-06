@@ -38,6 +38,7 @@ async def run_worker(settings: TemporalSettings) -> None:
         loop.add_signal_handler(sig, stop.set)
 
     ctx = Context.from_env()
+    await db.assert_reachable(ctx.settings.database_url)
     ingest = Ingest(ctx)
     reaper = Reaper(ctx)
     worker = Worker(

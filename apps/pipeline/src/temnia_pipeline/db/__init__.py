@@ -13,14 +13,13 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
     from uuid import UUID
-
-    from psycopg import AsyncConnection
 
     from temnia_pipeline.contracts import ArtifactRecord, ProbeResult, Scope
 
@@ -40,6 +39,17 @@ async def get_pool(database_url: str) -> AsyncConnectionPool[AsyncConnection[dic
         )
         await _pool.open()
     return _pool
+
+
+async def assert_reachable(database_url: str) -> None:
+    """One real connection at worker start, so a wrong host or password fails the boot.
+
+    The pool connects lazily and surfaces a bad URL only as a PoolTimeout
+    on the first activity thirty seconds later; the first staging deploy
+    sat at "Queued" for that reason.
+    """
+    conn = await AsyncConnection.connect(database_url, connect_timeout=15)
+    await conn.close()
 
 
 async def close_pool() -> None:
