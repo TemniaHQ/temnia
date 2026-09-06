@@ -166,11 +166,14 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    active upload from any browser, ListParts says what the store holds, and a grace window
    (`UPLOAD_ADOPT_GRACE_SECONDS`, 60 s) stops two writers interleaving. Listing parts is never a
    liveness signal; signing is. Part size is a deterministic function of file size.
-4. **Player: hls.js 1.7 on a plain video element with peaks.js 4; Video.js v10 is not adopted.** v10
-   is still beta.32 with breaking changes between betas, its React package exposes no `Hls`
-   instance, and the legacy needed a passive adapter to survive its mount-time MSE attach. hls.js 1.7
-   parses I-frame playlists and exposes `createIFramePlayer()` for the S8 scrubber. Peaks is
-   initialised after `loadedmetadata` because of bbc/peaks.js#574. Revisit at v10 GA.
+4. **Player: Video.js v10's React skin over its hls.js media element, with peaks.js 4.** The first
+   S1 build used hls.js on a plain video element (v10 is still beta.32 with breaking changes between
+   betas). Rajesh reversed that the same day because he likes Video.js's UI, the same kind of call as
+   Hugeicons. Two facts from the swap: the media host exposes the hls.js instance as `engine`, so the
+   S8 scrubber's `createIFramePlayer()` is reachable after all (the earlier objection was wrong);
+   and the legacy's passive-adapter trouble is avoided by initialising peaks only after
+   `loadedmetadata` (also bbc/peaks.js#574). `@videojs/react` is pinned to the exact beta; a bump is
+   a deliberate change, re-verified by the Playwright playback and waveform assertions.
 5. **ffmpeg 8.1.2 is the exact release, copied from `mwader/static-ffmpeg:8.1.2` by image digest.**
    No tarball mirror to maintain (the legacy's pin 404'd when BtbN pruned a dated build); PyAV 18.1's
    wheels bundle the same 8.1.2. Re-examined at S3 against 9.0.x as planned.
