@@ -4,7 +4,7 @@
 // poll the source until it is ready or failed. No dependencies.
 //
 //   node scripts/upload-master.mjs <file> --project <projectId> [--base http://localhost:3000]
-//        [--header "cf-access-token: ..."] [--concurrency 4]
+//        [--header "CF-Access-Client-Id: ..." --header "CF-Access-Client-Secret: ..."] [--concurrency 4]
 //
 // Prints the timings that go into the sprint log: upload wall time and
 // ingest wall time, from the same clock the user experiences.
