@@ -192,7 +192,13 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    migrations and the seed before its first request when `MIGRATE_DATABASE_URL` is set, and refuses to
    boot in production without it; a failure exits non-zero and Dokploy keeps the previous container.
    Nothing runs at build time.
-9. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
+9. **The HLS ladder moves to Modal at the start of S2, with WhisperX.** Measured on the staging VPS
+   during the S1 exit run (2026-09-06): a 2:31 1080p25 master laddered at about 2.9x realtime with all
+   eight vCPUs saturated, about 52 minutes for the ladder. Rajesh's call: S1 closes on this box as the
+   exit test is written; the transcode activity then calls a Modal function (NVENC, the same ffmpeg
+   command) once the Modal account exists for transcription, so both land on one deployment. The
+   `veryfast` top-rung preset was offered as a stopgap and declined in favour of the one move.
+10. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
    list in `access-control-allow-origin`, and browsers reject a comma-joined list (the first upload
    attempt failed on exactly that); the gate then serves the page from `127.0.0.1` on a random port,
    which no fixed origin list covers. Part PUTs carry no credentials, so `*` is valid, and the
