@@ -211,6 +211,29 @@ Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stac
 before architectural work. Record durable decisions in the Decisions section above, in the same turn
 they are made.
 
+### The 360-degree view comes before the code (Rajesh, 2026-09-06)
+
+Every change, whatever it touches (a page, a route, a workflow, a script, an env block, a runbook
+line), is planned in full before the first line is written, and the plan is in the PR description.
+The S1 bugs that reached Rajesh on staging were all the same shape: the happy path worked and an
+edge he met within minutes was unplanned, with the information to foresee it already in the session.
+The view covers:
+
+- **Inputs and edges**: empty, huge, duplicate, concurrent, re-entered, cancelled mid-way.
+- **Scale**: production numbers (a two-hour, tens-of-gigabytes master), on the real store and the
+  real network, not loopback.
+- **Failure and time**: per step, its expected duration, the timeout that bounds it, the liveness
+  signal inside it, and what a retry does with partial work (reuse, resume, or restart).
+- **User states**: every state the surface can be in, including waiting, refused, and failed, with
+  the words the user reads and what they can do from there. A raw server message is never a state.
+- **Operations**: env, hostnames, roles, volumes, disk, what a deploy or restart does to work in
+  flight, and how a wrong value shows up (loud at boot, never as a silent queue).
+- **Tenancy and security**: which scope every read and write runs under.
+- **Verification**: which test proves each row above; Playwright for every interactive surface;
+  the sprint's scale run on staging before the sprint is called done.
+- **Legacy lessons**: every item in a legacy report is ticked in the PR description as ported,
+  replaced by something better, or dropped with a reason. Reading a lesson is not applying it.
+
 ### Git workflow
 
 - **Never commit or push directly to `main`.** Every change lands through a pull request:
