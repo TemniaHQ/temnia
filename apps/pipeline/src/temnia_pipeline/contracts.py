@@ -51,6 +51,7 @@ class HelloOutput(BaseModel):
 class IngestStage(StrEnum):
     probe = "probe"
     hls = "hls"
+    publish = "publish"
     thumbnails = "thumbnails"
     audio = "audio"
     peaks = "peaks"

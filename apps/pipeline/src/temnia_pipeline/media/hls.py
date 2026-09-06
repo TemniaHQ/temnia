@@ -21,6 +21,7 @@ assertion stays because it is the thing that keeps a miss from reaching users.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -250,10 +251,21 @@ async def transcode_ladder(  # noqa: PLR0913
     video: VideoFacts | None,
     *,
     has_audio: bool,
+    expected_seconds: float | None = None,
     on_progress: Callable[[float], Awaitable[None]] | None = None,
 ) -> list[Rung]:
-    """Run the ladder and return the rungs it produced."""
+    """Run the ladder and return its rungs; a complete ladder from an earlier attempt is reused."""
     rungs = plan_rungs(video) if video else []
+    if expected_seconds is not None and ladder_is_complete(
+        out_dir,
+        rungs,
+        has_audio=has_audio,
+        iframes=video is not None,
+        expected_seconds=expected_seconds,
+    ):
+        return rungs
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for rung in rungs:
         (out_dir / rung.name).mkdir(exist_ok=True)
@@ -269,6 +281,30 @@ async def transcode_ladder(  # noqa: PLR0913
         mark_iframe_playlist(out_dir / "iframes" / "index.m3u8")
         append_iframe_variant(out_dir / "master.m3u8", out_dir / "iframes", duration_hint=None)
     return rungs
+
+
+def ladder_is_complete(
+    out_dir: Path, rungs: list[Rung], *, has_audio: bool, iframes: bool, expected_seconds: float
+) -> bool:
+    """True when every playlist an earlier attempt should have written exists and covers the source.
+
+    A retried transcode activity (a worker restart, a timeout in the publish
+    step that follows) must not throw away fifty minutes of encoding.
+    """
+    if not (out_dir / "master.m3u8").exists():
+        return False
+    playlists = [out_dir / rung.name / "index.m3u8" for rung in rungs]
+    if has_audio:
+        playlists.append(out_dir / "audio" / "index.m3u8")
+    if iframes:
+        playlists.append(out_dir / "iframes" / "index.m3u8")
+    try:
+        for playlist in playlists:
+            floor = KEYFRAME_SECONDS if playlist.parent.name == "iframes" else 0.0
+            assert_covers(playlist, expected_seconds, floor_seconds=floor)
+    except (OSError, TruncatedOutputError):
+        return False
+    return True
 
 
 def playlist_seconds(playlist: Path) -> float:

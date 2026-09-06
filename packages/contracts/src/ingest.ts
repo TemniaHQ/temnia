@@ -59,7 +59,16 @@ export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>;
 
 /** Stage names the ingest workflow reports on the source row. */
 export const IngestStageSchema = z
-  .enum(["probe", "hls", "thumbnails", "audio", "peaks", "shots", "finalize"])
+  .enum([
+    "probe",
+    "hls",
+    "publish",
+    "thumbnails",
+    "audio",
+    "peaks",
+    "shots",
+    "finalize",
+  ])
   .meta({ id: "IngestStage", title: "IngestStage" });
 
 export type IngestStage = z.infer<typeof IngestStageSchema>;
