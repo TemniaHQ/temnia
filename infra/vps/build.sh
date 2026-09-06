@@ -11,8 +11,8 @@ export DEBIAN_FRONTEND=noninteractive
 step() { echo "STEP $*"; }
 
 step 1 hostname
-hostnamectl set-hostname temnia-staging
-grep -q "temnia-staging" /etc/hosts || echo "127.0.1.1 temnia-staging" >> /etc/hosts
+hostnamectl set-hostname temnia-vps
+grep -q "temnia-vps" /etc/hosts || echo "127.0.1.1 temnia-vps" >> /etc/hosts
 
 step 2 packages
 apt-get update -q

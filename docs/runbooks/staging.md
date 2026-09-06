@@ -14,10 +14,10 @@ memory, not here.
 | `web` | Application, Dockerfile `apps/web/Dockerfile`, context `.` | `TemniaHQ/temnia` `main`, watch paths `apps/web/**`, `packages/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`, `turbo.json` | `staging.temnia.dev` |
 | `pipeline` | Application, Dockerfile `apps/pipeline/Dockerfile`, context `apps/pipeline` | same repo, watch paths `apps/pipeline/**` | no hostname; Temporal worker only |
 | `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.temnia.dev` (UI); `temporal:7233` inside `dokploy-network` |
-| `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-staging-postgres:5432` inside `dokploy-network` |
+| `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-vps-postgres:5432` inside `dokploy-network` |
 | `cloudflared` | Application, image `cloudflare/cloudflared:2026.8.3` | Dokploy-managed | outbound only |
 
-Object storage is Cloudflare R2 (bucket `temnia-staging-media`); Garage is local development only.
+Object storage is Cloudflare R2 (bucket `temnia-vps-media`); Garage is local development only.
 
 Runtime env per target (set in Dokploy, never in the image):
 
@@ -43,7 +43,8 @@ step 3 because the sshd restart ends the session). Nothing on the box was inheri
 install. What the
 script does, in order:
 
-1. hostname `temnia-staging`; full package upgrade; unattended security upgrades on; `ufw` removed
+1. hostname `temnia-vps` (the machine carries every environment of the `temnia` Dokploy project, so its
+   name carries none); full package upgrade; unattended security upgrades on; `ufw` removed
    (it cannot see Docker-published ports) in favour of raw iptables saved by `netfilter-persistent`.
 2. SSH: key-only root (`/etc/ssh/sshd_config.d/10-temnia.conf`, sorted before cloud-init's drop-in so
    it wins), password and keyboard-interactive off, three tries.
@@ -78,7 +79,7 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
    every browser, so nothing on it can be served over plain HTTP; Cloudflare terminates TLS, so that
    costs nothing here.
 2. **Tunnel.** Zero Trust → Networks → Connectors → Create a tunnel → Cloudflared. Name it
-   `temnia-staging`. Copy the token. Public hostnames, all of type HTTP with service
+   `temnia-vps`. Copy the token. Public hostnames, all of type HTTP with service
    `http://dokploy-traefik:80`: `dokploy.temnia.dev`, `staging.temnia.dev`, `temporal.temnia.dev`.
 3. **Access.** Zero Trust → Access → Applications → self-hosted, one application per hostname
    above. Policy `Rajesh only`: Allow, include the login email. Identity provider: the built-in
@@ -106,7 +107,7 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
 Create the four Temnia services in the `temnia` project's `staging` environment:
 
 - **postgres**: Dokploy Database → PostgreSQL, image `pgvector/pgvector:0.8.6-pg18-trixie`,
-  database `temnia`, user `temnia`, generated password, name `temnia-staging-postgres`. After the
+  database `temnia`, user `temnia`, generated password, name `temnia-vps-postgres`. After the
   first start, create the two application roles the same way `infra/dev/postgres-init/01-roles.sql`
   does, with generated passwords (`temnia_app`, `temnia_pipeline`; the `temporal` role is not
   needed here because the Temporal stack has its own Postgres).
