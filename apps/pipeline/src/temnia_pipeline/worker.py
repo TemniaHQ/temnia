@@ -8,7 +8,8 @@ import signal
 
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.worker import SandboxedWorkflowRunner, SandboxRestrictions, Worker
+from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from temnia_pipeline import db
 from temnia_pipeline.activities import say_hello
