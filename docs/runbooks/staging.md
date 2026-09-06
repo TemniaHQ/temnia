@@ -89,7 +89,7 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
 4. **First run.** Through the SSH port forward, create the Dokploy admin account.
 5. **cloudflared on the box.** Dokploy → new project `temnia` → environment `staging` →
    Application `cloudflared`: provider Docker, image `cloudflare/cloudflared:2026.8.3`, env
-   `TUNNEL_TOKEN=<token>`, command `tunnel --no-autoupdate run`. Deploy; the log must show four
+   `TUNNEL_TOKEN=<token>`, Run Command `cloudflared tunnel --no-autoupdate run` (the field replaces the image entrypoint, so the binary name is required). Deploy; the log must show four
    registered connections.
 6. **Panel domain.** Dokploy → Web Server → Server Domain: `dokploy.temnia.dev`, HTTPS off,
    certificate none. Open it through the tunnel and confirm Access prompts.
