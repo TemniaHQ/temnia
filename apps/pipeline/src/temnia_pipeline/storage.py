@@ -14,6 +14,8 @@ from botocore.config import Config
 from obstore.store import S3Store
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from mypy_boto3_s3 import S3Client
 
 if TYPE_CHECKING:
@@ -78,15 +80,33 @@ async def upload_file(store: S3Store, key: str, path: Path) -> int:
     return path.stat().st_size
 
 
-async def upload_tree(store: S3Store, prefix: str, root: Path) -> int:
-    """Upload every file under `root` to `prefix`; returns total bytes."""
+async def upload_tree(
+    store: S3Store,
+    prefix: str,
+    root: Path,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+) -> int:
+    """Upload every file under `root` to `prefix`; returns total bytes.
+
+    `on_progress(done_bytes, total_bytes)` is awaited after every file. A
+    2.5-hour ladder is about 4,500 segments and several gigabytes; without a
+    heartbeat inside this loop the activity times out mid-publish (staging,
+    2026-09-06) and the retry throws the finished ladder away.
+    """
     files = [p for p in root.rglob("*") if p.is_file()]
+    total = sum(p.stat().st_size for p in files)
+    done = 0
     semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
     async def one(path: Path) -> int:
+        nonlocal done
         async with semaphore:
             key = prefix + path.relative_to(root).as_posix()
-            return await upload_file(store, key, path)
+            size = await upload_file(store, key, path)
+            done += size
+            if on_progress is not None:
+                await on_progress(done, total)
+            return size
 
     sizes = await asyncio.gather(*(one(p) for p in files))
     return sum(sizes)
