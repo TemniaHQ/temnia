@@ -11,9 +11,9 @@ memory, not here.
 
 | Target | Dokploy service type | Source | Reached as |
 |---|---|---|---|
-| `web` | Application, Dockerfile `apps/web/Dockerfile`, context `.` | `TemniaHQ/temnia` `main`, watch paths `apps/web/**`, `packages/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`, `turbo.json` | `staging.temnia.com` |
+| `web` | Application, Dockerfile `apps/web/Dockerfile`, context `.` | `TemniaHQ/temnia` `main`, watch paths `apps/web/**`, `packages/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`, `turbo.json` | `staging.temnia.dev` |
 | `pipeline` | Application, Dockerfile `apps/pipeline/Dockerfile`, context `apps/pipeline` | same repo, watch paths `apps/pipeline/**` | no hostname; Temporal worker only |
-| `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.staging.temnia.com` (UI); `temporal:7233` inside `dokploy-network` |
+| `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.temnia.dev` (UI); `temporal:7233` inside `dokploy-network` |
 | `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-staging-postgres:5432` inside `dokploy-network` |
 | `cloudflared` | Application, image `cloudflare/cloudflared:2026.8.3` | Dokploy-managed | outbound only |
 
@@ -38,12 +38,15 @@ docker service inspect <service> --format '{{range .Spec.TaskTemplate.ContainerS
 
 These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner. Each is done once.
 
-1. **Zone.** Add `temnia.com` to the Cloudflare account and move its nameservers at Spaceship to
-   the two Cloudflare assigns. Wait for the zone to become active. SSL/TLS mode **Full (strict)**.
+1. **Zone.** Add `temnia.dev` (the infra domain, registered 2026-09-06; `temnia.com` stays the
+   product domain and stays on Spaceship until the product needs it) to the Cloudflare account and
+   move its nameservers at Spaceship to the two Cloudflare assigns. Wait for the zone to become
+   active. SSL/TLS mode **Full (strict)**. `.dev` is HSTS-preloaded in every browser, so nothing on
+   it can be served over plain HTTP; Cloudflare terminates TLS, so that costs nothing here.
 2. **Tunnel.** Zero Trust → Networks → Connectors → Create a tunnel → Cloudflared. Name it
    `temnia-staging`. Copy the token. Public hostnames, all of type HTTP with service
-   `http://dokploy-traefik:80`: `staging.temnia.com`, `temporal.staging.temnia.com`,
-   `dokploy.temnia.com`.
+   `http://dokploy-traefik:80`: `staging.temnia.dev`, `temporal.temnia.dev`,
+   `dokploy.temnia.dev`.
 3. **Access.** Zero Trust → Access → Applications → self-hosted, one application per hostname
    above. Policy `Rajesh only`: Allow, include the login email. Identity provider: the built-in
    Cloudflare login (account MFA). The Dokploy application keeps two extra **Bypass → Everyone**
@@ -56,7 +59,7 @@ These steps need the Cloudflare and Dokploy dashboards and the GitHub org owner.
    Application `cloudflared`: provider Docker, image `cloudflare/cloudflared:2026.8.3`, env
    `TUNNEL_TOKEN=<token>`, command `tunnel --no-autoupdate run`. Deploy; the log must show four
    registered connections.
-6. **Cut over Dokploy itself.** Dokploy → Web Server → Server Domain: `dokploy.temnia.com`, HTTPS
+6. **Cut over Dokploy itself.** Dokploy → Web Server → Server Domain: `dokploy.temnia.dev`, HTTPS
    off, certificate none. Open it through the tunnel and confirm Access prompts, then delete the
    old panel hostname from the legacy zone.
 7. **Close the origin.** On the VPS, remove the Cloudflare origin-lock rules in `DOCKER-USER`
@@ -83,11 +86,11 @@ Create the four Temnia services in the `temnia` project's `staging` environment:
   needed here because the Temporal stack has its own Postgres).
 - **temporal**: Compose, repository `TemniaHQ/temnia`, branch `main`, compose path
   `deploy/temporal/compose.yaml`, env `TEMPORAL_DB_PASSWORD=<generated>`. Domain for service
-  `temporal-ui`, host `temporal.staging.temnia.com`, container port 8080, HTTPS off, certificate
+  `temporal-ui`, host `temporal.temnia.dev`, container port 8080, HTTPS off, certificate
   none.
 - **web**: Application, repository `TemniaHQ/temnia`, branch `main`, build type Dockerfile,
   Dockerfile path `apps/web/Dockerfile`, build context `.`, watch paths as in §1, env as in §1.
-  Domain `staging.temnia.com`, container port 3000, HTTPS off, certificate none.
+  Domain `staging.temnia.dev`, container port 3000, HTTPS off, certificate none.
 - **pipeline**: Application, same repository and branch, Dockerfile path
   `apps/pipeline/Dockerfile`, build context `apps/pipeline`, watch paths `apps/pipeline/**`, env as
   in §1. No domain.
@@ -98,7 +101,7 @@ rebuilds only the targets whose files changed.
 ## 4. Verify a deploy
 
 1. GitHub → the merge commit → Dokploy's deployment shows `done` for each affected target.
-2. `https://staging.temnia.com/api/health` returns `{"ok":true,"service":"temnia-web"}` after the
+2. `https://staging.temnia.dev/api/health` returns `{"ok":true,"service":"temnia-web"}` after the
    Access login.
 3. On the page, run the hello workflow: the result names the seeded organization id and a Python
    worker host. In the Temporal UI the workflow shows one completed activity on task queue

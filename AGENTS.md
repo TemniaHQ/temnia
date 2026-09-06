@@ -132,6 +132,15 @@ triggers fires or the sprint's build list re-researches it; a change is made in 
 it and states what was compared. Decisions already carrying their own dated entries above (runtime,
 media language, schema owner, icons, transcription, no default vendor) are not re-argued through it.
 
+**2026-09-06 — Infrastructure lives on `temnia.dev`; the product lives on `temnia.com`.** Rajesh
+registered `temnia.dev` as the infra domain: `dokploy.temnia.dev`, `staging.temnia.dev`, and
+`temporal.temnia.dev`, all behind the Cloudflare Tunnel and Cloudflare Access. `temnia.com` carries
+only product and marketing hostnames and takes design partners' custom domains through Cloudflare for
+SaaS at S27. Why separate: certificate transparency logs publish every hostname a certificate is issued
+for, so infra names on the product domain advertise the control plane; cookies scoped to the product's
+registrable domain cannot leak between staging and production; and the product zone stays clean for
+custom hostnames. The staging VPS is reinstalled from scratch for this (runbook `docs/runbooks/staging.md`).
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
