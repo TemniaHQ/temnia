@@ -68,6 +68,27 @@ async def download(store: S3Store, key: str, dest: Path, *, expected_size: int |
     return size
 
 
+async def read_text(store: S3Store, key: str) -> str | None:
+    """Fetch a small object as text; None when the key is not there.
+
+    For completion markers, where absent is an answer and not a fault.
+    """
+    try:
+        result = await obs.get_async(store, key)
+    except FileNotFoundError:
+        return None
+    return bytes(await result.bytes_async()).decode()
+
+
+async def key_exists(store: S3Store, key: str) -> bool:
+    """True when the object is in the store."""
+    try:
+        await obs.head_async(store, key)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 async def upload_file(store: S3Store, key: str, path: Path) -> int:
     """Put one file; returns its size."""
     with path.open("rb") as handle:

@@ -5,6 +5,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast, get_args
+
+TranscodeBackend = Literal["local", "modal"]
+DEFAULT_MODAL_APP = "temnia-media"
+DEFAULT_PROGRESS_DICT = "temnia-ladder-progress"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +57,36 @@ class StorageSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TranscodeSettings:
+    """Where the HLS ladder runs: this worker, or a GPU on Modal.
+
+    `local` is the default, because it is what dev and the gate use and a
+    missing variable must never route work at a service that costs money.
+    """
+
+    backend: TranscodeBackend
+    modal_app: str
+    modal_environment: str | None
+    progress_dict: str
+
+    @classmethod
+    def from_env(cls) -> TranscodeSettings:
+        """Read `TRANSCODE_BACKEND`, `MODAL_APP`, `MODAL_ENVIRONMENT`, `MODAL_PROGRESS_DICT`."""
+        backend = os.environ.get("TRANSCODE_BACKEND", "local")
+        if backend not in get_args(TranscodeBackend):
+            options = ", ".join(get_args(TranscodeBackend))
+            msg = f"TRANSCODE_BACKEND is {backend!r}; it must be one of {options}"
+            raise ValueError(msg)
+        return cls(
+            backend=cast("TranscodeBackend", backend),
+            modal_app=os.environ.get("MODAL_APP", DEFAULT_MODAL_APP),
+            # Unset means Modal's default environment for the workspace.
+            modal_environment=os.environ.get("MODAL_ENVIRONMENT") or None,
+            progress_dict=os.environ.get("MODAL_PROGRESS_DICT", DEFAULT_PROGRESS_DICT),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineSettings:
     """Everything else the worker needs."""
 
@@ -59,6 +94,7 @@ class PipelineSettings:
     work_root: Path
     ffmpeg: str
     ffprobe: str
+    transcode: TranscodeSettings
 
     @classmethod
     def from_env(cls) -> PipelineSettings:
@@ -71,4 +107,5 @@ class PipelineSettings:
             work_root=Path(os.environ.get("PIPELINE_WORK_DIR", "/tmp/temnia-pipeline")),  # noqa: S108
             ffmpeg=os.environ.get("FFMPEG", "ffmpeg"),
             ffprobe=os.environ.get("FFPROBE", "ffprobe"),
+            transcode=TranscodeSettings.from_env(),
         )
