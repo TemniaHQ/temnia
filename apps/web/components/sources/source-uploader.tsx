@@ -21,20 +21,21 @@ import {
 type State =
   | { phase: "idle" }
   | { phase: "starting"; name: string }
+  | { phase: "waiting"; name: string; seconds: number }
   | {
       phase: "uploading";
       name: string;
       progress: UploadProgress;
       paused: boolean;
     }
-  | { phase: "completing"; name: string }
   | { phase: "done"; name: string; sourceId: string }
   | { phase: "error"; name: string; message: string };
 
 /**
- * Picks a master and streams it to storage in parts. Reloading the page
- * mid-upload loses nothing: re-select the same file and the server hands back
- * the parts it already has.
+ * Picks a master and streams it to storage in parts. Closing or reloading the
+ * page loses nothing: pick the same file again and the server hands back the
+ * parts it already has. If that earlier upload signed a part within the last
+ * minute the server asks for a short wait first, shown as a countdown.
  */
 export function SourceUploader({ projectId }: { projectId: string }) {
   const router = useRouter();
@@ -46,13 +47,18 @@ export function SourceUploader({ projectId }: { projectId: string }) {
   const begin = async (file: File) => {
     setState({ name: file.name, phase: "starting" });
     try {
-      const handle = await startUpload(file, projectId, (progress) => {
-        setState((current) =>
-          current.phase === "uploading"
-            ? { ...current, progress }
-            : { name: file.name, paused: false, phase: "uploading", progress }
-        );
-      });
+      const handle = await startUpload(
+        file,
+        projectId,
+        (progress) => {
+          setState((current) =>
+            current.phase === "uploading"
+              ? { ...current, progress }
+              : { name: file.name, paused: false, phase: "uploading", progress }
+          );
+        },
+        (seconds) => setState({ name: file.name, phase: "waiting", seconds })
+      );
       handleRef.current = handle;
       router.refresh();
       const result = await handle.done;
@@ -107,8 +113,9 @@ export function SourceUploader({ projectId }: { projectId: string }) {
       <CardHeader>
         <CardTitle>Upload a master</CardTitle>
         <CardDescription>
-          Video or audio, any size. Parts go straight to storage; a reload
-          resumes where it stopped when you pick the same file again.
+          Video or audio, any size. Parts go straight to storage. If the page is
+          closed or reloaded, pick the same file again and it resumes from the
+          parts already stored.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -151,6 +158,15 @@ export function SourceUploader({ projectId }: { projectId: string }) {
             Preparing {state.name}…
           </p>
         ) : null}
+        {state.phase === "waiting" ? (
+          <p
+            className="text-muted-foreground text-sm"
+            data-testid="upload-waiting"
+          >
+            An earlier upload of {state.name} was active a moment ago. Resuming
+            from its parts in {state.seconds}s…
+          </p>
+        ) : null}
         {state.phase === "uploading" ? (
           <div className="flex flex-col gap-2" data-testid="upload-progress">
             <div className="flex items-center justify-between text-sm">
@@ -182,11 +198,6 @@ export function SourceUploader({ projectId }: { projectId: string }) {
               </Button>
             </div>
           </div>
-        ) : null}
-        {state.phase === "completing" ? (
-          <p className="text-muted-foreground text-sm">
-            Finishing {state.name}…
-          </p>
         ) : null}
       </CardContent>
     </Card>

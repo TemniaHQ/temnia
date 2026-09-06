@@ -68,7 +68,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     async (
       tx,
       scope
-    ): Promise<UploadSession | { error: string; status: number }> => {
+    ): Promise<
+      | UploadSession
+      | { error: string; status: number; retryAfterSeconds?: number }
+    > => {
       const [owner] = await tx
         .select({ id: project.id })
         .from(project)
@@ -81,6 +84,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         .select({
           quiet: sql<boolean>`${upload.lastActivityAt} < now() - make_interval(secs => ${adoptGraceSeconds()})`,
           row: upload,
+          secondsLeft: sql<number>`GREATEST(1, CEIL(${adoptGraceSeconds()} - EXTRACT(EPOCH FROM now() - ${upload.lastActivityAt})))::int`,
         })
         .from(upload)
         .where(
@@ -90,7 +94,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (existing && !existing.quiet) {
         // Another browser is still signing parts for this file; adopting it
         // now would interleave two writers over the same part numbers.
-        return { error: "an upload of this file is in progress", status: 409 };
+        return {
+          error: "an upload of this file is in progress",
+          retryAfterSeconds: Number(existing.secondsLeft),
+          status: 409,
+        };
       }
       if (existing) {
         const active = existing.row;
@@ -176,7 +184,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
 
   if ("error" in session) {
-    return Response.json({ error: session.error }, { status: session.status });
+    return Response.json(
+      { error: session.error, retryAfterSeconds: session.retryAfterSeconds },
+      { status: session.status }
+    );
   }
   return Response.json(session);
 }

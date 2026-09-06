@@ -166,10 +166,12 @@ test("an upload whose first part is already stored resumes from it", async ({
     },
     { name, partSize, projectId, size }
   );
-  await page.waitForTimeout((grace + 1) * 1000);
+  // No waiting here: the re-pick lands inside the grace window on purpose,
+  // so the widget must show the countdown and then adopt on its own.
 
   // Half two: the same file is picked again (a DataTransfer, so lastModified
-  // is the same); the uploader must adopt the upload and PUT only parts 2 and 3.
+  // is the same) while the first upload is still inside the grace window; the
+  // widget waits it out, adopts the upload, and PUTs only parts 2 and 3.
   const puts: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "PUT" && PART_URL.test(request.url())) {
@@ -194,6 +196,9 @@ test("an upload whose first part is already stored resumes from it", async ({
     },
     { name, size }
   );
+  await expect(page.getByTestId("upload-waiting")).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByTestId("upload-done")).toBeVisible({
     timeout: 60_000,
   });
