@@ -139,8 +139,6 @@ class Ingest:
         _, video = await asyncio.to_thread(probe, master)
         directory = work_dir(self.ctx.settings, request.sourceId)
         hls_dir = directory / "hls"
-        if hls_dir.exists():
-            shutil.rmtree(hls_dir)
         duration = probed.durationMs / 1000
         last_report = 0.0
 
@@ -161,6 +159,7 @@ class Ingest:
                 hls_dir,
                 video,
                 has_audio=probed.audioChannels is not None and probed.audioChannels > 0,
+                expected_seconds=duration,
                 on_progress=on_progress,
             )
             renditions: dict[str, float] = {}
@@ -219,9 +218,21 @@ class Ingest:
                 )
             )
 
-        activity.heartbeat("publishing hls")
-        await self._progress(request, "hls", 100)
-        total = await storage.upload_tree(self.ctx.store, f"{request.artifactPrefix}hls/", hls_dir)
+        last_report = 0.0
+
+        async def on_publish(done: int, total_bytes: int) -> None:
+            nonlocal last_report
+            percent = int(100 * done / total_bytes) if total_bytes else 100
+            activity.heartbeat(f"publish {percent}%")
+            now = time.monotonic()
+            if now - last_report >= PROGRESS_INTERVAL_SECONDS:
+                last_report = now
+                await self._progress(request, "publish", percent)
+
+        await self._progress(request, "publish", 0)
+        total = await storage.upload_tree(
+            self.ctx.store, f"{request.artifactPrefix}hls/", hls_dir, on_progress=on_publish
+        )
         records.append(
             ArtifactRecord(
                 kind=ArtifactKind.hls,

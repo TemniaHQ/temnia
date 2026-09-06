@@ -192,7 +192,13 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    migrations and the seed before its first request when `MIGRATE_DATABASE_URL` is set, and refuses to
    boot in production without it; a failure exits non-zero and Dokploy keeps the previous container.
    Nothing runs at build time.
-9. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
+9. **The HLS ladder moves to Modal at the start of S2, with WhisperX.** Measured on the staging VPS
+   during the S1 exit run (2026-09-06): a 2:31 1080p25 master laddered at about 2.9x realtime with all
+   eight vCPUs saturated, about 52 minutes for the ladder. Rajesh's call: S1 closes on this box as the
+   exit test is written; the transcode activity then calls a Modal function (NVENC, the same ffmpeg
+   command) once the Modal account exists for transcription, so both land on one deployment. The
+   `veryfast` top-rung preset was offered as a stopgap and declined in favour of the one move.
+10. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
    list in `access-control-allow-origin`, and browsers reject a comma-joined list (the first upload
    attempt failed on exactly that); the gate then serves the page from `127.0.0.1` on a random port,
    which no fixed origin list covers. Part PUTs carry no credentials, so `*` is valid, and the
@@ -204,6 +210,29 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
 before architectural work. Record durable decisions in the Decisions section above, in the same turn
 they are made.
+
+### The 360-degree view comes before the code (Rajesh, 2026-09-06)
+
+Every change, whatever it touches (a page, a route, a workflow, a script, an env block, a runbook
+line), is planned in full before the first line is written, and the plan is in the PR description.
+The S1 bugs that reached Rajesh on staging were all the same shape: the happy path worked and an
+edge he met within minutes was unplanned, with the information to foresee it already in the session.
+The view covers:
+
+- **Inputs and edges**: empty, huge, duplicate, concurrent, re-entered, cancelled mid-way.
+- **Scale**: production numbers (a two-hour, tens-of-gigabytes master), on the real store and the
+  real network, not loopback.
+- **Failure and time**: per step, its expected duration, the timeout that bounds it, the liveness
+  signal inside it, and what a retry does with partial work (reuse, resume, or restart).
+- **User states**: every state the surface can be in, including waiting, refused, and failed, with
+  the words the user reads and what they can do from there. A raw server message is never a state.
+- **Operations**: env, hostnames, roles, volumes, disk, what a deploy or restart does to work in
+  flight, and how a wrong value shows up (loud at boot, never as a silent queue).
+- **Tenancy and security**: which scope every read and write runs under.
+- **Verification**: which test proves each row above; Playwright for every interactive surface;
+  the sprint's scale run on staging before the sprint is called done.
+- **Legacy lessons**: every item in a legacy report is ticked in the PR description as ported,
+  replaced by something better, or dropped with a reason. Reading a lesson is not applying it.
 
 ### Git workflow
 

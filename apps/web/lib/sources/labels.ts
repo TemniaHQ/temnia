@@ -16,6 +16,7 @@ const STAGE_LABELS: Record<IngestStage, string> = {
   hls: "Preparing playback",
   peaks: "Building waveform",
   probe: "Checking recording",
+  publish: "Saving playback",
   shots: "Finding shot changes",
   thumbnails: "Creating previews",
 };
