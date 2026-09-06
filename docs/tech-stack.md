@@ -91,7 +91,7 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 
 | Slot | Pick | Compared | Verdict |
 |---|---|---|---|
-| Player | **hls.js 1.7.2 on a plain `<video>`** (S1); Video.js v10 re-evaluated at its GA | Video.js v10 React (beta.32), Media Chrome 4.19 + hls-video-element, Vidstack (maintenance only) | §14, 2026-09-06 (S1): v10 is still beta with breaking changes between betas and no `Hls` accessor in its React package; hls.js 1.7 parses I-frame playlists and exposes `createIFramePlayer()` for the S8 scrubber; Media Chrome is the chrome option when custom controls need one |
+| Player | **`@videojs/react` 10.0.0-beta.32, pinned** (`VideoSkin` + `HlsJsVideo`, hls.js 1.7 as its engine) | hls.js 1.7.2 on a plain `<video>` (the first S1 build), Media Chrome 4.19 + hls-video-element, Vidstack (maintenance only) | Rajesh's call, 2026-09-06: the Video.js UI. The media host exposes the `Hls` instance as `engine`, so the S8 scrubber keeps `createIFramePlayer()`. Beta risk is carried on purpose: exact pin, bumps re-verified by Playwright |
 | Waveform | **peaks.js 4** with server-generated peaks | wavesurfer.js 7 | peaks.js is built for pre-computed peaks over long sources; upstream is slow (our bbc/peaks.js#574 is open). wavesurfer with pre-decoded peaks is the fallback if the S8 timeline needs it |
 | Frame access | **MediaBunny 1.55** (MPL) at S8 | — | Active (release 2026-09-04); keyframe-only decode through the I-frame playlists |
 | Preview | **Remotion Player** at S8 | — | One composition for preview and render |
@@ -225,7 +225,7 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 | 2026-09-06 (S1) | Better Auth is **1.7.3**, the CLI is the `auth` package, and the Drizzle adapter is `@better-auth/drizzle-adapter`; columns resolve by Drizzle property key, so snake_case DB names need no field mapping | Verified from source and a real `auth generate` run; §5 row 1 |
 | 2026-09-06 (S1) | drizzle-kit 0.31 emits no `FORCE ROW LEVEL SECURITY` and no grants; `packages/db/scripts/generate.ts` completes each migration | AGENTS.md 2026-09-06 decision 1 |
 | 2026-09-06 (S1) | Uploader is **in-house** (server-signed part URLs, server-side control calls and resume); Uppy 6.0 rejected | Uppy 6 (2026-08-26) rewrote `@uppy/aws-s3` to do Create/ListParts/Complete/Abort from the browser on presigned URLs, which R2 does not support (presigned GET/PUT/HEAD/DELETE only); tus needs another service; nothing on npm worth a dependency |
-| 2026-09-06 (S1) | Player is **hls.js 1.7.2 + peaks.js 4.0.0** on a plain video element; Video.js v10 deferred to GA | §4 |
+| 2026-09-06 (S1) | Player is **Video.js v10 React (beta.32, pinned) + peaks.js 4.0.0**; built first on bare hls.js, reversed the same day on Rajesh's preference for the Video.js UI | §4; AGENTS.md decision 4 |
 | 2026-09-06 (S1) | ffmpeg **8.1.2 by image digest** (`mwader/static-ffmpeg`), no tarball mirror | §8 |
 | 2026-09-06 (S1) | HLS is **fMP4** (`independent_segments`, 2 s GOP, capped CRF, audio group via `var_stream_map`) with a **separate intra-only I-frame rendition**; ffmpeg's `iframes_only` flag verified unusable as a companion playlist on 8.1.2 | AGENTS.md decision 6 |
 | 2026-09-06 (S1) | Python DB access is **psycopg 3** with a schema-contract test; sqlacodegen deferred | §8 |

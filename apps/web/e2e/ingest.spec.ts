@@ -8,6 +8,7 @@ const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\//;
 const PART_URL = /\/temnia-media\//;
 const PART_NUMBER = /partNumber=(\d+)/;
+const STARTED = /uploaded|processing/;
 
 async function createProject(page: Page, name: string): Promise<string> {
   await page.goto("/projects");
@@ -201,4 +202,23 @@ test("an upload whose first part is already stored resumes from it", async ({
     timeout: 60_000,
   });
   await expect(row).toContainText("could not be read");
+
+  // The row menu: retry runs the ingest again (and fails again, same bytes),
+  // delete removes the row and everything under its prefix.
+  await row.getByTestId("source-actions").click();
+  await page.getByRole("menuitem", { name: "Retry ingest" }).click();
+  await expect(row).toHaveAttribute("data-status", STARTED, {
+    timeout: 15_000,
+  });
+  await expect(row).toHaveAttribute("data-status", "failed", {
+    timeout: 60_000,
+  });
+
+  await row.getByTestId("source-actions").click();
+  await page.getByRole("menuitem", { name: "Delete source" }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.getByTestId("confirm-delete").click();
+  await expect(page.locator("[data-source-id]")).toHaveCount(0, {
+    timeout: 30_000,
+  });
 });

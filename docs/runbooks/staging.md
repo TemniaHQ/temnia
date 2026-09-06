@@ -14,7 +14,7 @@ memory, not here.
 | `web` | Application, Dockerfile `apps/web/Dockerfile`, context `.` | `TemniaHQ/temnia` `main`, watch paths `apps/web/**`, `packages/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`, `turbo.json` | `staging.temnia.dev` |
 | `pipeline` | Application, Dockerfile `apps/pipeline/Dockerfile`, context `apps/pipeline` | same repo, watch paths `apps/pipeline/**` | no hostname; Temporal worker only |
 | `temporal` | Compose, `deploy/temporal/compose.yaml` | same repo, watch path `deploy/temporal/**`, `infra/temporal/**` | `temporal.temnia.dev` (UI); `temporal-staging:7233` inside `dokploy-network` |
-| `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-staging-postgres:5432` inside `dokploy-network` |
+| `postgres` | Database, Postgres 18 with pgvector (image `pgvector/pgvector:0.8.6-pg18-trixie`) | Dokploy-managed, volume on the VPS | `temnia-staging-postgres-<suffix>:5432` inside `dokploy-network` (Dokploy appends a random suffix to every service name; today it is `temnia-staging-postgres-tucueg`; look it up with `docker service ls` on the box) |
 | `cloudflared` | Application, image `cloudflare/cloudflared:2026.8.3` | Dokploy-managed | outbound only |
 
 Object storage is Cloudflare R2 (bucket `temnia-staging-media`); Garage is local development only.
@@ -28,18 +28,20 @@ and write on it; the CORS rule below (browsers PUT upload parts straight to R2, 
   "AllowedHeaders": ["content-type"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600}]
 ```
 
-Runtime env per target (set in Dokploy, never in the image):
+Runtime env per target (set in Dokploy, never in the image). The database hostname carries Dokploy's
+suffix: the first S1 deploy failed with `getaddrinfo ENOTFOUND temnia-staging-postgres` because the
+runbook had assumed the bare app name.
 
 - `web`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`,
-  `DATABASE_URL=postgres://temnia_app:<pw>@temnia-staging-postgres:5432/temnia`,
-  `MIGRATE_DATABASE_URL=postgres://temnia:<pw>@temnia-staging-postgres:5432/temnia` (required: the
+  `DATABASE_URL=postgres://temnia_app:<pw>@temnia-staging-postgres-<suffix>:5432/temnia`,
+  `MIGRATE_DATABASE_URL=postgres://temnia:<pw>@temnia-staging-postgres-<suffix>:5432/temnia` (required: the
   container refuses to boot without it and applies migrations before serving), `STORAGE_ENDPOINT`
   (the R2 S3 endpoint `https://<account>.r2.cloudflarestorage.com`), `STORAGE_PUBLIC_ENDPOINT` (same
   for R2), `STORAGE_REGION=auto`, `STORAGE_BUCKET=temnia-staging-media`, `STORAGE_ACCESS_KEY_ID`,
   `STORAGE_SECRET_ACCESS_KEY` (an R2 API token scoped to the bucket, object read and write).
 - `pipeline`: `TEMPORAL_ADDRESS=temporal-staging:7233`, `TEMPORAL_NAMESPACE=default`,
   `TEMPORAL_TASK_QUEUE=temnia-pipeline`,
-  `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:<pw>@temnia-staging-postgres:5432/temnia`, the same
+  `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:<pw>@temnia-staging-postgres-<suffix>:5432/temnia`, the same
   `STORAGE_*` (without `STORAGE_PUBLIC_ENDPOINT`), and a volume on `/var/lib/temnia/work` sized for
   the largest master plus its ladder (the worker refuses a download without 1.5x the master free).
 - `temporal`: `TEMPORAL_DB_PASSWORD`, `TEMPORAL_HOST=temporal-staging` (the alias the others dial; a

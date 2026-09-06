@@ -20,6 +20,7 @@
     "@temnia/contracts": "workspace:*",
     "@temnia/db": "workspace:*",
     "@temporalio/client": "1.23.0",
+    "@videojs/react": "10.0.0-beta.32",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.5",
     "drizzle-orm": "0.45.2",

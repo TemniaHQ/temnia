@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { SourceRowActions } from "@/components/sources/source-row-actions";
 import { Badge } from "@/components/ui/badge";
 import {
   Empty,
@@ -79,6 +80,7 @@ export function SourcesTable({ rows }: { rows: Row[] }) {
           <TableHead>Status</TableHead>
           <TableHead className="text-right">Duration</TableHead>
           <TableHead className="text-right">Size</TableHead>
+          <TableHead className="w-12" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -123,6 +125,13 @@ export function SourcesTable({ rows }: { rows: Row[] }) {
             </TableCell>
             <TableCell className="text-right tabular-nums">
               {formatBytes(row.sizeBytes)}
+            </TableCell>
+            <TableCell className="text-right">
+              <SourceRowActions
+                sourceId={row.id}
+                status={row.status}
+                title={row.title}
+              />
             </TableCell>
           </TableRow>
         ))}

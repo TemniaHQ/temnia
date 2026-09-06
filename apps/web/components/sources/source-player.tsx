@@ -1,13 +1,18 @@
 "use client";
 
-import Hls, { Events } from "hls.js";
+import "@videojs/react/video/skin.css";
+import { HlsJsVideo } from "@videojs/react/media/hlsjs-video";
+import { VideoPlayer, VideoSkin } from "@videojs/react/video";
 import Peaks, { type PeaksInstance } from "peaks.js";
 import { useEffect, useRef, useState } from "react";
 
-const HLS_CONFIG = {
-  // hls.js guesses 500 kbps until measured, which would start every source
-  // on the lowest rung; a review tool starts at the top rung and lets ABR
-  // step down. Module-level so the engine is never reloaded on re-render.
+/**
+ * hls.js guesses 500 kbps until measured, which would start every source on
+ * the lowest rung; a review tool starts at the top rung and lets ABR step
+ * down. Module-level so the engine is never recreated on re-render (the
+ * source object's engine options are read when the engine is constructed).
+ */
+const HLS_JS_CONFIG = {
   abrEwmaDefaultEstimate: 10_000_000,
   backBufferLength: 60,
   lowLatencyMode: false,
@@ -22,10 +27,11 @@ interface SourcePlayerProps {
 }
 
 /**
- * hls.js on a plain video element plus a peaks.js overview bound to it.
+ * Video.js v10's React skin (Rajesh's pick, 2026-09-06) over its hls.js media
+ * element, with a peaks.js overview bound to the underlying video element.
  * Client-only: peaks.js touches window at import. Peaks is initialised after
- * `loadedmetadata` so the duration is finite (bbc/peaks.js#574 leaves the
- * unplayed waveform blank when it is NaN at init).
+ * `loadedmetadata`, once the duration is finite (bbc/peaks.js#574), which is
+ * also after the engine's mount-time MediaSource attach has settled.
  */
 export function SourcePlayer({
   playlistUrl,
@@ -42,40 +48,14 @@ export function SourcePlayer({
     const video = videoRef.current;
     const overview = overviewRef.current;
     // biome-ignore lint/suspicious/noUnnecessaryConditions: a ref is null until the element mounts
-    if (!video) {
+    if (!(video && overview && peaksUrl)) {
       return;
     }
     let peaks: PeaksInstance | undefined;
-    let hls: Hls | undefined;
     let cancelled = false;
 
-    if (Hls.isSupported()) {
-      hls = new Hls(HLS_CONFIG);
-      hls.on(Events.ERROR, (_event, data) => {
-        if (!data.fatal) {
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls?.recoverMediaError();
-        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls?.startLoad();
-        } else {
-          hls?.destroy();
-        }
-      });
-      hls.attachMedia(video);
-      hls.loadSource(playlistUrl);
-    } else {
-      // Safari plays fMP4 HLS natively.
-      video.src = playlistUrl;
-    }
-
     const initPeaks = () => {
-      if (
-        cancelled ||
-        !(peaksUrl && overview) ||
-        !Number.isFinite(video.duration)
-      ) {
+      if (cancelled || !Number.isFinite(video.duration)) {
         return;
       }
       Peaks.init(
@@ -103,28 +83,35 @@ export function SourcePlayer({
         }
       );
     };
-    video.addEventListener("loadedmetadata", initPeaks, { once: true });
-
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      initPeaks();
+    } else {
+      video.addEventListener("loadedmetadata", initPeaks, { once: true });
+    }
     return () => {
       cancelled = true;
       video.removeEventListener("loadedmetadata", initPeaks);
       peaks?.destroy();
-      hls?.destroy();
     };
-  }, [playlistUrl, peaksUrl]);
+  }, [peaksUrl]);
 
   return (
     <div className="flex flex-col gap-3" data-testid="source-player">
-      {/* biome-ignore lint/a11y/useMediaCaption: captions are the S8 lane; the transcript arrives at S2 */}
-      <video
-        className="aspect-video w-full rounded-lg bg-black"
-        controls
-        crossOrigin="use-credentials"
-        playsInline
-        poster={posterUrl ?? undefined}
-        preload="metadata"
-        ref={videoRef}
-      />
+      <VideoPlayer poster={posterUrl ?? undefined}>
+        <VideoSkin className="aspect-video w-full overflow-hidden rounded-lg">
+          <HlsJsVideo
+            crossOrigin="use-credentials"
+            playsInline
+            preload="metadata"
+            ref={videoRef}
+            source={{
+              engine: { hlsJs: HLS_JS_CONFIG },
+              src: playlistUrl,
+              type: "application/vnd.apple.mpegurl",
+            }}
+          />
+        </VideoSkin>
+      </VideoPlayer>
       {peaksUrl ? (
         <div
           className="h-20 w-full rounded-md border bg-muted/30"
