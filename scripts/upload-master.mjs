@@ -39,6 +39,14 @@ async function api(path, body, method = "POST") {
     headers: { "content-type": "application/json", ...headers },
     method,
   });
+  if (response.status === 409 && path === "/api/uploads") {
+    // An earlier run of this file is inside the adoption grace window.
+    console.log(
+      "an upload of this file is still in its grace window; waiting 65 s to adopt it"
+    );
+    await new Promise((r) => setTimeout(r, 65_000));
+    return api(path, body, method);
+  }
   if (!response.ok) {
     throw new Error(
       `${method} ${path} -> ${response.status}: ${await response.text()}`
@@ -80,7 +88,11 @@ async function sign(partNumbers) {
 let done = have.size;
 async function putPart(partNumber) {
   if (!signed.has(partNumber)) {
-    await sign(pending.filter((n) => !signed.has(n)).slice(0, 16));
+    // This part first: the workers have already taken it off `pending`.
+    await sign([
+      partNumber,
+      ...pending.filter((n) => !signed.has(n)).slice(0, 15),
+    ]);
   }
   const start = (partNumber - 1) * session.partSize;
   const length = Math.min(session.partSize, size - start);

@@ -221,6 +221,11 @@ async function runFullGate(sha) {
   const pipelineImage = `temnia-pipeline:gate-${stamp}`;
   const webContainer = `temnia-gate-web-${stamp}`;
   const workerContainer = `temnia-gate-worker-${stamp}`;
+  // The gate's worker and web app share the compose Temporal server with a
+  // developer's own `pnpm worker`; on one namespace both would poll the same
+  // task queue and the gate's ingest activities could land on a worker bound
+  // to the dev database. A namespace per run keeps them apart.
+  const namespace = `temnia-gate-${stamp}`;
   let databaseCreated = false;
   let containersStarted = false;
   let failure;
@@ -268,6 +273,23 @@ async function runFullGate(sha) {
       `STORAGE_SECRET_ACCESS_KEY=${GARAGE_SECRET_KEY}`,
     ];
     run("pnpm", ["--filter", "@temnia/db", "db:migrate"], { env });
+    run("docker", [
+      "run",
+      "--rm",
+      "--network",
+      COMPOSE_NETWORK,
+      "temporalio/admin-tools:1.31.2",
+      "temporal",
+      "operator",
+      "namespace",
+      "create",
+      "--address",
+      "temporal:7233",
+      "--namespace",
+      namespace,
+      "--retention",
+      "24h",
+    ]);
     run("pnpm", ["turbo", "run", "build", "lint", "typecheck", "test"], {
       env,
     });
@@ -289,6 +311,8 @@ async function runFullGate(sha) {
       "-e",
       "TEMPORAL_ADDRESS=temporal:7233",
       "-e",
+      `TEMPORAL_NAMESPACE=${namespace}`,
+      "-e",
       `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
       ...storageEnv,
       pipelineImage,
@@ -302,6 +326,8 @@ async function runFullGate(sha) {
       `${webPort}:3000`,
       "-e",
       "TEMPORAL_ADDRESS=temporal:7233",
+      "-e",
+      `TEMPORAL_NAMESPACE=${namespace}`,
       "-e",
       `DATABASE_URL=postgres://temnia_app:temnia_app@postgres:5432/${database}`,
       "-e",
@@ -351,6 +377,26 @@ async function runFullGate(sha) {
     spawnSync("docker", ["image", "rm", "-f", webImage, pipelineImage], {
       stdio: "ignore",
     });
+    spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--network",
+        COMPOSE_NETWORK,
+        "temporalio/admin-tools:1.31.2",
+        "temporal",
+        "operator",
+        "namespace",
+        "delete",
+        "--address",
+        "temporal:7233",
+        "--namespace",
+        namespace,
+        "--yes",
+      ],
+      { stdio: "ignore" }
+    );
     if (databaseCreated) {
       try {
         psql(

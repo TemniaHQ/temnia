@@ -220,6 +220,9 @@ they are made.
   the exact SHA under `.git/local-ci/`; the pre-push hook refuses any other SHA and any push to
   `main`. `pnpm push:verified` publishes the `local-ci` commit status the GitHub provenance job
   (`.github/workflows/ci.yml`) requires. A commit without an exact-SHA status cannot be merged.
+  The gate's containers run in their own Temporal namespace (`temnia-gate-<stamp>`, created and
+  deleted by the script), so a developer's `pnpm worker` on `default` never picks up the gate's
+  ingest activities, and the gate never picks up the developer's.
 - `production` does not exist yet. When it does (M3), it is promoted only by fast-forward from `main`.
 
 ### Environments
