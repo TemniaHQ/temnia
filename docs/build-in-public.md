@@ -149,6 +149,7 @@ Evidence comes last and, on Day 0, honestly: there is none yet, only the number 
 ## 8. Rules
 
 **Always**
+- **Posts are a developer's account of the day, in order, and the division of labour is the story** (Rajesh, 2026-09-06, after the first drafts read like release notes). Say what the agent did on its own, where Rajesh stepped in and why, and what Rajesh did by hand at a dashboard. Name the agent's mistakes and who caught them, the agent or the human. Times and counts come from the log. A post that could have been written by the product's marketing team is a rewrite.
 - Write in Rajesh's own voice (2026-09-03). First person, contractions, the odd aside, plain sentences of uneven length. Say "I" not "we" unless there is actually a we. If a reader could guess an AI drafted it, redraft.
 - Real numbers with dates and conditions. "18% on a fresh 90-min source, 2026-08-28" not "low".
 - Say what went wrong the day it went wrong, or the day after. Never bury a failure in a Friday review.
