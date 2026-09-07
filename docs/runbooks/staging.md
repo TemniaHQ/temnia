@@ -188,6 +188,18 @@ decided belongs to an organization, and never an organization id.
    static musl build with no NVENC, and BtbN rebuilds the `latest` tag in place, so a moved build
    fails the image rather than encoding with something else. A checksum failure here means the build
    moved: download it, recompute, and change `FFMPEG_SHA256` and the URL together.
+4b. **Decode is on the GPU too, for the sources that allow it.** The first staging ladder ran on
+   2026-09-07 with decode and scale on the CPU and only the rungs on `h264_nvenc`, and took about 22
+   minutes for a 2:31 1080p25 H.264 master: the cores were pinned at the function's request, the L4
+   sat near twenty percent, and the encoder was starved by the decoder in front of it. The function
+   now reads the codec and pixel format the worker probed and, for h264, hevc, or av1 at 8-bit 4:2:0,
+   decodes with `-hwaccel cuda -hwaccel_output_format cuda` and scales every rung with `scale_cuda`,
+   so a frame never leaves the card until the I-frame rendition pulls its half a frame a second back
+   for libx264. Everything else, ProRes and 10-bit and 4:2:2 among them, keeps the CPU graph, and so
+   does a run whose CUDA attempt failed: that one is encoded again on the CPU and costs the GPU
+   minutes already spent. Which decoder produced a ladder is recorded in `hls/manifest.json` and in
+   the hls artifact's metadata as `decoder`, so a slow run can be read rather than guessed at.
+   `"decoder": "cpu"` on an H.264 master means the fallback fired, and the container's log says why.
 5. **Deploy**, and redeploy from the same commit whenever the pipeline image is deployed:
 
    ```bash
