@@ -265,6 +265,20 @@ renderer.
    so the worker never downloads inside an activity; `torch` is pinned to the CPU wheels on linux,
    which is the difference between a 3 GB image and a 6 GB one.
 
+**2026-09-07 — The editing harness is a typed, durable program on Temporal with PydanticAI, not a
+cast of agents (Rajesh).** Research basis: the 2025 multi-agent failure taxonomy (specification,
+inter-agent misalignment, verification), compute-controlled results where a single capable model
+matches multi-agent setups, and the domain systems that work (EditDuet's editor-critic loop and
+artefact judge at 80.6%, Crayotter's traceable artefacts, PODTILE's global context, Chapter-Llama's
+fine-tuned proposer). Five typed stages (brief, propose in ids, cut in parallel with backstops,
+verify code-then-family, explain); idempotency-keyed activities for zero repeated calls; no default
+vendor and open-weight models first-class in every seat's pool, all seats through the gateway
+(Vercel AI Gateway leading, probe-confirmed); per-seat offline prompt optimisation with DSPy/GEPA
+against the C2 metrics; failover halt and per-run budget as pure code. Consequence: sprint-plan S3
+rewritten; tech-stack rows for framework, optimisation, gateway, roster, evals, tracing updated; the
+legacy's Director/Reconciler/Cutter/Publisher/Verifier/Reviewer names retire. What would change it:
+a measured win for a persona-style loop on the three fresh sources at equal cost.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
@@ -290,6 +304,10 @@ ecosystem first, the legacy is behaviour evidence and a baseline to beat, and wh
 a better design the better design is built, the deviation is recorded in the Decisions section, and
 the PRD or sprint-plan row is updated in the same PR. An exit test derived from the legacy is
 replaced by a scored comparison in which the legacy behaviour is one candidate.
+
+No pipeline design names a default vendor. Designs and cost estimates speak of seats and show
+several families side by side, open-weight ones included; the audition decides, and its result is
+recorded here.
 
 ### The 360-degree view comes before the code (Rajesh, 2026-09-06)
 

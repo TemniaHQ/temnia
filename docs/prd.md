@@ -163,7 +163,7 @@ Authorization is role × scope (organization / client / brand / campaign / proje
 
 ## 8. Editorial harness platform
 
-The harness is the product. Every editing workflow follows the same five-layer recipe: **structured perception → declarative spec over enumerated IDs → deterministic execution → computable sensors → separate evaluator → fixture flywheel.** Per workflow, only the spec shape and the sensor set change.
+The harness is the product. Every editing workflow follows the same five-layer recipe: **structured perception → declarative spec over enumerated IDs → deterministic execution → computable sensors → separate evaluator → fixture flywheel.** Per workflow, only the spec shape and the sensor set change. (superseded by the S3 harness decision in AGENTS.md, 2026-09-07: a typed durable program on Temporal with PydanticAI, five stages, no default vendor; the roster names below are the legacy's and retire)
 
 - Chassis: Python 3.12 on Temporal, a `pipeline` schema in the shared Postgres, checkpointed passes keyed on transcript revision + pass + prompt version + seat route + params, so replays and human retries re-pay zero tokens. `[A2]`
 - Economics layer built before any real prompt runs: transient-versus-deterministic error taxonomy (deterministic failures are terminal on attempt one), a per-run budget derived from a per-source-hour budget and checked before every model call (breach completes the run with partials, raising the budget is an explicit signal), ceilings on dispatches, failovers, repairs, and revisions, persisted failure evidence, and a cost-per-source-hour number on every run. `[A2]`
@@ -211,7 +211,7 @@ Two lanes share one cutting room. **Moments** is the peak lane (standalone highl
 | Best-take assembly | Script-to-take alignment for scripted content | `{script_line → take_id, word_range}` | Full script coverage, per-line WER, audio continuity at joins | `[C7]` |
 | Trailer and teaser | Ordered sparse segments with role labels; the evaluator carries most weight | Sparse segment list with roles | No spoiler segment, hook within 3 s, each segment standalone | `[C8]` |
 
-Each lane ships with its review surface, its Playwright coverage, evals green, an M-style review round on fresh sources, and cost within target before it is called done.
+Each lane ships with its review surface, its Playwright coverage, evals green, an M-style review round on fresh sources, and cost within target before it is called done. (superseded by the S3 harness decision in AGENTS.md, 2026-09-07: a typed durable program on Temporal with PydanticAI, five stages, no default vendor; the roster names below are the legacy's and retire)
 
 ## 11. Video editing studio
 

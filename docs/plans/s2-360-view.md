@@ -306,3 +306,4 @@ transcript status badge on the list is S7's concern (source intelligence).
 - The eval runner scores every row on one unit grid, the source's word start times, because
   sentences differ per segmenter and rows must be comparable.
 - The exit test for the substrate is the `temnia-eval segment` report, not byte-identity.
+- S3 is rewritten from the harness design (2026-09-07); the sprint-plan row and AGENTS.md carry it.
