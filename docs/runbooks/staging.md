@@ -146,8 +146,12 @@ decided belongs to an organization, and never an organization id.
 
 1. **Environment.** Modal dashboard → Environments → create `staging`. Deployments and lookups are
    scoped to it, so a later `production` cannot be reached by a staging token.
-2. **Token.** Settings → Service users → create one for the `staging` environment. Its `MODAL_TOKEN_ID`
-   and `MODAL_TOKEN_SECRET` go into the pipeline service's env in Dokploy, nowhere else.
+2. **Token.** Settings → API tokens & service users → API Tokens → New Token, named
+   `temnia-pipeline-staging` (created 2026-09-07). Its `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` go
+   into the pipeline service's env in Dokploy, nowhere else. Service users, which are scoped to one
+   environment, need Modal's Team plan; the workspace is on Starter, and a workspace API token reaches
+   every environment, which is fine while `staging` is the only one that matters. For a laptop,
+   `uv run modal token new` from `apps/pipeline` stores your own member credentials instead.
 3. **Secret `temnia-r2`.** Modal dashboard → Secrets → Custom, name `temnia-r2`, in the `staging`
    environment, with the five keys the function reads: `STORAGE_ENDPOINT`, `STORAGE_REGION`,
    `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`. Use a **second** R2 API
