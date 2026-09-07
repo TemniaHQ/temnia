@@ -84,7 +84,7 @@ async def assert_deployment(client: ModalClient, settings: TranscodeSettings) ->
         raise DeploymentError(msg) from error
     if deployed != CONTRACT_VERSION:
         msg = (
-            f"the {_where(settings)} speaks ladder contract {deployed!r} and this worker "
+            f"the {_where(settings)} speaks media contract {deployed!r} and this worker "
             f"speaks {CONTRACT_VERSION!r}. Deploy the Modal app and the pipeline image "
             "from the same commit."
         )

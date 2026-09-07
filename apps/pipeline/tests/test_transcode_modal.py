@@ -18,6 +18,7 @@ from temnia_pipeline.media import hls
 from temnia_pipeline.media.facts import VideoFacts
 from temnia_pipeline.settings import TranscodeSettings
 from temnia_pipeline.transcode import (
+    CONTRACT_VERSION,
     LadderJob,
     LadderProgress,
     LadderResult,
@@ -136,7 +137,7 @@ class FakeModalClient:
         return self.progress_notes.pop(0) if self.progress_notes else None
 
     async def version(self) -> str:
-        return "1"
+        return CONTRACT_VERSION
 
 
 def transcoder(client: FakeModalClient, store: FakeStore) -> ModalTranscoder:
@@ -417,9 +418,9 @@ async def test_a_deployment_from_another_commit_refuses_the_boot() -> None:
         await assert_deployment(OldDeploymentClient(), SETTINGS)
 
     assert str(caught.value) == (
-        "the Modal app 'temnia-media' in environment 'staging' speaks ladder contract '0' "
-        "and this worker speaks '1'. Deploy the Modal app and the pipeline image "
-        "from the same commit."
+        "the Modal app 'temnia-media' in environment 'staging' speaks media contract '0' "
+        f"and this worker speaks {CONTRACT_VERSION!r}. Deploy the Modal app and the pipeline "
+        "image from the same commit."
     )
 
 

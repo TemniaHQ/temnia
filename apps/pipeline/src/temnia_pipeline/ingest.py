@@ -36,6 +36,7 @@ from temnia_pipeline.media.probe import InvalidMediaError, probe
 from temnia_pipeline.settings import PipelineSettings, StorageSettings
 from temnia_pipeline.transcode import LadderJob
 from temnia_pipeline.transcode.factory import make_transcoder
+from temnia_pipeline.transcription.factory import make_transcription
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from obstore.store import S3Store
 
     from temnia_pipeline.transcode import LadderProgress, Transcoder
+    from temnia_pipeline.transcription.runner import TranscriptionRunner
 
 log = logging.getLogger("temnia.ingest")
 
@@ -60,14 +62,16 @@ class Context:
     storage: StorageSettings
     store: S3Store
     transcoder: Transcoder
+    transcription: TranscriptionRunner
 
     @classmethod
     def from_env(cls) -> Context:
         """Build from the environment once per worker.
 
         `worker.py` is the only caller, so the transcoder that
-        `TRANSCODE_BACKEND` chooses is built exactly once, at boot, beside the
-        probes that refuse a wrong one.
+        `TRANSCODE_BACKEND` chooses and the provider `TRANSCRIPTION_PROVIDER`
+        chooses are built exactly once, at boot, beside the probes that refuse a
+        wrong one.
         """
         storage_settings = StorageSettings.from_env()
         settings = PipelineSettings.from_env()
@@ -77,6 +81,7 @@ class Context:
             storage=storage_settings,
             store=store,
             transcoder=make_transcoder(settings, store, settings.work_root),
+            transcription=make_transcription(settings, store),
         )
 
 

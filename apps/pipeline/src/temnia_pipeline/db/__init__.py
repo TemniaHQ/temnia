@@ -261,3 +261,241 @@ async def fail_source(conn: AsyncConnection[dict[str, Any]], source_id: UUID, me
         """,
         (message[:2000], source_id),
     )
+
+
+async def claim_transcription(
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, organization_id: UUID, workflow_id: str
+) -> int:
+    """Insert or claim the source's transcript row; returns the attempt, or 0.
+
+    Claimable means missing, `pending`, or `failed`. A row already `processing`
+    or `ready` returns 0, which is what makes a second workflow for the same
+    source a no-op rather than a second GPU job; the unique index on
+    `source_id` is what the upsert conflicts on.
+
+    A retry from the web sets a `ready` or `failed` row back to `pending` first,
+    so the two rules do not contradict each other: this activity refuses to
+    interrupt work, and the user's Retry is the thing that says a finished
+    transcript may be replaced.
+    """
+    row = await (
+        await conn.execute(
+            """
+            INSERT INTO transcript (organization_id, source_id, status, attempts, workflow_id,
+                                    stage, percent, heartbeat_at)
+            VALUES (%(organization_id)s, %(source_id)s, 'processing', 1, %(workflow_id)s,
+                    'download', NULL, now())
+            ON CONFLICT (source_id) DO UPDATE
+               SET status = 'processing', attempts = transcript.attempts + 1,
+                   workflow_id = %(workflow_id)s, stage = 'download', percent = NULL,
+                   error_message = NULL, heartbeat_at = now(), updated_at = now()
+             WHERE transcript.status IN ('pending', 'failed')
+         RETURNING attempts
+            """,
+            {
+                "organization_id": organization_id,
+                "source_id": source_id,
+                "workflow_id": workflow_id,
+            },
+        )
+    ).fetchone()
+    return int(row["attempts"]) if row else 0
+
+
+async def report_transcription_progress(
+    conn: AsyncConnection[dict[str, Any]],
+    source_id: UUID,
+    stage: str,
+    percent: int | None,
+) -> None:
+    """Best-effort progress, and the heartbeat the surface reads to say "stalled"."""
+    await conn.execute(
+        """
+        UPDATE transcript
+           SET stage = %s, percent = %s, heartbeat_at = now(), updated_at = now()
+         WHERE source_id = %s AND status = 'processing'
+        """,
+        (stage, percent, source_id),
+    )
+
+
+async def next_transcript_revision(
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, attempt: int
+) -> tuple[UUID, int, bool]:
+    """The revision this attempt writes: its transcript, its number, and whether it exists.
+
+    Idempotent by attempt, not by call. An activity that uploaded the object
+    and then died before committing runs again, finds no row, computes the same
+    number, and overwrites the same key; one that committed finds its own row
+    and reuses it rather than writing a second revision for one engine run.
+
+    The number is the next after every revision the transcript has, not the
+    attempt number, because a user's corrections write revisions too and a
+    machine re-run must never land on top of one.
+    """
+    transcript = await (
+        await conn.execute("SELECT id FROM transcript WHERE source_id = %s", (source_id,))
+    ).fetchone()
+    if transcript is None:
+        msg = f"no transcript row for source {source_id}"
+        raise LookupError(msg)
+    transcript_id: UUID = transcript["id"]
+    existing = await (
+        await conn.execute(
+            """
+            SELECT revision FROM transcript_revision
+             WHERE transcript_id = %s AND kind = 'machine'
+               AND (metadata->>'attempt')::int = %s
+            """,
+            (transcript_id, attempt),
+        )
+    ).fetchone()
+    if existing is not None:
+        return transcript_id, int(existing["revision"]), True
+    nxt = await (
+        await conn.execute(
+            "SELECT COALESCE(MAX(revision), 0) + 1 AS revision FROM transcript_revision"
+            " WHERE transcript_id = %s",
+            (transcript_id,),
+        )
+    ).fetchone()
+    return transcript_id, int(nxt["revision"]) if nxt else 1, False
+
+
+async def record_transcript_revision(  # noqa: PLR0913
+    conn: AsyncConnection[dict[str, Any]],
+    *,
+    organization_id: UUID,
+    transcript_id: UUID,
+    revision: int,
+    attempt: int,
+    storage_key: str,
+    size_bytes: int,
+    word_count: int,
+    language: str,
+    provider: str,
+    model: str,
+    metadata: dict[str, Any],
+) -> None:
+    """Insert the machine revision and mark the transcript ready at it."""
+    await conn.execute(
+        """
+        INSERT INTO transcript_revision
+            (organization_id, transcript_id, revision, storage_key, size_bytes, kind,
+             base_revision, word_count, metadata)
+        VALUES (%s, %s, %s, %s, %s, 'machine', NULL, %s, %s::jsonb)
+        ON CONFLICT (transcript_id, revision) DO UPDATE
+           SET storage_key = EXCLUDED.storage_key, size_bytes = EXCLUDED.size_bytes,
+               word_count = EXCLUDED.word_count, metadata = EXCLUDED.metadata
+        """,
+        (
+            organization_id,
+            transcript_id,
+            revision,
+            storage_key,
+            size_bytes,
+            word_count,
+            json.dumps({**metadata, "attempt": attempt}),
+        ),
+    )
+    await conn.execute(
+        """
+        UPDATE transcript
+           SET current_revision = %s, language = %s, provider = %s, model = %s,
+               status = 'ready', ready_at = now(), stage = NULL, percent = NULL,
+               error_message = NULL, heartbeat_at = now(), updated_at = now()
+         WHERE id = %s
+        """,
+        (revision, language, provider, model, transcript_id),
+    )
+
+
+async def finalize_transcription(  # noqa: PLR0913
+    conn: AsyncConnection[dict[str, Any]],
+    *,
+    organization_id: UUID,
+    source_id: UUID,
+    workflow_id: str,
+    duration_ms: int,
+    revision: int,
+    detail: dict[str, Any],
+) -> int:
+    """Meter the run and the bytes it left behind; returns the storage delta.
+
+    Two entries. `transcription_seconds` is the audio's own duration, because
+    that is the cost driver whatever the engine took in wall time; the GPU
+    seconds and the GPU ride along in detail, so dollars per source-hour can be
+    computed from the ledger alone.
+
+    Storage is a delta against earlier `transcript` entries for this source, the
+    same pattern the artifact ledger uses. Revisions are new objects, so the
+    delta is usually just this revision's size, but a source whose revisions
+    were replaced or removed still meters correctly.
+    """
+    await conn.execute(
+        """
+        INSERT INTO usage_ledger (organization_id, kind, quantity, source_id, workflow_id, detail)
+        VALUES (%s, 'transcription_seconds', %s, %s, %s, %s::jsonb)
+        """,
+        (
+            organization_id,
+            round(duration_ms / 1000),
+            source_id,
+            workflow_id,
+            json.dumps(detail),
+        ),
+    )
+    stored = await (
+        await conn.execute(
+            """
+            SELECT COALESCE(SUM(r.size_bytes), 0)::bigint AS total
+              FROM transcript_revision r
+              JOIN transcript t ON t.id = r.transcript_id
+             WHERE t.source_id = %s
+            """,
+            (source_id,),
+        )
+    ).fetchone()
+    total = int(stored["total"]) if stored else 0
+    previous = await (
+        await conn.execute(
+            """
+            SELECT COALESCE(SUM(quantity), 0)::bigint AS total FROM usage_ledger
+             WHERE source_id = %s AND kind = 'storage_bytes'
+               AND detail->>'category' = 'transcript'
+            """,
+            (source_id,),
+        )
+    ).fetchone()
+    delta = total - (int(previous["total"]) if previous else 0)
+    if delta != 0:
+        await conn.execute(
+            """
+            INSERT INTO usage_ledger
+                (organization_id, kind, quantity, source_id, workflow_id, detail)
+            VALUES (%s, 'storage_bytes', %s, %s, %s, %s::jsonb)
+            """,
+            (
+                organization_id,
+                delta,
+                source_id,
+                workflow_id,
+                json.dumps({"category": "transcript", "revision": revision, "total": total}),
+            ),
+        )
+    return delta
+
+
+async def fail_transcription(
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, message: str
+) -> None:
+    """Terminal failure: the row says why, in words safe to render."""
+    await conn.execute(
+        """
+        UPDATE transcript
+           SET status = 'failed', error_message = %s, stage = NULL, percent = NULL,
+               updated_at = now()
+         WHERE source_id = %s
+        """,
+        (message[:2000], source_id),
+    )

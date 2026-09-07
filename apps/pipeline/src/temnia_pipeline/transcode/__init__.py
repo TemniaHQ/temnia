@@ -33,11 +33,14 @@ from temnia_pipeline.storage import key_exists, read_text
 if TYPE_CHECKING:
     from obstore.store import S3Store
 
-# Bumped whenever a job or a result changes shape. The worker refuses to boot
-# against a deployed Modal app that answers with a different one, so a half
-# deployed pair is a failed deploy and never a run that quietly does the wrong
-# thing.
-CONTRACT_VERSION = "1"
+# Bumped whenever any job or result the deployed app exchanges changes shape.
+# The worker refuses to boot against a Modal app that answers with a different
+# one, so a half deployed pair is a failed deploy and never a run that quietly
+# does the wrong thing. It covers the whole app, not just the ladder: S2 added
+# `transcribe` beside `ladder`, and the two must be deployed together.
+#
+# "1" was the ladder alone (S2, PR A). "2" adds transcription.
+CONTRACT_VERSION = "2"
 
 HLS_SUBDIR = "hls/"
 

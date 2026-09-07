@@ -1,4 +1,9 @@
-"""The deployed side: `temnia-media` on Modal, with an NVENC ffmpeg on an L4.
+"""The deployed side: `temnia-media` on Modal, on L4s.
+
+Two functions, deployed together and versioned together: `ladder` builds the
+HLS ladder with an NVENC ffmpeg, and `transcribe` runs WhisperX. They share an
+app and a contract version, so the worker's boot probe refuses a half deployed
+pair whichever backend it is configured for.
 
 Deploy from `apps/pipeline`:
 
@@ -19,19 +24,27 @@ decided belongs to an organization and it never sees an organization id.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import modal
 
 from temnia_pipeline.media import hls
-from temnia_pipeline.settings import DEFAULT_MODAL_APP, DEFAULT_PROGRESS_DICT, StorageSettings
+from temnia_pipeline.settings import (
+    DEFAULT_MODAL_APP,
+    DEFAULT_PROGRESS_DICT,
+    DEFAULT_TRANSCRIPT_DICT,
+    StorageSettings,
+)
 from temnia_pipeline.storage import download, make_store, upload_file, upload_tree
 from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult
 from temnia_pipeline.transcode.local import verify_ladder
+from temnia_pipeline.transcription import TranscribeJob, TranscribeRaw, assert_alignable
 
 # BtbN's `latest` tag is rebuilt in place, so the URL alone pins nothing. The
 # checksum is of the tarball downloaded on 2026-09-07; `sha256sum -c` in the
@@ -47,18 +60,53 @@ FFMPEG = "/usr/local/bin/ffmpeg"
 
 GPU = "L4"
 LADDER_TIMEOUT_SECONDS = 3 * 60 * 60
+# WhisperX on an L4 is reported at 20 to 70x realtime for ASR and alignment and
+# nearer 10x for diarization, so a 2.5-hour episode is plausibly 15 to 40
+# minutes. Four hours is the bound, not the expectation; the first staging run
+# is the measurement.
+TRANSCRIBE_TIMEOUT_SECONDS = 4 * 60 * 60
 PROBE_TIMEOUT_SECONDS = 600
 LADDER_CPUS = 4
 LADDER_MEMORY_MB = 8192
+TRANSCRIBE_CPUS = 4
+TRANSCRIBE_MEMORY_MB = 16384
 PROGRESS_INTERVAL_SECONDS = 5.0
 # The Modal Secret holding a second R2 token, revocable without touching the
 # worker's: the name of a secret, not a secret (runbook, Modal).
 R2_SECRET = "temnia-r2"  # noqa: S105
+# HF_TOKEN for the gated pyannote diarization model. The token exists only
+# inside Modal; the worker never holds it.
+HF_SECRET = "temnia-hf"  # noqa: S105
+
+WHISPERX_VERSION = "3.8.6"
+WHISPER_MODEL = "large-v3"
+# float16 is what an L4 has tensor cores for; batch 16 is whisperx's own
+# documented default for a 24 GB card and is a calibration knob at S12, not a
+# tuning guess to make now.
+WHISPER_COMPUTE_TYPE = "float16"
+WHISPER_BATCH_SIZE = 16
+# whisperx 3.8.6 requires pyannote-audio 4.x, whose default pipeline is this
+# gated, CC-BY-4.0 model (commercial use allowed with attribution).
+DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+
+# Models are downloaded once into a Volume and read from it on every later cold
+# start: large-v3 alone is about 3 GB, and paying for that download on every
+# call would be most of a short episode's cost.
+MODEL_VOLUME = "temnia-models"
+MODEL_DIR = "/models"
 
 # The same bounds as `apps/pipeline/pyproject.toml`. The function needs the
 # media planner, the object store, and pydantic; PyAV stays on the worker,
 # which is the only place a master is probed.
 PIP_PACKAGES = ["obstore>=0.11.1,<0.12", "pydantic>=2.13,<3", "boto3>=1.40,<2"]
+
+# whisperx pulls torch, ctranslate2, and pyannote-audio behind it. torch is
+# taken from PyTorch's own cu124 index to match the CUDA 12.4 runtime the image
+# is built on; the default PyPI wheel would bring its own CUDA libraries and a
+# second copy of them.
+TORCH_INDEX = "https://download.pytorch.org/whl/cu124"
+TORCH_PACKAGES = ["torch==2.8.0", "torchaudio==2.8.0"]
+WHISPERX_PACKAGES = [f"whisperx=={WHISPERX_VERSION}"]
 
 # Download, verify, install, and leave nothing behind. The checksum is checked
 # before the archive is opened, so a replaced build never reaches a container.
@@ -80,25 +128,48 @@ image = (
     .apt_install("xz-utils", "curl", "ca-certificates")
     .run_commands(*FFMPEG_INSTALL)
     .pip_install(*PIP_PACKAGES)
+    .pip_install(*TORCH_PACKAGES, index_url=TORCH_INDEX)
+    .pip_install(*WHISPERX_PACKAGES)
+    # Every model cache the three stages use, on one Volume: HF_HOME covers the
+    # alignment and diarization models, and whisperx reads the Whisper weights
+    # from the same tree.
+    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR})
     .add_local_python_source("temnia_pipeline")
 )
 
 app = modal.App(DEFAULT_MODAL_APP, image=image)
+models = modal.Volume.from_name(MODEL_VOLUME, create_if_missing=True)
 
 WORK_DIR = Path("/tmp/ladder")  # noqa: S108  # Modal's ephemeral disk, gone with the container
 
 
-async def _write_progress(stage: str, percent: int) -> None:
-    """Leave a note the worker can poll; a failure here never fails the ladder."""
+async def _write_note(dict_name: str, stage: str, percent: int) -> None:
+    """Leave a note the worker can poll; a failure here never fails the run."""
     call_id = modal.current_function_call_id()
     if call_id is None:
         return
-    name = os.environ.get("MODAL_PROGRESS_DICT", DEFAULT_PROGRESS_DICT)
     try:
-        notes = modal.Dict.from_name(name, create_if_missing=True)
+        notes = modal.Dict.from_name(dict_name, create_if_missing=True)
         await notes.put.aio(call_id, {"stage": stage, "percent": percent})
     except Exception:  # noqa: BLE001, S110
         pass
+
+
+async def _write_progress(stage: str, percent: int) -> None:
+    """The ladder's progress note."""
+    await _write_note(os.environ.get("MODAL_PROGRESS_DICT", DEFAULT_PROGRESS_DICT), stage, percent)
+
+
+async def _write_transcript_progress(stage: str, percent: int) -> None:
+    """The transcription's progress note, in its own Dict.
+
+    A second Dict rather than one shared with the ladder: the two functions
+    write different shapes, and a reader that guessed from a call id would be a
+    bug that only appears when both run at once.
+    """
+    await _write_note(
+        os.environ.get("MODAL_TRANSCRIPT_PROGRESS_DICT", DEFAULT_TRANSCRIPT_DICT), stage, percent
+    )
 
 
 def _throttled(stage: str) -> Any:  # noqa: ANN401
@@ -190,6 +261,118 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
         call_id=modal.current_function_call_id(),
     )
     return result.model_dump(mode="json", by_alias=True)
+
+
+# whisperx is installed into the Modal image and nowhere else: it is not a
+# dependency of this repository's uv project, because nothing outside a
+# container ever runs it. It is therefore unresolvable to the type checker here
+# by construction, so it is reached through these two `Any` helpers and the
+# rest of the module stays checked. Same shape as the Modal SDK helpers in
+# `transcode/modal_client.py`, for the same reason.
+def _whisperx() -> Any:  # noqa: ANN401
+    """The engine, imported inside the container that has it."""
+    return cast("Any", import_module("whisperx"))
+
+
+def alignable_languages() -> set[str]:
+    """Every language the deployed whisperx can align, asked of whisperx itself.
+
+    Never a list copied into this repository: the alignment table changes
+    between releases, and a stale copy would refuse a language the deployed
+    version handles perfectly well, or promise one it does not.
+    """
+    alignment = cast("Any", import_module("whisperx.alignment"))
+    torch_models = cast("dict[str, Any]", alignment.DEFAULT_ALIGN_MODELS_TORCH)
+    hf_models = cast("dict[str, Any]", alignment.DEFAULT_ALIGN_MODELS_HF)
+    return set(torch_models) | set(hf_models)
+
+
+@app.function(  # pyright: ignore[reportUnknownMemberType]
+    gpu=GPU,
+    cpu=TRANSCRIBE_CPUS,
+    memory=TRANSCRIBE_MEMORY_MB,
+    timeout=TRANSCRIBE_TIMEOUT_SECONDS,
+    secrets=[modal.Secret.from_name(R2_SECRET), modal.Secret.from_name(HF_SECRET)],
+    volumes={MODEL_DIR: models},
+)
+async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
+    """Transcribe, align, and diarize one audio extract on the GPU.
+
+    Reads the 96k extract ingest already made rather than the master: the
+    master is tens of gigabytes and every stage here wants audio.
+
+    The response is written to storage as well as returned. The object is what
+    a fixture is cut from and what S12's calibration round reads back; the
+    return value is what the worker normalises without a second download.
+    """
+    # First, before the job is parsed: a secret that is absent or missing a key
+    # must fail here, by name, not deep inside the download on a GPU that is
+    # already billing.
+    settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        msg = (
+            f"HF_TOKEN is missing or empty. The Modal Secret {HF_SECRET!r} sets it, and "
+            f"{DIARIZATION_MODEL} is gated: accept its terms on Hugging Face with the "
+            "account the token belongs to."
+        )
+        raise RuntimeError(msg)
+
+    engine = _whisperx()
+    request = TranscribeJob.model_validate(job)
+    store = make_store(settings)
+    started = time.monotonic()
+
+    await _write_transcript_progress("download", 0)
+    audio_file = WORK_DIR / "audio" / Path(request.audio_key).name
+    await download(store, request.audio_key, audio_file, expected_size=None)
+
+    await _write_transcript_progress("model", 0)
+    model = engine.load_model(WHISPER_MODEL, device="cuda", compute_type=WHISPER_COMPUTE_TYPE)
+    audio = engine.load_audio(str(audio_file))
+
+    await _write_transcript_progress("transcribe", 0)
+    result: dict[str, Any] = model.transcribe(audio, batch_size=WHISPER_BATCH_SIZE)
+    language = str(result.get("language") or "und")
+
+    # Before the alignment model is fetched, not after: an unsupported language
+    # is deterministic, and the worker turns this into a terminal failure that
+    # shows the code rather than three more attempts at GPU prices.
+    assert_alignable(language, alignable_languages())
+
+    await _write_transcript_progress("align", 0)
+    align_model, metadata = engine.load_align_model(language_code=language, device="cuda")
+    result = engine.align(
+        result["segments"], align_model, metadata, audio, "cuda", return_char_alignments=False
+    )
+
+    await _write_transcript_progress("diarize", 0)
+    diarize = engine.diarize.DiarizationPipeline(
+        model_name=DIARIZATION_MODEL, use_auth_token=token, device="cuda"
+    )
+    # fill_nearest gives a word with no diarization overlap the nearest turn
+    # rather than nothing; the normaliser still tolerates a null speaker,
+    # because a recording with no turns at all produces them.
+    result = engine.assign_word_speakers(diarize(audio), result, fill_nearest=True)
+    result["language"] = language
+
+    await _write_transcript_progress("write", 0)
+    raw_file = WORK_DIR / "raw.json"
+    raw_file.parent.mkdir(parents=True, exist_ok=True)
+    # Python's json writes the bare NaN a whisperx alignment score can be. It is
+    # kept, not cleaned: this object is the record of what the engine said, and
+    # the normaliser is the only place a score is interpreted.
+    raw_file.write_text(json.dumps(result))
+    await upload_file(store, request.raw_key, raw_file)
+
+    await _write_transcript_progress("write", 100)
+    return TranscribeRaw(
+        raw=result,
+        raw_key=request.raw_key,
+        language=language,
+        gpu_seconds=round(time.monotonic() - started, 3),
+        gpu=GPU,
+    ).model_dump(mode="json", by_alias=True)
 
 
 @app.function()  # pyright: ignore[reportUnknownMemberType]

@@ -10,9 +10,18 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
 from temnia_pipeline import modal_app
 from temnia_pipeline.transcode import CONTRACT_VERSION
 from temnia_pipeline.transcode.modal_client import LADDER_FUNCTION, VERSION_FUNCTION
+from temnia_pipeline.transcription import TranscribeJob, UnsupportedLanguageError
+from temnia_pipeline.transcription.modal_whisperx import (
+    MODEL,
+    NAME,
+    TRANSCRIBE_FUNCTION,
+    VERSION,
+)
 
 BANNED = ("temporalio", "psycopg", "av")
 
@@ -24,8 +33,17 @@ BANNED = ("temporalio", "psycopg", "av")
 ISOLATION_PROBE = f"""
 import sys
 from temnia_pipeline.transcode import LadderJob
+from temnia_pipeline.transcription import TranscribeJob
 import temnia_pipeline.modal_app
 
+TranscribeJob.model_validate(
+    {{
+        "audioKey": "org/a/source/b/audio/audio.m4a",
+        "artifactPrefix": "org/a/source/b/",
+        "attempt": 1,
+        "durationMs": 40116,
+    }}
+)
 LadderJob.model_validate(
     {{
         "masterKey": "org/a/source/b/master/master.mov",
@@ -63,7 +81,61 @@ def test_the_worker_and_the_app_agree_on_the_function_names() -> None:
     """Modal registers a function under its Python name; the client looks it up by string."""
     assert hasattr(modal_app, LADDER_FUNCTION)
     assert hasattr(modal_app, VERSION_FUNCTION)
+    assert hasattr(modal_app, TRANSCRIBE_FUNCTION)
     assert modal_app.version.local() == CONTRACT_VERSION
+
+
+def test_one_contract_version_covers_both_functions() -> None:
+    """A ladder deployed without its transcription is a failed deploy, not a surprise."""
+    assert CONTRACT_VERSION == "2"
+
+
+def test_the_provider_reports_the_model_and_release_the_image_pins() -> None:
+    """The three strings ride on every revision, so a calibration round can compare runs."""
+    assert NAME == "whisperx"
+    assert MODEL == modal_app.WHISPER_MODEL
+    assert VERSION == modal_app.WHISPERX_VERSION
+    assert any(VERSION in package for package in modal_app.WHISPERX_PACKAGES)
+
+
+def test_the_transcription_function_asks_for_both_secrets_and_the_model_volume() -> None:
+    """A missing HF_TOKEN is a gated model failing minutes into a billing GPU."""
+    assert modal_app.HF_SECRET == "temnia-hf"  # noqa: S105
+    assert modal_app.R2_SECRET == "temnia-r2"  # noqa: S105
+    assert modal_app.MODEL_VOLUME == "temnia-models"
+    assert modal_app.MODEL_DIR == "/models"
+
+
+def test_torch_comes_from_the_pytorch_index_matching_the_image_cuda() -> None:
+    """The PyPI wheel would bring a second copy of the CUDA libraries the image has."""
+    assert "cu124" in modal_app.TORCH_INDEX
+    assert all(
+        package.startswith(("torch==", "torchaudio==")) for package in modal_app.TORCH_PACKAGES
+    )
+    assert all("==" in package for package in modal_app.TORCH_PACKAGES)
+
+
+def test_the_diarization_model_is_the_one_pyannote_4_defaults_to() -> None:
+    assert modal_app.DIARIZATION_MODEL == "pyannote/speaker-diarization-community-1"
+
+
+def test_an_alignable_language_passes_and_an_unsupported_one_names_its_code() -> None:
+    """The check runs before the alignment model is fetched, so it costs nothing."""
+    available = {"en", "fr", "de"}
+    modal_app.assert_alignable("fr", available)
+    with pytest.raises(UnsupportedLanguageError, match="code: sw"):
+        modal_app.assert_alignable("sw", available)
+
+
+def test_the_raw_key_is_one_object_per_attempt() -> None:
+    """Never overwritten: it is the record a fixture is cut from and S12 reads back."""
+    job = TranscribeJob(
+        audio_key="org/a/source/b/audio/audio.m4a",
+        artifact_prefix="org/a/source/b/",
+        attempt=2,
+        duration_ms=1000,
+    )
+    assert job.raw_key == "org/a/source/b/transcript/raw-2.json"
 
 
 def test_the_module_a_container_imports_pulls_in_no_worker_dependencies() -> None:

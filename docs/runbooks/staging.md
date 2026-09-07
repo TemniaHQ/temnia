@@ -165,7 +165,7 @@ decided belongs to an organization, and never an organization id.
    ```
 
 6. **If the worker will not start**, its log carries one line beginning `TRANSCODE_BACKEND=modal:`.
-   `cannot reach the Modal app …` is a token or a missing deployment; `… speaks ladder contract 'x'
+   `cannot reach the Modal app …` is a token or a missing deployment; `… speaks media contract 'x'
    and this worker speaks 'y'` means the two halves came from different commits, so deploy the Modal
    app again from the commit the image was built from.
 

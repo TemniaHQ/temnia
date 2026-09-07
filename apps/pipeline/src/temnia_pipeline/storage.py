@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import mimetypes
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import boto3
 import obstore as obs
@@ -80,6 +81,23 @@ async def read_text(store: S3Store, key: str) -> str | None:
     return bytes(await result.bytes_async()).decode()
 
 
+async def read_json(store: S3Store, key: str) -> dict[str, Any] | None:
+    """Fetch a JSON object; None when the key is not there.
+
+    Python's json reads the bare NaN a whisperx alignment score can be, which
+    is why the engine's own response travels as a file rather than through a
+    parser that would refuse it.
+    """
+    text = await read_text(store, key)
+    if text is None:
+        return None
+    loaded: object = json.loads(text)
+    if not isinstance(loaded, dict):
+        msg = f"{key} is not a JSON object"
+        raise TypeError(msg)
+    return cast("dict[str, Any]", loaded)
+
+
 async def key_exists(store: S3Store, key: str) -> bool:
     """True when the object is in the store."""
     try:
@@ -99,6 +117,12 @@ async def upload_file(store: S3Store, key: str, path: Path) -> int:
             attributes={"Content-Type": content_type_for(path)},
         )
     return path.stat().st_size
+
+
+async def upload_bytes(store: S3Store, key: str, body: bytes, content_type: str) -> int:
+    """Put one small object built in memory; returns its size."""
+    await obs.put_async(store, key, body, attributes={"Content-Type": content_type})
+    return len(body)
 
 
 async def upload_tree(
