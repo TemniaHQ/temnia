@@ -418,7 +418,7 @@ async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
 
     await _write_transcript_progress("diarize", 0)
     diarize = engine.diarize.DiarizationPipeline(
-        model_name=DIARIZATION_MODEL, use_auth_token=token, device="cuda"
+        model_name=DIARIZATION_MODEL, token=token, device="cuda"
     )
     # fill_nearest gives a word with no diarization overlap the nearest turn
     # rather than nothing; the normaliser still tolerates a null speaker,
