@@ -82,7 +82,9 @@ def test_every_sentence_has_a_speaker_and_real_times(
     for sentence in layers.sentences:
         assert sentence.speaker is not None
         assert sentence.start_ms == transcript.words[sentence.word_start].startMs
-        assert sentence.end_ms == transcript.words[sentence.word_end].endMs
+        assert sentence.end_ms == max(
+            word.endMs for word in transcript.words[sentence.word_start : sentence.word_end + 1]
+        )
         assert sentence.text == " ".join(
             word.text for word in transcript.words[sentence.word_start : sentence.word_end + 1]
         )

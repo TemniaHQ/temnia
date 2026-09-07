@@ -20,7 +20,9 @@ takes its cache location from there.
 from __future__ import annotations
 
 import importlib.metadata
-from typing import TYPE_CHECKING, Protocol, cast
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 
@@ -28,7 +30,6 @@ from temnia_pipeline.settings import ModelSettings
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from numpy.typing import NDArray
 
@@ -37,6 +38,17 @@ if TYPE_CHECKING:
 #: seconds; 10,000 is 800 MB, and past that the answer is a hierarchy, not a
 #: bigger matrix.
 MAX_CHANGE_POINT_UNITS = 10_000
+
+#: The Hugging Face revision each model is pinned to. A model name resolves to
+#: whatever the hub's `main` points at on the day, so two clean image builds
+#: could carry different weights under one name (S2 review, I15);
+#: `scripts/fetch_models.py` refuses a build whose resolved revision differs,
+#: and the provenance records the one it loaded. Bump deliberately, with the
+#: eval runner re-run on the fixtures.
+PINNED_REVISIONS: dict[str, str] = {
+    "segment-any-text/sat-3l-sm": "137da054051ad9f1eac42025f758db4ac9f22535",
+    "sentence-transformers/all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+}
 
 
 def configure_model_cache(models_dir: Path | None = None) -> Path:
@@ -55,6 +67,22 @@ def configure_model_cache(models_dir: Path | None = None) -> Path:
     os.environ.setdefault("HF_HOME", str(root))
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     return root
+
+
+def model_revision(repo: str, models_dir: Path | None = None) -> str | None:
+    """The commit the cache resolved `repo` to, or None when it is not cached.
+
+    Read from the hub cache's `refs/main`, which the loaders write when they
+    resolve a name; the pinned revision in `PINNED_REVISIONS` is what it is
+    checked against at image build time, and the value here is what a run's
+    provenance records.
+    """
+    root = Path(os.environ.get("HF_HOME") or (models_dir or ModelSettings.from_env().models_dir))
+    ref = root / "hub" / f"models--{repo.replace('/', '--')}" / "refs" / "main"
+    try:
+        return ref.read_text().strip() or None
+    except OSError:
+        return None
 
 
 def prime_skops() -> None:
@@ -187,6 +215,27 @@ def load_encoder(name: str, *, models_dir: Path | None = None) -> TextEncoder:
     return cast("TextEncoder", loaded)
 
 
+def truncated_count(encoder: TextEncoder, texts: Sequence[str]) -> int | None:
+    """How many texts the encoder will cut short, or None when it cannot say.
+
+    all-MiniLM-L6-v2 reads 256 wordpieces and drops the rest without a word
+    (its model card says so), so a long sentence is embedded by its first
+    half. The count goes into the provenance, which is what makes it visible
+    on an eval row (S2 review, I18). The tokenizer is reached through the
+    loaded model; a test double without one answers None rather than a guess.
+    """
+    tokenizer = cast("Any", getattr(encoder, "tokenizer", None))
+    limit = getattr(encoder, "max_seq_length", None)
+    if tokenizer is None or not isinstance(limit, int) or limit <= 0:
+        return None
+    try:
+        encoded = tokenizer(list(texts), add_special_tokens=True, truncation=False)
+        lengths = [len(ids) for ids in cast("list[list[int]]", encoded["input_ids"])]
+    except Exception:  # noqa: BLE001 - provenance, never a gate
+        return None
+    return sum(length > limit for length in lengths)
+
+
 def encode_sentences(encoder: TextEncoder, texts: Sequence[str]) -> NDArray[np.float64]:
     """Normalised embeddings as a float64 matrix, one row per text.
 
@@ -237,7 +286,7 @@ class KernelSegmentation:
     scores are computed from.
     """
 
-    def __init__(self, matrix: NDArray[np.float64], *, min_size: int = 4, jump: int = 1) -> None:
+    def __init__(self, matrix: NDArray[np.float64], *, min_size: int = 4) -> None:
         if matrix.shape[0] > MAX_CHANGE_POINT_UNITS:
             msg = (
                 f"kernel change-point detection is quadratic in the number of units and this "
@@ -249,10 +298,12 @@ class KernelSegmentation:
 
         self.units = int(matrix.shape[0])
         self.min_size = min_size
+        # `jump=1` is the only value KernelCPD honours; its reference says the
+        # parameter is "not considered, set to 1", so it is not offered.
         self._algo = cast(
             "_KernelCPD",
             ruptures.KernelCPD(  # pyright: ignore[reportUnknownMemberType]
-                kernel="rbf", min_size=min_size, jump=jump
+                kernel="rbf", min_size=min_size, jump=1
             ).fit(matrix),  # pyright: ignore[reportUnknownMemberType]
         )
 

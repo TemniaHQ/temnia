@@ -9,6 +9,8 @@ empty hypothesis, a single boundary, and boundaries sitting on the media's own
 start and end.
 """
 
+import random
+
 import pytest
 
 from temnia_pipeline.evals.nltk_metrics import ghd, pk, windowdiff
@@ -69,24 +71,64 @@ def test_the_media_edges_are_not_boundaries() -> None:
     assert boundary_string((), [1000]) == ""
 
 
-def test_the_window_is_defined_even_with_no_reference_boundaries() -> None:
+def test_the_window_is_half_the_mean_segment_length() -> None:
     assert window_size("0" * 100) == 50
     assert window_size("") == 1
-    # Four segments in a hundred units: half the average segment length, and
-    # 12 rather than 13 because Python rounds a tie to even, which is what
-    # nltk's own default does too.
-    assert window_size("0" * 24 + "1" + ("0" * 24 + "1") * 3) == 12
-    assert window_size("0" * 39 + "1" + ("0" * 39 + "1") * 1) == 20
+    # The strings come from `boundary_string`, which marks internal cuts only,
+    # so k marks are k + 1 segments. Three cuts in a hundred units are four
+    # segments of 25: half is 12, Python rounding the tie to even.
+    grid = UNITS[:100]
+    assert window_size(boundary_string(grid, [25 * SECOND, 50 * SECOND, 75 * SECOND])) == 12
+    # One cut in a hundred units: two segments of fifty, half is 25. Dividing
+    # by the mark count, nltk's default for strings with a terminal mark,
+    # answered 50 here and inflated every sparse chapter score (S2 review, I12).
+    assert window_size(boundary_string(grid, [50 * SECOND])) == 25
+    assert window_size(boundary_string(UNITS[:80], [40 * SECOND])) == 20
 
 
-def test_the_matching_is_greedy_by_distance_and_one_to_one() -> None:
-    # Two hypotheses inside the tolerance of one reference: the nearer wins and
+def test_the_matching_is_one_to_one_and_as_full_as_the_tolerance_allows() -> None:
+    # Two hypotheses inside the tolerance of one reference: one is matched and
     # the other stays unmatched, so precision falls rather than recall rising.
     assert match_boundaries([100], [90, 130], 50) == ((0, 0),)
     assert match_boundaries([100, 200], [205, 105], 50) == ((0, 1), (1, 0))
     assert match_boundaries([100], [400], 50) == ()
     assert match_boundaries([], [100], 50) == ()
     assert match_boundaries([100], [], 50) == ()
+    # Nearest pairs first paired 20 with 19 and stranded both others: one
+    # match where two exist (S2 review, I13).
+    assert match_boundaries([10_000, 20_000], [19_000, 29_000], 10_000) == ((0, 0), (1, 1))
+
+
+def _largest_pairing(
+    reference: list[int], hypothesis: list[int], tolerance: int, index: int = 0, used: int = 0
+) -> int:
+    """Every one-to-one pairing within tolerance, by brute force; the size of the largest."""
+    if index == len(reference):
+        return 0
+    best = _largest_pairing(reference, hypothesis, tolerance, index + 1, used)
+    for position, time in enumerate(hypothesis):
+        if not used & (1 << position) and abs(reference[index] - time) <= tolerance:
+            best = max(
+                best,
+                1
+                + _largest_pairing(
+                    reference, hypothesis, tolerance, index + 1, used | (1 << position)
+                ),
+            )
+    return best
+
+
+def test_the_matching_is_maximum_against_a_brute_force_oracle() -> None:
+    generator = random.Random(7)  # noqa: S311 - a seeded sweep, not a secret
+    for _ in range(400):
+        reference = [generator.randint(0, 100) for _ in range(generator.randint(0, 6))]
+        hypothesis = [generator.randint(0, 100) for _ in range(generator.randint(0, 6))]
+        tolerance = generator.randint(0, 30)
+        matched = match_boundaries(reference, hypothesis, tolerance)
+        assert len(matched) == _largest_pairing(reference, hypothesis, tolerance)
+        assert len({r for r, _ in matched}) == len(matched)
+        assert len({h for _, h in matched}) == len(matched)
+        assert all(abs(reference[r] - hypothesis[h]) <= tolerance for r, h in matched)
 
 
 def test_a_perfect_hypothesis_scores_perfectly() -> None:

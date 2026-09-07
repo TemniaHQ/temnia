@@ -33,6 +33,37 @@ DEFAULT_MODELS_DIR = "~/.cache/temnia-models"
 SAT_MODEL = "sat-3l-sm"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# Duplicated from substrate.backends.PINNED_REVISIONS, for the same reason. A
+# model name resolves to whatever the hub's `main` points at on the day of the
+# build; the build fails when that is not the pinned commit, so two clean
+# images never carry different weights under one name (S2 review, I15).
+PINNED_REVISIONS = {
+    "segment-any-text/sat-3l-sm": "137da054051ad9f1eac42025f758db4ac9f22535",
+    "sentence-transformers/all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+}
+
+
+def resolved_revision(root: Path, repo: str) -> str | None:
+    """The commit the hub cache under `root` resolved `repo` to, if it is there."""
+    ref = root / "hub" / f"models--{repo.replace('/', '--')}" / "refs" / "main"
+    try:
+        return ref.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def assert_pinned(root: Path, pins: dict[str, str]) -> None:
+    """Fail unless every pinned model resolved to its pinned commit."""
+    for repo, pinned in pins.items():
+        resolved = resolved_revision(root, repo)
+        if resolved != pinned:
+            msg = (
+                f"{repo} resolved to {resolved or 'nothing'} but the pin is {pinned}. The hub's "
+                "main moved (or the cache is stale). Re-run the segmentation eval on the "
+                "fixtures, then bump PINNED_REVISIONS here and in substrate/backends.py together."
+            )
+            raise SystemExit(msg)
+
 
 def directory_bytes(root: Path) -> int:
     """Everything under `root`, following no symlinks."""
@@ -55,6 +86,7 @@ def main() -> int:
 
     SaT(SAT_MODEL)
     SentenceTransformer(EMBEDDING_MODEL)
+    assert_pinned(root, PINNED_REVISIONS)
     megabytes = directory_bytes(root) / 1_000_000
     sys.stdout.write(f"{SAT_MODEL} and {EMBEDDING_MODEL} in {root}: {megabytes:.0f} MB\n")
     return 0

@@ -13,8 +13,8 @@ from collections.abc import Callable
 
 from conftest import SubstrateFixture
 from temnia_pipeline.substrate.grid import build_cut_grid
-from temnia_pipeline.substrate.legacy_rules import LegacyRulesSegmenter
-from temnia_pipeline.substrate.model import Layers
+from temnia_pipeline.substrate.legacy_rules import LegacyRulesSegmenter, pack_paragraphs
+from temnia_pipeline.substrate.model import Layers, Sentence
 from temnia_pipeline.substrate.protocol import Segmenter
 
 
@@ -133,3 +133,35 @@ def test_the_adapter_satisfies_the_seam() -> None:
     assert isinstance(layers, Layers)
     assert layers.provenance.segmenter == "legacy"
     assert layers.provenance.versions["legacy_oracle"] == "b642b77"
+
+
+def test_the_paragraph_rule_can_end_at_the_whole_extent() -> None:
+    """Overlapping speech: the last sentence ends before an earlier one does (S2 review, I11).
+
+    The legacy took the last sentence's end and its parity oracle records that,
+    so the default stays; the SaT segmenter asks for the whole extent.
+    """
+    sentences = [
+        Sentence(
+            id=0,
+            start_ms=0,
+            end_ms=3000,
+            word_start=0,
+            word_end=1,
+            speaker="0",
+            text="a b",
+            is_question=False,
+        ),
+        Sentence(
+            id=1,
+            start_ms=1000,
+            end_ms=1100,
+            word_start=2,
+            word_end=2,
+            speaker="0",
+            text="c",
+            is_question=False,
+        ),
+    ]
+    assert pack_paragraphs(sentences).paragraphs[0].end_ms == 1100
+    assert pack_paragraphs(sentences, whole_extent=True).paragraphs[0].end_ms == 3000

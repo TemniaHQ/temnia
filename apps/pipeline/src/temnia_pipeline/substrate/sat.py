@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING
 from temnia_pipeline.substrate.backends import (
     library_version,
     load_sat,
+    model_revision,
     sat_paragraph_lengths,
     sat_segments,
 )
@@ -165,6 +166,11 @@ class SaTSegmenter:
                 "torch": library_version("torch"),
                 "transformers": library_version("transformers"),
                 "wtpsplit": library_version("wtpsplit"),
+                **(
+                    {"sat_revision": revision}
+                    if (revision := model_revision(f"segment-any-text/{self.model}")) is not None
+                    else {}
+                ),
             },
         )
 
@@ -215,11 +221,15 @@ class SaTSegmenter:
             first, last = group[0], group[-1]
             span = words[first : last + 1]
             sentence_text = " ".join(word.text for word in span)
+            # The latest end among the words, not the last word's end: with
+            # overlapping speech a sentence's last word can end before an
+            # earlier one does, and a span that ends there leaves speech
+            # outside every sentence (S2 review, I11).
             sentences.append(
                 Sentence(
                     id=len(sentences),
                     start_ms=words[first].startMs,
-                    end_ms=words[last].endMs,
+                    end_ms=max(word.endMs for word in span),
                     word_start=first,
                     word_end=last,
                     speaker=_majority_speaker(span),
@@ -230,7 +240,7 @@ class SaTSegmenter:
             paragraph_of.append(paragraph_index)
 
         if not self.paragraphs:
-            packed = pack_paragraphs(sentences)
+            packed = pack_paragraphs(sentences, whole_extent=True)
             return Layers(
                 words=words,
                 sentences=tuple(sentences),
@@ -273,7 +283,7 @@ def _paragraphs_from_sat(
             Paragraph(
                 id=len(paragraphs),
                 start_ms=sentences[start].start_ms,
-                end_ms=sentences[index - 1].end_ms,
+                end_ms=max(sentence.end_ms for sentence in sentences[start:index]),
                 sentence_start=start,
                 sentence_end=index - 1,
                 speaker=sentences[start].speaker,

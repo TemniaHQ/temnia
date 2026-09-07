@@ -12,6 +12,7 @@ labelled with a target that was never applied is worse than a failed run.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -97,24 +98,28 @@ def make_segmenter(name: str, **params: object) -> Segmenter:
             EmbeddingChangePointSegmenter,
         )
 
-        allowed = (
-            "sentences_from",
-            "embedding_model",
-            "target_per_hour",
-            "min_sentences",
-            "jump",
-        )
+        # No `jump`: ruptures' KernelCPD ignores it (its reference says "not
+        # considered, set to 1"), and a parameter that is recorded but not
+        # applied is worse than none (S2 review, I14).
+        allowed = ("sentences_from", "embedding_model", "target_per_hour", "min_sentences")
         _unknown(name, params, allowed)
         base = _text(params, "sentences_from", "sat") or "sat"
         if base == "changepoint":
             msg = "changepoint cannot take its sentences from changepoint"
             raise ValueError(msg)
+        # Defaulted only when absent. `or DEFAULT` turned an explicit zero into
+        # six an hour and recorded six on the row (S2 review, I14).
+        target = _number(params, "target_per_hour", None)
+        if target is None:
+            target = DEFAULT_TARGET_PER_HOUR
+        if not math.isfinite(target) or target <= 0:
+            msg = f"target_per_hour must be a positive number, not {target!r}"
+            raise ValueError(msg)
         return EmbeddingChangePointSegmenter(
             make_segmenter(base),
             _text(params, "embedding_model", DEFAULT_EMBEDDING_MODEL) or DEFAULT_EMBEDDING_MODEL,
-            _number(params, "target_per_hour", DEFAULT_TARGET_PER_HOUR) or DEFAULT_TARGET_PER_HOUR,
+            target,
             _whole(params, "min_sentences", 4),
-            _whole(params, "jump", 1),
         )
 
     msg = f"unknown segmenter {name!r}; it is one of {', '.join(SEGMENTER_NAMES)}"
