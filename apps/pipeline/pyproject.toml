@@ -66,6 +66,14 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D", "INP001", "PLR2004"]
 "scripts/**" = ["INP001"]
+# ECMA-262's StringNumericLiteral grammar is a chain of early returns; folding
+# it into one expression would hide which clause of the spec each answer is.
+"src/temnia_pipeline/jsnum.py" = ["PLR0911"]
+# The substrate is a line-for-line port whose output is compared byte for byte
+# with the TypeScript's: the loops keep the shape of the functions they mirror
+# (PERF401), and the typographic quotes are part of the ported regexes
+# (RUF001, RUF003).
+"src/temnia_pipeline/substrate/grid.py" = ["PERF401", "RUF001", "RUF003"]
 
 [tool.pyright]
 pythonVersion = "3.13"
