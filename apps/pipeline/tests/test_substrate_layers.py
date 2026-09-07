@@ -4,8 +4,8 @@ The port itself is covered by `test_substrate_grid.py`,
 `test_substrate_paragraphs.py` and the byte-parity gate in
 `test_substrate_parity.py`. What is new here is the adapter: that
 `LegacyRulesSegmenter` says exactly what `build_cut_grid` says, and that
-`pack_paragraphs` — the legacy paragraph rule restated over the shared
-`Sentence` so `SaTSegmenter` can reuse it — has not drifted from the port's own
+`pack_paragraphs`, the legacy paragraph rule restated over the shared
+`Sentence` so `SaTSegmenter` can reuse it, has not drifted from the port's own
 packing on any fixture.
 """
 

@@ -22,8 +22,8 @@ penalty by bisection until the number of breakpoints lands near the target.
 runs the dynamic program and returns the best segmentation into k+1 pieces, so
 the count is exact rather than approached, it is deterministic, and it costs
 one solve rather than a dozen. Bisection would be a slower way to get a worse
-answer. The penalty formulation is still exposed — `candidates_at(penalty)` on
-the analysis object is the raw curve the design wanted — but it is not how the
+answer. The penalty formulation is still exposed (`candidates_at(penalty)` on
+the analysis object is the raw curve the design wanted), but it is not how the
 target is hit.
 
 **Complexity.** Kernel change-point detection builds a dense Gram matrix and is

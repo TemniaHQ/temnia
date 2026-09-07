@@ -13,8 +13,8 @@ single spaces, and each word's character offset is recorded while it is built.
 wtpsplit's contract is that the returned segments concatenate back to the input
 exactly, which is asserted here rather than assumed, so the segment boundaries
 are character offsets into the same string. Each word then belongs to the
-segment that holds its FIRST character — a boundary predicted in the middle of
-a word does not split it — and because both sequences run left to right the
+segment that holds its FIRST character, so a boundary predicted in the middle
+of a word does not split it, and because both sequences run left to right the
 mapping is one walk. Sentences therefore tile the words in order, with no gaps
 and no overlaps, which is what makes `word_start` and `word_end` a safe address
 for exact times.
@@ -75,8 +75,8 @@ DEFAULT_SAT_MODEL = "sat-3l-sm"
 def _majority_speaker(words: Sequence[GridWord]) -> str | None:
     """The speaker most of a sentence's words carry.
 
-    A sentence can tile across a turn — one word of crosstalk is in the
-    `signal-boost-snippet` fixture — and the majority is a better answer than
+    A sentence can tile across a turn (one word of crosstalk is in the
+    `signal-boost-snippet` fixture), and the majority is a better answer than
     the first word's. `Counter.most_common` breaks a tie by first appearance,
     so an even split goes to whoever spoke first, which is the reading the
     legacy's own rule gives.
@@ -258,8 +258,8 @@ def _paragraphs_from_sat(
 
     SaT's paragraph mode returns a decision, not a probability, so every
     candidate scores 1.0 the way the legacy rules' do. The kind is read off the
-    same evidence the legacy rule uses — a speaker change is a `turn`, a gap
-    over the legacy threshold is a `pause` — and a break with neither is the
+    same evidence the legacy rule uses (a speaker change is a `turn`, a gap over
+    the legacy threshold is a `pause`), and a break with neither is the
     model saying the subject moved on, which is a `topic`. Scores are only
     comparable within one segmenter's own list; `BoundaryCandidate` says so.
     """

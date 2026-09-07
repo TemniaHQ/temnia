@@ -8,9 +8,9 @@ here, so the renderer, the eval runner and S4's prompts are written once.
 
 Three layers over the word timeline that `TranscriptV1` already carries:
 
-- :class:`Sentence` — the fine unit, the Cutter's coordinate system.
-- :class:`Paragraph` — the medium unit, a run of whole sentences.
-- :class:`BoundaryCandidate` — a proposed cut with a score and the reason it
+- :class:`Sentence`, the fine unit, the Cutter's coordinate system.
+- :class:`Paragraph`, the medium unit, a run of whole sentences.
+- :class:`BoundaryCandidate`, a proposed cut with a score and the reason it
   was proposed, which is what the S4 Director reads instead of guessing.
 
 Ids are 0-based integers everywhere; the zero padding that makes them look

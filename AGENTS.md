@@ -224,6 +224,47 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    bucket is local with dev-only keys. Applied by a compose one-shot (`garage-cors`); R2 gets the one
    real origin (runbook §1).
 
+**2026-09-07 — The substrate is designed from the Python ecosystem; the legacy rules are a scored
+baseline.** Slice C ported the legacy TypeScript grid function for function, which reproduced a set
+of regexes and thresholds in the language that exists to avoid them. Rajesh's correction: research
+the ecosystem and build what it says. The substrate is now three layers behind a `Segmenter`
+protocol (`apps/pipeline/src/temnia_pipeline/substrate/`), all sharing one output shape and one
+renderer.
+1. **Sentences: Segment-any-Text** (`wtpsplit` 2.2.1, MIT), which predicts boundaries from the text
+   and was evaluated on ASR transcripts with the punctuation and casing stripped. This removes the
+   dependence on Whisper's full stops that PRD §8 itself flags as the grid's weakness. Words map
+   back by character offset, so every sentence keeps exact `startMs` and `endMs`. `sat-3l-sm` runs
+   on the worker's CPU; `sat-12l` on the Modal GPU is a name, not a code change. SaT's own paragraph
+   mode is a selectable candidate and **not** the default: measured on the fixtures it returns one
+   paragraph per sentence, so paragraphs come from the legacy rule (2500 ms, 120 words, speaker
+   change) over SaT's sentences.
+2. **Chapter candidates: change-point detection over sentence embeddings**
+   (`sentence-transformers` 6.0.1 with all-MiniLM-L6-v2, `ruptures` 1.1.10 `KernelCPD` with an RBF
+   kernel), the Embed-KCPD line of work, unsupervised. Granularity is a parameter
+   (`target_per_hour`, default 6) and the count is solved exactly rather than approached by
+   bisection. Each candidate carries a score, so S4 reads a ranked list instead of guessing from the
+   raw text. Chapter-Llama is a later challenger to score, not a default. Kernel CPD is quadratic in
+   sentences: 2,500 is seconds, and the ceiling is 10,000 with a clear error.
+3. **The legacy rules stay**, as `LegacyRulesSegmenter`, still byte-parity tested against the frozen
+   oracle in `tools/legacy-reference/`. That is what makes them a trustworthy baseline rather than a
+   memory.
+4. **The metrics are the field's, not plain F1.** `evals/segmentation.py` reports Pk, WindowDiff and
+   GHD (`nltk` 3.10; `segeval` is unmaintained since 2013), window-tolerant precision and recall
+   reported separately as purity and coverage with their F1, boundary density per hour on both
+   sides, and tIoU-F1 over 0.5 to 0.95 for segments. "When F1 Fails" (arXiv 2512.17083) shows
+   boundary F1 tracks boundary density more than boundary quality, which is why density and the
+   unaveraged pair are always printed. Every row is scored on one unit grid, the source's word start
+   times, because sentences differ per segmenter and rows must be comparable. Without gold the
+   runner still reports density and pairwise agreement.
+5. **The exit test changes.** "Byte-identical to the legacy on three recorded sources" becomes
+   `temnia-eval segment` on those sources with every segmenter scored, and the plan recording which
+   segmenter S4 starts on and what number would make us switch. The legacy scorer snapshots keep
+   their bit-identical test: they are the record of what the legacy measured, and the M1 baseline
+   column.
+6. **Models are baked into the pipeline image** (`TEMNIA_MODELS_DIR`, `HF_HOME`, `HF_HUB_OFFLINE=1`)
+   so the worker never downloads inside an activity; `torch` is pinned to the CPU wheels on linux,
+   which is the difference between a 3 GB image and a 6 GB one.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
@@ -240,6 +281,15 @@ The finalization of a document or a decision is never delegated. Agents report t
 session scratchpad, not raw dumps; independent agents run in parallel. Delegation never lowers the
 verification bar: the agent that finishes a change runs the gate and the orchestrator checks the
 evidence.
+
+### The PRD is not a hard requirement (Rajesh, 2026-09-07)
+
+The PRD and the sprint plan describe intent and were written from the legacy TypeScript product.
+They are not specifications to reproduce. Every pipeline component is designed from the Python
+ecosystem first, the legacy is behaviour evidence and a baseline to beat, and where research shows
+a better design the better design is built, the deviation is recorded in the Decisions section, and
+the PRD or sprint-plan row is updated in the same PR. An exit test derived from the legacy is
+replaced by a scored comparison in which the legacy behaviour is one candidate.
 
 ### The 360-degree view comes before the code (Rajesh, 2026-09-06)
 

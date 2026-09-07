@@ -2,12 +2,12 @@
 
 Three commands today:
 
-- ``temnia-eval verify [dir]`` — replay the cross-language parity snapshots
+- ``temnia-eval verify [dir]``: replay the cross-language parity snapshots
   through the ported scorers and fail on any mismatch. The gate runs the same
   check through pytest (``tests/test_parity.py``).
-- ``temnia-eval score <snapshot.json ...>`` — recompute the scorer cases and
+- ``temnia-eval score <snapshot.json ...>``: recompute the scorer cases and
   print the PASS/FAIL threshold report the legacy's ``pnpm eval`` printed.
-- ``temnia-eval segment <transcript.json>`` — run every named segmenter over
+- ``temnia-eval segment <transcript.json>``: run every named segmenter over
   one source and print the segmentation metrics side by side. This is the S2
   substrate's exit test, in place of the byte-identical-to-the-legacy one.
 

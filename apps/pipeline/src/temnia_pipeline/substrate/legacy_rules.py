@@ -9,8 +9,8 @@ the definition of the answer.
 
 Two things are worth reading twice.
 
-`pack_paragraphs` is the legacy paragraph rule — speaker change, a gap over
-2500 ms, a 120-word cap, and never mid-sentence — stated over
+`pack_paragraphs` is the legacy paragraph rule (speaker change, a gap over
+2500 ms, a 120-word cap, and never mid-sentence) stated over
 :class:`~.model.Sentence` instead of over the port's `GridSentence`, because
 `SaTSegmenter` needs the same rule over sentences the port never saw. It is a
 second statement of one rule, so `tests/test_substrate_layers.py` pins it to

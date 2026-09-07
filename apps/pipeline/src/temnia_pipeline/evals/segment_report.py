@@ -8,7 +8,7 @@ A row is one segmenter. Its hypothesis is its own boundary candidates, which is
 why the change-point layer replaces the base's turn and pause candidates rather
 than adding to them: a row's boundaries are what it is proposing as cuts.
 
-Every row is scored on the same unit grid — the source's word start times — so
+Every row is scored on the same unit grid, the source's word start times, so
 Pk and WindowDiff mean the same thing across rows even though the segmenters
 disagree about where sentences are. Without gold the report still carries each
 row's density and the pairwise agreement between rows, which is enough to see

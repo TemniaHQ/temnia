@@ -27,8 +27,8 @@ class Segmenter(Protocol):
 
     `shot_times_ms` is the shot grid the ingest wrote (`shots/shots.json`,
     already filtered to the file's own decision threshold). No segmenter here
-    moves a boundary onto a shot — that is the legacy `shot_snap` backstop and
-    it belongs to the cut, not to the substrate — but a segmenter may record
+    moves a boundary onto a shot (that is the legacy `shot_snap` backstop, and it
+    belongs to the cut rather than to the substrate), but a segmenter may record
     the shots it was given in its provenance, and the fine rendering marks
     them, so the parameter rides through the seam rather than around it.
     """

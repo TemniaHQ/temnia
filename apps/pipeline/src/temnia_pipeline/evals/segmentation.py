@@ -8,7 +8,7 @@ on dialogue segmentation tracks boundary *density* more than boundary quality:
 a segmenter that proposes thirty boundaries an hour beats one that proposes six
 on F1 while being worse at the job. So every row here carries the density of
 both sides, and the tolerant precision and recall are reported under their own
-names — `purity` for precision, `coverage` for recall — so a lopsided pair is
+names (`purity` for precision, `coverage` for recall), so a lopsided pair is
 visible rather than averaged away.
 
 **Why Pk and WindowDiff as well.** Both are window metrics and tolerate a
@@ -32,8 +32,8 @@ number matched.
 **Segments, not boundaries.** `score_segments` is the VidChapters convention:
 F1 over temporal IoU thresholds 0.5 to 0.95 in steps of 0.05, averaged, plus
 the mean IoU of the pairs that match at all. It answers a different question
-from the boundary metrics — whether the *spans* line up, not whether the cut
-points do — and a chapter cut is judged on both.
+from the boundary metrics: whether the *spans* line up, not whether the cut
+points do. A chapter cut is judged on both.
 """
 
 from __future__ import annotations

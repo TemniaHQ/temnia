@@ -5,7 +5,7 @@ segmenter's output byte for byte, so a change to the format is a diff in a
 review rather than a surprise in a prompt; `scripts/dump_layers.py --check`
 is the same comparison and is what the gate runs. And a parser here reads the
 rendering back into ids, times and glyphs, so the format is asserted to be
-machine-readable rather than merely looking right — including for SaT and the
+machine-readable rather than merely looking right, including for SaT and the
 change-point layer, whose bytes move with their models and are therefore
 checked by properties.
 """

@@ -74,16 +74,37 @@ and a new machine revision, never an overwrite. Corrections: two tabs editing th
 the second save gets a stale-revision refusal. Speaker rename to an existing name merges two ids
 by design. Deletion: deleting the source deletes the transcript prefix and rows (cascade).
 
-**Substrate (C).** Empty transcript renders empty grids, not an error. A one-speaker monologue
-produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap alone. A word with
-`startMs == endMs` is legal. Shots absent (synthetic sources): shot snap is a no-op. The UI's display paragraphs (TypeScript, the legacy `paragraphs.ts`
-rules) and the substrate's grid paragraphs (Python) are separate implementations by design, as they
-were in the legacy; S5 addresses cuts by the substrate's ids, so the transcript JSON carries them
-once PR C lands. The oracle those renderings are compared against is a frozen copy of the legacy
-substrate at commit `b642b77` under `tools/legacy-reference/`, which is never edited to make a port
-pass and is never imported by an app or a package; it dumps into
-`apps/pipeline/tests/fixtures/substrate/`, one transcript and an optional shot grid per source, and
-adding a recorded source is dropping two files in and running `pnpm substrate:dump`.
+**Substrate (C, and C2 which redesigned it).** Slice C ported the legacy grid; slice C2 replaced
+the *design* with the Python ecosystem's and kept the port as a scored baseline (AGENTS.md,
+2026-09-07). Three layers now sit behind a `Segmenter` protocol: Segment-any-Text sentences,
+paragraphs from the legacy rule over them, and ranked topic candidates from kernel change-point
+detection over sentence embeddings.
+
+Empty transcript gives empty layers, not an error, and needs no model loaded at all. A one-speaker
+monologue produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap alone. A
+word with `startMs == endMs` is legal. Shots absent (synthetic sources): the shot glyph is a no-op.
+A transcript with no punctuation anywhere still gets sentences, which is the whole point of the SaT
+layer, and is asserted on a stripped `speech-40s`. A clip too short for the target rate gets no
+topic candidates rather than an invented one: six an hour over forty seconds is zero. A language
+without a SaT adapter falls back to the base model and the run records which, in the provenance
+every eval row prints. Kernel change-point detection is quadratic in sentences, so past 10,000 it
+refuses with a message that says to segment in parts.
+
+The UI's display paragraphs (TypeScript, the legacy `paragraphs.ts` rules) and the substrate's
+paragraphs (Python) are separate implementations by design, as they were in the legacy; S5
+addresses cuts by the substrate's ids, so the transcript JSON carries them once PR C lands. The
+oracle the *legacy* renderings are compared against is a frozen copy of the legacy substrate at
+commit `b642b77` under `tools/legacy-reference/`, which is never edited to make a port pass and is
+never imported by an app or a package; it dumps into `apps/pipeline/tests/fixtures/substrate/`, one
+transcript and an optional shot grid per source, and adding a recorded source is dropping two files
+in and running `pnpm substrate:dump` and `pnpm --filter @temnia/pipeline layers`. The new renderer's
+golden files are dumped by the second of those, for the `legacy` segmenter only, because it is the
+one that needs no model and is therefore the same on any machine.
+
+Operations: the model weights live in `TEMNIA_MODELS_DIR`, baked into the pipeline image at
+`/opt/temnia-models` with `HF_HUB_OFFLINE=1`, so a missing or renamed model fails loudly at load
+rather than downloading a gigabyte inside an activity. The image grew from 0.75 GB to 3.02 GB of
+layers for it, of which 961 MB is weights and most of the rest is CPU torch.
 
 ## 3. Scale
 
@@ -209,7 +230,14 @@ transcript status badge on the list is S7's concern (source intelligence).
 | Tenancy | Isolation suite probes for both tables; schema contract test updated for the new enum and columns |
 | Transcript tab | Playwright: every state above (driven by the recorded provider and a stalled fixture), click-to-seek changes `video.currentTime`, follow highlights the word at 5 s, search finds the expected count, edit a word then reload shows revision 2, rename then export shows the name in the VTT, two contexts produce the stale-revision message, every dialog and menu opened |
 | Hydration | The SSR-HTML assertions in `pnpm e2e:prod` on the transcript tab (the S1 hydration lesson) |
-| Substrate parity | `apps/pipeline/tests/test_substrate_parity.py`: coarse and fine renderings byte-equal to the committed oracle output, and the grid and display paragraphs equal after loading; `tools/legacy-reference/tests/substrate-dump.test.ts` re-dumps and compares bytes, so a fixture or oracle edit without a re-dump fails too. Four sources today (the speech fixture with the shot grid the ingest produced for it, the converted legacy snippet, a synthetic fixture exercising every rule, and an empty transcript); the three recorded sources join them in D, at which point the gate covers them without a code change |
+| Substrate parity (the baseline) | `apps/pipeline/tests/test_substrate_parity.py`: coarse and fine renderings byte-equal to the committed oracle output, and the grid and display paragraphs equal after loading; `tools/legacy-reference/tests/substrate-dump.test.ts` re-dumps and compares bytes, so a fixture or oracle edit without a re-dump fails too. Five sources today (the speech fixture with the shot grid the ingest produced for it, the converted legacy snippet, a synthetic fixture exercising every rule, an empty transcript, and `two-topics`); the three recorded sources join them in D, at which point the gate covers them without a code change |
+| The segmenter seam | `test_substrate_layers.py`: the legacy adapter reports the port's own sentences and paragraphs, and `pack_paragraphs` (the same rule restated over the shared shape so SaT can reuse it) agrees with `build_cut_grid` on every fixture |
+| SaT sentences | `test_substrate_sat.py` (`models` marker): the sentences tile the words in order, every one has a speaker and times that are some word's own, the character mapping round-trips, and a transcript with the punctuation stripped still gets more than one sentence |
+| Change-point candidates | `test_substrate_changepoint.py` (`models` marker): on `two-topics`, 40 sentences of one subject then 40 of another with the join gap deliberately under the legacy pause threshold, the top candidate is the gold boundary from either sentence source, and the candidate count is the target exactly |
+| The rendering | `test_substrate_render.py`: the committed `<name>.layers.*.txt` are what the legacy segmenter produces, and a parser in the test reads every rendering back into ids, times and glyphs, so the format is machine-readable and not merely tidy |
+| The metrics | `test_segmentation_metrics.py`: Pk, WindowDiff and GHD against nltk's own published examples, and the parts that are ours on hand-built cases including an empty hypothesis, an empty reference, a single boundary just inside and just outside the tolerance, and boundaries on the media's edges |
+| The eval report | `test_eval_segment.py`: `temnia-eval segment` runs through the installed console script on every fixture, and the JSON report round-trips |
+| Models in the image | `test_substrate_models_fetch.py`: the fetch script's three duplicated constants equal the package's, and the Dockerfile still downloads before it copies the source |
 | Scorer parity | `test_parity.py` on the re-hosted snapshots, bit-identical |
 | Scale on staging | The 2-hour master: ladder minutes and GPU cost, transcript minutes and cost, tab load time, two-org probes; the numbers close S2 and M0 |
 
@@ -267,3 +295,14 @@ transcript status badge on the list is S7's concern (source intelligence).
 - Hybrid ladder: CPU decode and scale, NVENC for the video rungs, libx264 for the I-frame rendition.
 - The transcript tab reuses the legacy viewer's rules with `@tanstack/react-virtual`.
 - A real-speech e2e fixture joins the synthetic 24-second master.
+- (2026-09-07, slice C2, now recorded in AGENTS.md.) The substrate is designed from the Python
+  ecosystem and the legacy rules are one scored candidate: SaT sentences, the legacy paragraph rule
+  over them, ranked change-point topic candidates, one renderer, one `Segmenter` seam.
+- SaT's paragraph mode is not the default. Measured on the fixtures it returns one paragraph per
+  sentence; it stays selectable because four fixtures are not a recorded episode.
+- The change-point target count is solved exactly by `KernelCPD`'s dynamic program rather than
+  approached by bisecting a penalty. The penalty curve is still exposed, on the fitted analysis
+  object rather than on the segmenter, so a caller asking for several granularities embeds once.
+- The eval runner scores every row on one unit grid, the source's word start times, because
+  sentences differ per segmenter and rows must be comparable.
+- The exit test for the substrate is the `temnia-eval segment` report, not byte-identity.

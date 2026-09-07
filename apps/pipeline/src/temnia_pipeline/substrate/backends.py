@@ -63,7 +63,7 @@ def prime_skops() -> None:
     `skops` enumerates the trusted types of every imported module when it is
     first imported. If `transformers` is already in the process it walks that
     too and touches its lazy vision submodules, one of which imports
-    `torchvision` at module level — a package the pipeline deliberately does
+    `torchvision` at module level, a package the pipeline deliberately does
     not install to run two text models. wtpsplit guards against this by
     importing skops before transformers in its own `__init__`, which only
     works when wtpsplit gets there first: loading `sentence-transformers` and
@@ -231,9 +231,9 @@ class KernelSegmentation:
 
     `ruptures.KernelCPD` solves two different problems from one fit: the exact
     best segmentation into a given number of pieces (dynamic programming), and
-    the best segmentation under a per-boundary penalty. Both are wanted here —
-    the first to hit a target granularity, the second to expose the raw curve —
-    so both are on this façade, along with the segment cost the candidate
+    the best segmentation under a per-boundary penalty. Both are wanted here:
+    the first to hit a target granularity and the second to expose the raw
+    curve, so both are on this façade, along with the segment cost the candidate
     scores are computed from.
     """
 

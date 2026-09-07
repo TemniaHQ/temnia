@@ -2,8 +2,8 @@
 
 The three window metrics are nltk's, so the first thing asserted is that our
 wrapper reproduces the examples in nltk's own docstrings exactly, including the
-GHD ones from the Kulyukin implementation. Everything above them — the unit
-grid, the tolerant matching, the densities, the tIoU convention — is ours and
+GHD ones from the Kulyukin implementation. Everything above them (the unit
+grid, the tolerant matching, the densities, the tIoU convention) is ours and
 is asserted on hand-built cases, with the edges the 360-degree view names: an
 empty hypothesis, a single boundary, and boundaries sitting on the media's own
 start and end.
