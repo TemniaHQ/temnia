@@ -18,6 +18,10 @@ DEFAULT_TRANSCRIPT_DICT = "temnia-transcript-progress"
 # Where recorded WhisperX responses are looked for when no explicit file is
 # named. Relative to nothing: the gate mounts its fixtures and points here.
 DEFAULT_RECORDINGS_DIR = "/var/lib/temnia/recordings"
+# Where model weights are cached. One directory for every model the pipeline
+# loads, pointed at by HF_HOME, so a machine downloads each of them once and
+# the pipeline image can bake them in at the same path.
+DEFAULT_MODELS_DIR = "~/.cache/temnia-models"
 
 # Region is not in this list on purpose: R2 wants `auto` and Garage `garage`,
 # neither is a secret, and a wrong one fails at the first request rather than
@@ -163,6 +167,26 @@ class TranscriptionSettings:
                 os.environ.get("TRANSCRIPTION_RECORDINGS_DIR", DEFAULT_RECORDINGS_DIR)
             ),
             recording=Path(recording) if recording else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSettings:
+    """Where the substrate's model weights live.
+
+    Its own settings object rather than a field of `PipelineSettings`,
+    because the eval runner and the fetch script read it without being a
+    worker, and because a wrong value here costs a download rather than a
+    misrouted job.
+    """
+
+    models_dir: Path
+
+    @classmethod
+    def from_env(cls) -> ModelSettings:
+        """Read `TEMNIA_MODELS_DIR`; `~` is expanded, so the default works unset."""
+        return cls(
+            models_dir=Path(os.environ.get("TEMNIA_MODELS_DIR") or DEFAULT_MODELS_DIR).expanduser()
         )
 
 
