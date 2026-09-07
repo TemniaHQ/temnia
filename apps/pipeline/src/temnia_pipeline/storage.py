@@ -130,6 +130,7 @@ async def upload_tree(
     prefix: str,
     root: Path,
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+    concurrency: int = UPLOAD_CONCURRENCY,
 ) -> int:
     """Upload every file under `root` to `prefix`; returns total bytes.
 
@@ -137,11 +138,16 @@ async def upload_tree(
     2.5-hour ladder is about 4,500 segments and several gigabytes; without a
     heartbeat inside this loop the activity times out mid-publish (staging,
     2026-09-06) and the retry throws the finished ladder away.
+
+    The publish is bound by per-object latency, not bandwidth: a ladder is
+    tens of thousands of two-second segments, and at eight in flight both the
+    VPS and a Modal container managed 2 to 3 MB/s (staging, 2026-09-07). The
+    caller that has the network for it raises `concurrency`.
     """
     files = [p for p in root.rglob("*") if p.is_file()]
     total = sum(p.stat().st_size for p in files)
     done = 0
-    semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
+    semaphore = asyncio.Semaphore(concurrency)
 
     async def one(path: Path) -> int:
         nonlocal done

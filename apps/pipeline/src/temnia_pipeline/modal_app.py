@@ -79,6 +79,10 @@ LADDER_MEMORY_MB = 16384
 TRANSCRIBE_CPUS = 4
 TRANSCRIBE_MEMORY_MB = 16384
 PROGRESS_INTERVAL_SECONDS = 5.0
+# The first staging ladder published 3.8 GB at 2 to 3 MB/s with eight puts in
+# flight, the VPS's own rate: the publish is per-object latency across tens of
+# thousands of segments. A container has the network for far more in flight.
+UPLOAD_CONCURRENCY = 64
 # The Modal Secret holding a second R2 token, revocable without touching the
 # worker's: the name of a secret, not a secret (runbook, Modal).
 R2_SECRET = "temnia-r2"  # noqa: S105
@@ -299,7 +303,13 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
         await publish(done, total_bytes)
 
     await _write_progress("publish", 0)
-    total = await upload_tree(store, request.hls_prefix, out_dir, on_progress=on_publish)
+    total = await upload_tree(
+        store,
+        request.hls_prefix,
+        out_dir,
+        on_progress=on_publish,
+        concurrency=UPLOAD_CONCURRENCY,
+    )
     manifest = hls.LadderManifest(
         renditions=renditions,
         iframes=request.video is not None,
