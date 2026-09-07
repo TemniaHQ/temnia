@@ -39,8 +39,11 @@ if TYPE_CHECKING:
 # does the wrong thing. It covers the whole app, not just the ladder: S2 added
 # `transcribe` beside `ladder`, and the two must be deployed together.
 #
-# "1" was the ladder alone (S2, PR A). "2" adds transcription.
-CONTRACT_VERSION = "2"
+# "1" was the ladder alone (S2, PR A). "2" adds transcription. "3" adds the
+# pixel format to `VideoFacts`: it is half of what the function reads to decide
+# whether it may decode on the GPU, and a container deployed before this one
+# would send every source down the CPU path without saying so.
+CONTRACT_VERSION = "3"
 
 HLS_SUBDIR = "hls/"
 
@@ -101,6 +104,9 @@ class LadderResult(BaseModel):
     total_bytes: int
     manifest_key: str
     encoder: hls.Encoder
+    # Read back from the manifest, never assumed: on Modal the encode may have
+    # started on the GPU decoder and finished on the CPU one.
+    decoder: hls.Decoder = "cpu"
     call_id: str | None = None
 
 
@@ -153,5 +159,6 @@ async def stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
         total_bytes=manifest.total_bytes,
         manifest_key=job.manifest_key,
         encoder=manifest.encoder,
+        decoder=manifest.decoder,
         call_id=manifest.call_id,
     )

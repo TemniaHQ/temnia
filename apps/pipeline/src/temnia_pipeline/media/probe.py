@@ -4,6 +4,10 @@ The probe is a gate. A file with no decodable stream, or a non-positive
 duration, never becomes a source. Embedded cover art (mjpeg "video") is not a
 video stream. `r_frame_rate != avg_frame_rate` marks a variable-frame-rate
 file, and the ladder then forces a constant rate so frame math holds.
+
+The codec name and the pixel format ride along in `VideoFacts` because the
+ladder decides from them whether the GPU can decode the source, and the Modal
+image carries no probe of its own.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ def probe(path: Path) -> tuple[ProbeResult, VideoFacts | None]:
                 fps=fps,
                 variable_frame_rate=variable,
                 codec=name,
+                pix_fmt=stream.codec_context.pix_fmt,
             )
             break
         audio = container.streams.audio[0] if container.streams.audio else None

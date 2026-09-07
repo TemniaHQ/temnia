@@ -18,10 +18,19 @@ from fractions import Fraction  # noqa: TC003
 
 @dataclass(frozen=True, slots=True)
 class VideoFacts:
-    """What the ladder needs about the video stream."""
+    """What the ladder needs about the video stream.
+
+    `codec` and `pix_fmt` exist for one decision: whether the GPU can decode
+    this source. NVDEC on an L4 handles h264, hevc, and av1 at 8-bit 4:2:0 and
+    none of the other things a master arrives as, so those two strings are what
+    `hls.cuda_decodable` reads. `pix_fmt` is optional because a container can
+    describe a stream without one, and a source whose pixel format is unknown
+    takes the CPU path rather than a guess.
+    """
 
     width: int
     height: int
     fps: Fraction
     variable_frame_rate: bool
     codec: str
+    pix_fmt: str | None = None

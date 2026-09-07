@@ -224,6 +224,7 @@ class Ingest:
                     "segment_seconds": hls.SEGMENT_SECONDS,
                     "iframes": video is not None,
                     "encoder": result.encoder,
+                    "decoder": result.decoder,
                 },
             )
         )

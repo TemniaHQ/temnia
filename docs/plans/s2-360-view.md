@@ -51,7 +51,13 @@ B's staging run because the three fixture transcripts are produced by B.
 **Ladder (A).** Empty or zero-duration master: refused at probe as today. Huge: a 3-hour 4K ProRes
 master is 100 GB+; NVENC cannot decode ProRes, so decode and scale stay on the CPU inside the
 function (hybrid graph) and only the video rungs switch to `h264_nvenc`; the I-frame rendition
-(360p at 0.5 fps, `keyint=1`) stays on libx264. Duplicate: a retry while a Modal call is running
+(360p at 0.5 fps, `keyint=1`) stays on libx264. **Corrected 2026-09-07 after the first staging
+ladder:** the hybrid graph starved the encoder, taking about 22 minutes on a 2:31 1080p25 H.264
+master with the CPU pinned and the L4 near twenty percent, so decode and scale moved onto the GPU
+(`-hwaccel cuda -hwaccel_output_format cuda`, `scale_cuda` per rung) for the 8-bit 4:2:0 H.264,
+HEVC, and AV1 sources NVDEC reads, with the CPU graph kept for ProRes, 10-bit, and 4:2:2 and as a
+one-shot fallback when the CUDA run fails; the decoder that produced a ladder is recorded in its
+manifest. Duplicate: a retry while a Modal call is running
 reattaches by call id rather than spawning a second GPU job. Concurrent: two sources ladder in two
 containers; Modal scales, the worker's one-ladder-at-a-time limit goes away. Cancelled: source
 deleted mid-ladder cancels the FunctionCall and the function's partial uploads are removed by the
