@@ -1,5 +1,12 @@
 import { resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import {
+  clickUpload,
+  expectUploadDone,
+  FIXED_LAST_MODIFIED,
+  pickGenerated,
+  uploadFixture,
+} from "./helpers/upload";
 
 // Playwright runs specs from apps/web.
 const FIXTURE = resolve(process.cwd(), "e2e/fixtures/master-24s.mp4");
@@ -13,8 +20,6 @@ const UPLOAD_ROW_URL = /\/api\/uploads\/[0-9a-f-]{36}$/;
 const STARTED = /uploaded|processing/;
 const UPLOADED_IN = /Uploaded in\s*\d+s/;
 const INGESTED_IN = /Ingested in\s*\d+s/;
-const UPLOAD_BUTTON = /^Upload \d+ files?$/;
-const FIXED_LAST_MODIFIED = 1_700_000_000_000;
 
 async function createProject(page: Page, name: string): Promise<string> {
   await page.goto("/projects");
@@ -22,43 +27,6 @@ async function createProject(page: Page, name: string): Promise<string> {
   await page.getByRole("button", { name: "Create project" }).click();
   await page.waitForURL(PROJECT_URL);
   return page.url().split("/").pop() ?? "";
-}
-
-/** Uppy's Dashboard keeps its file input hidden; Playwright can still set it. */
-function dashboardInput(page: Page) {
-  return page.locator("input.uppy-Dashboard-input").first();
-}
-
-/**
- * Picks a generated file with a fixed identity (name, size, lastModified) so
- * the server-side fingerprint matches across picks. A DataTransfer, because
- * setInputFiles stamps lastModified with the current time.
- */
-async function pickGenerated(
-  page: Page,
-  file: { name: string; size: number }
-): Promise<void> {
-  await dashboardInput(page).evaluate(
-    (input: HTMLInputElement, { name, size, lastModified }) => {
-      const bytes = new Uint8Array(size);
-      for (let i = 0; i < bytes.length; i += 4096) {
-        bytes[i] = i % 251;
-      }
-      const generated = new File([bytes], name, {
-        lastModified,
-        type: "video/mp4",
-      });
-      const transfer = new DataTransfer();
-      transfer.items.add(generated);
-      input.files = transfer.files;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    { lastModified: FIXED_LAST_MODIFIED, name: file.name, size: file.size }
-  );
-}
-
-function clickUpload(page: Page) {
-  return page.getByRole("button", { name: UPLOAD_BUTTON }).click();
 }
 
 function partSettings() {
@@ -77,11 +45,7 @@ test("a master uploaded in parts becomes a playable source", async ({
   test.setTimeout(INGEST_TIMEOUT_MS + 60_000);
   await createProject(page, `ingest ${Date.now()}`);
 
-  await dashboardInput(page).setInputFiles(FIXTURE);
-  await clickUpload(page);
-  await expect(page.getByTestId("upload-done")).toBeVisible({
-    timeout: 60_000,
-  });
+  await uploadFixture(page, FIXTURE);
 
   const row = page.locator("[data-source-id]").first();
   await expect(row).toHaveAttribute("data-status", "ready", {
@@ -249,9 +213,7 @@ test("an upload whose first part is already stored resumes from it", async ({
   await expect(page.getByTestId("upload-waiting")).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.getByTestId("upload-done")).toBeVisible({
-    timeout: 60_000,
-  });
+  await expectUploadDone(page);
   expect(puts.map((u) => u.match(PART_NUMBER)?.[1]).sort()).toEqual(["2", "3"]);
 
   // The store's part 1 plus the browser's 2 and 3 completed the upload; the
@@ -356,9 +318,7 @@ test("cancel aborts the upload; leaving the page keeps it resumable", async ({
   const listingsBefore = listings.length;
   await pickGenerated(page, { name, size });
   await clickUpload(page);
-  await expect(page.getByTestId("upload-done")).toBeVisible({
-    timeout: 90_000,
-  });
+  await expectUploadDone(page, 90_000);
   expect(listings.length).toBeGreaterThan(listingsBefore);
   await expect(page.locator("[data-source-id]")).toHaveCount(1);
   await expect(page.locator("[data-source-id]").first()).not.toHaveAttribute(

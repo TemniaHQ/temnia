@@ -23,6 +23,7 @@ import { expect, type Page, test } from "@playwright/test";
 import speech from "../tests/fixtures/speech-40s.transcript.json" with {
   type: "json",
 };
+import { uploadFixture } from "./helpers/upload";
 
 const SPEECH = resolve(process.cwd(), "e2e/fixtures/speech-40s.mp4");
 // Two silent masters, and the duration is the whole difference between them:
@@ -71,13 +72,7 @@ async function createProject(page: Page, name: string): Promise<void> {
 
 /** Upload a master, wait out the ingest, and land on its source page. */
 async function ingest(page: Page, fixture: string): Promise<string> {
-  await page
-    .locator("input.uppy-Dashboard-input")
-    .first()
-    .setInputFiles(fixture);
-  await expect(page.getByTestId("upload-done")).toBeVisible({
-    timeout: 60_000,
-  });
+  await uploadFixture(page, fixture);
   const row = page.locator("[data-source-id]").first();
   await expect(row).toHaveAttribute("data-status", "ready", {
     timeout: INGEST_TIMEOUT_MS,
@@ -117,13 +112,7 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
 
   // The tab has words while the ingest is still running, and never a spinner
   // with nothing to read.
-  await page
-    .locator("input.uppy-Dashboard-input")
-    .first()
-    .setInputFiles(SPEECH);
-  await expect(page.getByTestId("upload-done")).toBeVisible({
-    timeout: 60_000,
-  });
+  await uploadFixture(page, SPEECH);
   const listRow = page.locator("[data-source-id]").first();
   await listRow.getByRole("link").click();
   await page.waitForURL(SOURCE_URL);
