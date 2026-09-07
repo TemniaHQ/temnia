@@ -206,7 +206,8 @@ Web (vitest and Playwright):
 - Reader (Playwright): Try again issues a second request; a draft survives scrolling away and back;
   a save whose action rejects keeps the text and shows the error; the tooltip wording.
 
-Gate: `sweepStaleGateRuns` unit-tested with a fake `docker` and a fake pid table.
+Gate: the sweep's ownership rule (`ownerPid`, `processAlive`) checked by hand against live and
+dead pids while the fix was written; the script has no test harness of its own.
 
 ## 9. Legacy lessons
 
