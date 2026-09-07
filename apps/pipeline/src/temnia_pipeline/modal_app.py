@@ -7,8 +7,8 @@ pair whichever backend it is configured for.
 
 Deploy from `apps/pipeline`:
 
-    uv run modal run temnia_pipeline.modal_app::probe        # the throwaway check
-    uv run modal deploy temnia_pipeline.modal_app --env staging
+    uv run modal run --env staging -m temnia_pipeline.modal_app::probe        # the throwaway check
+    uv run modal deploy --env staging -m temnia_pipeline.modal_app
 
 The image is a CUDA runtime with BtbN's glibc ffmpeg, because Temnia's worker
 ffmpeg (`mwader/static-ffmpeg:8.1.2`) is a static musl build with no NVENC.
@@ -100,11 +100,12 @@ MODEL_DIR = "/models"
 # which is the only place a master is probed.
 PIP_PACKAGES = ["obstore>=0.11.1,<0.12", "pydantic>=2.13,<3", "boto3>=1.40,<2"]
 
-# whisperx pulls torch, ctranslate2, and pyannote-audio behind it. torch is
-# taken from PyTorch's own cu124 index to match the CUDA 12.4 runtime the image
-# is built on; the default PyPI wheel would bring its own CUDA libraries and a
-# second copy of them.
-TORCH_INDEX = "https://download.pytorch.org/whl/cu124"
+# whisperx pulls torch, ctranslate2, and pyannote-audio behind it. torch comes
+# from PyTorch's own cu126 index, the oldest that carries torch 2.8 (the cu124
+# index stops at 2.6). The wheels bundle their own CUDA libraries, so the
+# image's 12.4 runtime only has to supply the driver, and pinning the index
+# keeps a second copy of those libraries from arriving through PyPI.
+TORCH_INDEX = "https://download.pytorch.org/whl/cu126"
 TORCH_PACKAGES = ["torch==2.8.0", "torchaudio==2.8.0"]
 WHISPERX_PACKAGES = [f"whisperx=={WHISPERX_VERSION}"]
 
@@ -421,5 +422,5 @@ def nvenc_probe() -> str:
 
 @app.local_entrypoint()
 def probe() -> None:
-    """`uv run modal run temnia_pipeline.modal_app::probe`."""
+    """`uv run modal run --env staging -m temnia_pipeline.modal_app::probe`."""
     print(nvenc_probe.remote())  # noqa: T201

@@ -175,7 +175,7 @@ decided belongs to an organization, and never an organization id.
 4. **Probe the GPU first**, from `apps/pipeline`, before trusting anything else:
 
    ```bash
-   uv run modal run temnia_pipeline.modal_app::probe
+   uv run modal run --env staging -m temnia_pipeline.modal_app::probe
    ```
 
    It builds the image, lists the `nvenc` encoders, and times a ten-second 1080p encode. The image is
@@ -187,11 +187,11 @@ decided belongs to an organization, and never an organization id.
 5. **Deploy**, and redeploy from the same commit whenever the pipeline image is deployed:
 
    ```bash
-   uv run modal deploy temnia_pipeline.modal_app --env staging
+   uv run modal deploy --env staging -m temnia_pipeline.modal_app
    ```
 
    One deploy publishes `ladder`, `transcribe`, and `version`. The first build is long: it adds
-   torch 2.8 from PyTorch's cu124 index (matching the image's CUDA 12.4 runtime, so no second copy
+   torch 2.8 from PyTorch's cu126 index (the oldest index that carries torch 2.8; the wheels bundle their own CUDA libraries, so the image's 12.4 runtime only has to provide the driver, and no second copy
    of the CUDA libraries comes along) and whisperx 3.8.6 on top of the NVENC ffmpeg. There is no
    deploying one function without the other: they share `CONTRACT_VERSION`, and the worker's boot
    probe refuses a version it does not speak.
