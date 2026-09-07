@@ -39,8 +39,11 @@ if TYPE_CHECKING:
 # does the wrong thing. It covers the whole app, not just the ladder: S2 added
 # `transcribe` beside `ladder`, and the two must be deployed together.
 #
-# "1" was the ladder alone (S2, PR A). "2" adds transcription.
-CONTRACT_VERSION = "2"
+# "1" was the ladder alone (S2, PR A). "2" adds transcription. "3" adds the
+# pixel format to `VideoFacts`: it is half of what the function reads to decide
+# whether it may decode on the GPU, and a container deployed before this one
+# would send every source down the CPU path without saying so.
+CONTRACT_VERSION = "3"
 
 HLS_SUBDIR = "hls/"
 

@@ -51,7 +51,12 @@ JOB = LadderJob(
     artifact_prefix=PREFIX,
     size_bytes=1024,
     video=VideoFacts(
-        width=1920, height=1080, fps=Fraction(25), variable_frame_rate=False, codec="h264"
+        width=1920,
+        height=1080,
+        fps=Fraction(25),
+        variable_frame_rate=False,
+        codec="h264",
+        pix_fmt="yuv420p",
     ),
     has_audio=True,
     expected_seconds=DURATION,
@@ -377,6 +382,7 @@ def test_a_job_serialises_to_the_wire_names_the_function_reads() -> None:
     assert payload["expectedSeconds"] == DURATION
     assert payload["video"]["variableFrameRate"] is False
     assert payload["video"]["fps"] == "25"
+    assert payload["video"]["pixFmt"] == "yuv420p"
     assert LadderJob.model_validate(payload) == JOB
 
 

@@ -1,4 +1,8 @@
-"""Unit tests for the media planning code that needs no ffmpeg."""
+"""Unit tests for the media planning code that needs no ffmpeg binary.
+
+The probe runs here too: it is PyAV, not a subprocess, and the facts it fills
+in are what the ladder plans and picks a decoder from.
+"""
 
 from fractions import Fraction
 from pathlib import Path
@@ -7,17 +11,37 @@ import numpy as np
 import pytest
 
 from temnia_pipeline.media import derive, hls, peaks
-from temnia_pipeline.media.probe import VideoFacts
+from temnia_pipeline.media.probe import VideoFacts, probe
+
+# The only real media in the repository lives with the web app's Playwright
+# fixtures. Probing one of them here beats a second copy of the same bytes.
+FIXTURES = Path(__file__).resolve().parents[2] / "web" / "e2e" / "fixtures"
 
 
-def facts(height: int, fps: float = 30, *, vfr: bool = False) -> VideoFacts:
+def facts(
+    height: int,
+    fps: float = 30,
+    *,
+    vfr: bool = False,
+    codec: str = "h264",
+    pix_fmt: str | None = "yuv420p",
+) -> VideoFacts:
     return VideoFacts(
         width=height * 16 // 9,
         height=height,
         fps=Fraction(str(fps)),
         variable_frame_rate=vfr,
-        codec="h264",
+        codec=codec,
+        pix_fmt=pix_fmt,
     )
+
+
+def test_the_probe_records_the_codec_and_the_pixel_format() -> None:
+    """Both strings decide the decoder, and the Modal image has no probe of its own."""
+    _result, video = probe(FIXTURES / "master-12s.mp4")
+    assert video is not None
+    assert video.codec == "h264"
+    assert video.pix_fmt == "yuv420p"
 
 
 def test_ladder_caps_at_1080_and_adds_proxies() -> None:

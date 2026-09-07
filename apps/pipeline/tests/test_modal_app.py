@@ -55,6 +55,7 @@ LadderJob.model_validate(
             "fps": "25",
             "variableFrameRate": False,
             "codec": "h264",
+            "pixFmt": "yuv420p",
         }},
         "hasAudio": True,
         "expectedSeconds": 1.0,
@@ -87,7 +88,7 @@ def test_the_worker_and_the_app_agree_on_the_function_names() -> None:
 
 def test_one_contract_version_covers_both_functions() -> None:
     """A ladder deployed without its transcription is a failed deploy, not a surprise."""
-    assert CONTRACT_VERSION == "2"
+    assert CONTRACT_VERSION == "3"
 
 
 def test_the_provider_reports_the_model_and_release_the_image_pins() -> None:
