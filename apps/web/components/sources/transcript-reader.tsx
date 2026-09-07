@@ -24,6 +24,7 @@ import {
 } from "react";
 import {
   correctTranscript,
+  type TranscriptActionResult,
   updateSpeakerLabels,
 } from "@/app/actions/transcript";
 import { TranscriptParagraph } from "@/components/sources/transcript-paragraph";
@@ -64,6 +65,10 @@ interface TranscriptReaderProps {
 /** A row is about four lines; the virtualiser measures the real one on mount. */
 const ESTIMATED_ROW_PX = 92;
 
+/** A save that threw rather than answered: the network, the store, the database. */
+const SAVE_FAILED_MESSAGE =
+  "Could not save. Check your connection and try again.";
+
 function exportName(title: string, format: string): string {
   const cleaned = title
     .replace(/[^\w \-.]+/g, " ")
@@ -102,6 +107,11 @@ export function TranscriptReader({
 
   const [content, setContent] = useState<TranscriptV1 | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Counted up by Try again. The fetch effect depends on it, so a retry is a
+  // new request; a router refresh alone re-rendered the same client component
+  // with the same URL and fetched nothing (S2 review, I20).
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const [viewport, setViewport] = useState<HTMLElement | null>(null);
   const [follow, setFollow] = useState(true);
   const [editMode, setEditMode] = useState(false);
@@ -112,6 +122,7 @@ export function TranscriptReader({
   const [speakersOpen, setSpeakersOpen] = useState(false);
   const [speakersError, setSpeakersError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `loadAttempt` is the retry; a new value is a new request
   useEffect(() => {
     const controller = new AbortController();
     setLoadError(null);
@@ -127,7 +138,7 @@ export function TranscriptReader({
         }
       });
     return () => controller.abort();
-  }, [revisionUrl]);
+  }, [revisionUrl, loadAttempt]);
 
   const words = content?.words;
   const paragraphs = useMemo(
@@ -173,11 +184,13 @@ export function TranscriptReader({
     };
   }, [viewport]);
 
+  // Paused while a word is open for correction: following playback would
+  // scroll the editor out of the retained rows mid-word.
   useEffect(() => {
-    if (follow && activeParagraph >= 0) {
+    if (follow && activeParagraph >= 0 && edit === null) {
       virtualizer.scrollToIndex(activeParagraph, { align: "center" });
     }
-  }, [activeParagraph, follow, virtualizer]);
+  }, [activeParagraph, edit, follow, virtualizer]);
 
   useEffect(() => {
     if (focusedParagraph >= 0) {
@@ -196,13 +209,28 @@ export function TranscriptReader({
     []
   );
 
+  // Every save catches: an action that throws (the network, the store, the
+  // database) used to leave the editor pending for ever with nothing said,
+  // and a speaker reassignment that was refused for a reason other than
+  // staleness said nothing at all (S2 review, I22). The draft is kept.
   const saveWord = useCallback(
     (index: number, text: string) => {
-      setEdit({ error: null, index, pending: true });
+      setEdit({ draft: text, error: null, index, pending: true });
       startTransition(async () => {
-        const result = await correctTranscript(sourceId, baseRevision, [
-          { index, text },
-        ]);
+        let result: TranscriptActionResult;
+        try {
+          result = await correctTranscript(sourceId, baseRevision, [
+            { index, text },
+          ]);
+        } catch {
+          setEdit({
+            draft: text,
+            error: SAVE_FAILED_MESSAGE,
+            index,
+            pending: false,
+          });
+          return;
+        }
         if (result.ok) {
           setEdit(null);
           router.refresh();
@@ -212,7 +240,7 @@ export function TranscriptReader({
           setEdit(null);
           return;
         }
-        setEdit({ error: result.message, index, pending: false });
+        setEdit({ draft: text, error: result.message, index, pending: false });
       });
     },
     [baseRevision, refused, router, sourceId]
@@ -220,16 +248,25 @@ export function TranscriptReader({
 
   const assignSpeaker = useCallback(
     (utteranceIndex: number, speaker: string) => {
+      setAssignError(null);
       startTransition(async () => {
-        const result = await correctTranscript(sourceId, baseRevision, {
-          speaker,
-          utteranceIndex,
-        });
+        let result: TranscriptActionResult;
+        try {
+          result = await correctTranscript(sourceId, baseRevision, {
+            speaker,
+            utteranceIndex,
+          });
+        } catch {
+          setAssignError(SAVE_FAILED_MESSAGE);
+          return;
+        }
         if (result.ok) {
           router.refresh();
           return;
         }
-        refused(result);
+        if (!refused(result)) {
+          setAssignError(result.message);
+        }
       });
     },
     [baseRevision, refused, router, sourceId]
@@ -239,7 +276,13 @@ export function TranscriptReader({
     (next: Record<string, string>) => {
       setSpeakersError(null);
       startTransition(async () => {
-        const result = await updateSpeakerLabels(sourceId, next);
+        let result: TranscriptActionResult;
+        try {
+          result = await updateSpeakerLabels(sourceId, next);
+        } catch {
+          setSpeakersError(SAVE_FAILED_MESSAGE);
+          return;
+        }
         if (result.ok) {
           setSpeakersOpen(false);
           router.refresh();
@@ -253,6 +296,11 @@ export function TranscriptReader({
 
   const openRename = useCallback(() => setSpeakersOpen(true), []);
   const cancelEdit = useCallback(() => setEdit(null), []);
+  const draftWord = useCallback(
+    (text: string) =>
+      setEdit((current) => (current ? { ...current, draft: text } : current)),
+    []
+  );
 
   // One listener for every word on screen, on the scrolling element itself.
   // Each word is a real button and carries its index in a data attribute; a
@@ -271,7 +319,7 @@ export function TranscriptReader({
         return;
       }
       if (editMode) {
-        setEdit({ error: null, index, pending: false });
+        setEdit({ draft: null, error: null, index, pending: false });
         return;
       }
       const word = content?.words[index];
@@ -309,7 +357,12 @@ export function TranscriptReader({
       <Alert data-testid="transcript-load-error" variant="destructive">
         <AlertDescription>{loadError}</AlertDescription>
         <AlertAction>
-          <Button onClick={() => router.refresh()} size="sm" variant="outline">
+          <Button
+            data-testid="transcript-try-again"
+            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+            size="sm"
+            variant="outline"
+          >
             Try again
           </Button>
         </AlertAction>
@@ -452,6 +505,21 @@ export function TranscriptReader({
           </Alert>
         ) : null}
 
+        {assignError ? (
+          <Alert data-testid="transcript-assign-error" variant="destructive">
+            <AlertDescription>{assignError}</AlertDescription>
+            <AlertAction>
+              <Button
+                onClick={() => setAssignError(null)}
+                size="sm"
+                variant="outline"
+              >
+                Dismiss
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : null}
+
         {content ? null : (
           <div className="flex flex-col gap-3" data-testid="transcript-loading">
             <Skeleton className="h-16 w-full" />
@@ -493,6 +561,7 @@ export function TranscriptReader({
                           labels={labels}
                           onAssign={assignSpeaker}
                           onCancelEdit={cancelEdit}
+                          onDraft={draftWord}
                           onRenameSpeakers={openRename}
                           onSaveEdit={saveWord}
                           paragraph={paragraph}

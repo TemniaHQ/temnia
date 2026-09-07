@@ -2,7 +2,6 @@
 
 import { Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
 import { FieldError } from "@/components/ui/field";
 import {
   InputGroup,
@@ -12,6 +11,13 @@ import {
 } from "@/components/ui/input-group";
 
 export interface WordEdit {
+  /**
+   * What the person has typed, or null until they touch the input. It lives in
+   * the reader's state, not in this component's: the row this editor sits in
+   * is virtualised and unmounts when it scrolls out of the retained range,
+   * which took the draft with it (S2 review, I21).
+   */
+  draft: string | null;
   /** Why the last save was refused, when the edit itself was the problem. */
   error: string | null;
   index: number;
@@ -22,6 +28,7 @@ interface TranscriptWordEditorProps {
   edit: WordEdit;
   initial: string;
   onCancel: () => void;
+  onDraft: (text: string) => void;
   onSave: (index: number, text: string) => void;
 }
 
@@ -38,9 +45,10 @@ export function TranscriptWordEditor({
   edit,
   initial,
   onCancel,
+  onDraft,
   onSave,
 }: TranscriptWordEditorProps) {
-  const [text, setText] = useState(initial);
+  const text = edit.draft ?? initial;
   const save = () => {
     if (text.trim()) {
       onSave(edit.index, text.trim());
@@ -54,7 +62,7 @@ export function TranscriptWordEditor({
           autoFocus
           data-testid="transcript-word-input"
           disabled={edit.pending}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();

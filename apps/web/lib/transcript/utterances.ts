@@ -31,26 +31,24 @@ export function deriveUtterances(
  * The words belonging to each utterance, in order.
  *
  * Utterances are derived from the words rather than stored against them, so
- * this walk is how an edit addressed by utterance finds what to change. The
- * two arrays agree by construction: both come from `deriveUtterances`.
+ * this walk is how an edit addressed by utterance finds what to change. It
+ * follows the same rule as `deriveUtterances`, a run of consecutive words by
+ * one speaker, so the two agree by construction. Grouping by time did not:
+ * two speakers whose first words start on the same millisecond gave the
+ * first turn no words and the second both, and a reassignment then rewrote
+ * somebody else's word (S2 review, I10).
  */
 export function wordsByUtterance(
   words: readonly TranscriptWord[],
   utterances: readonly TranscriptUtterance[]
 ): number[][] {
   const groups: number[][] = utterances.map(() => []);
-  let turn = 0;
+  let turn = -1;
+  let speaker: string | null | undefined;
   for (const [index, word] of words.entries()) {
-    // Advanced on the next turn's start, not on this turn's end. A turn ends
-    // at its last word's `endMs`, and the next speaker's first word can begin
-    // on exactly that millisecond; a test against the end leaves that word in
-    // the turn before it and sends a speaker reassignment to the wrong words.
-    while (
-      turn < utterances.length - 1 &&
-      word.startMs >=
-        (utterances[turn + 1]?.startMs ?? Number.POSITIVE_INFINITY)
-    ) {
+    if (turn < 0 || word.speaker !== speaker) {
       turn += 1;
+      ({ speaker } = word);
     }
     groups[turn]?.push(index);
   }

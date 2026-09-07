@@ -1,9 +1,10 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import {
   sourcePrefix,
   TASK_QUEUES,
-  transcriptRevisionKey,
+  transcriptCorrectionKey,
   WORKFLOWS,
 } from "@temnia/contracts";
 import {
@@ -12,6 +13,7 @@ import {
   transcriptRevision,
   usageLedger,
 } from "@temnia/db";
+import { WorkflowNotFoundError } from "@temporalio/client";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -23,7 +25,12 @@ import {
   STALE_REVISION_MESSAGE,
   type TranscriptEdits,
 } from "@/lib/transcript/edits";
-import { readRevision, writeRevision } from "@/lib/transcript/queries";
+import {
+  discardRevision,
+  readRevision,
+  writeRevision,
+} from "@/lib/transcript/queries";
+import { STALL_AFTER_MS } from "@/lib/transcript/state";
 
 const IdSchema = z.uuid();
 
@@ -48,14 +55,48 @@ export type TranscriptActionResult =
   | { ok: true }
   | { invalid?: true; message: string; ok: false; stale?: true };
 
+const STILL_RUNNING_MESSAGE = "Transcription is still running.";
+const NOT_QUEUED_MESSAGE = "Transcription could not be queued. Try again.";
+
+/**
+ * Whether the source's transcription workflow is alive, asked of Temporal.
+ *
+ * A row can say `processing` for a run that is gone: a worker killed before
+ * it wrote, an execution that timed out. Trusting the row left those rows
+ * unretryable for ever (S2 review, I19). When Temporal itself cannot be
+ * asked, a fresh heartbeat is believed and a stale one is not.
+ */
+async function transcriptionIsRunning(
+  sourceId: string,
+  heartbeatAt: Date | null
+): Promise<boolean> {
+  try {
+    const client = await getTemporalClient();
+    const description = await client.workflow
+      .getHandle(`transcribe-${sourceId}`)
+      .describe();
+    return description.status.name === "RUNNING";
+  } catch (error) {
+    if (error instanceof WorkflowNotFoundError) {
+      return false;
+    }
+    return (
+      heartbeatAt !== null &&
+      Date.now() - heartbeatAt.getTime() <= STALL_AFTER_MS
+    );
+  }
+}
+
 /**
  * Start transcription again for a source whose previous run is over.
  *
- * A `ready` or `failed` row is parked back at `pending` first, in the same
- * scoped transaction that reads it: the claim activity refuses to interrupt a
- * run, so the user's Retry is the only thing that says a finished transcript
- * may be replaced. A row still `processing` is left alone and the workflow id
- * policy makes a second start a no-op anyway.
+ * A `ready`, `failed`, or `pending` row is parked at `pending`: the claim
+ * activity refuses to interrupt a run, so the user's Retry is the only thing
+ * that says a finished transcript may be replaced. A row still `processing`
+ * is retried only when Temporal says its run is gone; a live run is left
+ * alone and the workflow id policy makes a second start a no-op anyway. A
+ * start Temporal refuses is written to the row as a typed failure, so the tab
+ * says so and offers Retry instead of "Queued" for ever.
  */
 export async function retryTranscription(
   sourceId: string
@@ -64,11 +105,11 @@ export async function retryTranscription(
   if (!id.success) {
     return { message: "not a source id", ok: false };
   }
-  const started = await scoped(async (tx, scope) => {
+  const found = await scoped(async (tx) => {
     const [row] = await tx
       .select({
         durationMs: source.durationMs,
-        projectId: source.projectId,
+        heartbeatAt: transcript.heartbeatAt,
         status: source.status,
         transcriptStatus: transcript.status,
       })
@@ -76,13 +117,23 @@ export async function retryTranscription(
       .leftJoin(transcript, eq(transcript.sourceId, source.id))
       .where(eq(source.id, id.data))
       .limit(1);
-    if (row?.status !== "ready" || row.durationMs === null) {
-      return null;
-    }
-    if (row.transcriptStatus === "processing") {
-      return null;
-    }
-    if (row.transcriptStatus) {
+    return row;
+  });
+  if (found?.status !== "ready" || found.durationMs === null) {
+    return {
+      message: "this transcript cannot be retried right now",
+      ok: false,
+    };
+  }
+  if (
+    found.transcriptStatus === "processing" &&
+    (await transcriptionIsRunning(id.data, found.heartbeatAt))
+  ) {
+    return { message: STILL_RUNNING_MESSAGE, ok: false };
+  }
+  const { durationMs } = found;
+  const started = await scoped(async (tx, scope) => {
+    if (found.transcriptStatus) {
       await tx
         .update(transcript)
         .set({
@@ -95,34 +146,50 @@ export async function retryTranscription(
     }
     const prefix = sourcePrefix(scope.organizationId, id.data);
     return {
-      input: {
-        artifactPrefix: prefix,
-        audioKey: `${prefix}audio/audio.m4a`,
-        durationMs: row.durationMs,
-        scope,
-        sourceId: id.data,
-      },
-      projectId: row.projectId,
+      artifactPrefix: prefix,
+      audioKey: `${prefix}audio/audio.m4a`,
+      durationMs,
+      scope,
+      sourceId: id.data,
     };
   });
-  if (!started) {
-    return {
-      message: "this transcript cannot be retried right now",
-      ok: false,
-    };
+  try {
+    const client = await getTemporalClient();
+    await client.workflow.start(WORKFLOWS.transcribe, {
+      args: [started],
+      taskQueue: TASK_QUEUES.pipeline,
+      workflowExecutionTimeout: "6 hours",
+      // USE_EXISTING attaches to a run already going rather than failing; the
+      // reuse policy is what lets a completed or failed run start again under
+      // the same id, which is how a retry keeps one workflow per source.
+      workflowId: `transcribe-${id.data}`,
+      workflowIdConflictPolicy: "USE_EXISTING",
+      workflowIdReusePolicy: "ALLOW_DUPLICATE",
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await scoped(async (tx, scope) => {
+      // Only a row still waiting for this start; a claim that raced in owns it.
+      await tx
+        .insert(transcript)
+        .values({
+          errorMessage: `DispatchError: ${reason}`.slice(0, 2000),
+          organizationId: scope.organizationId,
+          sourceId: id.data,
+          status: "failed",
+        })
+        .onConflictDoUpdate({
+          set: {
+            errorMessage: `DispatchError: ${reason}`.slice(0, 2000),
+            status: "failed",
+          },
+          setWhere: sql`${transcript.status} = 'pending'`,
+          target: transcript.sourceId,
+        });
+    });
+    revalidatePath(`/sources/${id.data}`);
+    return { message: NOT_QUEUED_MESSAGE, ok: false };
   }
-  const client = await getTemporalClient();
-  await client.workflow.start(WORKFLOWS.transcribe, {
-    args: [started.input],
-    taskQueue: TASK_QUEUES.pipeline,
-    workflowExecutionTimeout: "6 hours",
-    // USE_EXISTING attaches to a run already going rather than failing; the
-    // reuse policy is what lets a completed or failed run start again under
-    // the same id, which is how a retry keeps one workflow per source.
-    workflowId: `transcribe-${id.data}`,
-    workflowIdConflictPolicy: "USE_EXISTING",
-    workflowIdReusePolicy: "ALLOW_DUPLICATE",
-  });
   revalidatePath(`/sources/${id.data}`);
   return { ok: true };
 }
@@ -230,7 +297,15 @@ export async function correctTranscript(
   }
 
   const next = base.data + 1;
-  const key = transcriptRevisionKey(loaded.prefix, next);
+  // One object per attempt. Two tabs saving against the same revision both
+  // upload; the compare-and-swap below publishes one of them and the other's
+  // object is discarded, so the accepted pointer never serves the loser's
+  // bytes (S2 review, I03).
+  const key = transcriptCorrectionKey(
+    loaded.prefix,
+    next,
+    randomUUID().slice(0, 8)
+  );
   const sizeBytes = await writeRevision(key, content);
 
   const saved = await scoped(async (tx, scope) => {
@@ -301,6 +376,7 @@ export async function correctTranscript(
     return true;
   });
   if (!saved) {
+    await discardRevision(key);
     return { message: STALE_REVISION_MESSAGE, ok: false, stale: true };
   }
   revalidatePath(`/sources/${id.data}`);

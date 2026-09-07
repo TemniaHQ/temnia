@@ -33,7 +33,8 @@ const RETRIED = resolve(process.cwd(), "e2e/fixtures/master-24s.mp4");
 const TERMINAL = resolve(process.cwd(), "e2e/fixtures/master-12s.mp4");
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
-const REVISION_URL = /transcript\/rev-\d+\.json/;
+// Machine revisions are `rev-N.json`; a correction's key carries its attempt.
+const REVISION_URL = /transcript\/rev-\d+(-[0-9a-f]{8})?\.json/;
 // The last two are what a nesting mistake looks like: the parser closes the
 // offending tag and the server HTML and the client tree stop agreeing, which
 // on a production build is React #418 and nothing else (the S1 lesson).
@@ -135,6 +136,28 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
   await expect(page.locator("[data-word]").first()).toHaveText(
     WORDS[0]?.text ?? ""
   );
+
+  // Try again after a failed fetch is a new request (S2 review, I20): the
+  // first read of the revision is refused and the retry is let through.
+  let refused = false;
+  await page.route(REVISION_URL, async (route) => {
+    if (refused) {
+      await route.continue();
+      return;
+    }
+    refused = true;
+    await route.abort();
+  });
+  await page.reload();
+  await openTranscript(page);
+  await expect(page.getByTestId("transcript-load-error")).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByTestId("transcript-try-again").click();
+  await expect(page.getByTestId("transcript-words")).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.unroute(REVISION_URL);
 
   const video = page.locator("video");
   await expect
@@ -300,7 +323,7 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
   expect(complaints).toEqual([]);
 });
 
-test("an uncertain word is marked and says how sure the engine was", async ({
+test("an uncertain word is marked and says its timing is uncertain", async ({
   page,
 }) => {
   test.setTimeout(INGEST_TIMEOUT_MS + 60_000);
@@ -331,8 +354,10 @@ test("an uncertain word is marked and says how sure the engine was", async ({
   await uncertain.hover();
   // Base UI 1.8's tooltip popup carries no `role`, so it is found by the slot
   // the registry component stamps on it rather than by role.
+  // The score is the aligner's, about the timing, not the recogniser's about
+  // the word (S2 review, I26).
   await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(
-    "21% sure"
+    "alignment score 21%"
   );
 });
 

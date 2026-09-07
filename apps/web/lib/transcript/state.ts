@@ -25,28 +25,35 @@ const STAGE_LABELS: Record<TranscriptStage, string> = {
 };
 
 /**
- * The one failure that no retry can fix and that has words of its own.
+ * The failures with words of their own.
  *
  * The pipeline puts the exception's type name in front of its message
- * (`transcription/runner.py`), which is what makes this a test on the failure
- * rather than on its wording. Every other failure is offered a Retry: a retry
- * of a deterministic failure costs one more attempt and says the same thing
- * again, while hiding Retry from a transient one leaves a dead end.
+ * (`transcription/runner.py`, and the ingest's `NoAudioError:` and the retry
+ * action's `DispatchError:`), which is what makes these tests on the failure
+ * rather than on its wording. Two are final and offer no Retry: a language no
+ * model aligns, and a recording with no audio. Every other failure is offered
+ * one: a retry of a deterministic failure costs one more attempt and says the
+ * same thing again, while hiding Retry from a transient one leaves a dead end
+ * (S2 review, I19 and I23).
  */
 const UNSUPPORTED_LANGUAGE = "UnsupportedLanguageError:";
+const NO_AUDIO = "NoAudioError:";
+const DISPATCH_FAILED = "DispatchError:";
+const UNUSABLE_RESULT = ["TranscriptContractError:", "ValidationError:"];
 const LANGUAGE_CODE = /\(code:\s*([\w-]+)\)/;
 
 export type TranscriptTabState =
   | { kind: "empty"; retry: true; words: string }
   | { kind: "failed"; retry: true; words: string }
   | { kind: "language"; retry: false; words: string }
+  | { kind: "noAudio"; retry: false; words: string }
   | { kind: "notReady"; retry: false; words: string }
-  | { kind: "pending"; retry: false; words: string }
+  | { kind: "pending"; retry: true; words: string }
   | { kind: "processing"; percent: number | null; retry: false; words: string }
   | { kind: "ready"; retry: false }
   | { kind: "retrying"; retry: false; words: string }
   | { kind: "sourceFailed"; retry: false; words: string }
-  | { kind: "stalled"; retry: false; words: string };
+  | { kind: "stalled"; retry: true; words: string };
 
 export interface TranscriptRowSummary {
   currentRevision: number | null;
@@ -95,6 +102,27 @@ function failedState(row: TranscriptRowSummary): TranscriptTabState {
       words: `This recording is in a language we cannot align yet (code: ${code}).`,
     };
   }
+  if (message.startsWith(NO_AUDIO)) {
+    return {
+      kind: "noAudio",
+      retry: false,
+      words: "This recording has no audio track, so there is no transcript.",
+    };
+  }
+  if (message.startsWith(DISPATCH_FAILED)) {
+    return {
+      kind: "failed",
+      retry: true,
+      words: "Transcription could not be queued. Try again.",
+    };
+  }
+  if (UNUSABLE_RESULT.some((prefix) => message.startsWith(prefix))) {
+    return {
+      kind: "failed",
+      retry: true,
+      words: "The transcription service returned an unusable result.",
+    };
+  }
   return {
     kind: "failed",
     retry: true,
@@ -115,11 +143,12 @@ function processingState(
   }
   const beat = row.heartbeatAt ? Date.parse(row.heartbeatAt) : Number.NaN;
   if (!Number.isNaN(beat) && now - beat > STALL_AFTER_MS) {
+    // No promise of a retry: the row cannot know whether a run is still
+    // behind it. Retry is offered, and the action asks Temporal first.
     return {
       kind: "stalled",
-      retry: false,
-      words:
-        "Transcription has not reported progress for a while. It will be retried.",
+      retry: true,
+      words: "Transcription has not reported progress for a while.",
     };
   }
   return {
@@ -152,9 +181,13 @@ export function transcriptState({
     };
   }
   if (!row || row.status === "pending") {
+    // Retry is offered while queued: a start that never happened (an older
+    // source, a queue the ingest could not reach) has no other way out, and a
+    // start that is about to happen makes the retry a no-op under the
+    // workflow id policy.
     return {
       kind: "pending",
-      retry: false,
+      retry: true,
       words: "Queued for transcription.",
     };
   }

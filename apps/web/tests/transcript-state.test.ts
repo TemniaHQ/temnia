@@ -56,12 +56,15 @@ describe("transcriptState", () => {
     expect(isInFlight(failed)).toBe(false);
   });
 
-  it("is pending with no row at all", () => {
+  it("is pending with no row at all, and offers a retry as the way out", () => {
+    // A ready source with no row and no run coming (an older source, a queue
+    // the ingest could not reach) said "Queued" for ever (S2 review, I19).
     expect(state(null)).toEqual({
       kind: "pending",
-      retry: false,
+      retry: true,
       words: "Queued for transcription.",
     });
+    expect(state({ status: "pending" }).retry).toBe(true);
   });
 
   it("names the stage and the percent while it runs", () => {
@@ -104,10 +107,13 @@ describe("transcriptState", () => {
       status: "processing",
     });
     expect(stalled.kind).toBe("stalled");
-    expect(stalled).toHaveProperty(
-      "words",
-      "Transcription has not reported progress for a while. It will be retried."
-    );
+    // No promise of a retry the row cannot vouch for; a Retry button instead,
+    // and the action asks Temporal whether the run is alive (S2 review, I23).
+    expect(stalled).toEqual({
+      kind: "stalled",
+      retry: true,
+      words: "Transcription has not reported progress for a while.",
+    });
   });
 
   it("is still processing one millisecond before the stall window", () => {
@@ -179,6 +185,44 @@ describe("transcriptState", () => {
       "words",
       "This recording is in a language we cannot align yet (code: unknown)."
     );
+  });
+
+  it("says there is no audio, with no retry, when the ingest found none", () => {
+    expect(
+      state({
+        errorMessage: "NoAudioError: the recording has no audio track",
+        status: "failed",
+      })
+    ).toEqual({
+      kind: "noAudio",
+      retry: false,
+      words: "This recording has no audio track, so there is no transcript.",
+    });
+  });
+
+  it("offers a retry when the start itself could not be queued", () => {
+    expect(
+      state({
+        errorMessage: "DispatchError: connect ECONNREFUSED 127.0.0.1:7233",
+        status: "failed",
+      })
+    ).toEqual({
+      kind: "failed",
+      retry: true,
+      words: "Transcription could not be queued. Try again.",
+    });
+  });
+
+  it("does not blame the service's availability for an unusable result", () => {
+    for (const prefix of ["TranscriptContractError:", "ValidationError:"]) {
+      expect(
+        state({ errorMessage: `${prefix} no segments list`, status: "failed" })
+      ).toEqual({
+        kind: "failed",
+        retry: true,
+        words: "The transcription service returned an unusable result.",
+      });
+    }
   });
 
   it("never renders the server's own message", () => {

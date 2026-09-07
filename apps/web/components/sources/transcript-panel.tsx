@@ -32,6 +32,7 @@ const HEADINGS: Record<string, string> = {
   empty: "Nothing to transcribe",
   failed: "Transcription failed",
   language: "Not this language yet",
+  noAudio: "No audio",
   notReady: "Not yet",
   pending: "Queued",
   processing: "Transcribing",

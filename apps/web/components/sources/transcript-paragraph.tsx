@@ -33,6 +33,7 @@ interface TranscriptParagraphProps {
   labels: Readonly<Record<string, string>>;
   onAssign: (utteranceIndex: number, speaker: string) => void;
   onCancelEdit: () => void;
+  onDraft: (text: string) => void;
   onRenameSpeakers: () => void;
   onSaveEdit: (index: number, text: string) => void;
   paragraph: Paragraph;
@@ -71,6 +72,7 @@ function ParagraphRow({
   labels,
   onAssign,
   onCancelEdit,
+  onDraft,
   onRenameSpeakers,
   onSaveEdit,
   paragraph,
@@ -95,6 +97,7 @@ function ParagraphRow({
           initial={word.text}
           key={index}
           onCancel={onCancelEdit}
+          onDraft={onDraft}
           onSave={onSaveEdit}
         />
       );
@@ -191,7 +194,10 @@ function Word({
     <Tooltip>
       <TooltipTrigger render={button} />
       <TooltipContent>
-        {`The engine was ${confidencePercent(word.confidence ?? 0)} sure of this word.`}
+        {/* The score is the aligner's, about where the word sits in time, not
+            the recogniser's about which word it is; the old wording claimed
+            the latter (S2 review, I26). */}
+        {`Word timing is uncertain (alignment score ${confidencePercent(word.confidence ?? 0)}).`}
       </TooltipContent>
     </Tooltip>
   );
