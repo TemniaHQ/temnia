@@ -40,12 +40,16 @@ interface TranscriptParagraphProps {
   words: readonly TranscriptWord[];
 }
 
+// Tokens only, so both themes are right without a second palette: the playhead
+// inverts the word, a search hit rings it, and the two are told apart at a
+// glance even when they land on the same word.
 const WORD_CLASS =
   "cursor-pointer rounded-sm px-0.5 text-left transition-colors hover:bg-muted " +
-  "data-[active=true]:bg-primary/15 data-[active=true]:text-foreground " +
-  "data-[focused=true]:bg-amber-300/50 data-[focused=true]:ring-1 data-[focused=true]:ring-amber-500/60 " +
   "data-[timing=interpolated]:text-muted-foreground " +
-  "data-[uncertain=true]:underline data-[uncertain=true]:decoration-dotted data-[uncertain=true]:underline-offset-4";
+  "data-[uncertain=true]:underline data-[uncertain=true]:decoration-dotted data-[uncertain=true]:underline-offset-4 " +
+  "data-[active=true]:bg-primary data-[active=true]:text-primary-foreground " +
+  "data-[focused=true]:bg-accent data-[focused=true]:text-accent-foreground " +
+  "data-[focused=true]:ring-2 data-[focused=true]:ring-ring";
 
 function confidencePercent(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
