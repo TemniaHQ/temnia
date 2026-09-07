@@ -279,6 +279,33 @@ rewritten; tech-stack rows for framework, optimisation, gateway, roster, evals, 
 legacy's Director/Reconciler/Cutter/Publisher/Verifier/Reviewer names retire. What would change it:
 a measured win for a persona-style loop on the three fresh sources at equal cost.
 
+**2026-09-08 — The S3 harness adopts the review's evidence layer and edit compiler; five typed
+artefacts, not five calls (Rajesh, after the 2026-09-07 review).** The review in
+`docs/design/harness-review-and-architecture-2026-09-07.md` (32 findings on the S2 code, 19
+independently rechecked, none overturned) proposed an architecture that is the 2026-09-07 design
+with two things made explicit: a versioned source-evidence record under everything (words in
+lexical order with their timing and its uncertainty, overlapping speaker intervals, speech and
+non-speech regions, shots), and a deterministic edit compiler that chooses neighbouring boundaries
+jointly from addressable candidates, the model proposing semantic spans and code picking the cut.
+Both are adopted: the compiler is the generalisation of the legacy's cutting room and answers the
+wrong-boundaries failure that sank M1. The one conflict, "drop the fixed five stages", is resolved
+by keeping the five typed artefacts as the contract (evidence, plan, edit specification, checks,
+review) and letting the number of model calls a stage makes be an implementation choice measured per
+lane; a stage may be one call, several, or none. Deferred, each with its reason: Remotion and the
+TypeScript composition worker (no lane before S9 needs them, and the licence is a cost);
+OpenTimelineIO interchange (nobody has asked for it); budget reservations beyond the pre-call check
+(there is no parallel dispatch yet); the twelve-lane edit specification (version one carries what
+chapters and moments need). Pulled forward: the annotated corpus, acceptable boundary windows on the
+three recordings, is the S4 entry gate, because the compiler's objective cannot be calibrated
+without it and the legacy's cutting room was never proven on a fresh source. Speech engines are
+re-auditioned only after slice D gives a measured WhisperX baseline. The spec is
+`docs/plans/s3-harness-spec.md`; the batch that fixed the review's defects is
+`docs/plans/s2-hardening-360-view.md`. Two rules that batch added to the pipeline: **a write a
+retry can repeat carries the identity of the run that made it and is fenced on it** (`run_id` on the
+transcript row, an idempotency key on the ledger, a per-attempt object key on a correction), and
+**a transport failure is never reported as a failed computation** (`Unreachable` is its own status
+in both Modal adapters, and no runner spawns on it).
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
