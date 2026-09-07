@@ -71,7 +71,10 @@ async function createProject(page: Page, name: string): Promise<void> {
 
 /** Upload a master, wait out the ingest, and land on its source page. */
 async function ingest(page: Page, fixture: string): Promise<string> {
-  await page.getByTestId("master-file-input").setInputFiles(fixture);
+  await page
+    .locator("input.uppy-Dashboard-input")
+    .first()
+    .setInputFiles(fixture);
   await expect(page.getByTestId("upload-done")).toBeVisible({
     timeout: 60_000,
   });
@@ -114,7 +117,10 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
 
   // The tab has words while the ingest is still running, and never a spinner
   // with nothing to read.
-  await page.getByTestId("master-file-input").setInputFiles(SPEECH);
+  await page
+    .locator("input.uppy-Dashboard-input")
+    .first()
+    .setInputFiles(SPEECH);
   await expect(page.getByTestId("upload-done")).toBeVisible({
     timeout: 60_000,
   });
