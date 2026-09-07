@@ -78,8 +78,9 @@ Rules for the loop:
 - The log is committed to the repo. It is the source of truth for the posts, and later it is the project's own history.
 - **Several posts a day are fine; one idea each** (Rajesh, 2026-09-06). A full day usually yields a shipped post, a how-it-works post, and a went-wrong post on X, and one or two on LinkedIn. Each post block in the log names its pillar and its image so the order and the media are decided when the log is written, not at posting time.
 - **Day N is the day of posting** (Rajesh, 2026-09-07). Work that closed late the night before opens
-  with "Sprint one closed last night", still under the new day's number; a second post the same day
-  says "second post". Readers follow the calendar, and a repeated day number reads as a repost.
+  with "Sprint one closed last night", still under the new day's number. One post per platform per
+  day; a second story from the same day goes into the same post under its own label (Rajesh,
+  2026-09-07). Readers follow the calendar, and a repeated day number reads as a repost.
 - **Short points, not paragraphs** (Rajesh, 2026-09-07): one idea per line, a blank line between,
   plain one-line labels ("What shipped", "What broke", "The numbers"), a number on every line that
   can carry one, the result in the first line, the next step as the last. No bold headers, no emoji
