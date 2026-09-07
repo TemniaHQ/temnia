@@ -5,6 +5,7 @@
   "scripts": {
     "contracts": "uv run --frozen python scripts/gen_contracts.py",
     "contracts:check": "uv run --frozen python scripts/gen_contracts.py --check",
+    "layers": "uv run --frozen python scripts/dump_layers.py",
     "lint": "uv run --frozen ruff format --check . && uv run --frozen ruff check .",
     "sync": "uv sync --frozen",
     "test": "uv run --frozen pytest",

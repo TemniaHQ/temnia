@@ -11,9 +11,18 @@ Everything else is generated:
 | `<name>.fine.txt` | `renderFine(grid, 0, last, shotTimesMs)`, verbatim, no trailing newline |
 | `<name>.grid.json` | the sentences and paragraphs of `buildCutGrid` |
 | `<name>.paragraphs.json` | the display paragraphs of `buildParagraphs` |
+| `<name>.layers.coarse.txt` | `render_coarse` over the `legacy` segmenter's layers |
+| `<name>.layers.fine.txt` | `render_fine` over the same, with the shot times |
 
-The generator is the frozen TypeScript oracle in `tools/legacy-reference/`, a
-copy of the legacy substrate at commit `b642b77`. The Python port in
+The first four come from the frozen TypeScript oracle in
+`tools/legacy-reference/`; the two `layers` files come from
+`apps/pipeline/scripts/dump_layers.py` (`pnpm --filter @temnia/pipeline layers`,
+and `--check` for the comparison, which `tests/test_substrate_render.py` also
+makes). Only the `legacy` segmenter is dumped, because it is the one that needs
+no model and is therefore deterministic on any machine; SaT and change-point
+renderings move with their model versions and are asserted by properties.
+
+The oracle is a copy of the legacy substrate at commit `b642b77`. The Python port in
 `src/temnia_pipeline/substrate/` is asserted against these bytes by
 `tests/test_substrate_parity.py`, and `tools/legacy-reference/tests/
 substrate-dump.test.ts` asserts that the bytes are what a fresh dump produces.
@@ -21,7 +30,7 @@ So the gate fails from either side: a port that drifts from the oracle, and an
 oracle or fixture edited without a re-dump.
 
 The renderings carry no trailing newline on purpose: the comparison is against
-exactly what the function returns, and `empty` therefore has two zero-byte
+exactly what the function returns, and `empty` therefore has four zero-byte
 files.
 
 ## Adding a recorded source
@@ -29,8 +38,8 @@ files.
 1. Drop `<name>.transcript.json` and `<name>.shots.json` in here, taken from a
    staging run (the transcript is `transcript/rev-1.json` under the source
    prefix; the shot grid is `shots/shots.json`).
-2. `pnpm substrate:dump`
-3. Commit the two inputs and the four outputs. The parity test picks the source
+2. `pnpm substrate:dump` and `pnpm --filter @temnia/pipeline layers`
+3. Commit the inputs and the six outputs. The parity test picks the source
    up by filename; nothing is registered anywhere.
 
 The three real recorded sources are S2 slice D's: they need a staging

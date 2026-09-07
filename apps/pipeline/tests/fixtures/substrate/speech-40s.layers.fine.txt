@@ -1,0 +1,13 @@
+s0000 00:00:00 S1: ¶|         Welcome back to the show.
+s0001 00:00:02 S1:   ·        Today we are talking about how a small team keeps a long recording under control.
+s0002 00:00:07 S2: ¶|         Thanks for having me.
+s0003 00:00:09 S2:   ·        The honest answer is that we stopped treating the transcript as a by-product.
+s0004 00:00:14 S1: ¶|         What changed when you made that switch?
+s0005 00:00:17 S2: ¶|         Everything downstream got easier.
+s0006 00:00:19 S2:   ·        Once every word carries a timestamp, the edit becomes a search problem.
+s0007 00:00:25 S1: ¶|         And the speakers?
+s0008 00:00:26 S1:            People always ask about crosstalk.
+s0009 00:00:29 S2: ¶|         Diarization gets you most of the way.
+s0010 00:00:31 S2:   ·        The rest is a rename box and about thirty seconds of attention.
+s0011 00:00:36 S1: ¶|         Perfect.
+s0012 00:00:37 S1:            Thanks for coming in today.
