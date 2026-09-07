@@ -22,8 +22,8 @@ makes). Only the `legacy` segmenter is dumped, because it is the one that needs
 no model and is therefore deterministic on any machine; SaT and change-point
 renderings move with their model versions and are asserted by properties.
 
-The oracle is a copy of the legacy substrate at commit `b642b77`. The Python port in
-`src/temnia_pipeline/substrate/` is asserted against these bytes by
+The oracle is a copy of the legacy substrate at commit `b642b77`. The Python
+port in `src/temnia_pipeline/substrate/` is asserted against these bytes by
 `tests/test_substrate_parity.py`, and `tools/legacy-reference/tests/
 substrate-dump.test.ts` asserts that the bytes are what a fresh dump produces.
 So the gate fails from either side: a port that drifts from the oracle, and an
@@ -44,7 +44,7 @@ files.
 
 The three real recorded sources are S2 slice D's: they need a staging
 transcription run and Rajesh's confirmation that the recordings may live in the
-repository (S2 plan §10.4). Until then the gate runs on the four below, which is
+repository (S2 plan §10.4). Until then the gate runs on the five below, which is
 why the chain is parameterised over the directory rather than over a list.
 
 ## The sources
