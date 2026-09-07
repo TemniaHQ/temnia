@@ -18,9 +18,15 @@ source that way). Reading from local disk removes the network cause; the
 assertion stays because it is the thing that keeps a miss from reaching users.
 
 The same plan runs on the worker's CPU ffmpeg and on an L4 inside a Modal
-function. Only the video rungs change encoder there: NVENC cannot decode
-ProRes, so decode and scale stay on the CPU, and the intra-only rendition
-stays on libx264 because one frame every two seconds is not worth a GPU.
+function. Two things change there. The video rungs encode with `h264_nvenc`,
+while the intra-only rendition stays on libx264 because one frame every two
+seconds is not worth a GPU. And when the source is one NVDEC can read
+(`cuda_decodable`), decode and scale move onto the GPU as well: the first
+staging ladder decoded and scaled on the CPU and spent 22 minutes on a 2:31
+1080p25 master with the four cores pinned and the GPU near twenty percent, so
+the CPU, not the encoder, was the ladder. Everything NVDEC cannot read —
+ProRes, 10-bit, 4:2:2 — keeps the CPU graph, and so does a run whose CUDA
+attempt failed.
 """
 
 from __future__ import annotations
@@ -53,7 +59,19 @@ IFRAMES_RENDITION = "iframes"
 _EXTINF = re.compile(r"^#EXTINF:([0-9.]+)", re.MULTILINE)
 
 Encoder = Literal["libx264", "h264_nvenc"]
+Decoder = Literal["cpu", "cuda"]
 ProducedBy = Literal["local", "modal"]
+
+# What NVDEC on an L4 decodes, narrowed to what a master actually arrives as.
+# The card also has VP9 and VC-1 decoders and 10-bit HEVC, and none of them is
+# listed: a source that would in fact decode on the GPU but is missing here
+# costs the encode a few minutes, while one listed here that the card refuses
+# costs a failed ffmpeg run and a second, slower pass. The list grows when a
+# real source measures it, not when a specification says it should work.
+CUDA_DECODE_CODECS = frozenset({"h264", "hevc", "av1"})
+# 8-bit 4:2:0 only. `nv12` is what NVDEC hands the filter graph; `yuv420p` is
+# what the container declares for the same thing.
+CUDA_DECODE_PIXEL_FORMATS = frozenset({"yuv420p", "nv12"})
 
 # NVENC's -cq is not libx264's -crf: different rate-control scales, so the same
 # number is a different picture. These are a first cut at the ladder's own CRF
@@ -88,6 +106,21 @@ def top_maxrate_k(height: int, fps: Fraction) -> int:
     else:
         base = 1200
     return int(base * 1.5) if fps > 40 else base  # noqa: PLR2004
+
+
+def cuda_decodable(video: VideoFacts | None) -> bool:
+    """True when the GPU may decode this source, decided from the probe alone.
+
+    Nothing about the container is trusted beyond the codec name and the pixel
+    format, and both have to be in the lists above. An audio-only job, an
+    unknown pixel format, and anything the probe could not name all come out
+    False, which is the CPU path: the wrong answer here is a failed ffmpeg run
+    on a billing GPU, and the fallback that catches it pays for the decode
+    twice.
+    """
+    if video is None:
+        return False
+    return video.codec in CUDA_DECODE_CODECS and video.pix_fmt in CUDA_DECODE_PIXEL_FORMATS
 
 
 def plan_rungs(video: VideoFacts) -> list[Rung]:
@@ -208,22 +241,49 @@ def _audio_only_args(master: Path, out_dir: Path) -> list[str]:
 
 
 def _filter_complex(
-    video: VideoFacts, rungs: list[Rung], *, iframes: bool
+    video: VideoFacts, rungs: list[Rung], *, iframes: bool, decoder: Decoder
 ) -> tuple[str, list[str]]:
     """Split the decoded video once and scale it per rung; returns the graph and its labels.
 
-    Decode and scale are on the CPU whatever encodes the rungs: NVENC has no
-    ProRes decoder, and a graph that differs by backend would make the two
-    ladders different files.
+    The two graphs are the same shape and differ only in where the frames
+    live. `split` declares no pixel formats at all (ffmpeg 8.1 `split.c` has no
+    query_formats and is flagged metadata-only), so it forwards CUDA frames by
+    reference exactly as it forwards system ones and no `hwupload` or
+    `split_cuda` is needed; `fps` is the same kind of filter. On the CUDA graph
+    every branch then scales with `scale_cuda`, which takes the same `-2:H`
+    expressions as `scale` (documented, and its own first example), and the
+    rungs reach `h264_nvenc` without a frame ever crossing the bus.
+
+    `passthrough=0` is on every `scale_cuda` on purpose. Its default, 1, hands
+    the untouched decoder frame straight through when nothing needs doing,
+    which is what the top rung at native size asks for; NVENC then holds that
+    frame for the length of its lookahead, and with four branches doing it the
+    decoder's frame pool empties and the run dies. ffmpeg's own documentation
+    names this mode as the answer to "a filter and encode chain that otherwise
+    exhausts the decoder's frame pool". The cost is one device-to-device copy
+    per frame on the rung that is not being resized.
+
+    The I-frame branch is the one place frames come back: it thins to one frame
+    per GOP and scales on the GPU first, so `hwdownload` moves 0.5 frames a
+    second at 360p, and `format=nv12` names the system format ffmpeg's
+    documentation says may have to follow it.
     """
     splits = len(rungs) + (1 if iframes else 0)
     labels = [f"[v{i}]" for i in range(splits)]
     chains = [f"[0:v]split={splits}" + "".join(f"[s{i}]" for i in range(splits))]
     fps_filter = f"fps={video.fps}," if video.variable_frame_rate else ""
-    chains += [f"[s{i}]{fps_filter}scale=-2:{rung.height}[v{i}]" for i, rung in enumerate(rungs)]
+    scale = "scale_cuda" if decoder == "cuda" else "scale"
+    options = ":passthrough=0" if decoder == "cuda" else ""
+    download = ",hwdownload,format=nv12" if decoder == "cuda" else ""
+    chains += [
+        f"[s{i}]{fps_filter}{scale}=-2:{rung.height}{options}[v{i}]" for i, rung in enumerate(rungs)
+    ]
     if iframes:
         i = len(rungs)
-        chains.append(f"[s{i}]{fps_filter}fps=1/{KEYFRAME_SECONDS},scale=-2:{IFRAME_HEIGHT}[v{i}]")
+        chains.append(
+            f"[s{i}]{fps_filter}fps=1/{KEYFRAME_SECONDS},"
+            f"{scale}=-2:{IFRAME_HEIGHT}{options}{download}[v{i}]"
+        )
     return ";".join(chains), labels
 
 
@@ -271,6 +331,48 @@ def _iframe_output_args(out_dir: Path, label: str) -> list[str]:
     ]
 
 
+def _input_args(master: Path, decoder: Decoder) -> list[str]:
+    """The input side: where the frames are decoded and where they come out.
+
+    Both halves of the CUDA form matter and both are input options, so they go
+    before `-i`. `-hwaccel cuda` on its own decodes on the card and then copies
+    every frame back to system memory, which is the bus traffic the GPU graph
+    exists to avoid; `-hwaccel_output_format cuda` is what leaves them there.
+    """
+    if decoder == "cpu":
+        return ["-i", str(master)]
+    return ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-i", str(master)]
+
+
+def _shared_video_args(encoder: Encoder, decoder: Decoder, gop: int) -> list[str]:
+    """What every rung shares: the codec, the pixel format, and the GOP.
+
+    The forced keyframes and the GOP are the same string on all four graphs;
+    they are what makes a player's mid-stream rung switch land on an IDR.
+
+    `-pix_fmt yuv420p` is only for frames in system memory. The rungs on the
+    CUDA graph arrive as CUDA frames and NVENC negotiates the `cuda` pixel
+    format for them; asking for `yuv420p` here would ask the filter chain for a
+    conversion only an explicit `hwdownload` can make, and fail the run. The
+    I-frame rendition keeps its own `-pix_fmt yuv420p` on its own output, where
+    the frames have already come back.
+    """
+    args: list[str] = []
+    if encoder == "libx264":
+        args += ["-c:v", "libx264", "-profile:v", "high", "-sc_threshold", "0"]
+    if decoder == "cpu":
+        args += ["-pix_fmt", "yuv420p"]
+    return [
+        *args,
+        "-g",
+        str(gop),
+        "-keyint_min",
+        str(gop),
+        "-force_key_frames",
+        f"expr:gte(t,n_forced*{KEYFRAME_SECONDS})",
+    ]
+
+
 def ladder_args(  # noqa: PLR0913
     master: Path,
     out_dir: Path,
@@ -280,31 +382,26 @@ def ladder_args(  # noqa: PLR0913
     rungs: list[Rung],
     iframes: bool,
     encoder: Encoder = "libx264",
+    decoder: Decoder = "cpu",
 ) -> list[str]:
     """Build the single ffmpeg invocation for the ladder, audio, and I-frames."""
+    if decoder == "cuda" and encoder != "h264_nvenc":
+        msg = (
+            "decoder='cuda' hands the rung encoder CUDA frames and only "
+            f"'h264_nvenc' takes them; encoder={encoder!r} was asked for"
+        )
+        raise ValueError(msg)
     if video is None:
         return _audio_only_args(master, out_dir)
-    args: list[str] = ["-i", str(master)]
+    args = _input_args(master, decoder)
 
-    graph, labels = _filter_complex(video, rungs, iframes=iframes)
+    graph, labels = _filter_complex(video, rungs, iframes=iframes, decoder=decoder)
     args += ["-filter_complex", graph]
     for label in labels[: len(rungs)]:
         args += ["-map", label]
     if has_audio:
         args += ["-map", "0:a:0"]
-    gop = gop_frames(video.fps)
-    if encoder == "libx264":
-        args += ["-c:v", "libx264", "-profile:v", "high", "-sc_threshold", "0"]
-    args += [
-        "-pix_fmt",
-        "yuv420p",
-        "-g",
-        str(gop),
-        "-keyint_min",
-        str(gop),
-        "-force_key_frames",
-        f"expr:gte(t,n_forced*{KEYFRAME_SECONDS})",
-    ]
+    args += _shared_video_args(encoder, decoder, gop_frames(video.fps))
     for i, rung in enumerate(rungs):
         args += _x264_rung_args(i, rung) if encoder == "libx264" else _nvenc_rung_args(i, rung)
     if has_audio:
@@ -353,6 +450,7 @@ async def transcode_ladder(  # noqa: PLR0913
     expected_seconds: float | None = None,
     on_progress: Callable[[float], Awaitable[None]] | None = None,
     encoder: Encoder = "libx264",
+    decoder: Decoder = "cpu",
 ) -> list[Rung]:
     """Run the ladder and return its rungs; a complete ladder from an earlier attempt is reused."""
     rungs = plan_rungs(video) if video else []
@@ -381,6 +479,7 @@ async def transcode_ladder(  # noqa: PLR0913
         rungs=rungs,
         iframes=video is not None,
         encoder=encoder,
+        decoder=decoder,
     )
     await run_ffmpeg(ffmpeg, args, on_progress=on_progress)
     if video:
