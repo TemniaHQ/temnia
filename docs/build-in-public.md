@@ -77,6 +77,13 @@ Rules for the loop:
 
 - The log is committed to the repo. It is the source of truth for the posts, and later it is the project's own history.
 - **Several posts a day are fine; one idea each** (Rajesh, 2026-09-06). A full day usually yields a shipped post, a how-it-works post, and a went-wrong post on X, and one or two on LinkedIn. Each post block in the log names its pillar and its image so the order and the media are decided when the log is written, not at posting time.
+- **Day N is the day of posting** (Rajesh, 2026-09-07). Work that closed late the night before opens
+  with "Sprint one closed last night", still under the new day's number; a second post the same day
+  says "second post". Readers follow the calendar, and a repeated day number reads as a repost.
+- **Short points, not paragraphs** (Rajesh, 2026-09-07): one idea per line, a blank line between,
+  plain one-line labels ("What shipped", "What broke", "The numbers"), a number on every line that
+  can carry one, the result in the first line, the next step as the last. No bold headers, no emoji
+  bullets, no agency angle until Rajesh calls it.
 - **Title** (Rajesh, 2026-09-06): every post on both platforms opens with **`Day N of building Temnia.`** and nothing more; the tools get named in the body where they did something, never in the title. Day 0 is the origin posts; Day 1 is the foundation. (This file's own name, "Building Temnia in public", stays as the strategy's name, not a post opener.)
 - Claude writes the log and both drafts from what actually happened in the session — no embellishing, no rounding numbers up.
 - Rajesh edits for voice and posts. If the edit changes a fact, the log gets corrected too.
