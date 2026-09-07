@@ -106,7 +106,10 @@ describe("a speaker reassignment", () => {
         timing: "aligned",
       },
     ];
-    expect(wordsByUtterance(words, deriveUtterances(words))).toEqual([[0], [1]]);
+    expect(wordsByUtterance(words, deriveUtterances(words))).toEqual([
+      [0],
+      [1],
+    ]);
   });
 
   it("refuses a turn the revision does not have", () => {
