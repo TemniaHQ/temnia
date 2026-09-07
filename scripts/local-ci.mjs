@@ -7,7 +7,8 @@
 //   1. frozen install; Ultracite; uv sync
 //   2. cross-language contracts are not stale (Zod → JSON Schema → pydantic)
 //   3. turbo build, lint, typecheck, test across web, packages, and the Python pipeline
-//      (db tests run against a disposable database on the compose Postgres)
+//      (db isolation probes, the pipeline's schema contract, and TranscribeWorkflow
+//      end to end against Garage on the disposable compose database)
 //   4. both deploy images build
 //   5. the deploy images work together: a Next.js server action in the web image
 //      starts a workflow that a worker in the pipeline image completes (Playwright)
@@ -36,6 +37,8 @@ const GARAGE_SECRET_KEY =
 const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
 // The resume e2e waits this out before re-selecting the file.
 const GATE_ADOPT_GRACE_SECONDS = 2;
+// Where the worker container sees the repository's recorded engine responses.
+const GATE_RECORDINGS_DIR = "/var/lib/temnia/recordings";
 const STAGES = [
   "pnpm install --frozen-lockfile",
   "pnpm check",
@@ -43,7 +46,7 @@ const STAGES = [
   "contracts: schemas:check + pipeline contracts:check",
   "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
-  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract)",
+  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end)",
   "docker build apps/web + apps/pipeline",
   "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
 ];
@@ -314,11 +317,26 @@ async function runFullGate(sha) {
       `TEMPORAL_NAMESPACE=${namespace}`,
       "-e",
       `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
-      // The gate encodes with the image's own ffmpeg. No Modal call in CI, ever;
-      // this is explicit rather than left to the default so a change to the
-      // default cannot quietly point the gate at a GPU that costs money.
+      // The gate encodes with the image's own ffmpeg and replays a recorded
+      // WhisperX response. No Modal call in CI, ever; both are explicit rather
+      // than left to the defaults so a change to a default cannot quietly point
+      // the gate at a GPU that costs money.
       "-e",
       "TRANSCODE_BACKEND=local",
+      "-e",
+      "TRANSCRIPTION_PROVIDER=recorded",
+      "-e",
+      `TRANSCRIPTION_RECORDINGS_DIR=${GATE_RECORDINGS_DIR}`,
+      // The path override, not the checksum lookup: the recorded provider keys
+      // on the sha256 of the audio extract, and the extract is re-encoded by
+      // whichever ffmpeg the image carries, so a bumped ffmpeg would change the
+      // checksum and stop matching without a word.
+      "-e",
+      `TRANSCRIPTION_RECORDING=${GATE_RECORDINGS_DIR}/speech-40s.whisperx.json`,
+      // Read-only: the fixtures are the repository's, and the worker only reads
+      // them. They are not baked into the image, which carries no tests.
+      "-v",
+      `${resolve(ROOT, "apps/pipeline/tests/fixtures/transcripts")}:${GATE_RECORDINGS_DIR}:ro`,
       ...storageEnv,
       pipelineImage,
     ]);

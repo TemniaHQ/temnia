@@ -44,12 +44,18 @@ runbook had assumed the bare app name.
   `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:<pw>@temnia-staging-postgres-<suffix>:5432/temnia`, the same
   `STORAGE_*` (without `STORAGE_PUBLIC_ENDPOINT`), and a volume on `/var/lib/temnia/work` sized for
   the largest master plus its ladder (the worker refuses a download without 1.5x the master free).
-  From S2 it also carries `TRANSCODE_BACKEND=modal`, `MODAL_ENVIRONMENT=staging`, `MODAL_TOKEN_ID`,
-  and `MODAL_TOKEN_SECRET` (§2c). With `TRANSCODE_BACKEND=modal` the worker calls the deployed
-  `version` function before it serves the queue and exits non-zero on a bad token or a Modal app
-  deployed from another commit, so Dokploy reports a failed deploy and keeps the previous container.
+  From S2 it also carries `TRANSCODE_BACKEND=modal`, `TRANSCRIPTION_PROVIDER=modal`,
+  `MODAL_ENVIRONMENT=staging`, `MODAL_TOKEN_ID`, and `MODAL_TOKEN_SECRET` (§2c). With either of
+  those two set to `modal` the worker calls the deployed `version` function before it serves the
+  queue and exits non-zero on a bad token or a Modal app deployed from another commit, so Dokploy
+  reports a failed deploy and keeps the previous container. One probe covers both functions: they
+  share an app and a contract version, so a half deployed pair cannot get past it either.
   The work volume no longer holds ladders once the backend is `modal`: only the master and the audio
-  extract stay on it.
+  extract stay on it, and transcription reads the extract from R2 inside the Modal function rather
+  than from the volume.
+  `TRANSCRIPTION_PROVIDER` has no unconfigured state. Leaving it unset means `recorded`, which
+  replays a committed response and never calls a GPU; that is right on a laptop and wrong on
+  staging, so set it explicitly there.
 - `temporal`: `TEMPORAL_DB_PASSWORD`, `TEMPORAL_HOST=temporal-staging` (the alias the others dial; a
   production stack gets its own).
 - `cloudflared`: `TUNNEL_TOKEN`.
@@ -146,6 +152,25 @@ decided belongs to an organization, and never an organization id.
    `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`. Use a **second** R2 API
    token scoped to `temnia-staging-media` with object read and write, so it can be revoked without
    touching the worker's.
+3b. **Secret `temnia-hf`**, and the model gate. whisperx 3.8.6 diarizes with pyannote-audio 4's
+   default pipeline, `pyannote/speaker-diarization-community-1`, which is gated on Hugging Face
+   (CC-BY-4.0, commercial use allowed with attribution).
+   1. Create a Hugging Face account, open
+      [`pyannote/speaker-diarization-community-1`](https://huggingface.co/pyannote/speaker-diarization-community-1),
+      and accept its terms with that account. Without this the download 401s inside the function.
+   2. Settings → Access Tokens → a **read** token.
+   3. Modal dashboard → Secrets → Custom, name `temnia-hf`, in the `staging` environment, one key
+      `HF_TOKEN`. The token exists only inside Modal; the worker never holds it, and neither does
+      the image.
+
+   The function refuses to start when `HF_TOKEN` is missing or empty, by name and before the audio
+   is downloaded, so a forgotten secret is a fast failure rather than one minutes into a billing GPU.
+3c. **Volume `temnia-models`.** Created automatically on the first deploy
+   (`modal.Volume.from_name(..., create_if_missing=True)`) and mounted at `/models`, which is
+   `HF_HOME` and `TORCH_HOME` inside the container. It holds large-v3 (about 3 GB), the alignment
+   model for each language seen, and the diarization pipeline. The first transcription fills it and
+   every later cold start reads from it; paying for that download on every call would be most of a
+   short episode's cost. To force a re-download, delete the Volume in the dashboard.
 4. **Probe the GPU first**, from `apps/pipeline`, before trusting anything else:
 
    ```bash
@@ -164,10 +189,59 @@ decided belongs to an organization, and never an organization id.
    uv run modal deploy temnia_pipeline.modal_app --env staging
    ```
 
-6. **If the worker will not start**, its log carries one line beginning `TRANSCODE_BACKEND=modal:`.
+   One deploy publishes `ladder`, `transcribe`, and `version`. The first build is long: it adds
+   torch 2.8 from PyTorch's cu124 index (matching the image's CUDA 12.4 runtime, so no second copy
+   of the CUDA libraries comes along) and whisperx 3.8.6 on top of the NVENC ffmpeg. There is no
+   deploying one function without the other: they share `CONTRACT_VERSION`, and the worker's boot
+   probe refuses a version it does not speak.
+
+6. **If the worker will not start**, its log carries one line naming the variables that put it on
+   Modal, for example `TRANSCODE_BACKEND=modal and TRANSCRIPTION_PROVIDER=modal:`.
    `cannot reach the Modal app …` is a token or a missing deployment; `… speaks media contract 'x'
    and this worker speaks 'y'` means the two halves came from different commits, so deploy the Modal
    app again from the commit the image was built from.
+
+## 2d. Record the gate's transcription fixture (once, after the first staging run)
+
+`apps/pipeline/tests/fixtures/transcripts/speech-40s.whisperx.json` is **hand-authored**. It is in
+WhisperX's output shape and its word timings follow the measured turn boundaries of
+`apps/web/e2e/fixtures/speech-40s.mp4`, but no engine produced it; it exists so the normaliser, the
+cue builder, and the gate had something with real speech in them before a Modal account did. Its
+`_note` says so. Replace it with a real recording the first time the deployed function runs, so the
+gate replays what WhisperX actually emits rather than what we guessed it emits.
+
+1. Upload `apps/web/e2e/fixtures/speech-40s.mp4` to staging and let the ingest finish:
+
+   ```bash
+   node scripts/upload-master.mjs apps/web/e2e/fixtures/speech-40s.mp4 --project <id>
+   ```
+
+2. Transcription starts on its own after the ingest finalizes. When the transcript row is `ready`,
+   fetch the engine's own response, which the function wrote beside the revision:
+
+   ```bash
+   # org/<organization>/source/<source>/transcript/raw-1.json
+   aws s3 cp "s3://temnia-staging-media/org/<org>/source/<source>/transcript/raw-1.json" \
+     apps/pipeline/tests/fixtures/transcripts/speech-40s.whisperx.json \
+     --endpoint-url "$STORAGE_ENDPOINT"
+   ```
+
+3. Add the two fields the recorded provider and the reader need, keeping everything else byte for
+   byte as the engine wrote it (including any bare `NaN` alignment score, which is real and which
+   `normalize.py` turns into a null confidence):
+
+   - `"_note"`: that this is a real recording, from which commit and which date.
+   - `"_audioSha256"`: the sha256 of the audio extract it was made from. The worker logs it, and the
+     provider's failure message repeats it; it is only used when no `TRANSCRIPTION_RECORDING` path
+     is set, so the gate does not depend on it.
+
+4. Re-run the gate. `pnpm ci:local` pins `TRANSCRIPTION_RECORDING` at that file, so the recording is
+   chosen by path and not by checksum: the extract is re-encoded by whichever ffmpeg the pipeline
+   image carries, and a bumped ffmpeg would change the checksum and stop matching without a word.
+
+5. Update the word count in `apps/pipeline/tests/test_transcription_normalize.py` and regenerate
+   `apps/web/tests/fixtures/speech-40s.transcript.json`, which is that response put through the
+   normaliser and is what the caption tests read.
 
 ## 3. Deploy targets (Rajesh once, then automatic)
 
