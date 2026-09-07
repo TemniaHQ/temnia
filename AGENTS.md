@@ -304,7 +304,10 @@ re-auditioned only after slice D gives a measured WhisperX baseline. The spec is
 retry can repeat carries the identity of the run that made it and is fenced on it** (`run_id` on the
 transcript row, an idempotency key on the ledger, a per-attempt object key on a correction), and
 **a transport failure is never reported as a failed computation** (`Unreachable` is its own status
-in both Modal adapters, and no runner spawns on it).
+in both Modal adapters, and no runner spawns on it). The PRD's "a retry re-pays zero tokens" (§1.5 principle 6,
+§8 chassis, §23 fair billing) is qualified in the same PR to committed results, with unresolved spend
+bounded and reported, because the crash window between a provider's answer and Temnia's commit cannot
+be closed by a checkpoint.
 
 ## Working rules (S0, 2026-09-06)
 
