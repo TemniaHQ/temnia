@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  fingerprintOf,
-  missingParts,
-  partCountFor,
-  partSizeFor,
-} from "@/lib/uploads/server";
+import { MAX_PARTS, missingParts, partCountFor } from "@/lib/uploads/parts";
+import { fingerprintOf, partSizeFor } from "@/lib/uploads/server";
 
 const MIB = 1024 * 1024;
 
@@ -13,18 +9,25 @@ describe("part sizing", () => {
     delete process.env.UPLOAD_PART_SIZE_BYTES;
   });
 
-  it("is 16 MiB for anything up to about 140 GB", () => {
+  it("is 16 MiB for anything up to 1000 parts of it", () => {
     expect(partSizeFor(1)).toBe(16 * MIB);
-    expect(partSizeFor(100 * 1024 * MIB)).toBe(16 * MIB);
+    expect(partSizeFor(MAX_PARTS * 16 * MIB)).toBe(16 * MIB);
   });
 
-  it("grows for larger files so the part count stays bounded", () => {
-    const size = 300 * 1024 * MIB;
-    expect(partSizeFor(size)).toBeGreaterThan(16 * MIB);
-    expect(partCountFor(size, partSizeFor(size))).toBeLessThanOrEqual(9000);
+  it("grows for larger files so the part count stays inside one ListParts page", () => {
+    for (const size of [
+      MAX_PARTS * 16 * MIB + 1,
+      40 * 1024 * MIB,
+      200 * 1024 * MIB,
+    ]) {
+      expect(partSizeFor(size)).toBeGreaterThan(16 * MIB);
+      expect(partCountFor(size, partSizeFor(size))).toBeLessThanOrEqual(
+        MAX_PARTS
+      );
+    }
   });
 
-  it("honours the e2e override only above the R2 minimum", () => {
+  it("honours the e2e override only above the store minimum", () => {
     process.env.UPLOAD_PART_SIZE_BYTES = String(5 * MIB);
     expect(partSizeFor(100)).toBe(5 * MIB);
     process.env.UPLOAD_PART_SIZE_BYTES = String(1 * MIB);

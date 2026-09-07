@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Push a local master through the real upload API, the way the browser does:
-// create (or adopt), sign parts in batches, PUT each slice, complete. Then
-// poll the source until it is ready or failed. No dependencies.
+// create (or adopt), sign each part, PUT each slice, complete. Then poll the
+// source until it is ready or failed. No dependencies.
 //
 //   node scripts/upload-master.mjs <file> --project <projectId> [--base http://localhost:3000]
 //        [--header "CF-Access-Client-Id: ..." --header "CF-Access-Client-Secret: ..."] [--concurrency 4]
@@ -40,11 +40,12 @@ async function api(path, body, method = "POST") {
     method,
   });
   if (response.status === 409 && path === "/api/uploads") {
-    // An earlier run of this file is inside the adoption grace window.
+    const { retryAfterSeconds } = await response.json();
+    const wait = (retryAfterSeconds ?? 60) + 5;
     console.log(
-      "an upload of this file is still in its grace window; waiting 65 s to adopt it"
+      `an upload of this file is still in its grace window; waiting ${wait} s to adopt it`
     );
-    await new Promise((r) => setTimeout(r, 65_000));
+    await new Promise((r) => setTimeout(r, wait * 1000));
     return api(path, body, method);
   }
   if (!response.ok) {
@@ -76,42 +77,31 @@ console.log(
 );
 
 const handle = await open(file, "r");
-const signed = new Map();
-async function sign(partNumbers) {
-  const { urls } = await api(`/api/uploads/${session.uploadId}/sign`, {
-    partNumbers,
+async function sign(partNumber) {
+  const { url } = await api(`/api/uploads/${session.uploadId}/sign`, {
+    key: session.key,
+    method: "PUT",
+    partNumber,
+    uploadId: session.multipartUploadId,
   });
-  for (const { partNumber, url } of urls) {
-    signed.set(partNumber, url);
-  }
+  return url;
 }
 let done = have.size;
 async function putPart(partNumber) {
-  if (!signed.has(partNumber)) {
-    // This part first: the workers have already taken it off `pending`.
-    await sign([
-      partNumber,
-      ...pending.filter((n) => !signed.has(n)).slice(0, 15),
-    ]);
-  }
   const start = (partNumber - 1) * session.partSize;
   const length = Math.min(session.partSize, size - start);
   const buffer = Buffer.alloc(length);
   await handle.read(buffer, 0, length, start);
   for (let attempt = 0; ; attempt += 1) {
     // biome-ignore lint/performance/noAwaitInLoops: retries of one part are sequential
-    const response = await fetch(signed.get(partNumber), {
-      body: buffer,
-      method: "PUT",
-    });
+    const url = await sign(partNumber);
+    const response = await fetch(url, { body: buffer, method: "PUT" });
     if (response.ok) {
       break;
     }
     if (attempt >= 4) {
       throw new Error(`part ${partNumber} failed with ${response.status}`);
     }
-    signed.delete(partNumber);
-    await sign([partNumber]);
   }
   done += 1;
   process.stdout.write(`\rparts ${done}/${session.partCount}`);

@@ -19,7 +19,8 @@ memory, not here.
 
 Object storage is Cloudflare R2 (bucket `temnia-staging-media`); Garage is local development only.
 R2 one-time setup (Rajesh, dashboard or `wrangler`): create the bucket; an API token with object read
-and write on it; the CORS rule below (browsers PUT upload parts straight to R2, and without
+and write on it; the CORS rule below (Uppy PUTs upload parts straight to R2 and GETs the part list when it
+resumes; Complete and Abort go to the app, so no POST or DELETE is needed; without
 `ExposeHeaders: ETag` every multipart completes with no part tags); and confirm the bucket's
 "Default Multipart Abort Rule" (7 days) is enabled, which is the backstop behind the reaper.
 

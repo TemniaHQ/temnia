@@ -7,6 +7,10 @@
  * the parts the store already holds. The check runs inside the transaction
  * that would otherwise create a second row, and the partial unique index on
  * (organization, fingerprint) where active makes a duplicate unreachable.
+ *
+ * The multipart upload is created here, before the browser sends a byte, so
+ * the row knows the store's UploadId from the start; Uppy receives it as
+ * resume state and lists parts rather than creating an upload of its own.
  */
 import { masterKey } from "@temnia/contracts";
 import { project, source, upload } from "@temnia/db";
@@ -14,16 +18,15 @@ import { and, eq, sql } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
+import { missingParts, partCountFor } from "@/lib/uploads/parts";
 import {
   adoptGraceSeconds,
   createMultipart,
   fingerprintOf,
   listUploadedParts,
-  missingParts,
-  partCountFor,
   partSizeFor,
-  type UploadedPart,
 } from "@/lib/uploads/server";
+import type { UploadSession } from "@/lib/uploads/session";
 
 const MAX_FILE_BYTES = 200 * 1024 * 1024 * 1024;
 const MEDIA_TYPE = /^(video|audio)\//;
@@ -36,16 +39,6 @@ const BodySchema = z.object({
   size: z.int().positive().max(MAX_FILE_BYTES),
   type: z.string().regex(MEDIA_TYPE, "only video and audio files are accepted"),
 });
-
-export interface UploadSession {
-  partCount: number;
-  partSize: number;
-  resumed: boolean;
-  sourceId: string;
-  /** Parts the store already holds; the browser skips these. */
-  uploaded: UploadedPart[];
-  uploadId: string;
-}
 
 export async function POST(request: NextRequest): Promise<Response> {
   const parsed = BodySchema.safeParse(await request.json().catch(() => null));
@@ -119,6 +112,8 @@ export async function POST(request: NextRequest): Promise<Response> {
             .set({ lastActivityAt: sql`now()` })
             .where(eq(upload.id, active.id));
           return {
+            key: active.storageKey,
+            multipartUploadId: active.multipartUploadId,
             partCount: partCountFor(active.sizeBytes, active.partSizeBytes),
             partSize: active.partSizeBytes,
             resumed: true,
@@ -173,6 +168,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         return { error: "upload not created", status: 500 };
       }
       return {
+        key,
+        multipartUploadId,
         partCount: partCountFor(body.size, partSize),
         partSize,
         resumed: false,
