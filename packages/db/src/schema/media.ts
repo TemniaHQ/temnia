@@ -187,6 +187,7 @@ export const artifact = pgTable(
 export const usageKind = pgEnum("usage_kind", [
   "storage_bytes",
   "processing_seconds",
+  "transcription_seconds",
 ]);
 
 /**
@@ -219,5 +220,114 @@ export const usageLedger = pgTable(
       table.recordedAt
     ),
     organizationPolicy("usage_ledger", table.organizationId),
+  ]
+).enableRLS();
+
+export const transcriptStatus = pgEnum("transcript_status", [
+  "pending",
+  "processing",
+  "ready",
+  "failed",
+]);
+
+/**
+ * One transcript per source. The row is the state and the progress; the words
+ * themselves live in storage under `{sourcePrefix}transcript/rev-{N}.json`,
+ * never in an artifact row, because re-ingesting a source clears its artifact
+ * rows and a paid transcript has to survive that (S2 plan §9). Deleting the
+ * source deletes both: the row cascades and the prefix delete takes the JSON.
+ *
+ * `speakerLabels` maps a diarization id ("0", "1") to the display name a user
+ * typed. Renaming a speaker therefore never rewrites a revision, and giving
+ * two ids the same name merges them on screen, which is the manual merge the
+ * legacy needed after over-segmented diarization.
+ */
+export const transcript = pgTable(
+  "transcript",
+  {
+    /** How many times transcription has been claimed for this source; the revision an attempt writes. */
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: createdAt(),
+    /** The revision the UI reads; null until the first one is written. */
+    currentRevision: integer("current_revision"),
+    errorMessage: text("error_message"),
+    /** Mirrors the activity's Temporal heartbeat so the surface can say "stalled". */
+    heartbeatAt: timestamptz("heartbeat_at"),
+    id: id(),
+    /** The detected language code, so a wrong guess on a music intro is visible. */
+    language: text("language"),
+    model: text("model"),
+    organizationId: organizationId(),
+    percent: integer("percent"),
+    provider: text("provider"),
+    readyAt: timestamptz("ready_at"),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    /** Diarization id to the name a user typed; the same name on two ids merges them. */
+    speakerLabels: jsonb("speaker_labels")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    stage: text("stage"),
+    status: transcriptStatus("status").notNull().default("pending"),
+    updatedAt: updatedAt(),
+    workflowId: text("workflow_id"),
+  },
+  (table) => [
+    // Unique, not just an index: the claim activity upserts on it, which is
+    // what makes a second workflow for the same source a no-op rather than a
+    // second GPU job.
+    uniqueIndex("transcript_source_idx").on(table.sourceId),
+    index("transcript_organization_status_idx").on(
+      table.organizationId,
+      table.status
+    ),
+    organizationPolicy("transcript", table.organizationId),
+  ]
+).enableRLS();
+
+export const transcriptRevisionKind = pgEnum("transcript_revision_kind", [
+  "machine",
+  "correction",
+]);
+
+/**
+ * A revision is a new object in storage, never an overwrite. `machine` rows
+ * come from an engine run, `correction` rows from a user edit and carry the
+ * revision they were derived from; a save whose `baseRevision` is no longer
+ * the transcript's current revision is refused, which is the optimistic
+ * concurrency two open tabs need.
+ */
+export const transcriptRevision = pgTable(
+  "transcript_revision",
+  {
+    baseRevision: integer("base_revision"),
+    createdAt: createdAt(),
+    createdBy: uuid("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    id: id(),
+    kind: transcriptRevisionKind("kind").notNull(),
+    /** The attempt that produced a machine revision, the edit that produced a correction. */
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    organizationId: organizationId(),
+    revision: integer("revision").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    storageKey: text("storage_key").notNull(),
+    transcriptId: uuid("transcript_id")
+      .notNull()
+      .references(() => transcript.id, { onDelete: "cascade" }),
+    wordCount: integer("word_count").notNull(),
+  },
+  (table) => [
+    uniqueIndex("transcript_revision_idx").on(
+      table.transcriptId,
+      table.revision
+    ),
+    organizationPolicy("transcript_revision", table.organizationId),
   ]
 ).enableRLS();
