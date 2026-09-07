@@ -55,11 +55,11 @@ export function buildParagraphs(
       if (!word) {
         continue;
       }
-      const broken =
+      if (
         open === null ||
         length >= PARAGRAPH_MAX_WORDS ||
-        word.startMs - open.endMs > PARAGRAPH_GAP_MS;
-      if (broken) {
+        word.startMs - open.endMs > PARAGRAPH_GAP_MS
+      ) {
         open = {
           endMs: word.endMs,
           firstWord: index,

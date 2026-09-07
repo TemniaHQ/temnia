@@ -2,7 +2,7 @@
 
 import "@videojs/react/video/skin.css";
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video";
-import { VideoPlayer, VideoSkin } from "@videojs/react/video";
+import { VideoSkin } from "@videojs/react/video";
 import Peaks, { type PeaksInstance } from "peaks.js";
 import { useEffect, useRef, useState } from "react";
 
@@ -23,7 +23,6 @@ const HLS_JS_CONFIG = {
 interface SourcePlayerProps {
   peaksUrl: string | null;
   playlistUrl: string;
-  posterUrl: string | null;
 }
 
 /**
@@ -32,12 +31,13 @@ interface SourcePlayerProps {
  * Client-only: peaks.js touches window at import. Peaks is initialised after
  * `loadedmetadata`, once the duration is finite (bbc/peaks.js#574), which is
  * also after the engine's mount-time MediaSource attach has settled.
+ *
+ * The `VideoPlayer` provider is not here but around both panes, in
+ * `SourceWorkspace`: it renders no element of its own and it is what lets the
+ * transcript tab read and drive this player through `usePlayer` rather than
+ * through a ref lifted out of this file (S2 plan §5).
  */
-export function SourcePlayer({
-  playlistUrl,
-  peaksUrl,
-  posterUrl,
-}: SourcePlayerProps) {
+export function SourcePlayer({ playlistUrl, peaksUrl }: SourcePlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overviewRef = useRef<HTMLDivElement | null>(null);
   const [waveformState, setWaveformState] = useState<
@@ -97,21 +97,19 @@ export function SourcePlayer({
 
   return (
     <div className="flex flex-col gap-3" data-testid="source-player">
-      <VideoPlayer poster={posterUrl ?? undefined}>
-        <VideoSkin className="aspect-video w-full overflow-hidden rounded-lg">
-          <HlsJsVideo
-            crossOrigin="use-credentials"
-            playsInline
-            preload="metadata"
-            ref={videoRef}
-            source={{
-              engine: { hlsJs: HLS_JS_CONFIG },
-              src: playlistUrl,
-              type: "application/vnd.apple.mpegurl",
-            }}
-          />
-        </VideoSkin>
-      </VideoPlayer>
+      <VideoSkin className="aspect-video w-full overflow-hidden rounded-lg">
+        <HlsJsVideo
+          crossOrigin="use-credentials"
+          playsInline
+          preload="metadata"
+          ref={videoRef}
+          source={{
+            engine: { hlsJs: HLS_JS_CONFIG },
+            src: playlistUrl,
+            type: "application/vnd.apple.mpegurl",
+          }}
+        />
+      </VideoSkin>
       {peaksUrl ? (
         <div
           className="h-20 w-full rounded-md border bg-muted/30"

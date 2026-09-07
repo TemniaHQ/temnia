@@ -1,6 +1,8 @@
 "use client";
 
+import { VideoPlayer } from "@videojs/react/video";
 import dynamic from "next/dynamic";
+import { TranscriptPanel } from "@/components/sources/transcript-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -18,6 +20,7 @@ import {
   formatElapsed,
   statusLabel,
 } from "@/lib/sources/labels";
+import type { TranscriptRowSummary } from "@/lib/transcript/state";
 
 const SourcePlayer = dynamic(
   () => import("./source-player").then((m) => m.SourcePlayer),
@@ -59,15 +62,29 @@ interface SourceWorkspaceProps {
   playlistUrl: string | null;
   posterUrl: string | null;
   source: SourceSummary;
+  speakerLabels: Record<string, string>;
+  transcript: TranscriptRowSummary | null;
+  /** The media-proxy URL of the transcript's current revision, if it has one. */
+  transcriptUrl: string | null;
 }
 
-/** Two panes: the player stays put on the left while the right pane scrolls. */
+/**
+ * Two panes: the player stays put on the left while the right pane scrolls.
+ *
+ * `VideoPlayer` wraps both of them. It renders no element of its own, so the
+ * layout is unchanged, and it is what gives the transcript tab the same player
+ * the pane beside it is showing: the tab follows and seeks through `usePlayer`
+ * rather than through a ref lifted out of the player component (S2 plan §5).
+ */
 export function SourceWorkspace({
   source,
   artifacts,
   playlistUrl,
   peaksUrl,
   posterUrl,
+  speakerLabels,
+  transcript,
+  transcriptUrl,
 }: SourceWorkspaceProps) {
   const rows: [string, string][] = [
     ["Status", statusLabel(source)],
@@ -90,70 +107,79 @@ export function SourceWorkspace({
     ["Ingested in", formatElapsed(source.uploadedAt, source.readyAt)],
   ];
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <section className="lg:sticky lg:top-6 lg:self-start">
-        <h1 className="mb-3 font-semibold text-xl tracking-tight">
-          {source.title}
-        </h1>
-        {playlistUrl ? (
-          <SourcePlayer
-            peaksUrl={peaksUrl}
-            playlistUrl={playlistUrl}
-            posterUrl={posterUrl}
-          />
-        ) : (
-          <div className="flex aspect-video items-center justify-center rounded-lg border text-muted-foreground text-sm">
-            Playback is not ready yet.
-          </div>
-        )}
-      </section>
-      <section>
-        <Tabs defaultValue="details">
-          <TabsList>
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-          </TabsList>
-          <TabsContent value="details">
-            <dl
-              className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm"
-              data-testid="source-details"
-            >
-              {rows.map(([label, value]) => (
-                <div className="contents" key={label}>
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="tabular-nums">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </TabsContent>
-          <TabsContent value="artifacts">
-            <Table data-testid="artifacts-table">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {artifacts.map((a) => (
-                  <TableRow key={a.kind}>
-                    <TableCell>
-                      <Badge variant="outline">{a.kind}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {a.contentType}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatBytes(a.sizeBytes)}
-                    </TableCell>
-                  </TableRow>
+    <VideoPlayer poster={posterUrl ?? undefined}>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <section className="lg:sticky lg:top-6 lg:self-start">
+          <h1 className="mb-3 font-semibold text-xl tracking-tight">
+            {source.title}
+          </h1>
+          {playlistUrl ? (
+            <SourcePlayer peaksUrl={peaksUrl} playlistUrl={playlistUrl} />
+          ) : (
+            <div className="flex aspect-video items-center justify-center rounded-lg border text-muted-foreground text-sm">
+              Playback is not ready yet.
+            </div>
+          )}
+        </section>
+        <section>
+          <Tabs defaultValue="details">
+            <TabsList>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="transcript">Transcript</TabsTrigger>
+              <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+            </TabsList>
+            <TabsContent value="details">
+              <dl
+                className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm"
+                data-testid="source-details"
+              >
+                {rows.map(([label, value]) => (
+                  <div className="contents" key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="tabular-nums">{value}</dd>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
-          </TabsContent>
-        </Tabs>
-      </section>
-    </div>
+              </dl>
+            </TabsContent>
+            <TabsContent value="transcript">
+              <TranscriptPanel
+                labels={speakerLabels}
+                revisionUrl={transcriptUrl}
+                row={transcript}
+                sourceId={source.id}
+                sourceStatus={source.status}
+                title={source.title}
+              />
+            </TabsContent>
+            <TabsContent value="artifacts">
+              <Table data-testid="artifacts-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Kind</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Size</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {artifacts.map((a) => (
+                    <TableRow key={a.kind}>
+                      <TableCell>
+                        <Badge variant="outline">{a.kind}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {a.contentType}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatBytes(a.sizeBytes)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TabsContent>
+          </Tabs>
+        </section>
+      </div>
+    </VideoPlayer>
   );
 }

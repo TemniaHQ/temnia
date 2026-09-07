@@ -34,7 +34,7 @@ export async function fetchRevision(
   url: string,
   signal?: AbortSignal
 ): Promise<TranscriptV1> {
-  const response = await fetch(url, { signal });
+  const response = await fetch(url, signal ? { signal } : {});
   if (!response.ok) {
     throw new TranscriptShapeError(
       `the transcript could not be read (${response.status})`
