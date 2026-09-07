@@ -20,6 +20,10 @@ __pycache__/
 .env.*
 !.env.example
 
+# Model weights, downloaded on demand into TEMNIA_MODELS_DIR. The gate points
+# that at .cache/temnia-models so a machine downloads them once.
+.cache/
+
 # Test artefacts
 coverage/
 test-results/
