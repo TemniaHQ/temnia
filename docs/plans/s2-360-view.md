@@ -79,7 +79,11 @@ produces no speaker turns; paragraphs split on the 2500 ms gap and 120-word cap 
 `startMs == endMs` is legal. Shots absent (synthetic sources): shot snap is a no-op. The UI's display paragraphs (TypeScript, the legacy `paragraphs.ts`
 rules) and the substrate's grid paragraphs (Python) are separate implementations by design, as they
 were in the legacy; S5 addresses cuts by the substrate's ids, so the transcript JSON carries them
-once PR C lands.
+once PR C lands. The oracle those renderings are compared against is a frozen copy of the legacy
+substrate at commit `b642b77` under `tools/legacy-reference/`, which is never edited to make a port
+pass and is never imported by an app or a package; it dumps into
+`apps/pipeline/tests/fixtures/substrate/`, one transcript and an optional shot grid per source, and
+adding a recorded source is dropping two files in and running `pnpm substrate:dump`.
 
 ## 3. Scale
 
@@ -205,7 +209,7 @@ transcript status badge on the list is S7's concern (source intelligence).
 | Tenancy | Isolation suite probes for both tables; schema contract test updated for the new enum and columns |
 | Transcript tab | Playwright: every state above (driven by the recorded provider and a stalled fixture), click-to-seek changes `video.currentTime`, follow highlights the word at 5 s, search finds the expected count, edit a word then reload shows revision 2, rename then export shows the name in the VTT, two contexts produce the stale-revision message, every dialog and menu opened |
 | Hydration | The SSR-HTML assertions in `pnpm e2e:prod` on the transcript tab (the S1 hydration lesson) |
-| Substrate parity | `apps/pipeline/tests/test_substrate_parity.py`: coarse and fine renderings byte-equal to the committed oracle output on three recorded sources; the dump script's stale check fails if the oracle output changes |
+| Substrate parity | `apps/pipeline/tests/test_substrate_parity.py`: coarse and fine renderings byte-equal to the committed oracle output, and the grid and display paragraphs equal after loading; `tools/legacy-reference/tests/substrate-dump.test.ts` re-dumps and compares bytes, so a fixture or oracle edit without a re-dump fails too. Four sources today (the speech fixture with the shot grid the ingest produced for it, the converted legacy snippet, a synthetic fixture exercising every rule, and an empty transcript); the three recorded sources join them in D, at which point the gate covers them without a code change |
 | Scorer parity | `test_parity.py` on the re-hosted snapshots, bit-identical |
 | Scale on staging | The 2-hour master: ladder minutes and GPU cost, transcript minutes and cost, tab load time, two-org probes; the numbers close S2 and M0 |
 
@@ -258,6 +262,8 @@ transcript status badge on the list is S7's concern (source intelligence).
 - Modal functions are scope-blind compute; the worker is the only authority on organization and
   prefix.
 - The recorded-response provider replaces a synthetic mock.
+- The legacy substrate is vendored frozen as the parity oracle rather than trusted from memory: a
+  behaviour question is settled by running that copy, and it is never edited to make a port pass.
 - Hybrid ladder: CPU decode and scale, NVENC for the video rungs, libx264 for the I-frame rendition.
 - The transcript tab reuses the legacy viewer's rules with `@tanstack/react-virtual`.
 - A real-speech e2e fixture joins the synthetic 24-second master.
