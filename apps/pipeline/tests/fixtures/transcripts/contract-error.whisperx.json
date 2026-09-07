@@ -1,0 +1,8 @@
+{
+  "_note": "Not a transcription. A recording carrying `_failure` fails the run with that message instead of finishing. This is the terminal half of the pair: `TranscriptContractError` is one of runner.py's TERMINAL_TYPES, so the run is non-retryable and the row reaches `failed` on attempt one, in seconds, instead of walking the 30/60/120 s ladder that `unavailable.whisperx.json` walks. That is what lets apps/web/e2e/transcript.spec.ts assert the Failed state and its Retry without waiting the ladder out; the retry policy itself is production behaviour and is not shortened anywhere. Selected by `_durationMs`: it is the probed duration of apps/web/e2e/fixtures/master-12s.mp4, the first twelve seconds of the synthetic 24-second master copied without re-encoding (`ffmpeg -i master-24s.mp4 -t 12 -c copy -movflags +faststart master-12s.mp4`), which exists only so two silent masters can select two different failures in one run.",
+  "_durationMs": 12080,
+  "_failure": "TranscriptContractError: a word ends after the recording does",
+  "language": "en",
+  "segments": [],
+  "word_segments": []
+}

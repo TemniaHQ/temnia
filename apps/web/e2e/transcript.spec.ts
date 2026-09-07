@@ -6,8 +6,12 @@
  * states, click-to-seek, follow, search, a correction and the revision it
  * writes, a speaker rename that reaches the export, the stale-revision refusal
  * between two contexts, and the tooltip on an uncertain word. The failure
- * states get their own source, because the recording that produces them is
- * chosen by the fixture's duration.
+ * states get a source each, because the recording that produces them is chosen
+ * by the fixture's duration: the 24-second master selects a retryable failure
+ * and the 12-second one a failure the runner classifies as terminal. That is
+ * how the retrying state and the failed state are each reached in seconds,
+ * without a test sitting out the 30/60/120-second retry ladder that production
+ * really walks.
  *
  * The console listener is the hydration assertion. Under `next dev` a mismatch
  * is invisible (the S1 React #418 lesson), but this same spec is what the gate
@@ -21,7 +25,11 @@ import speech from "../tests/fixtures/speech-40s.transcript.json" with {
 };
 
 const SPEECH = resolve(process.cwd(), "e2e/fixtures/speech-40s.mp4");
-const SILENT = resolve(process.cwd(), "e2e/fixtures/master-24s.mp4");
+// Two silent masters, and the duration is the whole difference between them:
+// 24 s matches `unavailable.whisperx.json`, whose failure is retried, and
+// 12 s matches `contract-error.whisperx.json`, whose failure is not.
+const RETRIED = resolve(process.cwd(), "e2e/fixtures/master-24s.mp4");
+const TERMINAL = resolve(process.cwd(), "e2e/fixtures/master-12s.mp4");
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
 const REVISION_URL = /transcript\/rev-\d+\.json/;
@@ -35,9 +43,9 @@ const WAITING_WORDS =
   /The transcript starts after processing finishes\.|Queued for transcription\./;
 const RESTARTED_STATE = /pending|processing/;
 const INGEST_TIMEOUT_MS = 180_000;
-// Four attempts, 30 s doubling: the retryable failure reaches the row after
-// the last one. The policy is production behaviour and is not shortened here.
-const RETRY_LADDER_MS = 300_000;
+// Either failure state is on the row within a second or two of the ingest
+// finishing; the rest of this is the tab's own 3.5 s poll and a slow machine.
+const FAILURE_TIMEOUT_MS = 60_000;
 
 const WORDS = speech.words;
 
@@ -331,28 +339,53 @@ test("an uncertain word is marked and says how sure the engine was", async ({
   );
 });
 
-test("a transcription that keeps failing says so and offers a retry", async ({
+test("a transcription with another attempt coming says it is being retried", async ({
   page,
 }) => {
-  test.setTimeout(INGEST_TIMEOUT_MS + RETRY_LADDER_MS + 60_000);
-  await createProject(page, `failed ${Date.now()}`);
-  await ingest(page, SILENT);
+  test.setTimeout(INGEST_TIMEOUT_MS + FAILURE_TIMEOUT_MS);
+  const complaints = watchConsole(page);
+  await createProject(page, `retrying ${Date.now()}`);
+  await ingest(page, RETRIED);
   const tab = await openTranscript(page);
 
   // The row never flashes Failed between two attempts; it parks at retrying.
   await expect(tab).toHaveAttribute("data-state", "retrying", {
-    timeout: 60_000,
+    timeout: FAILURE_TIMEOUT_MS,
   });
   await expect(tab).toContainText(
     "Transcription stopped unexpectedly and is being retried."
   );
+  expect(complaints).toEqual([]);
 
+  // This is where the retryable recording is left. Its remaining attempts are
+  // 30, 60 and 120 seconds away, which is production's policy and stays that
+  // way; the failed state it eventually reaches is the test below, from a
+  // recording that gets there on attempt one.
+});
+
+test("a transcription that cannot succeed says so and offers a retry", async ({
+  page,
+}) => {
+  test.setTimeout(INGEST_TIMEOUT_MS + FAILURE_TIMEOUT_MS);
+  const complaints = watchConsole(page);
+  await createProject(page, `failed ${Date.now()}`);
+  await ingest(page, TERMINAL);
+  const tab = await openTranscript(page);
+
+  // `TranscriptContractError` is terminal in transcription/runner.py, so there
+  // is no ladder to wait out: the workflow writes the failure to the row after
+  // the first attempt, and the tab's next poll reads it.
   await expect(tab).toHaveAttribute("data-state", "failed", {
-    timeout: RETRY_LADDER_MS,
+    timeout: FAILURE_TIMEOUT_MS,
   });
   await expect(tab).toContainText(
     "Transcription failed: the transcription service was unavailable."
   );
+  expect(complaints).toEqual([]);
+
+  // Retry is a second claim: the action parks the row back at pending and the
+  // worker takes it again. What the tab shows next is that new attempt, and
+  // this stops there rather than following it to the failure it repeats.
   await expect(page.getByTestId("transcript-retry")).toBeVisible();
   await page.getByTestId("transcript-retry").click();
   await expect(tab).toHaveAttribute("data-state", RESTARTED_STATE, {

@@ -325,9 +325,10 @@ async function runFullGate(sha) {
       "TRANSCODE_BACKEND=local",
       "-e",
       "TRANSCRIPTION_PROVIDER=recorded",
-      // The directory, not a pinned file: the transcript e2e drives two
-      // fixtures to two different outcomes in one run, which one pinned file
-      // cannot do. Each recording is matched on the duration it declares, which
+      // The directory, not a pinned file: the transcript e2e drives three
+      // fixtures to three different outcomes in one run (ready, retrying,
+      // failed), which one pinned file cannot do. Each recording is matched on
+      // the duration it declares, which
       // a bumped ffmpeg does not move — unlike the sha256 of the re-encoded
       // audio extract, which is why the pin was here to begin with.
       "-e",

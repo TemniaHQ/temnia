@@ -239,8 +239,9 @@ gate replays what WhisperX actually emits rather than what we guessed it emits.
      extract is re-encoded by whichever ffmpeg the image carries and the checksum moves with it.
 
 4. Re-run the gate. `pnpm ci:local` sets `TRANSCRIPTION_RECORDINGS_DIR` at the fixtures directory and
-   pins no single file: the transcript e2e drives `speech-40s.mp4` to Ready and `master-24s.mp4` to
-   Failed in the same run, and each is matched by the duration its recording declares.
+   pins no single file: the transcript e2e drives `speech-40s.mp4` to Ready, `master-24s.mp4` to
+   Retrying and `master-12s.mp4` to Failed in the same run, and each is matched by the duration its
+   recording declares.
 
 5. Update the word count in `apps/pipeline/tests/test_transcription_normalize.py` and regenerate
    `apps/web/tests/fixtures/speech-40s.transcript.json`, which is that response put through the
