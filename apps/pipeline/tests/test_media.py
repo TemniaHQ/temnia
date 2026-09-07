@@ -389,6 +389,7 @@ def _manifest(renditions: dict[str, float] | None = None) -> hls.LadderManifest:
         total_bytes=4096,
         encoder="h264_nvenc",
         produced_by="modal",
+        decoder="cuda",
         call_id="fc-123",
     )
 
@@ -400,10 +401,19 @@ def test_manifest_round_trips_through_camel_case_json(tmp_path: Path) -> None:
     assert '"segmentSeconds"' in text
     assert '"producedBy":"modal"' in text
     assert '"callId":"fc-123"' in text
+    assert '"decoder":"cuda"' in text
     back = hls.read_manifest(text)
     assert back == _manifest()
     assert back.version == 1
     assert back.encoder == "h264_nvenc"
+    assert back.decoder == "cuda"
+
+
+def test_a_manifest_written_before_the_gpu_decode_reads_back_as_cpu() -> None:
+    """Every S1 and early S2 ladder decoded on the CPU, and a reuse check must
+    still read one rather than raise inside `stored_ladder`."""
+    text = _manifest().model_dump_json(by_alias=True, exclude={"decoder"})
+    assert hls.read_manifest(text).decoder == "cpu"
 
 
 def test_manifest_covers_uses_the_same_tolerance_as_assert_covers() -> None:

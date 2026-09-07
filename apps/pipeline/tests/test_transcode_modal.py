@@ -65,7 +65,9 @@ JOB = LadderJob(
 FULL_LADDER = {"top": 151.0, "720p": 151.0, "360p": 151.0, "audio": 151.04, "iframes": 150.0}
 
 
-def manifest(renditions: dict[str, float] | None = None) -> hls.LadderManifest:
+def manifest(
+    renditions: dict[str, float] | None = None, decoder: hls.Decoder = "cuda"
+) -> hls.LadderManifest:
     return hls.LadderManifest(
         renditions=FULL_LADDER if renditions is None else renditions,
         iframes=True,
@@ -73,6 +75,7 @@ def manifest(renditions: dict[str, float] | None = None) -> hls.LadderManifest:
         total_bytes=987_654,
         encoder="h264_nvenc",
         produced_by="modal",
+        decoder=decoder,
         call_id="fc-original",
     )
 
@@ -155,6 +158,7 @@ def result_of(ladder: hls.LadderManifest) -> LadderResult:
         total_bytes=ladder.total_bytes,
         manifest_key=PREFIX + "hls/manifest.json",
         encoder=ladder.encoder,
+        decoder=ladder.decoder,
         call_id=ladder.call_id,
     )
 
@@ -185,6 +189,9 @@ async def test_a_fresh_spawn_reports_progress_and_returns_the_published_ladder()
     assert result.renditions == FULL_LADDER
     assert result.total_bytes == 987_654
     assert result.encoder == "h264_nvenc"
+    # Which decoder produced it comes from the manifest the function wrote,
+    # never from what the worker would have asked for.
+    assert result.decoder == "cuda"
     # The call id is what a retry reattaches by, so every tick carries it.
     assert [note.percent for note, _ in seen] == [40, 90]
     assert {call_id for _, call_id in seen} == {"fc-spawn-1"}
@@ -296,6 +303,18 @@ async def test_a_ladder_already_in_storage_never_reaches_modal() -> None:
     assert client.spawns == []
     assert client.polled == []
     assert result.encoder == "h264_nvenc"
+
+
+async def test_a_ladder_that_fell_back_to_the_cpu_reports_the_cpu_decoder() -> None:
+    """The fallback happened inside the function; the manifest is the only record."""
+    store = FakeStore()
+    store.publish(manifest(decoder="cpu"))
+
+    result = await transcoder(FakeModalClient(), store).run(
+        JOB, on_progress=collect([]), resume=None
+    )
+
+    assert result.decoder == "cpu"
 
 
 async def test_a_manifest_without_its_master_playlist_is_not_reuse() -> None:

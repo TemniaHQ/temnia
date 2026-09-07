@@ -104,6 +104,9 @@ class LadderResult(BaseModel):
     total_bytes: int
     manifest_key: str
     encoder: hls.Encoder
+    # Read back from the manifest, never assumed: on Modal the encode may have
+    # started on the GPU decoder and finished on the CPU one.
+    decoder: hls.Decoder = "cpu"
     call_id: str | None = None
 
 
@@ -156,5 +159,6 @@ async def stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
         total_bytes=manifest.total_bytes,
         manifest_key=job.manifest_key,
         encoder=manifest.encoder,
+        decoder=manifest.decoder,
         call_id=manifest.call_id,
     )

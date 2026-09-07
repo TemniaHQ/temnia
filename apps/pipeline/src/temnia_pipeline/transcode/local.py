@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from temnia_pipeline.settings import PipelineSettings
 
 ENCODER: hls.Encoder = "libx264"
+# The worker's ffmpeg is a static musl build with no CUDA in it, and the box it
+# runs on has no GPU. The local backend has one decoder and says so.
+DECODER: hls.Decoder = "cpu"
 
 
 def master_path(work_root: Path, job: LadderJob) -> Path:
@@ -100,6 +103,7 @@ class LocalTranscoder:
             total_bytes=total,
             encoder=ENCODER,
             produced_by="local",
+            decoder=DECODER,
         )
         await storage.upload_file(
             self.store, job.manifest_key, hls.write_manifest(out_dir, manifest)
@@ -109,6 +113,7 @@ class LocalTranscoder:
             total_bytes=total,
             manifest_key=job.manifest_key,
             encoder=ENCODER,
+            decoder=DECODER,
         )
 
     async def _ensure_master(self, job: LadderJob) -> Path:

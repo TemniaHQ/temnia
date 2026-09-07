@@ -563,6 +563,12 @@ class LadderManifest(BaseModel):
     total_bytes: int
     encoder: Encoder
     produced_by: ProducedBy
+    # Which decoder actually produced this ladder, not which one was asked for:
+    # a CUDA attempt that failed and fell back to the CPU records "cpu". It has
+    # a default because every manifest written before the GPU decode existed is
+    # a CPU one, and `stored_ladder` has to keep reading those back rather than
+    # raising a validation error inside a reuse check.
+    decoder: Decoder = "cpu"
     call_id: str | None = None
 
 
