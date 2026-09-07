@@ -33,10 +33,20 @@ const LabelsSchema = z.record(
   z.string().trim().min(1).max(80)
 );
 
+/**
+ * Two refusals a correction has to keep apart.
+ *
+ * `stale` means somebody else saved first and the revision this edit was made
+ * against is no longer current: nothing is wrong with the edit, and the answer
+ * is to reload. `invalid` means the edit itself does not apply to the revision
+ * it names, and the reader has to see that on the input they are still typing
+ * in. Answering both with the reload notice tells somebody their own good edit
+ * was overtaken by a change that never happened, and the reload loses it.
+ */
 export type TranscriptActionResult =
   | { ok: true; revision: number }
   | { ok: true }
-  | { message: string; ok: false; stale?: true };
+  | { invalid?: true; message: string; ok: false; stale?: true };
 
 /**
  * Start transcription again for a source whose previous run is over.
@@ -135,7 +145,11 @@ export async function updateSpeakerLabels(
     return { message: "not a source id", ok: false };
   }
   if (!parsed.success) {
-    return { message: "those speaker names cannot be saved", ok: false };
+    return {
+      invalid: true,
+      message: "those speaker names cannot be saved",
+      ok: false,
+    };
   }
   const updated = await scoped(async (tx) => {
     const rows = await tx
@@ -173,7 +187,7 @@ export async function correctTranscript(
     return { message: "not a source id", ok: false };
   }
   if (!parsed.success) {
-    return { message: "that edit cannot be saved", ok: false };
+    return { invalid: true, message: "that edit cannot be saved", ok: false };
   }
 
   const loaded = await scoped(async (tx, scope) => {
@@ -209,7 +223,10 @@ export async function correctTranscript(
   const content = await readRevision(loaded.current.storageKey);
   const failure = applyEdits(content, parsed.data);
   if (failure) {
-    return { message: failure, ok: false, stale: true };
+    // The base revision was current a line ago, so this is the edit and not
+    // the revision: an index this transcript does not have. Reloading would
+    // not help and would throw away what the reader typed.
+    return { invalid: true, message: failure, ok: false };
   }
 
   const next = base.data + 1;
