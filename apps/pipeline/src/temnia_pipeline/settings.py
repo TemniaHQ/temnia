@@ -8,8 +8,16 @@ from pathlib import Path
 from typing import Literal, cast, get_args
 
 TranscodeBackend = Literal["local", "modal"]
+TranscriptionProviderName = Literal["recorded", "modal"]
 DEFAULT_MODAL_APP = "temnia-media"
 DEFAULT_PROGRESS_DICT = "temnia-ladder-progress"
+# A second Dict rather than one shared with the ladder: the two functions write
+# different progress shapes, and a reader that guessed wrong from a call id
+# would be a bug that only appears when both run at once.
+DEFAULT_TRANSCRIPT_DICT = "temnia-transcript-progress"
+# Where recorded WhisperX responses are looked for when no explicit file is
+# named. Relative to nothing: the gate mounts its fixtures and points here.
+DEFAULT_RECORDINGS_DIR = "/var/lib/temnia/recordings"
 
 # Region is not in this list on purpose: R2 wants `auto` and Garage `garage`,
 # neither is a secret, and a wrong one fails at the first request rather than
@@ -120,6 +128,45 @@ class TranscodeSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TranscriptionSettings:
+    """Which engine transcribes: a recording, or WhisperX on a Modal GPU.
+
+    `recorded` is the default for the same reason `local` is the transcode
+    default: a missing variable must never route work at something that costs
+    money, and it must never route it at nothing at all either. There is no
+    "unconfigured" state in which transcription silently does not happen; the
+    legacy degraded to "no transcript" that way and nobody noticed for a week.
+    """
+
+    provider: TranscriptionProviderName
+    modal_app: str
+    modal_environment: str | None
+    progress_dict: str
+    recordings_dir: Path
+    recording: Path | None
+
+    @classmethod
+    def from_env(cls) -> TranscriptionSettings:
+        """Read `TRANSCRIPTION_PROVIDER`, `TRANSCRIPTION_RECORDING(S_DIR)`, and the Modal names."""
+        provider = os.environ.get("TRANSCRIPTION_PROVIDER", "recorded")
+        if provider not in get_args(TranscriptionProviderName):
+            options = ", ".join(get_args(TranscriptionProviderName))
+            msg = f"TRANSCRIPTION_PROVIDER is {provider!r}; it must be one of {options}"
+            raise ValueError(msg)
+        recording = os.environ.get("TRANSCRIPTION_RECORDING") or None
+        return cls(
+            provider=cast("TranscriptionProviderName", provider),
+            modal_app=os.environ.get("MODAL_APP", DEFAULT_MODAL_APP),
+            modal_environment=os.environ.get("MODAL_ENVIRONMENT") or None,
+            progress_dict=os.environ.get("MODAL_TRANSCRIPT_PROGRESS_DICT", DEFAULT_TRANSCRIPT_DICT),
+            recordings_dir=Path(
+                os.environ.get("TRANSCRIPTION_RECORDINGS_DIR", DEFAULT_RECORDINGS_DIR)
+            ),
+            recording=Path(recording) if recording else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineSettings:
     """Everything else the worker needs."""
 
@@ -128,6 +175,7 @@ class PipelineSettings:
     ffmpeg: str
     ffprobe: str
     transcode: TranscodeSettings
+    transcription: TranscriptionSettings
 
     @classmethod
     def from_env(cls) -> PipelineSettings:
@@ -141,4 +189,5 @@ class PipelineSettings:
             ffmpeg=os.environ.get("FFMPEG", "ffmpeg"),
             ffprobe=os.environ.get("FFPROBE", "ffprobe"),
             transcode=TranscodeSettings.from_env(),
+            transcription=TranscriptionSettings.from_env(),
         )

@@ -18,7 +18,11 @@
       "!apps/web/components/ui",
       // Generated: JSON Schema from Zod, drizzle-kit migrations. Their generators own the formatting.
       "!packages/contracts/schemas",
-      "!packages/db/drizzle"
+      "!packages/db/drizzle",
+      // Recorded engine responses, read only by Python. They are kept exactly
+      // as the engine emits them, and Python's json writes the bare NaN a
+      // whisperx alignment score can be, which is not JSON biome can parse.
+      "!apps/pipeline/tests/fixtures"
     ]
   },
   "linter": {
