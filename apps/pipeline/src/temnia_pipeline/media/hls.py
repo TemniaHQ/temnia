@@ -16,14 +16,23 @@ treats a dropped input as end-of-file and exits 0, so a truncated ladder
 looks healthy until a player reads it (the legacy shipped 58% of a 2-hour
 source that way). Reading from local disk removes the network cause; the
 assertion stays because it is the thing that keeps a miss from reaching users.
+
+The same plan runs on the worker's CPU ffmpeg and on an L4 inside a Modal
+function. Only the video rungs change encoder there: NVENC cannot decode
+ProRes, so decode and scale stay on the CPU, and the intra-only rendition
+stays on libx264 because one frame every two seconds is not worth a GPU.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 from temnia_pipeline.media.ffmpeg import run_ffmpeg
 
@@ -32,13 +41,25 @@ if TYPE_CHECKING:
     from fractions import Fraction
     from pathlib import Path
 
-    from temnia_pipeline.media.probe import VideoFacts
+    from temnia_pipeline.media.facts import VideoFacts
 
 SEGMENT_SECONDS = 2
 KEYFRAME_SECONDS = 2
 IFRAME_HEIGHT = 360
 AUDIO_BITRATE = "128k"
+MANIFEST_NAME = "manifest.json"
+MANIFEST_VERSION = 1
+IFRAMES_RENDITION = "iframes"
 _EXTINF = re.compile(r"^#EXTINF:([0-9.]+)", re.MULTILINE)
+
+Encoder = Literal["libx264", "h264_nvenc"]
+ProducedBy = Literal["local", "modal"]
+
+# NVENC's -cq is not libx264's -crf: different rate-control scales, so the same
+# number is a different picture. These are a first cut at the ladder's own CRF
+# values; the VMAF comparison against the libx264 rungs on a two-minute staging
+# excerpt (docs/plans/s2-360-view.md §8) is what calibrates them.
+NVENC_CQ = {"top": 20, "720p": 22, "360p": 23}
 
 
 class TruncatedOutputError(RuntimeError):
@@ -86,6 +107,170 @@ def gop_frames(fps: Fraction) -> int:
     return max(1, round(float(fps) * KEYFRAME_SECONDS))
 
 
+def nvenc_cq(rung: Rung) -> int:
+    """The rung's NVENC quality target; its CRF is the fallback for a new rung."""
+    return NVENC_CQ.get(rung.name, rung.crf)
+
+
+def _x264_rung_args(index: int, rung: Rung) -> list[str]:
+    """Capped CRF for one rung on the CPU encoder."""
+    return [
+        f"-preset:v:{index}",
+        rung.preset,
+        f"-crf:v:{index}",
+        str(rung.crf),
+        f"-maxrate:v:{index}",
+        f"{rung.maxrate_k}k",
+        f"-bufsize:v:{index}",
+        f"{rung.maxrate_k * 2}k",
+    ]
+
+
+def _nvenc_rung_args(index: int, rung: Rung) -> list[str]:
+    """Capped VBR for one rung on the GPU encoder, at the same peak bitrate.
+
+    `-forced-idr` and `-no-scenecut` are what make `-force_key_frames` produce
+    real IDR frames at the same instants on every rung; without them NVENC
+    answers a forced key frame with a plain I frame and inserts scene cuts of
+    its own, and a player switching rungs mid-stream lands mid-GOP.
+    `-sc_threshold` is libx264's spelling of the same thing and is not an
+    option here.
+    """
+    return [
+        f"-c:v:{index}",
+        "h264_nvenc",
+        f"-preset:v:{index}",
+        "p5",
+        f"-tune:v:{index}",
+        "hq",
+        f"-rc:v:{index}",
+        "vbr",
+        f"-cq:v:{index}",
+        str(nvenc_cq(rung)),
+        f"-b:v:{index}",
+        "0",
+        f"-maxrate:v:{index}",
+        f"{rung.maxrate_k}k",
+        f"-bufsize:v:{index}",
+        f"{rung.maxrate_k * 2}k",
+        f"-spatial-aq:v:{index}",
+        "1",
+        f"-temporal-aq:v:{index}",
+        "1",
+        f"-rc-lookahead:v:{index}",
+        "20",
+        f"-bf:v:{index}",
+        "3",
+        f"-forced-idr:v:{index}",
+        "1",
+        f"-no-scenecut:v:{index}",
+        "1",
+        f"-profile:v:{index}",
+        "high",
+    ]
+
+
+def _audio_only_args(master: Path, out_dir: Path) -> list[str]:
+    """An audio-only source: one audio rendition is the whole ladder."""
+    return [
+        "-i",
+        str(master),
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        AUDIO_BITRATE,
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-f",
+        "hls",
+        "-hls_time",
+        str(SEGMENT_SECONDS),
+        "-hls_playlist_type",
+        "vod",
+        "-hls_list_size",
+        "0",
+        "-hls_segment_type",
+        "fmp4",
+        "-hls_flags",
+        "independent_segments",
+        "-hls_segment_filename",
+        str(out_dir / "audio" / "seg_%05d.m4s"),
+        "-master_pl_name",
+        "master.m3u8",
+        "-var_stream_map",
+        "a:0,name:audio,default:yes",
+        str(out_dir / "%v" / "index.m3u8"),
+    ]
+
+
+def _filter_complex(
+    video: VideoFacts, rungs: list[Rung], *, iframes: bool
+) -> tuple[str, list[str]]:
+    """Split the decoded video once and scale it per rung; returns the graph and its labels.
+
+    Decode and scale are on the CPU whatever encodes the rungs: NVENC has no
+    ProRes decoder, and a graph that differs by backend would make the two
+    ladders different files.
+    """
+    splits = len(rungs) + (1 if iframes else 0)
+    labels = [f"[v{i}]" for i in range(splits)]
+    chains = [f"[0:v]split={splits}" + "".join(f"[s{i}]" for i in range(splits))]
+    fps_filter = f"fps={video.fps}," if video.variable_frame_rate else ""
+    chains += [f"[s{i}]{fps_filter}scale=-2:{rung.height}[v{i}]" for i, rung in enumerate(rungs)]
+    if iframes:
+        i = len(rungs)
+        chains.append(f"[s{i}]{fps_filter}fps=1/{KEYFRAME_SECONDS},scale=-2:{IFRAME_HEIGHT}[v{i}]")
+    return ";".join(chains), labels
+
+
+def _iframe_output_args(out_dir: Path, label: str) -> list[str]:
+    """The intra-only rendition: one frame per GOP, single file, always libx264.
+
+    NVENC has no advantage on half a frame per second, and a rendition where
+    every frame is an IDR is exactly what the GPU's lookahead and B frames are
+    there to avoid.
+    """
+    iframe_dir = out_dir / "iframes"
+    return [
+        "-map",
+        label,
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "26",
+        "-g",
+        "1",
+        "-x264-params",
+        "keyint=1:min-keyint=1:scenecut=0",
+        "-f",
+        "hls",
+        "-hls_time",
+        str(KEYFRAME_SECONDS),
+        "-hls_playlist_type",
+        "vod",
+        "-hls_list_size",
+        "0",
+        "-hls_segment_type",
+        "fmp4",
+        "-hls_flags",
+        "single_file+independent_segments",
+        "-hls_fmp4_init_filename",
+        "init.mp4",
+        "-hls_segment_filename",
+        str(iframe_dir / "iframes.mp4"),
+        str(iframe_dir / "index.m3u8"),
+    ]
+
+
 def ladder_args(  # noqa: PLR0913
     master: Path,
     out_dir: Path,
@@ -94,86 +279,34 @@ def ladder_args(  # noqa: PLR0913
     has_audio: bool,
     rungs: list[Rung],
     iframes: bool,
+    encoder: Encoder = "libx264",
 ) -> list[str]:
     """Build the single ffmpeg invocation for the ladder, audio, and I-frames."""
-    args: list[str] = ["-i", str(master)]
     if video is None:
-        # Audio-only source: one audio rendition is the whole ladder.
-        return [
-            *args,
-            "-map",
-            "0:a:0",
-            "-c:a",
-            "aac",
-            "-b:a",
-            AUDIO_BITRATE,
-            "-ac",
-            "2",
-            "-ar",
-            "48000",
-            "-f",
-            "hls",
-            "-hls_time",
-            str(SEGMENT_SECONDS),
-            "-hls_playlist_type",
-            "vod",
-            "-hls_list_size",
-            "0",
-            "-hls_segment_type",
-            "fmp4",
-            "-hls_flags",
-            "independent_segments",
-            "-hls_segment_filename",
-            str(out_dir / "audio" / "seg_%05d.m4s"),
-            "-master_pl_name",
-            "master.m3u8",
-            "-var_stream_map",
-            "a:0,name:audio,default:yes",
-            str(out_dir / "%v" / "index.m3u8"),
-        ]
+        return _audio_only_args(master, out_dir)
+    args: list[str] = ["-i", str(master)]
 
-    splits = len(rungs) + (1 if iframes else 0)
-    labels = [f"[v{i}]" for i in range(splits)]
-    chains = [f"[0:v]split={splits}" + "".join(f"[s{i}]" for i in range(splits))]
-    fps_filter = f"fps={video.fps}," if video.variable_frame_rate else ""
-    for i, rung in enumerate(rungs):
-        chains.append(f"[s{i}]{fps_filter}scale=-2:{rung.height}[v{i}]")
-    if iframes:
-        i = len(rungs)
-        chains.append(f"[s{i}]{fps_filter}fps=1/{KEYFRAME_SECONDS},scale=-2:{IFRAME_HEIGHT}[v{i}]")
-    args += ["-filter_complex", ";".join(chains)]
+    graph, labels = _filter_complex(video, rungs, iframes=iframes)
+    args += ["-filter_complex", graph]
     for label in labels[: len(rungs)]:
         args += ["-map", label]
     if has_audio:
         args += ["-map", "0:a:0"]
     gop = gop_frames(video.fps)
+    if encoder == "libx264":
+        args += ["-c:v", "libx264", "-profile:v", "high", "-sc_threshold", "0"]
     args += [
-        "-c:v",
-        "libx264",
-        "-profile:v",
-        "high",
         "-pix_fmt",
         "yuv420p",
         "-g",
         str(gop),
         "-keyint_min",
         str(gop),
-        "-sc_threshold",
-        "0",
         "-force_key_frames",
         f"expr:gte(t,n_forced*{KEYFRAME_SECONDS})",
     ]
     for i, rung in enumerate(rungs):
-        args += [
-            f"-preset:v:{i}",
-            rung.preset,
-            f"-crf:v:{i}",
-            str(rung.crf),
-            f"-maxrate:v:{i}",
-            f"{rung.maxrate_k}k",
-            f"-bufsize:v:{i}",
-            f"{rung.maxrate_k * 2}k",
-        ]
+        args += _x264_rung_args(i, rung) if encoder == "libx264" else _nvenc_rung_args(i, rung)
     if has_audio:
         args += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ac", "2", "-ar", "48000"]
     stream_map = " ".join(
@@ -206,41 +339,7 @@ def ladder_args(  # noqa: PLR0913
         str(out_dir / "%v" / "index.m3u8"),
     ]
     if iframes:
-        iframe_dir = out_dir / "iframes"
-        args += [
-            "-map",
-            labels[-1],
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "26",
-            "-g",
-            "1",
-            "-x264-params",
-            "keyint=1:min-keyint=1:scenecut=0",
-            "-f",
-            "hls",
-            "-hls_time",
-            str(KEYFRAME_SECONDS),
-            "-hls_playlist_type",
-            "vod",
-            "-hls_list_size",
-            "0",
-            "-hls_segment_type",
-            "fmp4",
-            "-hls_flags",
-            "single_file+independent_segments",
-            "-hls_fmp4_init_filename",
-            "init.mp4",
-            "-hls_segment_filename",
-            str(iframe_dir / "iframes.mp4"),
-            str(iframe_dir / "index.m3u8"),
-        ]
+        args += _iframe_output_args(out_dir, labels[-1])
     return args
 
 
@@ -253,6 +352,7 @@ async def transcode_ladder(  # noqa: PLR0913
     has_audio: bool,
     expected_seconds: float | None = None,
     on_progress: Callable[[float], Awaitable[None]] | None = None,
+    encoder: Encoder = "libx264",
 ) -> list[Rung]:
     """Run the ladder and return its rungs; a complete ladder from an earlier attempt is reused."""
     rungs = plan_rungs(video) if video else []
@@ -274,7 +374,13 @@ async def transcode_ladder(  # noqa: PLR0913
     if video:
         (out_dir / "iframes").mkdir(exist_ok=True)
     args = ladder_args(
-        master, out_dir, video, has_audio=has_audio, rungs=rungs, iframes=video is not None
+        master,
+        out_dir,
+        video,
+        has_audio=has_audio,
+        rungs=rungs,
+        iframes=video is not None,
+        encoder=encoder,
     )
     await run_ffmpeg(ffmpeg, args, on_progress=on_progress)
     if video:
@@ -331,6 +437,56 @@ def assert_covers(playlist: Path, expected_seconds: float, *, floor_seconds: flo
         )
         raise TruncatedOutputError(msg)
     return actual
+
+
+class LadderManifest(BaseModel):
+    """What a finished ladder is, written to `manifest.json` after everything else.
+
+    The manifest is the completion marker. A ladder produced on Modal is
+    published by the function itself, so the worker cannot look at a work
+    volume to decide whether an earlier attempt finished; it reads this object
+    instead, and because it is uploaded last, its presence means every segment
+    and playlist under the prefix is already there. `renditions` carries the
+    length of every playlist, so the check is the same one `assert_covers`
+    makes locally.
+
+    Field names are the wire names the spec fixed (camelCase, as the generated
+    contracts use); the Python attributes stay snake_case like the rest of the
+    package.
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    version: Literal[1] = MANIFEST_VERSION
+    renditions: dict[str, float]
+    iframes: bool
+    segment_seconds: int
+    total_bytes: int
+    encoder: Encoder
+    produced_by: ProducedBy
+    call_id: str | None = None
+
+
+def write_manifest(out_dir: Path, manifest: LadderManifest) -> Path:
+    """Write the manifest into the ladder directory; returns the file."""
+    path = out_dir / MANIFEST_NAME
+    path.write_text(manifest.model_dump_json(by_alias=True) + "\n")
+    return path
+
+
+def read_manifest(text: str) -> LadderManifest:
+    """Parse a manifest read back from storage or disk."""
+    return LadderManifest.model_validate(json.loads(text))
+
+
+def manifest_covers(manifest: LadderManifest, expected_seconds: float) -> bool:
+    """True when every playlist the manifest names covers the source within tolerance."""
+    tolerance = duration_tolerance(expected_seconds)
+    for name, seconds in manifest.renditions.items():
+        floor = KEYFRAME_SECONDS if name == IFRAMES_RENDITION else 0.0
+        if seconds < expected_seconds - tolerance - floor:
+            return False
+    return bool(manifest.renditions)
 
 
 def mark_iframe_playlist(playlist: Path) -> None:

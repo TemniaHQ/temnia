@@ -7,6 +7,7 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.activities import say_hello
@@ -20,7 +21,10 @@ with workflow.unsafe.imports_passed_through():
         IngestInput,
         IngestOutput,
         ProbeResult,
+        TranscribeInput,
+        TranscribeOutput,
     )
+    from temnia_pipeline.transcription import TranscribeRecord
 
 # Deterministic failures (bad media, truncated output) are terminal on attempt
 # one; everything else (network, disk, a killed worker) retries a few times.
@@ -30,6 +34,21 @@ INGEST_RETRY = RetryPolicy(
     maximum_attempts=4,
     non_retryable_error_types=["IngestFailure", "TranscodeFailure", "DeriveFailure"],
 )
+
+# The ingest policy plus the transcription-specific terminal type: an
+# unsupported language, a corrupt response, or a result that fails the contract
+# fails the same way on the next container, and retrying it three times at GPU
+# prices buys nothing.
+TRANSCRIBE_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=30),
+    backoff_coefficient=2.0,
+    maximum_attempts=4,
+    non_retryable_error_types=["TranscriptionFailure", "NotClaimable"],
+)
+
+# The audio extract ingest makes, relative to the source prefix. Matches
+# ARTIFACT_PATHS.audio in @temnia/contracts.
+AUDIO_PATH = "audio/audio.m4a"
 
 
 @workflow.defn(name="HelloWorkflow")
@@ -110,7 +129,7 @@ class IngestWorkflow:
                 retry_policy=INGEST_RETRY,
             )
             elapsed = int((workflow.now() - started).total_seconds())
-            return await workflow.execute_activity(
+            finalized = await workflow.execute_activity(
                 "finalize_source",
                 args=[request, probed, [*transcoded, *derived], elapsed],
                 result_type=IngestOutput,
@@ -126,6 +145,118 @@ class IngestWorkflow:
             )
             await workflow.execute_activity(
                 "fail_source",
+                args=[request, message],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
+            raise
+        else:
+            await self._start_transcription(request, probed)
+            return finalized
+
+    @staticmethod
+    async def _start_transcription(request: IngestInput, probed: ProbeResult) -> None:
+        """Hand the finished source to `TranscribeWorkflow` and stop caring about it.
+
+        Abandoned, so this workflow completes now and the transcription outlives
+        it: a source is ready when its playback is ready, and transcription can
+        take another half hour. Started only when the probe found audio, and a
+        failure to start is logged rather than raised, because a source that has
+        laddered and published must not be failed by a transcription that could
+        not be queued. The web's Retry starts the same workflow id.
+        """
+        if not probed.audioChannels:
+            return
+        try:
+            await workflow.start_child_workflow(
+                "TranscribeWorkflow",
+                TranscribeInput(
+                    scope=request.scope,
+                    sourceId=request.sourceId,
+                    artifactPrefix=request.artifactPrefix,
+                    audioKey=request.artifactPrefix + AUDIO_PATH,
+                    durationMs=probed.durationMs,
+                ),
+                id=f"transcribe-{request.sourceId}",
+                parent_close_policy=ParentClosePolicy.ABANDON,
+            )
+        # Deliberately blind: whatever went wrong queueing a transcription, a
+        # source that has laddered and published is ready and must not be
+        # failed by it. The user's Retry starts the same workflow id.
+        except Exception:  # noqa: BLE001
+            workflow.logger.warning(
+                "could not start transcription for source %s", request.sourceId, exc_info=True
+            )
+
+
+@workflow.defn(name="TranscribeWorkflow")
+class TranscribeWorkflow:
+    """Audio extract -> a machine transcript revision in storage, and two ledger rows.
+
+    Its own workflow, started as an abandoned child of the ingest and by the
+    web's Retry under the same id, so a transcription failure never touches a
+    finished source and a retry costs one engine run rather than a re-ingest.
+
+    Liveness is Temporal's. The run heartbeats on every poll tick carrying the
+    provider's handle, so a killed worker is noticed by the heartbeat timeout
+    and the retry reattaches to the run already on the GPU. No reaper sweeps
+    transcripts; after the last attempt this workflow writes the failure to the
+    row itself, so the row never sits at `processing` with nothing to say.
+    """
+
+    @workflow.run
+    async def run(self, request: TranscribeInput) -> TranscribeOutput:
+        """Claim, transcribe, write the revision, meter."""
+        attempt = await workflow.execute_activity(
+            "claim_transcription",
+            request,
+            result_type=int,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=TRANSCRIBE_RETRY,
+        )
+        if attempt == 0:
+            # Already running, or already ready. A second start for one source
+            # must be a no-op, never a second engine run; a user who wants a
+            # finished transcript replaced goes through Retry, which parks the
+            # row back at pending first.
+            msg = "the transcript is not in a claimable state"
+            raise ApplicationError(msg, non_retryable=True, type="NotClaimable")
+        try:
+            record = await workflow.execute_activity(
+                "transcribe_source",
+                args=[request, attempt],
+                result_type=TranscribeRecord,
+                # Five hours bounds the activity; the deployed function's own
+                # timeout is four, so the function gives up first and this
+                # never hides a run that is already over.
+                start_to_close_timeout=timedelta(hours=5),
+                heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=TRANSCRIBE_RETRY,
+            )
+            written = await workflow.execute_activity(
+                "write_revision",
+                args=[request, record],
+                result_type=TranscribeOutput,
+                start_to_close_timeout=timedelta(minutes=15),
+                heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=TRANSCRIBE_RETRY,
+            )
+            return await workflow.execute_activity(
+                "finalize_transcription",
+                args=[request, record, written],
+                result_type=TranscribeOutput,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=TRANSCRIBE_RETRY,
+            )
+        except ActivityError as error:
+            cause = error.cause
+            message = (
+                cause.message
+                if isinstance(cause, ApplicationError)
+                else "The transcription did not complete. Try again from the source page."
+            )
+            await workflow.execute_activity(
+                "fail_transcription",
                 args=[request, message],
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=5),

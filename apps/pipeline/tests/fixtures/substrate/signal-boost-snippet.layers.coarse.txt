@@ -1,0 +1,4 @@
+P000 00:00:00 S1: Welcome back to Signal Boost, I'm your host Priya Nair.
+P001 00:00:22 S2: Thanks Priya, great to be here. I'm Marcus Webb, I run growth at Lumen Robotics.
+P002 00:00:52 S1: Marcus, your team tripled organic reach last quarter. What We changed?
+P003 00:01:09 S2: stopped chasing volume and rebuilt everything around one weekly flagship interview.

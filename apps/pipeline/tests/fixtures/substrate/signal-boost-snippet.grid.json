@@ -1,0 +1,116 @@
+{
+  "paragraphs": [
+    {
+      "endMs": 17600,
+      "endSentence": 0,
+      "id": 0,
+      "speaker": "0",
+      "startMs": 0,
+      "startSentence": 0
+    },
+    {
+      "endMs": 48600,
+      "endSentence": 2,
+      "id": 1,
+      "speaker": "1",
+      "startMs": 22000,
+      "startSentence": 1
+    },
+    {
+      "endMs": 69600,
+      "endSentence": 4,
+      "id": 2,
+      "speaker": "0",
+      "startMs": 52000,
+      "startSentence": 3
+    },
+    {
+      "endMs": 89200,
+      "endSentence": 5,
+      "id": 3,
+      "speaker": "1",
+      "startMs": 69800,
+      "startSentence": 5
+    }
+  ],
+  "sentences": [
+    {
+      "endMs": 17600,
+      "endsTurn": true,
+      "endWord": 9,
+      "id": 0,
+      "opensTurn": true,
+      "pauseAfterMs": 4400,
+      "question": false,
+      "speaker": "0",
+      "startMs": 0,
+      "startWord": 0,
+      "text": "Welcome back to Signal Boost, I'm your host Priya Nair."
+    },
+    {
+      "endMs": 32400,
+      "endsTurn": false,
+      "endWord": 15,
+      "id": 1,
+      "opensTurn": true,
+      "pauseAfterMs": 400,
+      "question": false,
+      "speaker": "1",
+      "startMs": 22000,
+      "startWord": 10,
+      "text": "Thanks Priya, great to be here."
+    },
+    {
+      "endMs": 48600,
+      "endsTurn": true,
+      "endWord": 24,
+      "id": 2,
+      "opensTurn": false,
+      "pauseAfterMs": 3400,
+      "question": false,
+      "speaker": "1",
+      "startMs": 32800,
+      "startWord": 16,
+      "text": "I'm Marcus Webb, I run growth at Lumen Robotics."
+    },
+    {
+      "endMs": 66000,
+      "endsTurn": false,
+      "endWord": 32,
+      "id": 3,
+      "opensTurn": true,
+      "pauseAfterMs": 400,
+      "question": false,
+      "speaker": "0",
+      "startMs": 52000,
+      "startWord": 25,
+      "text": "Marcus, your team tripled organic reach last quarter."
+    },
+    {
+      "endMs": 69600,
+      "endsTurn": true,
+      "endWord": 35,
+      "id": 4,
+      "opensTurn": false,
+      "pauseAfterMs": 200,
+      "question": true,
+      "speaker": "0",
+      "startMs": 66400,
+      "startWord": 33,
+      "text": "What We changed?"
+    },
+    {
+      "endMs": 89200,
+      "endsTurn": true,
+      "endWord": 46,
+      "id": 5,
+      "opensTurn": true,
+      "pauseAfterMs": 0,
+      "question": false,
+      "speaker": "1",
+      "startMs": 69800,
+      "startWord": 36,
+      "text": "stopped chasing volume and rebuilt everything around one weekly flagship interview."
+    }
+  ]
+}

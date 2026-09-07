@@ -1,0 +1,1228 @@
+{
+  "durationMs": 78900,
+  "language": "en",
+  "provider": {
+    "model": "hand-authored",
+    "name": "temnia-fixture",
+    "version": "1"
+  },
+  "speakers": [
+    "0",
+    "1",
+    "guest"
+  ],
+  "utterances": [
+    {
+      "endMs": 3500,
+      "speaker": "0",
+      "startMs": 0
+    },
+    {
+      "endMs": 69100,
+      "speaker": "1",
+      "startMs": 3550
+    },
+    {
+      "endMs": 71900,
+      "speaker": null,
+      "startMs": 69500
+    },
+    {
+      "endMs": 73900,
+      "speaker": "guest",
+      "startMs": 72400
+    },
+    {
+      "endMs": 78000,
+      "speaker": "0",
+      "startMs": 75600
+    }
+  ],
+  "version": 1,
+  "words": [
+    {
+      "confidence": 0.9,
+      "endMs": 400,
+      "speaker": "0",
+      "startMs": 0,
+      "text": "Right.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 1350,
+      "speaker": "0",
+      "startMs": 1090,
+      "text": "Now",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 1700,
+      "speaker": "0",
+      "startMs": 1400,
+      "text": "listen",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 2000,
+      "speaker": "0",
+      "startMs": 1750,
+      "text": "carefully.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 2900,
+      "speaker": "0",
+      "startMs": 2701,
+      "text": "This",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 3200,
+      "speaker": "0",
+      "startMs": 2950,
+      "text": "sentence",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 3500,
+      "speaker": "0",
+      "startMs": 3250,
+      "text": "changes",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 3800,
+      "speaker": "1",
+      "startMs": 3550,
+      "text": "speaker",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 4100,
+      "speaker": "1",
+      "startMs": 3850,
+      "text": "mid-way.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 7100,
+      "speaker": "1",
+      "startMs": 6700,
+      "text": "word1",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 7600,
+      "speaker": "1",
+      "startMs": 7200,
+      "text": "word2",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 8100,
+      "speaker": "1",
+      "startMs": 7700,
+      "text": "word3",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 8600,
+      "speaker": "1",
+      "startMs": 8200,
+      "text": "word4",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 9100,
+      "speaker": "1",
+      "startMs": 8700,
+      "text": "word5",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 9600,
+      "speaker": "1",
+      "startMs": 9200,
+      "text": "word6",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 10100,
+      "speaker": "1",
+      "startMs": 9700,
+      "text": "word7",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 10600,
+      "speaker": "1",
+      "startMs": 10200,
+      "text": "word8",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 11100,
+      "speaker": "1",
+      "startMs": 10700,
+      "text": "word9",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 11600,
+      "speaker": "1",
+      "startMs": 11200,
+      "text": "word10",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 12100,
+      "speaker": "1",
+      "startMs": 11700,
+      "text": "word11",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 12600,
+      "speaker": "1",
+      "startMs": 12200,
+      "text": "word12",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 13100,
+      "speaker": "1",
+      "startMs": 12700,
+      "text": "word13",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 13600,
+      "speaker": "1",
+      "startMs": 13200,
+      "text": "word14",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 14100,
+      "speaker": "1",
+      "startMs": 13700,
+      "text": "word15",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 14600,
+      "speaker": "1",
+      "startMs": 14200,
+      "text": "word16",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 15100,
+      "speaker": "1",
+      "startMs": 14700,
+      "text": "word17",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 15600,
+      "speaker": "1",
+      "startMs": 15200,
+      "text": "word18",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 16100,
+      "speaker": "1",
+      "startMs": 15700,
+      "text": "word19",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 16600,
+      "speaker": "1",
+      "startMs": 16200,
+      "text": "word20",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 17100,
+      "speaker": "1",
+      "startMs": 16700,
+      "text": "word21",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 17600,
+      "speaker": "1",
+      "startMs": 17200,
+      "text": "word22",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 18100,
+      "speaker": "1",
+      "startMs": 17700,
+      "text": "word23",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 18600,
+      "speaker": "1",
+      "startMs": 18200,
+      "text": "word24",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 19100,
+      "speaker": "1",
+      "startMs": 18700,
+      "text": "word25",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 19600,
+      "speaker": "1",
+      "startMs": 19200,
+      "text": "word26",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 20100,
+      "speaker": "1",
+      "startMs": 19700,
+      "text": "word27",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 20600,
+      "speaker": "1",
+      "startMs": 20200,
+      "text": "word28",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 21100,
+      "speaker": "1",
+      "startMs": 20700,
+      "text": "word29",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 21600,
+      "speaker": "1",
+      "startMs": 21200,
+      "text": "word30.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 22100,
+      "speaker": "1",
+      "startMs": 21700,
+      "text": "word31",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 22600,
+      "speaker": "1",
+      "startMs": 22200,
+      "text": "word32",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 23100,
+      "speaker": "1",
+      "startMs": 22700,
+      "text": "word33",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 23600,
+      "speaker": "1",
+      "startMs": 23200,
+      "text": "word34",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 24100,
+      "speaker": "1",
+      "startMs": 23700,
+      "text": "word35",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 24600,
+      "speaker": "1",
+      "startMs": 24200,
+      "text": "word36",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 25100,
+      "speaker": "1",
+      "startMs": 24700,
+      "text": "word37",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 25600,
+      "speaker": "1",
+      "startMs": 25200,
+      "text": "word38",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 26100,
+      "speaker": "1",
+      "startMs": 25700,
+      "text": "word39",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 26600,
+      "speaker": "1",
+      "startMs": 26200,
+      "text": "word40",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 27100,
+      "speaker": "1",
+      "startMs": 26700,
+      "text": "word41",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 27600,
+      "speaker": "1",
+      "startMs": 27200,
+      "text": "word42",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 28100,
+      "speaker": "1",
+      "startMs": 27700,
+      "text": "word43",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 28600,
+      "speaker": "1",
+      "startMs": 28200,
+      "text": "word44",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 29100,
+      "speaker": "1",
+      "startMs": 28700,
+      "text": "word45",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 29600,
+      "speaker": "1",
+      "startMs": 29200,
+      "text": "word46",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 30100,
+      "speaker": "1",
+      "startMs": 29700,
+      "text": "word47",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 30600,
+      "speaker": "1",
+      "startMs": 30200,
+      "text": "word48",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 31100,
+      "speaker": "1",
+      "startMs": 30700,
+      "text": "word49",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 31600,
+      "speaker": "1",
+      "startMs": 31200,
+      "text": "word50",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 32100,
+      "speaker": "1",
+      "startMs": 31700,
+      "text": "word51",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 32600,
+      "speaker": "1",
+      "startMs": 32200,
+      "text": "word52",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 33100,
+      "speaker": "1",
+      "startMs": 32700,
+      "text": "word53",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 33600,
+      "speaker": "1",
+      "startMs": 33200,
+      "text": "word54",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 34100,
+      "speaker": "1",
+      "startMs": 33700,
+      "text": "word55",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 34600,
+      "speaker": "1",
+      "startMs": 34200,
+      "text": "word56",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 35100,
+      "speaker": "1",
+      "startMs": 34700,
+      "text": "word57",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 35600,
+      "speaker": "1",
+      "startMs": 35200,
+      "text": "word58",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 36100,
+      "speaker": "1",
+      "startMs": 35700,
+      "text": "word59",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 36600,
+      "speaker": "1",
+      "startMs": 36200,
+      "text": "word60.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 37100,
+      "speaker": "1",
+      "startMs": 36700,
+      "text": "word61",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 37600,
+      "speaker": "1",
+      "startMs": 37200,
+      "text": "word62",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 38100,
+      "speaker": "1",
+      "startMs": 37700,
+      "text": "word63",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 38600,
+      "speaker": "1",
+      "startMs": 38200,
+      "text": "word64",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 39100,
+      "speaker": "1",
+      "startMs": 38700,
+      "text": "word65",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 39600,
+      "speaker": "1",
+      "startMs": 39200,
+      "text": "word66",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 40100,
+      "speaker": "1",
+      "startMs": 39700,
+      "text": "word67",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 40600,
+      "speaker": "1",
+      "startMs": 40200,
+      "text": "word68",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 41100,
+      "speaker": "1",
+      "startMs": 40700,
+      "text": "word69",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 41600,
+      "speaker": "1",
+      "startMs": 41200,
+      "text": "word70",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 42100,
+      "speaker": "1",
+      "startMs": 41700,
+      "text": "word71",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 42600,
+      "speaker": "1",
+      "startMs": 42200,
+      "text": "word72",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 43100,
+      "speaker": "1",
+      "startMs": 42700,
+      "text": "word73",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 43600,
+      "speaker": "1",
+      "startMs": 43200,
+      "text": "word74",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 44100,
+      "speaker": "1",
+      "startMs": 43700,
+      "text": "word75",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 44600,
+      "speaker": "1",
+      "startMs": 44200,
+      "text": "word76",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 45100,
+      "speaker": "1",
+      "startMs": 44700,
+      "text": "word77",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 45600,
+      "speaker": "1",
+      "startMs": 45200,
+      "text": "word78",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 46100,
+      "speaker": "1",
+      "startMs": 45700,
+      "text": "word79",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 46600,
+      "speaker": "1",
+      "startMs": 46200,
+      "text": "word80",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 47100,
+      "speaker": "1",
+      "startMs": 46700,
+      "text": "word81",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 47600,
+      "speaker": "1",
+      "startMs": 47200,
+      "text": "word82",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 48100,
+      "speaker": "1",
+      "startMs": 47700,
+      "text": "word83",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 48600,
+      "speaker": "1",
+      "startMs": 48200,
+      "text": "word84",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 49100,
+      "speaker": "1",
+      "startMs": 48700,
+      "text": "word85",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 49600,
+      "speaker": "1",
+      "startMs": 49200,
+      "text": "word86",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 50100,
+      "speaker": "1",
+      "startMs": 49700,
+      "text": "word87",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 50600,
+      "speaker": "1",
+      "startMs": 50200,
+      "text": "word88",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 51100,
+      "speaker": "1",
+      "startMs": 50700,
+      "text": "word89",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 51600,
+      "speaker": "1",
+      "startMs": 51200,
+      "text": "word90.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 52100,
+      "speaker": "1",
+      "startMs": 51700,
+      "text": "word91",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 52600,
+      "speaker": "1",
+      "startMs": 52200,
+      "text": "word92",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 53100,
+      "speaker": "1",
+      "startMs": 52700,
+      "text": "word93",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 53600,
+      "speaker": "1",
+      "startMs": 53200,
+      "text": "word94",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 54100,
+      "speaker": "1",
+      "startMs": 53700,
+      "text": "word95",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 54600,
+      "speaker": "1",
+      "startMs": 54200,
+      "text": "word96",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 55100,
+      "speaker": "1",
+      "startMs": 54700,
+      "text": "word97",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 55600,
+      "speaker": "1",
+      "startMs": 55200,
+      "text": "word98",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 56100,
+      "speaker": "1",
+      "startMs": 55700,
+      "text": "word99",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 56600,
+      "speaker": "1",
+      "startMs": 56200,
+      "text": "word100",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 57100,
+      "speaker": "1",
+      "startMs": 56700,
+      "text": "word101",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 57600,
+      "speaker": "1",
+      "startMs": 57200,
+      "text": "word102",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 58100,
+      "speaker": "1",
+      "startMs": 57700,
+      "text": "word103",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 58600,
+      "speaker": "1",
+      "startMs": 58200,
+      "text": "word104",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 59100,
+      "speaker": "1",
+      "startMs": 58700,
+      "text": "word105",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 59600,
+      "speaker": "1",
+      "startMs": 59200,
+      "text": "word106",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 60100,
+      "speaker": "1",
+      "startMs": 59700,
+      "text": "word107",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 60600,
+      "speaker": "1",
+      "startMs": 60200,
+      "text": "word108",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 61100,
+      "speaker": "1",
+      "startMs": 60700,
+      "text": "word109",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 61600,
+      "speaker": "1",
+      "startMs": 61200,
+      "text": "word110",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 62100,
+      "speaker": "1",
+      "startMs": 61700,
+      "text": "word111",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 62600,
+      "speaker": "1",
+      "startMs": 62200,
+      "text": "word112",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 63100,
+      "speaker": "1",
+      "startMs": 62700,
+      "text": "word113",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 63600,
+      "speaker": "1",
+      "startMs": 63200,
+      "text": "word114",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 64100,
+      "speaker": "1",
+      "startMs": 63700,
+      "text": "word115",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 64600,
+      "speaker": "1",
+      "startMs": 64200,
+      "text": "word116",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 65100,
+      "speaker": "1",
+      "startMs": 64700,
+      "text": "word117",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 65600,
+      "speaker": "1",
+      "startMs": 65200,
+      "text": "word118",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 66100,
+      "speaker": "1",
+      "startMs": 65700,
+      "text": "word119",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 66600,
+      "speaker": "1",
+      "startMs": 66200,
+      "text": "word120.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 67100,
+      "speaker": "1",
+      "startMs": 66700,
+      "text": "word121",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 67600,
+      "speaker": "1",
+      "startMs": 67200,
+      "text": "word122",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 68100,
+      "speaker": "1",
+      "startMs": 67700,
+      "text": "word123",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 68600,
+      "speaker": "1",
+      "startMs": 68200,
+      "text": "word124",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 69100,
+      "speaker": "1",
+      "startMs": 68700,
+      "text": "cap.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": null,
+      "endMs": 69900,
+      "speaker": null,
+      "startMs": 69500,
+      "text": "The",
+      "timing": "interpolated"
+    },
+    {
+      "confidence": null,
+      "endMs": 70400,
+      "speaker": null,
+      "startMs": 70000,
+      "text": "diarizer",
+      "timing": "interpolated"
+    },
+    {
+      "confidence": null,
+      "endMs": 70900,
+      "speaker": null,
+      "startMs": 70500,
+      "text": "lost",
+      "timing": "interpolated"
+    },
+    {
+      "confidence": null,
+      "endMs": 71400,
+      "speaker": null,
+      "startMs": 71000,
+      "text": "this",
+      "timing": "interpolated"
+    },
+    {
+      "confidence": null,
+      "endMs": 71900,
+      "speaker": null,
+      "startMs": 71500,
+      "text": "turn.",
+      "timing": "interpolated"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 72800,
+      "speaker": "guest",
+      "startMs": 72400,
+      "text": "Guest",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 73300,
+      "speaker": "guest",
+      "startMs": 72900,
+      "text": "speaks",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 73800,
+      "speaker": "guest",
+      "startMs": 73400,
+      "text": "now.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 73900,
+      "speaker": "guest",
+      "startMs": 73900,
+      "text": "Yeah.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 76000,
+      "speaker": "0",
+      "startMs": 75600,
+      "text": "and",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 76500,
+      "speaker": "0",
+      "startMs": 76100,
+      "text": "it",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 77000,
+      "speaker": "0",
+      "startMs": 76600,
+      "text": "just",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 77500,
+      "speaker": "0",
+      "startMs": 77100,
+      "text": "stops",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.9,
+      "endMs": 78000,
+      "speaker": "0",
+      "startMs": 77600,
+      "text": "here",
+      "timing": "aligned"
+    }
+  ]
+}

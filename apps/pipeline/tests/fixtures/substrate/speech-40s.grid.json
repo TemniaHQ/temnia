@@ -1,0 +1,231 @@
+{
+  "paragraphs": [
+    {
+      "endMs": 6897,
+      "endSentence": 1,
+      "id": 0,
+      "speaker": "0",
+      "startMs": 500,
+      "startSentence": 0
+    },
+    {
+      "endMs": 13769,
+      "endSentence": 3,
+      "id": 1,
+      "speaker": "1",
+      "startMs": 7597,
+      "startSentence": 2
+    },
+    {
+      "endMs": 16601,
+      "endSentence": 4,
+      "id": 2,
+      "speaker": "0",
+      "startMs": 14569,
+      "startSentence": 4
+    },
+    {
+      "endMs": 24367,
+      "endSentence": 6,
+      "id": 3,
+      "speaker": "1",
+      "startMs": 17201,
+      "startSentence": 5
+    },
+    {
+      "endMs": 28687,
+      "endSentence": 8,
+      "id": 4,
+      "speaker": "0",
+      "startMs": 25267,
+      "startSentence": 7
+    },
+    {
+      "endMs": 35813,
+      "endSentence": 10,
+      "id": 5,
+      "speaker": "1",
+      "startMs": 29287,
+      "startSentence": 9
+    },
+    {
+      "endMs": 39116,
+      "endSentence": 12,
+      "id": 6,
+      "speaker": "0",
+      "startMs": 36613,
+      "startSentence": 11
+    }
+  ],
+  "sentences": [
+    {
+      "endMs": 1997,
+      "endsTurn": false,
+      "endWord": 4,
+      "id": 0,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": false,
+      "speaker": "0",
+      "startMs": 500,
+      "startWord": 0,
+      "text": "Welcome back to the show."
+    },
+    {
+      "endMs": 6897,
+      "endsTurn": true,
+      "endWord": 19,
+      "id": 1,
+      "opensTurn": false,
+      "pauseAfterMs": 700,
+      "question": false,
+      "speaker": "0",
+      "startMs": 2177,
+      "startWord": 5,
+      "text": "Today we are talking about how a small team keeps a long recording under control."
+    },
+    {
+      "endMs": 8915,
+      "endsTurn": false,
+      "endWord": 23,
+      "id": 2,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": false,
+      "speaker": "1",
+      "startMs": 7597,
+      "startWord": 20,
+      "text": "Thanks for having me."
+    },
+    {
+      "endMs": 13769,
+      "endsTurn": true,
+      "endWord": 36,
+      "id": 3,
+      "opensTurn": false,
+      "pauseAfterMs": 800,
+      "question": false,
+      "speaker": "1",
+      "startMs": 9095,
+      "startWord": 24,
+      "text": "The honest answer is that we stopped treating the transcript as a by-product."
+    },
+    {
+      "endMs": 16601,
+      "endsTurn": true,
+      "endWord": 43,
+      "id": 4,
+      "opensTurn": true,
+      "pauseAfterMs": 600,
+      "question": true,
+      "speaker": "0",
+      "startMs": 14569,
+      "startWord": 37,
+      "text": "What changed when you made that switch?"
+    },
+    {
+      "endMs": 19442,
+      "endsTurn": false,
+      "endWord": 47,
+      "id": 5,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": false,
+      "speaker": "1",
+      "startMs": 17201,
+      "startWord": 44,
+      "text": "Everything downstream got easier."
+    },
+    {
+      "endMs": 24367,
+      "endsTurn": true,
+      "endWord": 59,
+      "id": 6,
+      "opensTurn": false,
+      "pauseAfterMs": 900,
+      "question": false,
+      "speaker": "1",
+      "startMs": 19622,
+      "startWord": 48,
+      "text": "Once every word carries a timestamp, the edit becomes a search problem."
+    },
+    {
+      "endMs": 26367,
+      "endsTurn": false,
+      "endWord": 62,
+      "id": 7,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": true,
+      "speaker": "0",
+      "startMs": 25267,
+      "startWord": 60,
+      "text": "And the speakers?"
+    },
+    {
+      "endMs": 28687,
+      "endsTurn": true,
+      "endWord": 67,
+      "id": 8,
+      "opensTurn": false,
+      "pauseAfterMs": 600,
+      "question": false,
+      "speaker": "0",
+      "startMs": 26547,
+      "startWord": 63,
+      "text": "People always ask about crosstalk."
+    },
+    {
+      "endMs": 31651,
+      "endsTurn": false,
+      "endWord": 74,
+      "id": 9,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": false,
+      "speaker": "1",
+      "startMs": 29287,
+      "startWord": 68,
+      "text": "Diarization gets you most of the way."
+    },
+    {
+      "endMs": 35813,
+      "endsTurn": true,
+      "endWord": 86,
+      "id": 10,
+      "opensTurn": false,
+      "pauseAfterMs": 800,
+      "question": false,
+      "speaker": "1",
+      "startMs": 31831,
+      "startWord": 75,
+      "text": "The rest is a rename box and about thirty seconds of attention."
+    },
+    {
+      "endMs": 37178,
+      "endsTurn": false,
+      "endWord": 87,
+      "id": 11,
+      "opensTurn": true,
+      "pauseAfterMs": 180,
+      "question": false,
+      "speaker": "0",
+      "startMs": 36613,
+      "startWord": 87,
+      "text": "Perfect."
+    },
+    {
+      "endMs": 39116,
+      "endsTurn": true,
+      "endWord": 92,
+      "id": 12,
+      "opensTurn": false,
+      "pauseAfterMs": 0,
+      "question": false,
+      "speaker": "0",
+      "startMs": 37358,
+      "startWord": 88,
+      "text": "Thanks for coming in today."
+    }
+  ]
+}

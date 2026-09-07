@@ -7,7 +7,8 @@
 //   1. frozen install; Ultracite; uv sync
 //   2. cross-language contracts are not stale (Zod → JSON Schema → pydantic)
 //   3. turbo build, lint, typecheck, test across web, packages, and the Python pipeline
-//      (db tests run against a disposable database on the compose Postgres)
+//      (db isolation probes, the pipeline's schema contract, and TranscribeWorkflow
+//      end to end against Garage on the disposable compose database)
 //   4. both deploy images build
 //   5. the deploy images work together: a Next.js server action in the web image
 //      starts a workflow that a worker in the pipeline image completes (Playwright)
@@ -36,6 +37,13 @@ const GARAGE_SECRET_KEY =
 const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
 // The resume e2e waits this out before re-selecting the file.
 const GATE_ADOPT_GRACE_SECONDS = 2;
+// Where the worker container sees the repository's recorded engine responses.
+const GATE_RECORDINGS_DIR = "/var/lib/temnia/recordings";
+// The substrate's model weights: about a gigabyte, downloaded once per machine
+// into the repository's ignored .cache/. The gate runs the tests that load them
+// (TEMNIA_MODEL_TESTS), because a segmenter that only runs when someone
+// remembers to set a variable is a segmenter nobody is holding to anything.
+const GATE_MODELS_DIR = resolve(ROOT, ".cache/temnia-models");
 const STAGES = [
   "pnpm install --frozen-lockfile",
   "pnpm check",
@@ -43,7 +51,7 @@ const STAGES = [
   "contracts: schemas:check + pipeline contracts:check",
   "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
-  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract)",
+  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
   "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
 ];
@@ -212,6 +220,26 @@ function dockerLogsTail(name) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
+/** Remove containers and images left by gate runs that never reached their cleanup. */
+function sweepStaleGateRuns() {
+  const list = (args) =>
+    (spawnSync("docker", args, { encoding: "utf8" }).stdout ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  const containers = list(["ps", "-aq", "--filter", "name=temnia-gate-"]);
+  if (containers.length > 0) {
+    spawnSync("docker", ["rm", "-f", ...containers], { stdio: "ignore" });
+  }
+  const images = [
+    ...list(["images", "-q", "--filter", "reference=temnia-web:gate-*"]),
+    ...list(["images", "-q", "--filter", "reference=temnia-pipeline:gate-*"]),
+  ];
+  if (images.length > 0) {
+    spawnSync("docker", ["image", "rm", "-f", ...images], { stdio: "ignore" });
+  }
+}
+
 async function runFullGate(sha) {
   const startedAt = new Date().toISOString();
   const stamp = `${Date.now().toString(36)}_${process.pid}`;
@@ -255,6 +283,8 @@ async function runFullGate(sha) {
       CI: "1",
       LOCAL_CI: "1",
       MIGRATE_DATABASE_URL: ownerUrl,
+      TEMNIA_MODEL_TESTS: "1",
+      TEMNIA_MODELS_DIR: GATE_MODELS_DIR,
       TEMPORAL_ADDRESS: "127.0.0.1:56233",
       TEST_DATABASE_URL: ownerUrl,
     };
@@ -294,6 +324,13 @@ async function runFullGate(sha) {
       env,
     });
 
+    // A gate run that was killed, or that died on a full disk, never reaches the
+    // cleanup below, and its 3 GB pipeline image stays behind; enough of them
+    // filled the disk and took Docker Desktop down on 2026-09-07. Sweep the
+    // leftovers of earlier runs and cap the build cache before building again.
+    sweepStaleGateRuns();
+    run("docker", ["builder", "prune", "-f", "--keep-storage", "8GB"]);
+
     run("docker", [
       "build",
       "--tag",
@@ -314,6 +351,26 @@ async function runFullGate(sha) {
       `TEMPORAL_NAMESPACE=${namespace}`,
       "-e",
       `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
+      // The gate encodes with the image's own ffmpeg and replays recorded
+      // WhisperX responses. No Modal call in CI, ever; both are explicit rather
+      // than left to the defaults so a change to a default cannot quietly point
+      // the gate at a GPU that costs money.
+      "-e",
+      "TRANSCODE_BACKEND=local",
+      "-e",
+      "TRANSCRIPTION_PROVIDER=recorded",
+      // The directory, not a pinned file: the transcript e2e drives three
+      // fixtures to three different outcomes in one run (ready, retrying,
+      // failed), which one pinned file cannot do. Each recording is matched on
+      // the duration it declares, which
+      // a bumped ffmpeg does not move — unlike the sha256 of the re-encoded
+      // audio extract, which is why the pin was here to begin with.
+      "-e",
+      `TRANSCRIPTION_RECORDINGS_DIR=${GATE_RECORDINGS_DIR}`,
+      // Read-only: the fixtures are the repository's, and the worker only reads
+      // them. They are not baked into the image, which carries no tests.
+      "-v",
+      `${resolve(ROOT, "apps/pipeline/tests/fixtures/transcripts")}:${GATE_RECORDINGS_DIR}:ro`,
       ...storageEnv,
       pipelineImage,
     ]);

@@ -1,0 +1,13 @@
+{
+  "durationMs": 24000,
+  "language": "en",
+  "provider": {
+    "model": "hand-authored",
+    "name": "temnia-fixture",
+    "version": "1"
+  },
+  "speakers": [],
+  "utterances": [],
+  "version": 1,
+  "words": []
+}

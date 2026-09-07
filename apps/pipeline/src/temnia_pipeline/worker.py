@@ -16,13 +16,57 @@ from temnia_pipeline.activities import say_hello
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
-from temnia_pipeline.workflows import HelloWorkflow, IngestWorkflow, ReaperWorkflow
+from temnia_pipeline.transcription.activities import Transcribe
+from temnia_pipeline.workflows import (
+    HelloWorkflow,
+    IngestWorkflow,
+    ReaperWorkflow,
+    TranscribeWorkflow,
+)
 
 log = logging.getLogger("temnia.worker")
 
 # One ladder at a time per worker: the ladder is CPU-bound and two of them
 # only halve each other's speed while doubling the scratch disk in use.
 MAX_CONCURRENT_ACTIVITIES = 2
+
+
+async def assert_modal_deployment(ctx: Context) -> None:
+    """When anything runs on Modal, prove the deployment before the queue is served.
+
+    A bad token or a Modal app deployed from another commit must be a failed
+    deploy, not a source that sits in the queue: Dokploy keeps the previous
+    container when this one exits non-zero. One probe covers both functions,
+    because they share an app and a contract version, so a half deployed pair
+    cannot get past this either.
+
+    The local ladder and the recorded provider have nothing to probe: ffmpeg is
+    in the image and a recording is a file.
+    """
+    settings = ctx.settings
+    users = [
+        name
+        for name, on_modal in (
+            ("TRANSCODE_BACKEND", settings.transcode.backend == "modal"),
+            ("TRANSCRIPTION_PROVIDER", settings.transcription.provider == "modal"),
+        )
+        if on_modal
+    ]
+    if not users:
+        return
+    from temnia_pipeline.transcode.modal import (  # noqa: PLC0415
+        DeploymentError,
+        assert_deployment,
+    )
+    from temnia_pipeline.transcode.modal_client import RealModalClient  # noqa: PLC0415
+
+    named = " and ".join(f"{name}=modal" for name in users)
+    try:
+        await assert_deployment(RealModalClient(settings.transcode), settings.transcode)
+    except DeploymentError as error:
+        log.error("%s: %s", named, error)  # noqa: TRY400
+        raise SystemExit(1) from error
+    log.info("%s, app %s", named, settings.transcode.modal_app)
 
 
 async def run_worker(settings: TemporalSettings) -> None:
@@ -39,13 +83,20 @@ async def run_worker(settings: TemporalSettings) -> None:
 
     ctx = Context.from_env()
     await db.assert_reachable(ctx.settings.database_url)
+    await assert_modal_deployment(ctx)
     ingest = Ingest(ctx)
     reaper = Reaper(ctx)
+    transcribe = Transcribe(ctx)
     worker = Worker(
         client,
         task_queue=settings.task_queue,
-        workflows=[HelloWorkflow, IngestWorkflow, ReaperWorkflow],
-        activities=[say_hello, *ingest.activities(), *reaper.activities()],
+        workflows=[HelloWorkflow, IngestWorkflow, ReaperWorkflow, TranscribeWorkflow],
+        activities=[
+            say_hello,
+            *ingest.activities(),
+            *reaper.activities(),
+            *transcribe.activities(),
+        ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
         # The contract models are pydantic; passing pydantic through the sandbox
         # is the documented setup for the pydantic data converter and stops the

@@ -1,0 +1,342 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "$id": "#/$defs/ArtifactKind",
+      "type": "string",
+      "enum": [
+        "master",
+        "hls",
+        "peaks",
+        "thumbnails",
+        "audio",
+        "shots"
+      ],
+      "title": "ArtifactKind"
+    },
+    "ArtifactRecord": {
+      "$id": "#/$defs/ArtifactRecord",
+      "type": "object",
+      "properties": {
+        "contentType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storagePrefix": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "contentType",
+        "kind",
+        "metadata",
+        "sizeBytes",
+        "storageKey",
+        "storagePrefix"
+      ],
+      "additionalProperties": false,
+      "title": "ArtifactRecord"
+    },
+    "HelloInput": {
+      "$id": "#/$defs/HelloInput",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Who to greet."
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        }
+      },
+      "required": [
+        "name",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "title": "HelloInput"
+    },
+    "HelloOutput": {
+      "$id": "#/$defs/HelloOutput",
+      "type": "object",
+      "properties": {
+        "greeting": {
+          "type": "string"
+        },
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Echoed from the input scope, never invented."
+        },
+        "workerHost": {
+          "type": "string"
+        },
+        "workerLanguage": {
+          "type": "string",
+          "const": "python"
+        }
+      },
+      "required": [
+        "greeting",
+        "organizationId",
+        "workerHost",
+        "workerLanguage"
+      ],
+      "additionalProperties": false,
+      "title": "HelloOutput"
+    },
+    "IngestInput": {
+      "$id": "#/$defs/IngestInput",
+      "type": "object",
+      "properties": {
+        "artifactPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Prefix every derived artifact is written under; ends with '/'."
+        },
+        "masterKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The uploaded master's storage key."
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "artifactPrefix",
+        "masterKey",
+        "scope",
+        "sourceId"
+      ],
+      "additionalProperties": false,
+      "title": "IngestInput"
+    },
+    "IngestOutput": {
+      "$id": "#/$defs/IngestOutput",
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactRecord"
+          }
+        },
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Echoed from the input scope, never invented."
+        },
+        "probe": {
+          "$ref": "#/$defs/ProbeResult"
+        },
+        "processingSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Wall-clock seconds the worker spent."
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "storageBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Sum of the artifact rows written."
+        }
+      },
+      "required": [
+        "artifacts",
+        "organizationId",
+        "probe",
+        "processingSeconds",
+        "sourceId",
+        "storageBytes"
+      ],
+      "additionalProperties": false,
+      "title": "IngestOutput"
+    },
+    "IngestStage": {
+      "$id": "#/$defs/IngestStage",
+      "type": "string",
+      "enum": [
+        "probe",
+        "hls",
+        "publish",
+        "thumbnails",
+        "audio",
+        "peaks",
+        "shots",
+        "finalize"
+      ],
+      "title": "IngestStage"
+    },
+    "ProbeResult": {
+      "$id": "#/$defs/ProbeResult",
+      "type": "object",
+      "properties": {
+        "audioChannels": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "audioCodec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "variableFrameRate": {
+          "type": "boolean"
+        },
+        "videoCodec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "audioChannels",
+        "audioCodec",
+        "durationMs",
+        "fps",
+        "height",
+        "sizeBytes",
+        "variableFrameRate",
+        "videoCodec",
+        "width"
+      ],
+      "additionalProperties": false,
+      "title": "ProbeResult"
+    },
+    "Scope": {
+      "$id": "#/$defs/Scope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The organization every row is scoped to."
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The acting user inside that organization."
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "Scope"
+    },
+    "TranscribeInput": {
+      "$id": "#/$defs/TranscribeInput",
+      "type": "object",
+      "properties": {
+        "artifactPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The source prefix; the transcript is written under it."
+        },
+        "audioKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The audio extract the provider reads; never the master."
+        },
+        "durationMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "description": "The probed duration; what the engine is metered against."
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "artifactPrefix",
+        "audioKey",
+        "durationMs",
+        "scope",
+        "sourceId"
+      ],
+      "additionalProperties": false,
+      "title": "TranscribeInput"
+    }
+  },
+  "$id": "TranscribeInput.json",
+  "$ref": "#/$defs/TranscribeInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

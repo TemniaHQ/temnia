@@ -18,7 +18,20 @@
       "!apps/web/components/ui",
       // Generated: JSON Schema from Zod, drizzle-kit migrations. Their generators own the formatting.
       "!packages/contracts/schemas",
-      "!packages/db/drizzle"
+      "!packages/db/drizzle",
+      // The frozen legacy oracle: a copy, not source. Its formatting is the
+      // legacy's, and reformatting it would put the parity fixtures and the
+      // code they were dumped from out of step.
+      "!tools/legacy-reference/lib",
+      // Recorded engine responses and the substrate renderings, read only by
+      // Python. They are kept exactly as the engine or the frozen oracle emits
+      // them, and Python's json writes the bare NaN a whisperx alignment score
+      // can be, which is not JSON biome can parse.
+      "!apps/pipeline/tests/fixtures",
+      // Eval parity snapshots, dumped by the legacy's TypeScript and frozen:
+      // reformatting them would edit the evidence the scorers are replayed
+      // against.
+      "!apps/pipeline/tests/parity"
     ]
   },
   "linter": {

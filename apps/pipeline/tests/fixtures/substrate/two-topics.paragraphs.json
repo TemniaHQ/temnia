@@ -1,0 +1,282 @@
+[
+  {
+    "endMs": 10053,
+    "speaker": "0",
+    "startMs": 1000,
+    "wordCount": 14,
+    "wordOffset": 0
+  },
+  {
+    "endMs": 39915,
+    "speaker": "1",
+    "startMs": 11233,
+    "wordCount": 43,
+    "wordOffset": 14
+  },
+  {
+    "endMs": 48628,
+    "speaker": "0",
+    "startMs": 41095,
+    "wordCount": 12,
+    "wordOffset": 57
+  },
+  {
+    "endMs": 75659,
+    "speaker": "1",
+    "startMs": 49808,
+    "wordCount": 38,
+    "wordOffset": 69
+  },
+  {
+    "endMs": 82789,
+    "speaker": "0",
+    "startMs": 76839,
+    "wordCount": 9,
+    "wordOffset": 107
+  },
+  {
+    "endMs": 109616,
+    "speaker": "1",
+    "startMs": 83969,
+    "wordCount": 38,
+    "wordOffset": 116
+  },
+  {
+    "endMs": 116440,
+    "speaker": "0",
+    "startMs": 110796,
+    "wordCount": 9,
+    "wordOffset": 154
+  },
+  {
+    "endMs": 146433,
+    "speaker": "1",
+    "startMs": 117620,
+    "wordCount": 44,
+    "wordOffset": 163
+  },
+  {
+    "endMs": 155588,
+    "speaker": "0",
+    "startMs": 147613,
+    "wordCount": 12,
+    "wordOffset": 207
+  },
+  {
+    "endMs": 182721,
+    "speaker": "1",
+    "startMs": 156768,
+    "wordCount": 38,
+    "wordOffset": 219
+  },
+  {
+    "endMs": 191031,
+    "speaker": "0",
+    "startMs": 183901,
+    "wordCount": 11,
+    "wordOffset": 257
+  },
+  {
+    "endMs": 219985,
+    "speaker": "1",
+    "startMs": 192211,
+    "wordCount": 41,
+    "wordOffset": 268
+  },
+  {
+    "endMs": 224920,
+    "speaker": "0",
+    "startMs": 221165,
+    "wordCount": 6,
+    "wordOffset": 309
+  },
+  {
+    "endMs": 253466,
+    "speaker": "1",
+    "startMs": 226100,
+    "wordCount": 41,
+    "wordOffset": 315
+  },
+  {
+    "endMs": 261470,
+    "speaker": "0",
+    "startMs": 254646,
+    "wordCount": 11,
+    "wordOffset": 356
+  },
+  {
+    "endMs": 288428,
+    "speaker": "1",
+    "startMs": 262650,
+    "wordCount": 39,
+    "wordOffset": 367
+  },
+  {
+    "endMs": 296534,
+    "speaker": "0",
+    "startMs": 289608,
+    "wordCount": 11,
+    "wordOffset": 406
+  },
+  {
+    "endMs": 324609,
+    "speaker": "1",
+    "startMs": 297714,
+    "wordCount": 40,
+    "wordOffset": 417
+  },
+  {
+    "endMs": 332715,
+    "speaker": "0",
+    "startMs": 325789,
+    "wordCount": 11,
+    "wordOffset": 457
+  },
+  {
+    "endMs": 356065,
+    "speaker": "1",
+    "startMs": 333895,
+    "wordCount": 33,
+    "wordOffset": 468
+  },
+  {
+    "endMs": 366024,
+    "speaker": "0",
+    "startMs": 358015,
+    "wordCount": 12,
+    "wordOffset": 501
+  },
+  {
+    "endMs": 393157,
+    "speaker": "1",
+    "startMs": 367204,
+    "wordCount": 38,
+    "wordOffset": 513
+  },
+  {
+    "endMs": 400253,
+    "speaker": "0",
+    "startMs": 394337,
+    "wordCount": 9,
+    "wordOffset": 551
+  },
+  {
+    "endMs": 428595,
+    "speaker": "1",
+    "startMs": 401433,
+    "wordCount": 41,
+    "wordOffset": 560
+  },
+  {
+    "endMs": 437546,
+    "speaker": "0",
+    "startMs": 429775,
+    "wordCount": 12,
+    "wordOffset": 601
+  },
+  {
+    "endMs": 465247,
+    "speaker": "1",
+    "startMs": 438726,
+    "wordCount": 40,
+    "wordOffset": 613
+  },
+  {
+    "endMs": 469881,
+    "speaker": "0",
+    "startMs": 466427,
+    "wordCount": 5,
+    "wordOffset": 653
+  },
+  {
+    "endMs": 497179,
+    "speaker": "1",
+    "startMs": 471061,
+    "wordCount": 39,
+    "wordOffset": 658
+  },
+  {
+    "endMs": 503362,
+    "speaker": "0",
+    "startMs": 498359,
+    "wordCount": 8,
+    "wordOffset": 697
+  },
+  {
+    "endMs": 533020,
+    "speaker": "1",
+    "startMs": 504542,
+    "wordCount": 43,
+    "wordOffset": 705
+  },
+  {
+    "endMs": 539742,
+    "speaker": "0",
+    "startMs": 534200,
+    "wordCount": 9,
+    "wordOffset": 748
+  },
+  {
+    "endMs": 567142,
+    "speaker": "1",
+    "startMs": 540922,
+    "wordCount": 39,
+    "wordOffset": 757
+  },
+  {
+    "endMs": 574675,
+    "speaker": "0",
+    "startMs": 568322,
+    "wordCount": 10,
+    "wordOffset": 796
+  },
+  {
+    "endMs": 602648,
+    "speaker": "1",
+    "startMs": 575855,
+    "wordCount": 40,
+    "wordOffset": 806
+  },
+  {
+    "endMs": 608326,
+    "speaker": "0",
+    "startMs": 603828,
+    "wordCount": 7,
+    "wordOffset": 846
+  },
+  {
+    "endMs": 641791,
+    "speaker": "1",
+    "startMs": 609506,
+    "wordCount": 50,
+    "wordOffset": 853
+  },
+  {
+    "endMs": 649494,
+    "speaker": "0",
+    "startMs": 642971,
+    "wordCount": 10,
+    "wordOffset": 903
+  },
+  {
+    "endMs": 678613,
+    "speaker": "1",
+    "startMs": 650674,
+    "wordCount": 42,
+    "wordOffset": 913
+  },
+  {
+    "endMs": 685437,
+    "speaker": "0",
+    "startMs": 679793,
+    "wordCount": 9,
+    "wordOffset": 955
+  },
+  {
+    "endMs": 708282,
+    "speaker": "1",
+    "startMs": 686617,
+    "wordCount": 32,
+    "wordOffset": 964
+  }
+]

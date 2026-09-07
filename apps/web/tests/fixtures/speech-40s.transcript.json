@@ -1,0 +1,794 @@
+{
+  "durationMs": 40116,
+  "language": "en",
+  "provider": {
+    "model": "large-v3",
+    "name": "whisperx",
+    "version": "3.8.6"
+  },
+  "speakers": ["0", "1"],
+  "utterances": [
+    {
+      "endMs": 6897,
+      "speaker": "0",
+      "startMs": 500
+    },
+    {
+      "endMs": 13769,
+      "speaker": "1",
+      "startMs": 7597
+    },
+    {
+      "endMs": 16601,
+      "speaker": "0",
+      "startMs": 14569
+    },
+    {
+      "endMs": 24367,
+      "speaker": "1",
+      "startMs": 17201
+    },
+    {
+      "endMs": 28687,
+      "speaker": "0",
+      "startMs": 25267
+    },
+    {
+      "endMs": 35813,
+      "speaker": "1",
+      "startMs": 29287
+    },
+    {
+      "endMs": 39116,
+      "speaker": "0",
+      "startMs": 36613
+    }
+  ],
+  "version": 1,
+  "words": [
+    {
+      "confidence": 0.975,
+      "endMs": 917,
+      "speaker": "0",
+      "startMs": 500,
+      "text": "Welcome",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.97,
+      "endMs": 1213,
+      "speaker": "0",
+      "startMs": 952,
+      "text": "back",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.833,
+      "endMs": 1405,
+      "speaker": "0",
+      "startMs": 1248,
+      "text": "to",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.94,
+      "endMs": 1649,
+      "speaker": "0",
+      "startMs": 1440,
+      "text": "the",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.888,
+      "endMs": 1997,
+      "speaker": "0",
+      "startMs": 1684,
+      "text": "show.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.788,
+      "endMs": 2486,
+      "speaker": "0",
+      "startMs": 2177,
+      "text": "Today",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.791,
+      "endMs": 2676,
+      "speaker": "0",
+      "startMs": 2521,
+      "text": "we",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.948,
+      "endMs": 2917,
+      "speaker": "0",
+      "startMs": 2711,
+      "text": "are",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.754,
+      "endMs": 3365,
+      "speaker": "0",
+      "startMs": 2952,
+      "text": "talking",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.784,
+      "endMs": 3710,
+      "speaker": "0",
+      "startMs": 3400,
+      "text": "about",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.765,
+      "endMs": 3951,
+      "speaker": "0",
+      "startMs": 3745,
+      "text": "how",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.968,
+      "endMs": 4089,
+      "speaker": "0",
+      "startMs": 3986,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.941,
+      "endMs": 4434,
+      "speaker": "0",
+      "startMs": 4124,
+      "text": "small",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.942,
+      "endMs": 4727,
+      "speaker": "0",
+      "startMs": 4469,
+      "text": "team",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.876,
+      "endMs": 5071,
+      "speaker": "0",
+      "startMs": 4762,
+      "text": "keeps",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.724,
+      "endMs": 5209,
+      "speaker": "0",
+      "startMs": 5106,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.822,
+      "endMs": 5502,
+      "speaker": "0",
+      "startMs": 5244,
+      "text": "long",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.915,
+      "endMs": 6053,
+      "speaker": "0",
+      "startMs": 5537,
+      "text": "recording",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.984,
+      "endMs": 6398,
+      "speaker": "0",
+      "startMs": 6088,
+      "text": "under",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.922,
+      "endMs": 6897,
+      "speaker": "0",
+      "startMs": 6433,
+      "text": "control.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.753,
+      "endMs": 7983,
+      "speaker": "1",
+      "startMs": 7597,
+      "text": "Thanks",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.736,
+      "endMs": 8239,
+      "speaker": "1",
+      "startMs": 8018,
+      "text": "for",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.722,
+      "endMs": 8660,
+      "speaker": "1",
+      "startMs": 8274,
+      "text": "having",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.749,
+      "endMs": 8915,
+      "speaker": "1",
+      "startMs": 8695,
+      "text": "me.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.823,
+      "endMs": 9313,
+      "speaker": "1",
+      "startMs": 9095,
+      "text": "The",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.728,
+      "endMs": 9730,
+      "speaker": "1",
+      "startMs": 9348,
+      "text": "honest",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.791,
+      "endMs": 10147,
+      "speaker": "1",
+      "startMs": 9765,
+      "text": "answer",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.884,
+      "endMs": 10346,
+      "speaker": "1",
+      "startMs": 10182,
+      "text": "is",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.873,
+      "endMs": 10653,
+      "speaker": "1",
+      "startMs": 10381,
+      "text": "that",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.779,
+      "endMs": 10852,
+      "speaker": "1",
+      "startMs": 10688,
+      "text": "we",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.813,
+      "endMs": 11323,
+      "speaker": "1",
+      "startMs": 10887,
+      "text": "stopped",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.99,
+      "endMs": 11849,
+      "speaker": "1",
+      "startMs": 11358,
+      "text": "treating",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.78,
+      "endMs": 12102,
+      "speaker": "1",
+      "startMs": 11884,
+      "text": "the",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.733,
+      "endMs": 12737,
+      "speaker": "1",
+      "startMs": 12137,
+      "text": "transcript",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.855,
+      "endMs": 12936,
+      "speaker": "1",
+      "startMs": 12772,
+      "text": "as",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.747,
+      "endMs": 13080,
+      "speaker": "1",
+      "startMs": 12971,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.841,
+      "endMs": 13769,
+      "speaker": "1",
+      "startMs": 13115,
+      "text": "by-product.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.931,
+      "endMs": 14797,
+      "speaker": "0",
+      "startMs": 14569,
+      "text": "What",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.986,
+      "endMs": 15196,
+      "speaker": "0",
+      "startMs": 14832,
+      "text": "changed",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.922,
+      "endMs": 15459,
+      "speaker": "0",
+      "startMs": 15231,
+      "text": "when",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.78,
+      "endMs": 15676,
+      "speaker": "0",
+      "startMs": 15494,
+      "text": "you",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.721,
+      "endMs": 15939,
+      "speaker": "0",
+      "startMs": 15711,
+      "text": "made",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.794,
+      "endMs": 16202,
+      "speaker": "0",
+      "startMs": 15974,
+      "text": "that",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.816,
+      "endMs": 16601,
+      "speaker": "0",
+      "startMs": 16237,
+      "text": "switch?",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.862,
+      "endMs": 17892,
+      "speaker": "1",
+      "startMs": 17201,
+      "text": "Everything",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.822,
+      "endMs": 18618,
+      "speaker": "1",
+      "startMs": 17927,
+      "text": "downstream",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.819,
+      "endMs": 18904,
+      "speaker": "1",
+      "startMs": 18653,
+      "text": "got",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.903,
+      "endMs": 19442,
+      "speaker": "1",
+      "startMs": 18939,
+      "text": "easier.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.994,
+      "endMs": 19925,
+      "speaker": "1",
+      "startMs": 19622,
+      "text": "Once",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.842,
+      "endMs": 20323,
+      "speaker": "1",
+      "startMs": 19960,
+      "text": "every",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.738,
+      "endMs": 20661,
+      "speaker": "1",
+      "startMs": 20358,
+      "text": "word",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.943,
+      "endMs": 21180,
+      "speaker": "1",
+      "startMs": 20696,
+      "text": "carries",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.857,
+      "endMs": 21336,
+      "speaker": "1",
+      "startMs": 21215,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.898,
+      "endMs": 22038,
+      "speaker": "1",
+      "startMs": 21371,
+      "text": "timestamp,",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.77,
+      "endMs": 22315,
+      "speaker": "1",
+      "startMs": 22073,
+      "text": "the",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.763,
+      "endMs": 22653,
+      "speaker": "1",
+      "startMs": 22350,
+      "text": "edit",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.763,
+      "endMs": 23172,
+      "speaker": "1",
+      "startMs": 22688,
+      "text": "becomes",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.955,
+      "endMs": 23328,
+      "speaker": "1",
+      "startMs": 23207,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.814,
+      "endMs": 23787,
+      "speaker": "1",
+      "startMs": 23363,
+      "text": "search",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.729,
+      "endMs": 24367,
+      "speaker": "1",
+      "startMs": 23822,
+      "text": "problem.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.727,
+      "endMs": 25496,
+      "speaker": "0",
+      "startMs": 25267,
+      "text": "And",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.749,
+      "endMs": 25760,
+      "speaker": "0",
+      "startMs": 25531,
+      "text": "the",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.993,
+      "endMs": 26367,
+      "speaker": "0",
+      "startMs": 25795,
+      "text": "speakers?",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.894,
+      "endMs": 26947,
+      "speaker": "0",
+      "startMs": 26547,
+      "text": "People",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.777,
+      "endMs": 27382,
+      "speaker": "0",
+      "startMs": 26982,
+      "text": "always",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.911,
+      "endMs": 27645,
+      "speaker": "0",
+      "startMs": 27417,
+      "text": "ask",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.807,
+      "endMs": 28023,
+      "speaker": "0",
+      "startMs": 27680,
+      "text": "about",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.863,
+      "endMs": 28687,
+      "speaker": "0",
+      "startMs": 28058,
+      "text": "crosstalk.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.808,
+      "endMs": 29967,
+      "speaker": "1",
+      "startMs": 29287,
+      "text": "Diarization",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.974,
+      "endMs": 30285,
+      "speaker": "1",
+      "startMs": 30002,
+      "text": "gets",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.742,
+      "endMs": 30547,
+      "speaker": "1",
+      "startMs": 30320,
+      "text": "you",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.799,
+      "endMs": 30866,
+      "speaker": "1",
+      "startMs": 30582,
+      "text": "most",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.883,
+      "endMs": 31071,
+      "speaker": "1",
+      "startMs": 30901,
+      "text": "of",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.795,
+      "endMs": 31332,
+      "speaker": "1",
+      "startMs": 31106,
+      "text": "the",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.817,
+      "endMs": 31651,
+      "speaker": "1",
+      "startMs": 31367,
+      "text": "way.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.953,
+      "endMs": 32056,
+      "speaker": "1",
+      "startMs": 31831,
+      "text": "The",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.794,
+      "endMs": 32372,
+      "speaker": "1",
+      "startMs": 32091,
+      "text": "rest",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.837,
+      "endMs": 32575,
+      "speaker": "1",
+      "startMs": 32407,
+      "text": "is",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.724,
+      "endMs": 32723,
+      "speaker": "1",
+      "startMs": 32610,
+      "text": "a",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.821,
+      "endMs": 33151,
+      "speaker": "1",
+      "startMs": 32758,
+      "text": "rename",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.879,
+      "endMs": 33411,
+      "speaker": "1",
+      "startMs": 33186,
+      "text": "box",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.755,
+      "endMs": 33671,
+      "speaker": "1",
+      "startMs": 33446,
+      "text": "and",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.819,
+      "endMs": 34043,
+      "speaker": "1",
+      "startMs": 33706,
+      "text": "about",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.886,
+      "endMs": 34471,
+      "speaker": "1",
+      "startMs": 34078,
+      "text": "thirty",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.789,
+      "endMs": 34956,
+      "speaker": "1",
+      "startMs": 34506,
+      "text": "seconds",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.837,
+      "endMs": 35160,
+      "speaker": "1",
+      "startMs": 34991,
+      "text": "of",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.857,
+      "endMs": 35813,
+      "speaker": "1",
+      "startMs": 35195,
+      "text": "attention.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.721,
+      "endMs": 37178,
+      "speaker": "0",
+      "startMs": 36613,
+      "text": "Perfect.",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.772,
+      "endMs": 37762,
+      "speaker": "0",
+      "startMs": 37358,
+      "text": "Thanks",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.972,
+      "endMs": 38028,
+      "speaker": "0",
+      "startMs": 37797,
+      "text": "for",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.947,
+      "endMs": 38468,
+      "speaker": "0",
+      "startMs": 38063,
+      "text": "coming",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.969,
+      "endMs": 38676,
+      "speaker": "0",
+      "startMs": 38503,
+      "text": "in",
+      "timing": "aligned"
+    },
+    {
+      "confidence": 0.87,
+      "endMs": 39116,
+      "speaker": "0",
+      "startMs": 38711,
+      "text": "today.",
+      "timing": "aligned"
+    }
+  ]
+}

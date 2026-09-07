@@ -32,6 +32,8 @@ import {
   organization,
   project,
   source,
+  transcript,
+  transcriptRevision,
   upload,
   usageLedger,
   user,
@@ -207,6 +209,38 @@ const probes: Probe[] = [
       return values;
     },
     table: usageLedger,
+  },
+  {
+    create: async (scope, ctx) => {
+      const values = {
+        organizationId: scope.organizationId,
+        sourceId: ctx.get("source") ?? "",
+      };
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx.insert(transcript).values(values).returning({ id: transcript.id })
+      );
+      ctx.set("transcript", row?.id ?? "");
+      return values;
+    },
+    table: transcript,
+  },
+  {
+    create: async (scope, ctx) => {
+      const values = {
+        kind: "machine" as const,
+        organizationId: scope.organizationId,
+        revision: 1,
+        sizeBytes: 1,
+        storageKey: `org/${scope.organizationId}/source/probe/transcript/rev-1.json`,
+        transcriptId: ctx.get("transcript") ?? "",
+        wordCount: 1,
+      };
+      await withScope(app.db, scope, (tx) =>
+        tx.insert(transcriptRevision).values(values)
+      );
+      return values;
+    },
+    table: transcriptRevision,
   },
 ];
 

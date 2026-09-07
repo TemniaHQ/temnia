@@ -86,6 +86,69 @@ class Scope(BaseModel):
     ]
 
 
+class TranscribeInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    artifactPrefix: Annotated[
+        str,
+        Field(
+            description="The source prefix; the transcript is written under it.",
+            min_length=1,
+        ),
+    ]
+    audioKey: Annotated[
+        str,
+        Field(
+            description="The audio extract the provider reads; never the master.",
+            min_length=1,
+        ),
+    ]
+    durationMs: Annotated[
+        int,
+        Field(
+            description="The probed duration; what the engine is metered against.",
+            gt=0,
+            le=9007199254740991,
+        ),
+    ]
+    scope: Scope
+    sourceId: UUID
+
+
+class TranscriptProvider(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    model: Annotated[str, Field(min_length=1)]
+    name: Annotated[str, Field(min_length=1)]
+    version: Annotated[str, Field(min_length=1)]
+
+
+class TranscriptStage(StrEnum):
+    download = "download"
+    model = "model"
+    transcribe = "transcribe"
+    align = "align"
+    diarize = "diarize"
+    write = "write"
+    retrying = "retrying"
+
+
+class TranscriptUtterance(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    speaker: str | None
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class WordTiming(StrEnum):
+    aligned = "aligned"
+    interpolated = "interpolated"
+
+
 class HelloInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -138,3 +201,63 @@ class IngestOutput(BaseModel):
             description="Sum of the artifact rows written.", ge=0, le=9007199254740991
         ),
     ]
+
+
+class TranscribeOutput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    durationMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    language: Annotated[str, Field(min_length=1)]
+    organizationId: Annotated[
+        UUID, Field(description="Echoed from the input scope, never invented.")
+    ]
+    provider: TranscriptProvider
+    revision: Annotated[int, Field(gt=0, le=9007199254740991)]
+    sourceId: UUID
+    speakerCount: Annotated[int, Field(ge=0, le=9007199254740991)]
+    storageKey: Annotated[str, Field(min_length=1)]
+    wordCount: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class TranscriptWord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    confidence: Annotated[
+        float | None,
+        Field(
+            description="Alignment score, or null when the provider gave none.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ]
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    speaker: str | None
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    text: Annotated[str, Field(min_length=1)]
+    timing: WordTiming
+
+
+class TranscriptV1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    durationMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    language: Annotated[
+        str,
+        Field(
+            description="The detected language code, so a wrong guess is visible.",
+            min_length=1,
+        ),
+    ]
+    provider: TranscriptProvider
+    speakers: Annotated[
+        list[str],
+        Field(
+            description="Every speaker id used by a word, in first-appearance order."
+        ),
+    ]
+    utterances: list[TranscriptUtterance]
+    version: Literal[1]
+    words: list[TranscriptWord]

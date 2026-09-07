@@ -8,6 +8,13 @@
       "when": 1788684684137,
       "tag": "0000_s1_ingest",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788742306149,
+      "tag": "0001_s2_transcript",
+      "breakpoints": true
     }
   ]
 }

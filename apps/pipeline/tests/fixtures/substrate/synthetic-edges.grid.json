@@ -1,0 +1,210 @@
+{
+  "paragraphs": [
+    {
+      "endMs": 4100,
+      "endSentence": 2,
+      "id": 0,
+      "speaker": "0",
+      "startMs": 0,
+      "startSentence": 0
+    },
+    {
+      "endMs": 66600,
+      "endSentence": 6,
+      "id": 1,
+      "speaker": "1",
+      "startMs": 6700,
+      "startSentence": 3
+    },
+    {
+      "endMs": 69100,
+      "endSentence": 7,
+      "id": 2,
+      "speaker": "1",
+      "startMs": 66700,
+      "startSentence": 7
+    },
+    {
+      "endMs": 71900,
+      "endSentence": 8,
+      "id": 3,
+      "speaker": null,
+      "startMs": 69500,
+      "startSentence": 8
+    },
+    {
+      "endMs": 73900,
+      "endSentence": 10,
+      "id": 4,
+      "speaker": "guest",
+      "startMs": 72400,
+      "startSentence": 9
+    },
+    {
+      "endMs": 78000,
+      "endSentence": 11,
+      "id": 5,
+      "speaker": "0",
+      "startMs": 75600,
+      "startSentence": 11
+    }
+  ],
+  "sentences": [
+    {
+      "endMs": 400,
+      "endsTurn": false,
+      "endWord": 0,
+      "id": 0,
+      "opensTurn": true,
+      "pauseAfterMs": 690,
+      "question": false,
+      "speaker": "0",
+      "startMs": 0,
+      "startWord": 0,
+      "text": "Right."
+    },
+    {
+      "endMs": 2000,
+      "endsTurn": false,
+      "endWord": 3,
+      "id": 1,
+      "opensTurn": false,
+      "pauseAfterMs": 701,
+      "question": false,
+      "speaker": "0",
+      "startMs": 1090,
+      "startWord": 1,
+      "text": "Now listen carefully."
+    },
+    {
+      "endMs": 4100,
+      "endsTurn": false,
+      "endWord": 8,
+      "id": 2,
+      "opensTurn": false,
+      "pauseAfterMs": 2600,
+      "question": false,
+      "speaker": "0",
+      "startMs": 2701,
+      "startWord": 4,
+      "text": "This sentence changes speaker mid-way."
+    },
+    {
+      "endMs": 21600,
+      "endsTurn": false,
+      "endWord": 38,
+      "id": 3,
+      "opensTurn": false,
+      "pauseAfterMs": 100,
+      "question": false,
+      "speaker": "1",
+      "startMs": 6700,
+      "startWord": 9,
+      "text": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30."
+    },
+    {
+      "endMs": 36600,
+      "endsTurn": false,
+      "endWord": 68,
+      "id": 4,
+      "opensTurn": false,
+      "pauseAfterMs": 100,
+      "question": false,
+      "speaker": "1",
+      "startMs": 21700,
+      "startWord": 39,
+      "text": "word31 word32 word33 word34 word35 word36 word37 word38 word39 word40 word41 word42 word43 word44 word45 word46 word47 word48 word49 word50 word51 word52 word53 word54 word55 word56 word57 word58 word59 word60."
+    },
+    {
+      "endMs": 51600,
+      "endsTurn": false,
+      "endWord": 98,
+      "id": 5,
+      "opensTurn": false,
+      "pauseAfterMs": 100,
+      "question": false,
+      "speaker": "1",
+      "startMs": 36700,
+      "startWord": 69,
+      "text": "word61 word62 word63 word64 word65 word66 word67 word68 word69 word70 word71 word72 word73 word74 word75 word76 word77 word78 word79 word80 word81 word82 word83 word84 word85 word86 word87 word88 word89 word90."
+    },
+    {
+      "endMs": 66600,
+      "endsTurn": false,
+      "endWord": 128,
+      "id": 6,
+      "opensTurn": false,
+      "pauseAfterMs": 100,
+      "question": false,
+      "speaker": "1",
+      "startMs": 51700,
+      "startWord": 99,
+      "text": "word91 word92 word93 word94 word95 word96 word97 word98 word99 word100 word101 word102 word103 word104 word105 word106 word107 word108 word109 word110 word111 word112 word113 word114 word115 word116 word117 word118 word119 word120."
+    },
+    {
+      "endMs": 69100,
+      "endsTurn": true,
+      "endWord": 133,
+      "id": 7,
+      "opensTurn": false,
+      "pauseAfterMs": 400,
+      "question": false,
+      "speaker": "1",
+      "startMs": 66700,
+      "startWord": 129,
+      "text": "word121 word122 word123 word124 cap."
+    },
+    {
+      "endMs": 71900,
+      "endsTurn": true,
+      "endWord": 138,
+      "id": 8,
+      "opensTurn": true,
+      "pauseAfterMs": 500,
+      "question": false,
+      "speaker": null,
+      "startMs": 69500,
+      "startWord": 134,
+      "text": "The diarizer lost this turn."
+    },
+    {
+      "endMs": 73800,
+      "endsTurn": false,
+      "endWord": 141,
+      "id": 9,
+      "opensTurn": true,
+      "pauseAfterMs": 100,
+      "question": false,
+      "speaker": "guest",
+      "startMs": 72400,
+      "startWord": 139,
+      "text": "Guest speaks now."
+    },
+    {
+      "endMs": 73900,
+      "endsTurn": true,
+      "endWord": 142,
+      "id": 10,
+      "opensTurn": false,
+      "pauseAfterMs": 1700,
+      "question": false,
+      "speaker": "guest",
+      "startMs": 73900,
+      "startWord": 142,
+      "text": "Yeah."
+    },
+    {
+      "endMs": 78000,
+      "endsTurn": true,
+      "endWord": 147,
+      "id": 11,
+      "opensTurn": true,
+      "pauseAfterMs": 0,
+      "question": false,
+      "speaker": "0",
+      "startMs": 75600,
+      "startWord": 143,
+      "text": "and it just stops here"
+    }
+  ]
+}

@@ -17,6 +17,7 @@
     "@base-ui/react": "^1.8.0",
     "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/react": "^1.1.10",
+    "@tanstack/react-virtual": "^3.14.10",
     "@temnia/contracts": "workspace:*",
     "@temnia/db": "workspace:*",
     "@temporalio/client": "1.23.0",

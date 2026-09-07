@@ -97,20 +97,24 @@ Scaffold consequences: the pipeline joins Turborepo through a `package.json` shi
 `uv run` (native uv workspaces arrive when `experimentalPythonWorkspaces` leaves canary; corrected at S0,
 see `docs/tech-stack.md` §0 row 13); `@temporalio/client` is listed in Next.js `serverExternalPackages`.
 
-**2026-09-05 — Icons stay Hugeicons; transcription is WhisperX on Modal from S2.** On reviewing the
+**2026-09-05 — Icons stay Hugeicons; transcription is WhisperX on Modal from S2 (corrected
+2026-09-06 after re-research).** On reviewing the
 tech-stack research (`docs/tech-stack.md`), Rajesh made two slot decisions. (1) **Hugeicons** stays
 because the icons look better; the cost is accepted: shadcn's Base UI registry output imports Lucide,
 so each vendored component is swapped with the official migration tool. (2) **WhisperX** (large-v3,
 wav2vec2 alignment, pyannote diarization) running on **Modal** is the transcription engine from the
 first S2 run, behind the provider seam with a deterministic mock. Basis: the independent March 2026
 benchmark on podcasts and interviews put WhisperX ahead of both hosted providers on word error and
-diarization; an L4 handles large-v3 with alignment and diarization at roughly twenty audio-hours per
-GPU-hour. Consequences: the sprint plan's S12 is a calibration round (model size, VAD, alignment,
+diarization; Modal lists the L4 at about $0.80/hour (2026-09-06), and the audio-hours-per-GPU-hour
+figure has no primary source, so the first staging run is the benchmark. Consequences: the sprint
+plan's S12 is a calibration round (model size, VAD, alignment,
 diarization settings against the sentence grid), not an ownership A/B; a hosted adapter (AssemblyAI
 Universal-3.5 Pro is the candidate) is built only as fallback if the bar is missed; PRD §6's
-Deepgram-primary line is retired at its next revision. Known trap: whisperx 3.8.5 wheels still carry a
-`use_auth_token` path that breaks against pyannote 4.x (m-bain/whisperX#1406), so pin pyannote 3.x or
-patch until a fixed wheel ships. The model gateway is still decided by the S3 transport probe; its
+Deepgram-primary line is retired at its next revision. whisperx 3.8.6 (2026-05-25, BSD-2) requires
+pyannote-audio 4.x and defaults to `pyannote/speaker-diarization-community-1` (gated on Hugging Face,
+CC-BY-4.0, commercial use allowed with attribution); issue #1406 is a dead `use_auth_token` keyword on
+the Whisper model loader, inert under whisperx's `huggingface-hub<1` pin; no pin and no patch are
+needed. The model gateway is still decided by the S3 transport probe; its
 catalogue coverage for Kimi K3, GLM, Nano Banana, and the Seedance, Veo, Kling, and Wan video models is
 recorded in `docs/tech-stack.md` §9.
 
@@ -210,6 +214,9 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    exit test is written; the transcode activity then calls a Modal function (NVENC, the same ffmpeg
    command) once the Modal account exists for transcription, so both land on one deployment. The
    `veryfast` top-rung preset was offered as a stopgap and declined in favour of the one move.
+   Modal's L4 lists at about $0.80/hour (2026-09-06); the ladder runs there as a hybrid, CPU decode
+   and scale with NVENC for the video rungs, because NVENC cannot decode ProRes masters, and the
+   function publishes the ladder to R2 itself, since the publish was 21 of the VPS's 67 minutes.
 10. **Garage CORS on the dev bucket allows any origin.** Garage echoes a matching rule's whole origin
    list in `access-control-allow-origin`, and browsers reject a comma-joined list (the first upload
    attempt failed on exactly that); the gate then serves the page from `127.0.0.1` on a random port,
@@ -217,11 +224,90 @@ adopted it, and the per-slot record in `docs/tech-stack.md` §14).**
    bucket is local with dev-only keys. Applied by a compose one-shot (`garage-cors`); R2 gets the one
    real origin (runbook §1).
 
+**2026-09-07 — The substrate is designed from the Python ecosystem; the legacy rules are a scored
+baseline.** Slice C ported the legacy TypeScript grid function for function, which reproduced a set
+of regexes and thresholds in the language that exists to avoid them. Rajesh's correction: research
+the ecosystem and build what it says. The substrate is now three layers behind a `Segmenter`
+protocol (`apps/pipeline/src/temnia_pipeline/substrate/`), all sharing one output shape and one
+renderer.
+1. **Sentences: Segment-any-Text** (`wtpsplit` 2.2.1, MIT), which predicts boundaries from the text
+   and was evaluated on ASR transcripts with the punctuation and casing stripped. This removes the
+   dependence on Whisper's full stops that PRD §8 itself flags as the grid's weakness. Words map
+   back by character offset, so every sentence keeps exact `startMs` and `endMs`. `sat-3l-sm` runs
+   on the worker's CPU; `sat-12l` on the Modal GPU is a name, not a code change. SaT's own paragraph
+   mode is a selectable candidate and **not** the default: measured on the fixtures it returns one
+   paragraph per sentence, so paragraphs come from the legacy rule (2500 ms, 120 words, speaker
+   change) over SaT's sentences.
+2. **Chapter candidates: change-point detection over sentence embeddings**
+   (`sentence-transformers` 6.0.1 with all-MiniLM-L6-v2, `ruptures` 1.1.10 `KernelCPD` with an RBF
+   kernel), the Embed-KCPD line of work, unsupervised. Granularity is a parameter
+   (`target_per_hour`, default 6) and the count is solved exactly rather than approached by
+   bisection. Each candidate carries a score, so S4 reads a ranked list instead of guessing from the
+   raw text. Chapter-Llama is a later challenger to score, not a default. Kernel CPD is quadratic in
+   sentences: 2,500 is seconds, and the ceiling is 10,000 with a clear error.
+3. **The legacy rules stay**, as `LegacyRulesSegmenter`, still byte-parity tested against the frozen
+   oracle in `tools/legacy-reference/`. That is what makes them a trustworthy baseline rather than a
+   memory.
+4. **The metrics are the field's, not plain F1.** `evals/segmentation.py` reports Pk, WindowDiff and
+   GHD (`nltk` 3.10; `segeval` is unmaintained since 2013), window-tolerant precision and recall
+   reported separately as purity and coverage with their F1, boundary density per hour on both
+   sides, and tIoU-F1 over 0.5 to 0.95 for segments. "When F1 Fails" (arXiv 2512.17083) shows
+   boundary F1 tracks boundary density more than boundary quality, which is why density and the
+   unaveraged pair are always printed. Every row is scored on one unit grid, the source's word start
+   times, because sentences differ per segmenter and rows must be comparable. Without gold the
+   runner still reports density and pairwise agreement.
+5. **The exit test changes.** "Byte-identical to the legacy on three recorded sources" becomes
+   `temnia-eval segment` on those sources with every segmenter scored, and the plan recording which
+   segmenter S4 starts on and what number would make us switch. The legacy scorer snapshots keep
+   their bit-identical test: they are the record of what the legacy measured, and the M1 baseline
+   column.
+6. **Models are baked into the pipeline image** (`TEMNIA_MODELS_DIR`, `HF_HOME`, `HF_HUB_OFFLINE=1`)
+   so the worker never downloads inside an activity; `torch` is pinned to the CPU wheels on linux,
+   which is the difference between a 3 GB image and a 6 GB one.
+
+**2026-09-07 — The editing harness is a typed, durable program on Temporal with PydanticAI, not a
+cast of agents (Rajesh).** Research basis: the 2025 multi-agent failure taxonomy (specification,
+inter-agent misalignment, verification), compute-controlled results where a single capable model
+matches multi-agent setups, and the domain systems that work (EditDuet's editor-critic loop and
+artefact judge at 80.6%, Crayotter's traceable artefacts, PODTILE's global context, Chapter-Llama's
+fine-tuned proposer). Five typed stages (brief, propose in ids, cut in parallel with backstops,
+verify code-then-family, explain); idempotency-keyed activities for zero repeated calls; no default
+vendor and open-weight models first-class in every seat's pool, all seats through the gateway
+(Vercel AI Gateway leading, probe-confirmed); per-seat offline prompt optimisation with DSPy/GEPA
+against the C2 metrics; failover halt and per-run budget as pure code. Consequence: sprint-plan S3
+rewritten; tech-stack rows for framework, optimisation, gateway, roster, evals, tracing updated; the
+legacy's Director/Reconciler/Cutter/Publisher/Verifier/Reviewer names retire. What would change it:
+a measured win for a persona-style loop on the three fresh sources at equal cost.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
 before architectural work. Record durable decisions in the Decisions section above, in the same turn
 they are made.
+
+### Sessions orchestrate (Rajesh, 2026-09-06)
+
+The top model in a session plans the work, writes the briefs, reads the agents' reports, and writes
+the synthesis itself: the 360-degree view, the design, every decision, and the final word on a
+review. Research, extraction, exploration, and implementation against a written spec go to cheaper
+agents: Opus for implementation and multi-source synthesis, Sonnet for research and mechanical work.
+The finalization of a document or a decision is never delegated. Agents report to short files in the
+session scratchpad, not raw dumps; independent agents run in parallel. Delegation never lowers the
+verification bar: the agent that finishes a change runs the gate and the orchestrator checks the
+evidence.
+
+### The PRD is not a hard requirement (Rajesh, 2026-09-07)
+
+The PRD and the sprint plan describe intent and were written from the legacy TypeScript product.
+They are not specifications to reproduce. Every pipeline component is designed from the Python
+ecosystem first, the legacy is behaviour evidence and a baseline to beat, and where research shows
+a better design the better design is built, the deviation is recorded in the Decisions section, and
+the PRD or sprint-plan row is updated in the same PR. An exit test derived from the legacy is
+replaced by a scored comparison in which the legacy behaviour is one candidate.
+
+No pipeline design names a default vendor. Designs and cost estimates speak of seats and show
+several families side by side, open-weight ones included; the audition decides, and its result is
+recorded here.
 
 ### The 360-degree view comes before the code (Rajesh, 2026-09-06)
 

@@ -1,0 +1,80 @@
+s0000 00:00:01 S1: ¶|·        Let's start with the set piece, because that is where your teams are known.
+s0001 00:00:11 S2: ¶|         The scrum is a contest of angles before it is a contest of strength.
+s0002 00:00:20 S2:            If the tight head's shoulder is above his hip the pressure goes nowhere.
+s0003 00:00:29 S2:   ·        We film every scrum from behind the posts so the players see their own body height.
+s0004 00:00:41 S1: ¶|·        How much of that is coachable and how much is simply size?
+s0005 00:00:49 S2: ¶|         Size buys you a margin, but technique is what survives eighty minutes.
+s0006 00:00:58 S2:            Our lightest prop last season won more penalties than anyone in the league.
+s0007 00:01:07 S2:   ·        He did it by getting his bind earlier than the man opposite him.
+s0008 00:01:16 S1: ¶|·        And the line-out, is that a different skill entirely?
+s0009 00:01:23 S2: ¶|         The line-out is a timing problem dressed up as a jumping problem.
+s0010 00:01:32 S2:            The lifters have to be moving before the hooker's hands leave the ball.
+s0011 00:01:41 S2:   ·        We drill the call to the throw in under two seconds, every session.
+s0012 00:01:50 S1: ¶|·        Do you change the calls much during a match?
+s0013 00:01:57 S2: ¶|         We carry four and we use two, because a caller who is thinking is a caller who is late.
+s0014 00:02:09 S2:            The opposition scout our first six line-outs and we know that they do.
+s0015 00:02:18 S2:   ·        So the sixth one is usually the one we have been saving.
+s0016 00:02:27 S1: ¶|·        What about the breakdown, which everyone says is where matches are won?
+s0017 00:02:36 S2: ¶|         The breakdown rewards whoever arrives with their feet already set.
+s0018 00:02:44 S2:            A player who arrives fast and off balance gives away the penalty every time.
+s0019 00:02:53 S2:   ·        We coach the last three steps before the ruck, not the sprint into it.
+s0020 00:03:03 S1: ¶|·        Is that why your penalty count dropped so sharply last year?
+s0021 00:03:12 S2: ¶|         Partly, and partly because we stopped asking the flankers to compete on every ball.
+s0022 00:03:22 S2:            Choosing three rucks a half to attack is worth more than contesting thirty.
+s0023 00:03:31 S2:   ·        The referee starts to trust a pack that is not always on the edge.
+s0024 00:03:41 S1: ¶|·        How do you decide which three?
+s0025 00:03:46 S2: ¶|         We look for the ruck after a big carry, when their support is still getting up.
+s0026 00:03:56 S2:            That is the moment the ball is slowest and the guard is thinnest.
+s0027 00:04:05 S2:   ·        Everything else we leave alone and get back into the defensive line.
+s0028 00:04:14 S1: ¶|·        Does any of this change on a wet night in February?
+s0029 00:04:22 S2: ¶|         The weather changes the reward, not the method.
+s0030 00:04:28 S2:            In the wet the scrum is worth more because the backs will not run from deep.
+s0031 00:04:39 S2:   ·        So we shorten the game and make them play in front of their own posts.
+s0032 00:04:49 S1: ¶|·        What do you look for when you recruit a young forward?
+s0033 00:04:57 S2: ¶|         Work rate first, because you cannot teach a man to want the next collision.
+s0034 00:05:07 S2:            Then neck and shoulder strength, because that part takes the longest to build.
+s0035 00:05:16 S2:   ·        Skills we can add, and we can add them quickly at that age.
+s0036 00:05:25 S1: ¶|·        What is the most common mistake you see in club rugby?
+s0037 00:05:33 S2: ¶|         Packs that push straight when they should be pushing across.
+s0038 00:05:41 S2:            A straight shove against a good front row is a shove into a wall.
+s0039 00:05:50 S2:   ·        The angle is free and almost nobody takes it.
+s0040 00:05:58 S1: ¶|·        I want to change subject completely, because you also write about money.
+s0041 00:06:07 S2: ¶|         Compound interest is the one idea in finance that everybody agrees on.
+s0042 00:06:15 S2:            It works because the return itself starts earning a return of its own.
+s0043 00:06:24 S2:   ·        The first ten years look disappointing and the last ten look like magic.
+s0044 00:06:34 S1: ¶|·        Why do people give up during the disappointing part?
+s0045 00:06:41 S2: ¶|         Because the curve is almost flat there, and a flat curve feels like failure.
+s0046 00:06:51 S2:            A pound saved in the first year is worth many pounds saved in the twentieth.
+s0047 00:07:01 S2:   ·        But it does not feel that way while you are saving it.
+s0048 00:07:09 S1: ¶|·        What do you tell someone starting at forty rather than at twenty?
+s0049 00:07:18 S2: ¶|         That the arithmetic is harsher, but that it is not hopeless.
+s0050 00:07:26 S2:            They have to save a larger share and they have to leave it alone for longer.
+s0051 00:07:37 S2:   ·        The mistake is deciding to make up the lost time with extra risk.
+s0052 00:07:46 S1: ¶|·        You mean picking individual stocks?
+s0053 00:07:51 S2: ¶|         I mean anything at all that promises to shorten the wait.
+s0054 00:07:58 S2:            The wait is the product, and the return is what you are paid for enduring it.
+s0055 00:08:09 S2:   ·        Every scheme that removes the wait puts something worse in its place.
+s0056 00:08:18 S1: ¶|·        So a broad index fund and nothing else?
+s0057 00:08:24 S2: ¶|         For almost everybody, a broad index fund at a low fee is the whole answer.
+s0058 00:08:34 S2:            The fee matters more than people believe, because the fee compounds as well.
+s0059 00:08:43 S2:   ·        One per cent a year for thirty years is a quarter of the final pot.
+s0060 00:08:54 S1: ¶|·        A quarter seems far too large to be true.
+s0061 00:09:00 S2: ¶|         Run the numbers and it is worse than that in a low return decade.
+s0062 00:09:10 S2:            The fee is charged on the balance, so it grows exactly as your money grows.
+s0063 00:09:20 S2:   ·        It is compound interest, working very patiently for somebody else.
+s0064 00:09:28 S1: ¶|·        What about timing the market at all, even a little?
+s0065 00:09:35 S2: ¶|         The evidence is that missing the best twenty days ruins a thirty year record.
+s0066 00:09:45 S2:            And the best days sit right next to the worst days, which is the cruel part.
+s0067 00:09:56 S2:   ·        You cannot avoid the one without also missing the other.
+s0068 00:10:03 S1: ¶|·        Do you rebalance the portfolio at all?
+s0069 00:10:09 S2: ¶|         Once a year, on a date I picked in advance and do not move.
+s0070 00:10:18 S2:            The date matters far less than the fact that I did not choose it while watching news.
+s0071 00:10:29 S2:   ·        A rule you wrote when you were calm is worth more than a decision made when you are not.
+s0072 00:10:42 S1: ¶|·        Is there anything here you have changed your mind about?
+s0073 00:10:50 S2: ¶|         I used to think an emergency fund of three months was enough.
+s0074 00:10:58 S2:            I now think six, because its real job is to stop you selling at the bottom.
+s0075 00:11:09 S2:   ·        It is not really a savings account, it is insurance against your own behaviour.
+s0076 00:11:19 S1: ¶|·        What would you tell a twenty year old today?
+s0077 00:11:26 S2: ¶|         Automate it, keep the fee low, then go and spend your attention elsewhere.
+s0078 00:11:35 S2:            The plan does not need you once it is running.
+s0079 00:11:42 S2:            Watching it will only tempt you into breaking it.

@@ -158,3 +158,103 @@ def test_a_complete_ladder_from_an_earlier_attempt_is_recognised(tmp_path: Path)
     assert not hls.ladder_is_complete(
         out, rungs, has_audio=True, iframes=True, expected_seconds=120
     )
+
+
+def test_nvenc_rungs_switch_encoder_and_keep_the_shared_gop(tmp_path: Path) -> None:
+    rungs = hls.plan_rungs(facts(1080))
+    args = hls.ladder_args(
+        tmp_path / "master.mov",
+        tmp_path / "hls",
+        facts(1080),
+        has_audio=True,
+        rungs=rungs,
+        iframes=True,
+        encoder="h264_nvenc",
+    )
+    joined = " ".join(args)
+    for i, rung in enumerate(rungs):
+        assert f"-c:v:{i} h264_nvenc" in joined
+        assert f"-cq:v:{i} {hls.NVENC_CQ[rung.name]}" in joined
+        assert f"-b:v:{i} 0" in joined
+        assert f"-maxrate:v:{i} {rung.maxrate_k}k" in joined
+        assert f"-forced-idr:v:{i} 1" in joined
+        assert f"-no-scenecut:v:{i} 1" in joined
+        assert f"-profile:v:{i} high" in joined
+    # The forced keyframes and the GOP are what make the rungs interchangeable;
+    # they are the same string on both encoders.
+    assert "-g 60 -keyint_min 60" in joined
+    assert "-force_key_frames expr:gte(t,n_forced*2)" in joined
+    # libx264-only options must not reach NVENC, and the decode side is unchanged.
+    assert "-sc_threshold" not in joined
+    assert "-crf:v:" not in joined
+    assert "-c:v libx264 -preset veryfast" in joined  # the I-frame rendition
+    assert "split=4" in joined
+    assert "scale=-2:1080" in joined
+
+
+def test_nvenc_cq_falls_back_to_the_rung_crf() -> None:
+    assert hls.nvenc_cq(hls.Rung("top", 1080, 20, 6000, "fast")) == 20
+    assert hls.nvenc_cq(hls.Rung("540p", 540, 21, 1800, "veryfast")) == 21
+
+
+def test_libx264_rungs_are_unchanged_by_the_encoder_argument(tmp_path: Path) -> None:
+    rungs = hls.plan_rungs(facts(1080))
+    default = hls.ladder_args(
+        tmp_path / "m.mp4",
+        tmp_path / "hls",
+        facts(1080),
+        has_audio=True,
+        rungs=rungs,
+        iframes=True,
+    )
+    explicit = hls.ladder_args(
+        tmp_path / "m.mp4",
+        tmp_path / "hls",
+        facts(1080),
+        has_audio=True,
+        rungs=rungs,
+        iframes=True,
+        encoder="libx264",
+    )
+    assert default == explicit
+    assert "-sc_threshold 0" in " ".join(default)
+
+
+FULL_LADDER = {"top": 120.0, "360p": 120.0, "audio": 120.04, "iframes": 118.0}
+
+
+def _manifest(renditions: dict[str, float] | None = None) -> hls.LadderManifest:
+    return hls.LadderManifest(
+        renditions=FULL_LADDER if renditions is None else renditions,
+        iframes=True,
+        segment_seconds=hls.SEGMENT_SECONDS,
+        total_bytes=4096,
+        encoder="h264_nvenc",
+        produced_by="modal",
+        call_id="fc-123",
+    )
+
+
+def test_manifest_round_trips_through_camel_case_json(tmp_path: Path) -> None:
+    written = hls.write_manifest(tmp_path, _manifest())
+    assert written.name == hls.MANIFEST_NAME
+    text = written.read_text()
+    assert '"segmentSeconds"' in text
+    assert '"producedBy":"modal"' in text
+    assert '"callId":"fc-123"' in text
+    back = hls.read_manifest(text)
+    assert back == _manifest()
+    assert back.version == 1
+    assert back.encoder == "h264_nvenc"
+
+
+def test_manifest_covers_uses_the_same_tolerance_as_assert_covers() -> None:
+    assert hls.manifest_covers(_manifest(), 120.0)
+    # 1% or 12 s, whichever is larger: 108 s of a 120 s source is inside it.
+    assert hls.manifest_covers(_manifest(renditions={"top": 108.0}), 120.0)
+    assert not hls.manifest_covers(_manifest(renditions={"top": 107.9}), 120.0)
+    # The I-frame rendition is one frame short of the last GOP by construction.
+    assert hls.manifest_covers(_manifest(renditions={"iframes": 106.0}), 120.0)
+    assert not hls.manifest_covers(_manifest(renditions={"iframes": 105.9}), 120.0)
+    # An empty ladder covers nothing, whatever the tolerance says.
+    assert not hls.manifest_covers(_manifest(renditions={}), 120.0)

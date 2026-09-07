@@ -8,7 +8,6 @@ file, and the ladder then forces a constant rate so frame math holds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -16,26 +15,18 @@ import av
 from av.error import FFmpegError
 
 from temnia_pipeline.contracts import ProbeResult
+from temnia_pipeline.media.facts import VideoFacts
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 COVER_ART_CODECS = frozenset({"mjpeg", "png", "bmp", "gif"})
 
+__all__ = ["COVER_ART_CODECS", "InvalidMediaError", "VideoFacts", "probe"]
+
 
 class InvalidMediaError(ValueError):
     """The file cannot be ingested; the message is safe to show a user."""
-
-
-@dataclass(frozen=True, slots=True)
-class VideoFacts:
-    """What the ladder needs about the video stream."""
-
-    width: int
-    height: int
-    fps: Fraction
-    variable_frame_rate: bool
-    codec: str
 
 
 def _fps(stream: av.VideoStream) -> tuple[Fraction, bool]:

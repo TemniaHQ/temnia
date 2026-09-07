@@ -1,0 +1,53 @@
+{
+  "_note": "Hand-authored. Every shape WhisperX 3.8.6 is known to emit that the normaliser has to decide about, in one 12-second response: a word with no start or end (the alignment model has no phonemes for digits), a word the diarizer never covered, a NaN score, a segment with no words at all, and two words the alignment moved out of order. Nothing here is a hypothetical; each one is why the corresponding branch in normalize.py exists.",
+  "_audioSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "language": "en",
+  "segments": [
+    {
+      "start": 0.4,
+      "end": 3.1,
+      "speaker": "SPEAKER_00",
+      "text": " We recorded 1998 hours last month.",
+      "words": [
+        { "word": "We", "start": 0.4, "end": 0.62, "score": 0.94, "speaker": "SPEAKER_00" },
+        { "word": "recorded", "start": 0.66, "end": 1.31, "score": 0.88, "speaker": "SPEAKER_00" },
+        { "word": "1998" },
+        { "word": "hours", "start": 2.05, "end": 2.4, "score": 0.91, "speaker": "SPEAKER_00" },
+        { "word": "last", "start": 2.44, "end": 2.71, "score": NaN, "speaker": "SPEAKER_00" },
+        { "word": "month.", "start": 2.75, "end": 3.1, "score": 0.9 }
+      ]
+    },
+    {
+      "start": 3.6,
+      "end": 5.2,
+      "text": " ",
+      "words": []
+    },
+    {
+      "start": 5.4,
+      "end": 9.2,
+      "speaker": "SPEAKER_01",
+      "text": " That is more than we planned for.",
+      "words": [
+        { "word": "That", "start": 5.62, "end": 5.9, "score": 0.93, "speaker": "SPEAKER_01" },
+        { "word": "is", "start": 5.4, "end": 5.58, "score": 0.71, "speaker": "SPEAKER_01" },
+        { "word": "more", "start": 6.3, "end": 6.62, "score": 0.95, "speaker": "SPEAKER_01" },
+        { "word": "than", "start": 6.66, "end": 6.92, "score": 0.89 },
+        { "word": "we", "start": 6.96, "end": 7.14, "score": 0.9, "speaker": "" },
+        { "word": "planned", "end": 8.6, "score": 0.87, "speaker": "SPEAKER_01" },
+        { "word": "for.", "start": 8.64, "end": 9.2, "score": 0.92, "speaker": "SPEAKER_01" }
+      ]
+    },
+    {
+      "start": 9.6,
+      "end": 11.4,
+      "speaker": "SPEAKER_1",
+      "text": " Right.",
+      "words": [
+        { "word": "  ", "start": 9.6, "end": 9.7, "score": 0.5, "speaker": "SPEAKER_1" },
+        { "word": "Right.", "start": 9.8, "end": 11.4, "score": 0.99, "speaker": "SPEAKER_1" }
+      ]
+    }
+  ],
+  "word_segments": []
+}
