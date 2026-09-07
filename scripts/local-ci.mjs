@@ -33,6 +33,10 @@ const GARAGE_HOST_PORT = 56_900;
 const GARAGE_ACCESS_KEY = "GK746d6e696164657600000000";
 const GARAGE_SECRET_KEY =
   "7f5fbe4a561d5196e4422e7fe9b8b8880846f9e153aacd3a142fd3d27f8f2bd2";
+// Every gate resource's name ends in its stamp, `<time>_<pid>`; the pid is
+// how the sweep tells an abandoned run's leftovers from a live run's.
+const GATE_STAMP = /gate-(?:web-|worker-)?[0-9a-z]+_(\d+)$/;
+const WHITESPACE = /\s+/;
 // Three parts from the 12 MB resume fixture; R2's minimum part size.
 const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
 // The resume e2e waits this out before re-selecting the file.
@@ -220,21 +224,74 @@ function dockerLogsTail(name) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
-/** Remove containers and images left by gate runs that never reached their cleanup. */
+/**
+ * The pid of the gate that owns a resource, read off the stamp every gate
+ * resource carries (`<time>_<pid>`), or null when the name has no stamp.
+ */
+function ownerPid(name) {
+  const stamp = GATE_STAMP.exec(name);
+  return stamp ? Number(stamp[1]) : null;
+}
+
+/** True when a process with that pid is alive on this machine. */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+/**
+ * Remove containers and images left by gate runs that never reached their
+ * cleanup, and only those. A second gate on the same machine (two worktrees)
+ * has live containers under the same prefix; sweeping by prefix alone killed
+ * them mid-run (S2 review, I32). Ownership is the pid in the stamp: a resource
+ * whose gate process is still alive is somebody else's and is left alone.
+ */
 function sweepStaleGateRuns() {
   const list = (args) =>
     (spawnSync("docker", args, { encoding: "utf8" }).stdout ?? "")
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-  const containers = list(["ps", "-aq", "--filter", "name=temnia-gate-"]);
+  const stale = (line) => {
+    const [id, name] = line.split(WHITESPACE, 2);
+    const pid = ownerPid(name ?? "");
+    return pid !== null && !processAlive(pid) ? id : null;
+  };
+  const containers = list([
+    "ps",
+    "-a",
+    "--filter",
+    "name=temnia-gate-",
+    "--format",
+    "{{.ID}} {{.Names}}",
+  ])
+    .map(stale)
+    .filter(Boolean);
   if (containers.length > 0) {
     spawnSync("docker", ["rm", "-f", ...containers], { stdio: "ignore" });
   }
   const images = [
-    ...list(["images", "-q", "--filter", "reference=temnia-web:gate-*"]),
-    ...list(["images", "-q", "--filter", "reference=temnia-pipeline:gate-*"]),
-  ];
+    ...list([
+      "images",
+      "--filter",
+      "reference=temnia-web:gate-*",
+      "--format",
+      "{{.ID}} {{.Repository}}:{{.Tag}}",
+    ]),
+    ...list([
+      "images",
+      "--filter",
+      "reference=temnia-pipeline:gate-*",
+      "--format",
+      "{{.ID}} {{.Repository}}:{{.Tag}}",
+    ]),
+  ]
+    .map(stale)
+    .filter(Boolean);
   if (images.length > 0) {
     spawnSync("docker", ["image", "rm", "-f", ...images], { stdio: "ignore" });
   }
