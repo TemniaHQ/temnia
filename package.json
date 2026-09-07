@@ -12,6 +12,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "push:verified": "node scripts/verified-pr.mjs push",
     "services": "docker compose up -d --wait --wait-timeout 300 postgres garage temporal temporal-ui && docker compose up -d garage-cors",
+    "substrate:dump": "pnpm --filter @temnia/legacy-reference dump",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },

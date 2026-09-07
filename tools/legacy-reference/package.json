@@ -1,0 +1,19 @@
+{
+  "name": "@temnia/legacy-reference",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The frozen TypeScript oracle for the substrate parity gate: a copy of the legacy sentence grid and paragraph rules, plus the script that dumps their renderings into the pipeline's fixtures. Never imported by an app or a package.",
+  "type": "module",
+  "scripts": {
+    "dump": "node --experimental-strip-types dump-substrate.ts",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@types/node": "^24",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

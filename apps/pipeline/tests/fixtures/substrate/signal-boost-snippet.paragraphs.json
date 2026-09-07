@@ -1,0 +1,44 @@
+[
+  {
+    "endMs": 17600,
+    "speaker": "0",
+    "startMs": 0,
+    "wordCount": 10,
+    "wordOffset": 0
+  },
+  {
+    "endMs": 48600,
+    "speaker": "1",
+    "startMs": 22000,
+    "wordCount": 15,
+    "wordOffset": 10
+  },
+  {
+    "endMs": 67800,
+    "speaker": "0",
+    "startMs": 52000,
+    "wordCount": 9,
+    "wordOffset": 25
+  },
+  {
+    "endMs": 69400,
+    "speaker": "1",
+    "startMs": 68000,
+    "wordCount": 1,
+    "wordOffset": 34
+  },
+  {
+    "endMs": 69600,
+    "speaker": "0",
+    "startMs": 68200,
+    "wordCount": 1,
+    "wordOffset": 35
+  },
+  {
+    "endMs": 89200,
+    "speaker": "1",
+    "startMs": 69800,
+    "wordCount": 11,
+    "wordOffset": 36
+  }
+]

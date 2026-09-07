@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - tools/*
 
 # Refuse to install package versions published less than 24h ago: the window
 # in which most compromised npm releases are detected and unpublished.
