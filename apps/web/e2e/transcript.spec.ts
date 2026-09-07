@@ -396,12 +396,14 @@ test("a transcription that cannot succeed says so and offers a retry", async ({
 
   // `TranscriptContractError` is terminal in transcription/runner.py, so there
   // is no ladder to wait out: the workflow writes the failure to the row after
-  // the first attempt, and the tab's next poll reads it.
+  // the first attempt, and the tab's next poll reads it. The words name what
+  // happened, an unusable result, rather than blaming the service's
+  // availability for it (S2 review, I23).
   await expect(tab).toHaveAttribute("data-state", "failed", {
     timeout: FAILURE_TIMEOUT_MS,
   });
   await expect(tab).toContainText(
-    "Transcription failed: the transcription service was unavailable."
+    "The transcription service returned an unusable result."
   );
   expect(complaints).toEqual([]);
 
