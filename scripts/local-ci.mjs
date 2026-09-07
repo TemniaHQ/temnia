@@ -39,6 +39,11 @@ const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
 const GATE_ADOPT_GRACE_SECONDS = 2;
 // Where the worker container sees the repository's recorded engine responses.
 const GATE_RECORDINGS_DIR = "/var/lib/temnia/recordings";
+// The substrate's model weights: about a gigabyte, downloaded once per machine
+// into the repository's ignored .cache/. The gate runs the tests that load them
+// (TEMNIA_MODEL_TESTS), because a segmenter that only runs when someone
+// remembers to set a variable is a segmenter nobody is holding to anything.
+const GATE_MODELS_DIR = resolve(ROOT, ".cache/temnia-models");
 const STAGES = [
   "pnpm install --frozen-lockfile",
   "pnpm check",
@@ -46,7 +51,7 @@ const STAGES = [
   "contracts: schemas:check + pipeline contracts:check",
   "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
-  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end)",
+  "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
   "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
 ];
@@ -258,6 +263,8 @@ async function runFullGate(sha) {
       CI: "1",
       LOCAL_CI: "1",
       MIGRATE_DATABASE_URL: ownerUrl,
+      TEMNIA_MODEL_TESTS: "1",
+      TEMNIA_MODELS_DIR: GATE_MODELS_DIR,
       TEMPORAL_ADDRESS: "127.0.0.1:56233",
       TEST_DATABASE_URL: ownerUrl,
     };

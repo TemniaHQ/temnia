@@ -3,14 +3,34 @@
   "extends": ["//"],
   "tasks": {
     "lint": {
-      "inputs": ["src/**", "tests/**", "pyproject.toml", "uv.lock"]
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "scripts/**",
+        "pyproject.toml",
+        "uv.lock"
+      ]
     },
     "typecheck": {
-      "inputs": ["src/**", "tests/**", "pyproject.toml", "uv.lock"]
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "scripts/**",
+        "pyproject.toml",
+        "uv.lock"
+      ]
     },
     "test": {
-      "inputs": ["src/**", "tests/**", "pyproject.toml", "uv.lock"],
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "scripts/**",
+        "pyproject.toml",
+        "uv.lock"
+      ],
       "env": [
+        "TEMNIA_MODELS_DIR",
+        "TEMNIA_MODEL_TESTS",
         "TEMPORAL_ADDRESS",
         "TEMPORAL_NAMESPACE",
         "TEMPORAL_TASK_QUEUE",

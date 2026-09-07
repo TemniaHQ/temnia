@@ -12,6 +12,15 @@ COPY pyproject.toml uv.lock .python-version ./
 # Dependencies first: this layer survives source-only changes.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
+# The substrate's models, baked in so the worker never downloads during a
+# request on staging. Before the source copy on purpose: this layer depends on
+# the lock file alone, so editing Python does not re-fetch a gigabyte of
+# weights. scripts/fetch_models.py imports nothing from the package for the
+# same reason, and tests/test_substrate_models_fetch.py holds the two lists
+# together.
+ENV TEMNIA_MODELS_DIR=/opt/temnia-models
+COPY scripts/fetch_models.py ./scripts/
+RUN /app/.venv/bin/python scripts/fetch_models.py
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -27,9 +36,16 @@ RUN useradd --system --create-home --uid 10001 temnia \
   && mkdir -p /var/lib/temnia/work && chown temnia:temnia /var/lib/temnia/work
 WORKDIR /app
 COPY --from=builder --chown=temnia:temnia /app /app
+COPY --from=builder --chown=temnia:temnia /opt/temnia-models /opt/temnia-models
+# HF_HUB_OFFLINE turns a missing or renamed model into a loud failure at load
+# instead of a silent gigabyte pulled from the internet inside an activity.
 ENV PATH=/app/.venv/bin:${PATH} \
     PYTHONUNBUFFERED=1 \
-    PIPELINE_WORK_DIR=/var/lib/temnia/work
+    PIPELINE_WORK_DIR=/var/lib/temnia/work \
+    TEMNIA_MODELS_DIR=/opt/temnia-models \
+    HF_HOME=/opt/temnia-models \
+    HF_HUB_OFFLINE=1 \
+    TOKENIZERS_PARALLELISM=false
 USER temnia
 VOLUME ["/var/lib/temnia/work"]
 CMD ["python", "-m", "temnia_pipeline.worker"]
