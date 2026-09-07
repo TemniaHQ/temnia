@@ -106,9 +106,14 @@ def test_the_transcription_function_asks_for_both_secrets_and_the_model_volume()
     assert modal_app.MODEL_DIR == "/models"
 
 
-def test_torch_comes_from_the_pytorch_index_matching_the_image_cuda() -> None:
-    """The PyPI wheel would bring a second copy of the CUDA libraries the image has."""
-    assert "cu124" in modal_app.TORCH_INDEX
+def test_torch_comes_from_a_pytorch_index_that_carries_torch_2_8() -> None:
+    """The cu124 index stops at torch 2.6 and whisperx needs 2.8 (found on 2026-09-07).
+
+    The wheels bundle their own CUDA libraries, so the index only has to carry
+    the pinned version; pinning it keeps a second copy from arriving via PyPI.
+    """
+    assert modal_app.TORCH_INDEX.startswith("https://download.pytorch.org/whl/cu")
+    assert "cu124" not in modal_app.TORCH_INDEX
     assert all(
         package.startswith(("torch==", "torchaudio==")) for package in modal_app.TORCH_PACKAGES
     )
