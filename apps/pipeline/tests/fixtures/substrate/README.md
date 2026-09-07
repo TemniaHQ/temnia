@@ -2,7 +2,8 @@
 
 Each source here is one `<name>.transcript.json` (a `TranscriptV1`) plus an
 optional `<name>.shots.json` (the shot grid `derive.write_shots` writes to
-`shots/shots.json`). Everything else is generated:
+`shots/shots.json`) and an optional `<name>.gold.json` (reference boundaries).
+Everything else is generated:
 
 | File | What it is |
 |---|---|
@@ -44,7 +45,25 @@ why the chain is parameterised over the directory rather than over a list.
 | `speech-40s` | The normaliser's output for `apps/web/e2e/fixtures/speech-40s.mp4`: two machine voices, seven turns, real pauses. Its `shots.json` is what the ingest actually produced for that file (a `testsrc` picture has no cuts, so the list is honestly empty). |
 | `signal-boost-snippet` | The legacy eval fixture `evals/fixtures/signal-boost-snippet.json`, converted by `tools/legacy-reference/convert-signal-boost.ts`. Carries one word of crosstalk, so it covers a sentence that tiles across two speakers. |
 | `synthetic-edges` | Hand-built to exercise every rule at once (below). |
+| `two-topics` | Hand-written for the change-point layer: 80 sentences over about 12 minutes, 40 on coaching a rugby forward pack and 40 on compound interest, host and guest. It has a `gold.json` because the one true boundary is known by construction. |
 | `empty` | A ready transcript with no words: empty grids, not an error. |
+
+`two-topics` is written so the boundary is not free. The gap at the join is
+1950 ms, under the legacy rule's 2500 ms paragraph gap, so the pause rule does
+not find it; the speaker changes there, but the speaker changes at forty other
+places too, so a rule that breaks on every turn scores no better at that one.
+A segmenter that finds it has read the words.
+
+## Gold
+
+`<name>.gold.json` is `{"boundariesMs": [...], "chapters": [{"startMs",
+"endMs", "title"?}]}`, both optional. `temnia-eval segment --gold` scores every
+segmenter against it, and without one the runner still reports density and
+inter-segmenter agreement. Three sources of gold are planned, in order of
+arrival: creator chapters on the recorded episodes if they have them, a manual
+annotation in the cutting room once S5 exists, and then every accepted or
+nudged boundary from the cutting room. `two-topics` has gold because it was
+constructed around one boundary; nothing here is a substitute for a real one.
 
 `synthetic-edges` covers, in order: a one-word sentence; a pause of 690 ms (just
 under the 700 ms glyph) and one of 701 ms (just over); a sentence whose speaker

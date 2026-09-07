@@ -57,6 +57,24 @@ def configure_model_cache(models_dir: Path | None = None) -> Path:
     return root
 
 
+def prime_skops() -> None:
+    """Import `skops.io` before anything imports `transformers`.
+
+    `skops` enumerates the trusted types of every imported module when it is
+    first imported. If `transformers` is already in the process it walks that
+    too and touches its lazy vision submodules, one of which imports
+    `torchvision` at module level — a package the pipeline deliberately does
+    not install to run two text models. wtpsplit guards against this by
+    importing skops before transformers in its own `__init__`, which only
+    works when wtpsplit gets there first: loading `sentence-transformers` and
+    then wtpsplit in one process raises `ModuleNotFoundError: torchvision`
+    (verified 2026-09-07 on wtpsplit 2.2.1, transformers 5.16.1, skops 0.14).
+    The eval runner loads both, in whichever order the rows are given, so
+    every loader here primes skops first and the order stops mattering.
+    """
+    import skops.io  # noqa: F401, PLC0415  # pyright: ignore[reportMissingTypeStubs, reportUnusedImport]
+
+
 def library_version(name: str) -> str:
     """The installed version of a distribution, for provenance.
 
@@ -98,6 +116,7 @@ def load_sat(
     is checked here rather than inside the model's own error.
     """
     configure_model_cache(models_dir)
+    prime_skops()
     if (style_or_domain is None) != (language is None):
         msg = (
             "a Segment-any-Text adapter needs style_or_domain and language together; "
@@ -159,6 +178,7 @@ class TextEncoder(Protocol):
 def load_encoder(name: str, *, models_dir: Path | None = None) -> TextEncoder:
     """Load a sentence-embedding model onto the CPU."""
     configure_model_cache(models_dir)
+    prime_skops()
     from sentence_transformers import (  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs]
         SentenceTransformer,
     )

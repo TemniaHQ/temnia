@@ -32,6 +32,7 @@ it("re-dumps every fixture byte for byte", () => {
     "signal-boost-snippet",
     "speech-40s",
     "synthetic-edges",
+    "two-topics",
   ]);
 
   expect(dumpAll(FIXTURE_DIR, OUT)).toEqual(names);

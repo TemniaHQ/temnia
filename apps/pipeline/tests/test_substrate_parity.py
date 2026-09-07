@@ -31,7 +31,13 @@ NAMES = sorted(
 
 
 def test_the_fixture_set_is_the_one_the_oracle_dumped() -> None:
-    assert NAMES == ["empty", "signal-boost-snippet", "speech-40s", "synthetic-edges"]
+    assert NAMES == [
+        "empty",
+        "signal-boost-snippet",
+        "speech-40s",
+        "synthetic-edges",
+        "two-topics",
+    ]
 
 
 def load(name: str) -> tuple[TranscriptV1, list[int]]:
