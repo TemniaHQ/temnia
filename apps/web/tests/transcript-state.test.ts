@@ -119,6 +119,24 @@ describe("transcriptState", () => {
     ).toBe("processing");
   });
 
+  it("never reads a clock the server does not have: now 0 is not stalled", () => {
+    // The panel holds `now` at zero until an effect has run, so the server and
+    // the first client render choose the same state for the same row. A stall
+    // decided from a real clock during SSR would be a text mismatch, and on a
+    // production build that is React #418 and a regenerated tree.
+    expect(
+      transcriptState({
+        now: 0,
+        row: row({
+          heartbeatAt: new Date(NOW - STALL_AFTER_MS - 1).toISOString(),
+          stage: "transcribe",
+          status: "processing",
+        }),
+        sourceStatus: "ready",
+      }).kind
+    ).toBe("processing");
+  });
+
   it("is processing when no heartbeat has been written yet", () => {
     expect(state({ heartbeatAt: null, status: "processing" }).kind).toBe(
       "processing"

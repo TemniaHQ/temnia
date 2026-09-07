@@ -2,6 +2,8 @@
 
 import { VideoPlayer } from "@videojs/react/video";
 import dynamic from "next/dynamic";
+import type { ReactNode } from "react";
+import { SourceTimestamp } from "@/components/sources/source-timestamp";
 import { TranscriptPanel } from "@/components/sources/transcript-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -86,7 +88,15 @@ export function SourceWorkspace({
   transcript,
   transcriptUrl,
 }: SourceWorkspaceProps) {
-  const rows: [string, string][] = [
+  // The one row that is not a string: an absolute instant belongs to the
+  // reader's time zone, which only the browser knows, so it renders itself in
+  // two phases rather than making the server guess (`SourceTimestamp`).
+  const readyAt: ReactNode = source.readyAt ? (
+    <SourceTimestamp iso={source.readyAt} />
+  ) : (
+    "—"
+  );
+  const rows: [string, ReactNode][] = [
     ["Status", statusLabel(source)],
     ["Duration", formatDuration(source.durationMs)],
     [
@@ -102,7 +112,7 @@ export function SourceWorkspace({
         : "—",
     ],
     ["Master", `${source.originalFilename} · ${formatBytes(source.sizeBytes)}`],
-    ["Ready", source.readyAt ? new Date(source.readyAt).toLocaleString() : "—"],
+    ["Ready", readyAt],
     ["Uploaded in", formatElapsed(source.createdAt, source.uploadedAt)],
     ["Ingested in", formatElapsed(source.uploadedAt, source.readyAt)],
   ];

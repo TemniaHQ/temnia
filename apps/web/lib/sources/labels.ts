@@ -68,6 +68,25 @@ export function formatElapsed(from: string | null, to: string | null): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+/**
+ * An instant in UTC, built from its own fields rather than through `Intl`.
+ *
+ * This is the form the server renders and the form the browser renders once,
+ * on hydration, so the two agree: it depends on neither the time zone nor the
+ * locale nor the ICU version of whatever renders it. `SourceTimestamp` puts
+ * the reader's own zone in its place after mount.
+ */
+export function formatUtcTimestamp(iso: string): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) {
+    return "—";
+  }
+  const date = new Date(at);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+  return `${day} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+}
+
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
