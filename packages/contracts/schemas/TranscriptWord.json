@@ -562,17 +562,9 @@
       ],
       "additionalProperties": false,
       "title": "TranscriptWord"
-    },
-    "WordTiming": {
-      "$id": "#/$defs/WordTiming",
-      "type": "string",
-      "enum": [
-        "aligned",
-        "interpolated"
-      ],
-      "title": "WordTiming"
     }
   },
-  "$id": "contracts.json",
+  "$id": "TranscriptWord.json",
+  "$ref": "#/$defs/TranscriptWord",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

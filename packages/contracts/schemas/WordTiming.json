@@ -573,6 +573,7 @@
       "title": "WordTiming"
     }
   },
-  "$id": "contracts.json",
+  "$id": "WordTiming.json",
+  "$ref": "#/$defs/WordTiming",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }
