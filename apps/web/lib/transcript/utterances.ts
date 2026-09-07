@@ -41,9 +41,14 @@ export function wordsByUtterance(
   const groups: number[][] = utterances.map(() => []);
   let turn = 0;
   for (const [index, word] of words.entries()) {
+    // Advanced on the next turn's start, not on this turn's end. A turn ends
+    // at its last word's `endMs`, and the next speaker's first word can begin
+    // on exactly that millisecond; a test against the end leaves that word in
+    // the turn before it and sends a speaker reassignment to the wrong words.
     while (
       turn < utterances.length - 1 &&
-      word.startMs > (utterances[turn]?.endMs ?? 0)
+      word.startMs >=
+        (utterances[turn + 1]?.startMs ?? Number.POSITIVE_INFINITY)
     ) {
       turn += 1;
     }

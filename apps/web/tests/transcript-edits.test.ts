@@ -7,7 +7,10 @@
 import { type TranscriptV1, TranscriptV1Schema } from "@temnia/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyEdits, EditsSchema } from "@/lib/transcript/edits";
-import { wordsByUtterance } from "@/lib/transcript/utterances";
+import {
+  deriveUtterances,
+  wordsByUtterance,
+} from "@/lib/transcript/utterances";
 import speech from "./fixtures/speech-40s.transcript.json" with {
   type: "json",
 };
@@ -78,6 +81,32 @@ describe("a speaker reassignment", () => {
     }
     expect(content.speakers).toEqual(["0"]);
     expect(content.utterances).toHaveLength(1);
+  });
+
+  it("keeps a word that starts on the previous turn's last millisecond", () => {
+    // Two speakers with no silence between them: the second turn's first word
+    // begins exactly when the first turn ends. Grouping on the turn's end
+    // leaves that word in the turn before it, and the reassignment then
+    // rewrites a word belonging to somebody else.
+    const words: TranscriptV1["words"] = [
+      {
+        confidence: 1,
+        endMs: 800,
+        speaker: "0",
+        startMs: 0,
+        text: "one",
+        timing: "aligned",
+      },
+      {
+        confidence: 1,
+        endMs: 1200,
+        speaker: "1",
+        startMs: 800,
+        text: "two",
+        timing: "aligned",
+      },
+    ];
+    expect(wordsByUtterance(words, deriveUtterances(words))).toEqual([[0], [1]]);
   });
 
   it("refuses a turn the revision does not have", () => {
