@@ -1,0 +1,8 @@
+{
+  "_note": "Not a transcription. A recording carrying `_failure` fails the run with that message instead of finishing, which is how the transcript tab's Retrying and Failed states are driven by a fixture rather than by breaking something real. `TranscriptionProviderFailure` is classified retryable by transcription/runner.py, so the row parks at processing/retrying between attempts and reaches failed after the last one, which is exactly the sequence apps/web/e2e/transcript.spec.ts asserts. Selected by `_durationMs`: it is the duration of apps/web/e2e/fixtures/master-24s.mp4, the synthetic master that has no speech in it and so has nothing to transcribe anyway.",
+  "_durationMs": 24000,
+  "_failure": "TranscriptionProviderFailure: the transcription service is unavailable",
+  "language": "en",
+  "segments": [],
+  "word_segments": []
+}

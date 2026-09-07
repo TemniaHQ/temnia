@@ -145,7 +145,11 @@ function ParagraphRow({
           {formatDuration(paragraph.startMs)}
         </span>
       </div>
-      <p className="flex-1 text-pretty leading-7">{spoken}</p>
+      {/* A div, not a <p>: the inline word editor is a registry InputGroup and
+          that is a <div>. A <div> inside a <p> is closed by the parser, which
+          would be a hydration mismatch on the production build rather than a
+          layout quirk (the S1 React #418 lesson). */}
+      <div className="flex-1 text-pretty leading-7">{spoken}</div>
     </div>
   );
 }

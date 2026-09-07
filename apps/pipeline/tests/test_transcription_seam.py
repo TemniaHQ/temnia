@@ -32,6 +32,7 @@ from temnia_pipeline.transcription import (
 )
 from temnia_pipeline.transcription.factory import make_transcription
 from temnia_pipeline.transcription.recorded import (
+    DURATION_TOLERANCE_MS,
     STAGES,
     RecordedProvider,
     RecordingNotFoundError,
@@ -89,12 +90,21 @@ def settings(directory: Path, recording: Path | None = None) -> TranscriptionSet
     )
 
 
-def write_recording(directory: Path, name: str, sha: str | None, language: str = "en") -> Path:
+def write_recording(
+    directory: Path,
+    name: str,
+    sha: str | None,
+    *,
+    language: str = "en",
+    marks: Mapping[str, object] | None = None,
+) -> Path:
+    """A one-word WhisperX response, plus whatever `marks` the case needs."""
     path = directory / name
     path.write_text(
         json.dumps(
             {
                 "_audioSha256": sha,
+                **(marks or {}),
                 "language": language,
                 "segments": [
                     {
@@ -167,6 +177,30 @@ class TestFindingARecording:
         assert AUDIO_SHA in str(caught.value)
         assert str(tmp_path) in str(caught.value)
 
+    def test_the_duration_is_the_last_resort_and_the_checksum_still_wins(
+        self, tmp_path: Path
+    ) -> None:
+        """Two fixtures, two outcomes, in one developer run: what the duration is for."""
+        write_recording(
+            tmp_path, "byduration.json", sha=None, language="de", marks={"_durationMs": 24_000}
+        )
+        write_recording(
+            tmp_path, "bysha.json", sha=AUDIO_SHA, language="fr", marks={"_durationMs": 24_000}
+        )
+        assert find_recording(settings(tmp_path), AUDIO_SHA, 24_000)["language"] == "fr"
+        assert find_recording(settings(tmp_path), "b" * 64, 24_000)["language"] == "de"
+
+    def test_a_duration_outside_the_tolerance_is_not_a_match(self, tmp_path: Path) -> None:
+        write_recording(tmp_path, "byduration.json", sha=None, marks={"_durationMs": 24_000})
+        assert find_recording(settings(tmp_path), "b" * 64, 24_000 + DURATION_TOLERANCE_MS)
+        with pytest.raises(RecordingNotFoundError):
+            find_recording(settings(tmp_path), "b" * 64, 24_000 + DURATION_TOLERANCE_MS + 1)
+
+    def test_a_duration_is_not_consulted_when_the_job_has_none(self, tmp_path: Path) -> None:
+        write_recording(tmp_path, "byduration.json", sha=None, marks={"_durationMs": 24_000})
+        with pytest.raises(RecordingNotFoundError):
+            find_recording(settings(tmp_path), "b" * 64)
+
 
 class TestTheRecordedProvider:
     async def test_it_names_itself_and_never_claims_a_gpu_model(self, tmp_path: Path) -> None:
@@ -203,6 +237,30 @@ class TestTheRecordedProvider:
                 break
         assert seen[: len(STAGES)] == list(STAGES)
         assert status.raw.language == "en"
+
+    async def test_a_recording_marked_failed_fails_the_run_after_its_stages(
+        self, tmp_path: Path
+    ) -> None:
+        """How the surface's failed and retrying states are driven by a fixture."""
+        chosen = write_recording(
+            tmp_path,
+            "unavailable.json",
+            sha=None,
+            marks={
+                "_failure": (
+                    "TranscriptionProviderFailure: the transcription service is unavailable"
+                )
+            },
+        )
+        provider = RecordedProvider(settings(tmp_path, chosen), store())
+        handle = await provider.start(JOB)
+        for _ in STAGES:
+            assert isinstance(await provider.status(handle), Running)
+        status = await provider.status(handle)
+        assert isinstance(status, Failed)
+        # Retryable, so the row parks at retrying between attempts rather than
+        # flashing Failed, which is the state the tab has words for.
+        assert classify(status.message).non_retryable is not True
 
     async def test_an_unknown_handle_is_unknown_not_a_crash(self, tmp_path: Path) -> None:
         provider = RecordedProvider(settings(tmp_path), store())

@@ -226,18 +226,21 @@ gate replays what WhisperX actually emits rather than what we guessed it emits.
      --endpoint-url "$STORAGE_ENDPOINT"
    ```
 
-3. Add the two fields the recorded provider and the reader need, keeping everything else byte for
+3. Add the three fields the recorded provider and the reader need, keeping everything else byte for
    byte as the engine wrote it (including any bare `NaN` alignment score, which is real and which
    `normalize.py` turns into a null confidence):
 
    - `"_note"`: that this is a real recording, from which commit and which date.
+   - `"_durationMs"`: `40116`, the probed duration of `speech-40s.mp4`. **This is the field the gate
+     matches on**, because it does not move when the pipeline image's ffmpeg is bumped.
    - `"_audioSha256"`: the sha256 of the audio extract it was made from. The worker logs it, and the
-     provider's failure message repeats it; it is only used when no `TRANSCRIPTION_RECORDING` path
-     is set, so the gate does not depend on it.
+     provider's failure message repeats it. It is tried before the duration, so a recording made
+     against one specific stored object still wins; the gate does not depend on it, because the
+     extract is re-encoded by whichever ffmpeg the image carries and the checksum moves with it.
 
-4. Re-run the gate. `pnpm ci:local` pins `TRANSCRIPTION_RECORDING` at that file, so the recording is
-   chosen by path and not by checksum: the extract is re-encoded by whichever ffmpeg the pipeline
-   image carries, and a bumped ffmpeg would change the checksum and stop matching without a word.
+4. Re-run the gate. `pnpm ci:local` sets `TRANSCRIPTION_RECORDINGS_DIR` at the fixtures directory and
+   pins no single file: the transcript e2e drives `speech-40s.mp4` to Ready and `master-24s.mp4` to
+   Failed in the same run, and each is matched by the duration its recording declares.
 
 5. Update the word count in `apps/pipeline/tests/test_transcription_normalize.py` and regenerate
    `apps/web/tests/fixtures/speech-40s.transcript.json`, which is that response put through the

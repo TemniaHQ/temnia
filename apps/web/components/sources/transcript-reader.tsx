@@ -414,6 +414,10 @@ export function TranscriptReader({
           {(["srt", "vtt"] as const).map((format) => (
             <Button
               key={format}
+              // An anchor, so the browser downloads rather than posts, and
+              // `nativeButton` off because Base UI otherwise expects a real
+              // <button> here and says so.
+              nativeButton={false}
               render={
                 <a
                   data-testid={`transcript-${format}`}

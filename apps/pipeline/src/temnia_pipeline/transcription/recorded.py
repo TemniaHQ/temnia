@@ -15,6 +15,16 @@ Selecting a recording:
 2. otherwise the audio object is fetched and hashed, and the recordings
    directory is searched for a file whose `_audioSha256` is that hash. That is
    the path for recording against a specific stored object by hand.
+3. failing that, a recording whose `_durationMs` is within a second of the
+   job's probed duration. It is the coarsest of the three and the last one
+   tried, and it exists because a developer's run needs two different fixtures
+   to reach two different outcomes at once, which one path override cannot do
+   and a committed checksum cannot survive an ffmpeg bump.
+
+A recording may carry `_failure`, a `TypeName: message` string. The run then
+walks its stages and fails with that message instead of finishing, which is
+how the surface's failed and retrying states are driven by a fixture rather
+than by breaking something real.
 
 A run with no recording fails loudly, naming the checksum and the directory,
 because the alternative is a gate that passes with no transcript at all.
@@ -32,6 +42,7 @@ import obstore as obs
 
 from temnia_pipeline.transcription import (
     Done,
+    Failed,
     Running,
     TranscribeJob,
     TranscribeRaw,
@@ -53,6 +64,13 @@ NAME = "recorded"
 MODEL = "recorded"
 VERSION = "1"
 AUDIO_SHA_FIELD = "_audioSha256"
+DURATION_FIELD = "_durationMs"
+FAILURE_FIELD = "_failure"
+
+# A probe reads the container's duration and the recording names the same
+# figure; a second of slack covers a re-encoded fixture, and is far tighter
+# than the gap between any two fixtures in this repository.
+DURATION_TOLERANCE_MS = 1000
 
 # The stages a run walks through, in order. The recorded provider hands out one
 # per poll so the surface, the progress row, and the Playwright specs all see a
@@ -72,20 +90,34 @@ def _load(path: Path) -> dict[str, Any]:
     return loaded  # pyright: ignore[reportUnknownVariableType]
 
 
-def find_recording(settings: TranscriptionSettings, audio_sha256: str) -> dict[str, Any]:
-    """The recording for this audio, by explicit path or by checksum."""
+def _matches_duration(recorded: dict[str, Any], duration_ms: int | None) -> bool:
+    declared = recorded.get(DURATION_FIELD)
+    if duration_ms is None or not isinstance(declared, int):
+        return False
+    return abs(declared - duration_ms) <= DURATION_TOLERANCE_MS
+
+
+def find_recording(
+    settings: TranscriptionSettings, audio_sha256: str, duration_ms: int | None = None
+) -> dict[str, Any]:
+    """The recording for this audio, by explicit path, by checksum, or by duration."""
     if settings.recording is not None:
         if not settings.recording.exists():
             msg = f"TRANSCRIPTION_RECORDING points at {settings.recording}, which does not exist"
             raise RecordingNotFoundError(msg)
         return _load(settings.recording)
     directory = settings.recordings_dir
+    loaded: list[tuple[str, dict[str, Any]]] = []
     if directory.is_dir():
-        for candidate in sorted(directory.glob("*.json")):
-            recorded = _load(candidate)
-            if recorded.get(AUDIO_SHA_FIELD) == audio_sha256:
-                log.info("replaying %s for audio %s", candidate.name, audio_sha256[:12])
-                return recorded
+        loaded = [(path.name, _load(path)) for path in sorted(directory.glob("*.json"))]
+    for name, recorded in loaded:
+        if recorded.get(AUDIO_SHA_FIELD) == audio_sha256:
+            log.info("replaying %s for audio %s", name, audio_sha256[:12])
+            return recorded
+    for name, recorded in loaded:
+        if _matches_duration(recorded, duration_ms):
+            log.info("replaying %s for a %s ms recording", name, duration_ms)
+            return recorded
     msg = (
         f"no recorded transcription for audio sha256 {audio_sha256}. Add a WhisperX "
         f'response with "{AUDIO_SHA_FIELD}": "{audio_sha256}" to {directory}, or set '
@@ -111,10 +143,11 @@ async def audio_sha256(store: S3Store, key: str) -> str:
 class _Run:
     """One replayed run: where it has got to, and what it will answer with."""
 
-    __slots__ = ("polls", "raw", "started")
+    __slots__ = ("failure", "polls", "raw", "started")
 
-    def __init__(self, raw: TranscribeRaw) -> None:
+    def __init__(self, raw: TranscribeRaw, failure: str | None) -> None:
         self.raw = raw
+        self.failure = failure
         self.polls = 0
         self.started = time.monotonic()
 
@@ -145,19 +178,20 @@ class RecordedProvider:
     async def start(self, job: TranscribeJob) -> str:
         """Fetch and hash the audio, find its recording, and hold it for the poller."""
         sha = await audio_sha256(self.store, job.audio_key)
-        recorded = find_recording(self.settings, sha)
+        recorded = find_recording(self.settings, sha, job.duration_ms)
         language = recorded.get("language")
         raw = TranscribeRaw(
             raw=recorded,
             raw_key=None,
             language=str(language) if isinstance(language, str) and language else "en",
         )
+        failure = recorded.get(FAILURE_FIELD)
         handle = f"rec-{job.attempt}-{sha[:16]}"
-        self._runs[handle] = _Run(raw)
+        self._runs[handle] = _Run(raw, str(failure) if isinstance(failure, str) else None)
         return handle
 
     async def status(self, handle: str) -> RunStatus:
-        """Running for one poll per stage, then the recording."""
+        """Running for one poll per stage, then the recording, or its failure."""
         run = self._runs.get(handle)
         if run is None:
             # A worker restart loses the in-memory run. Unknown is the honest
@@ -166,6 +200,11 @@ class RecordedProvider:
         if run.polls < len(STAGES):
             run.polls += 1
             return Running()
+        if run.failure is not None:
+            # The runner classifies this the way it classifies a real one, so a
+            # recording decides between the retrying and the failed states by
+            # naming an exception type and nothing else changes.
+            return Failed(run.failure)
         return Done(run.raw)
 
     async def progress(self, handle: str) -> TranscriptionProgress | None:

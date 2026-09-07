@@ -317,22 +317,21 @@ async function runFullGate(sha) {
       `TEMPORAL_NAMESPACE=${namespace}`,
       "-e",
       `PIPELINE_DATABASE_URL=postgres://temnia_pipeline:temnia_pipeline@postgres:5432/${database}`,
-      // The gate encodes with the image's own ffmpeg and replays a recorded
-      // WhisperX response. No Modal call in CI, ever; both are explicit rather
+      // The gate encodes with the image's own ffmpeg and replays recorded
+      // WhisperX responses. No Modal call in CI, ever; both are explicit rather
       // than left to the defaults so a change to a default cannot quietly point
       // the gate at a GPU that costs money.
       "-e",
       "TRANSCODE_BACKEND=local",
       "-e",
       "TRANSCRIPTION_PROVIDER=recorded",
+      // The directory, not a pinned file: the transcript e2e drives two
+      // fixtures to two different outcomes in one run, which one pinned file
+      // cannot do. Each recording is matched on the duration it declares, which
+      // a bumped ffmpeg does not move — unlike the sha256 of the re-encoded
+      // audio extract, which is why the pin was here to begin with.
       "-e",
       `TRANSCRIPTION_RECORDINGS_DIR=${GATE_RECORDINGS_DIR}`,
-      // The path override, not the checksum lookup: the recorded provider keys
-      // on the sha256 of the audio extract, and the extract is re-encoded by
-      // whichever ffmpeg the image carries, so a bumped ffmpeg would change the
-      // checksum and stop matching without a word.
-      "-e",
-      `TRANSCRIPTION_RECORDING=${GATE_RECORDINGS_DIR}/speech-40s.whisperx.json`,
       // Read-only: the fixtures are the repository's, and the worker only reads
       // them. They are not baked into the image, which carries no tests.
       "-v",

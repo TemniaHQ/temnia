@@ -2,6 +2,7 @@
   "_note": "Hand-authored, not recorded. This is a WhisperX 3.8.6 response in the shape the deployed transcribe function returns, written for apps/web/e2e/fixtures/speech-40s.mp4 (scripts/make-speech-fixture.mjs) so the normaliser, the cue builder, and the gate have something with real speech in it before a Modal account exists. Word timings follow the measured turn boundaries of that file and are distributed within a turn by word length, so they are plausible rather than observed. Replace it with a real recording once the Modal deployment exists: docs/runbooks/staging.md section 2d.",
   "_audioSha256": null,
   "_source": "apps/web/e2e/fixtures/speech-40s.mp4",
+  "_durationMs": 40116,
   "language": "en",
   "segments": [
     {
