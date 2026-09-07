@@ -51,11 +51,17 @@ it("leaves no committed rendering without a fixture", () => {
   const names = new Set(fixtureNames(FIXTURE_DIR));
   for (const file of readdirSync(FIXTURE_DIR)) {
     const suffix = OUTPUTS.find((candidate) => file.endsWith(candidate));
-    if (suffix) {
-      expect(names, `${file} has no transcript fixture`).toContain(
-        file.slice(0, -suffix.length)
-      );
+    if (!suffix) {
+      continue;
     }
+    const base = file.slice(0, -suffix.length);
+    // `<name>.layers.coarse.txt` and `<name>.layers.fine.txt` are the Python
+    // renderer's goldens, not this oracle's. They end in the same two suffixes
+    // and are checked by apps/pipeline/scripts/dump_layers.py --check.
+    if (base.endsWith(".layers")) {
+      continue;
+    }
+    expect(names, `${file} has no transcript fixture`).toContain(base);
   }
 });
 
