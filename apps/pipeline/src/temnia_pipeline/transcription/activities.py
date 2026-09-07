@@ -52,6 +52,16 @@ def workflow_id() -> str:
     return activity.info().workflow_id or "unknown"
 
 
+def run_id() -> str:
+    """The running workflow's run id: the identity every write of this run is fenced on.
+
+    The workflow id is the same for every run of one source (the web's Retry
+    starts the same id), so it cannot tell a retry of this run's claim from a
+    later run's. The run id can.
+    """
+    return activity.info().workflow_run_id or "unknown"
+
+
 def resume_handle() -> str | None:
     """The provider handle the last heartbeat carried, if there was one.
 
@@ -84,7 +94,9 @@ class Transcribe:
     async def _progress(self, request: TranscribeInput, stage: str, percent: int | None) -> None:
         try:
             async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
-                await db.report_transcription_progress(conn, request.sourceId, stage, percent)
+                await db.report_transcription_progress(
+                    conn, request.sourceId, stage, percent, run_id()
+                )
         except Exception:
             log.warning("transcript progress write failed", exc_info=True)
 
@@ -93,7 +105,15 @@ class Transcribe:
         """Insert or claim the transcript row; 0 when another run owns it."""
         async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
             return await db.claim_transcription(
-                conn, request.sourceId, request.scope.organizationId, workflow_id()
+                conn, request.sourceId, request.scope.organizationId, workflow_id(), run_id()
+            )
+
+    @activity.defn(name="mark_transcript_unavailable")
+    async def mark_transcript_unavailable(self, request: TranscribeInput, message: str) -> None:
+        """The ingest's word that no transcription run is coming, and why."""
+        async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
+            await db.mark_transcript_unavailable(
+                conn, request.sourceId, request.scope.organizationId, message
             )
 
     @activity.defn(name="transcribe_source")
@@ -193,13 +213,19 @@ class Transcribe:
 
         body = transcript.model_dump_json().encode()
         async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
-            transcript_id, revision, already = await db.next_transcript_revision(
-                conn, request.sourceId, record.attempt
-            )
+            try:
+                transcript_id, revision, already = await db.next_transcript_revision(
+                    conn, request.sourceId, record.attempt, run_id()
+                )
+            except db.StaleRunError as error:
+                # A later run claimed the row. Nothing of this run may land on
+                # it; the failure is terminal and the fenced failure write
+                # below is a no-op, so the row stays the later run's.
+                raise ApplicationError(str(error), non_retryable=True, type="StaleRun") from error
             key = revision_key(request.artifactPrefix, revision)
-            # The upload is inside the transaction: one that fails rolls the row
-            # back, and a process killed after it recomputes the same number and
-            # overwrites the same key.
+            # The upload is inside the transaction, which holds the transcript
+            # row lock: one that fails rolls the row back, and a process killed
+            # after it recomputes the same number and overwrites the same key.
             await storage.upload_bytes(self.ctx.store, key, body, "application/json")
             if not already:
                 await db.record_transcript_revision(
@@ -220,6 +246,7 @@ class Transcribe:
                         "gpu": record.gpu,
                         "gpuSeconds": record.gpu_seconds,
                     },
+                    run_id=run_id(),
                 )
         return TranscribeOutput(
             sourceId=request.sourceId,
@@ -246,6 +273,7 @@ class Transcribe:
                 workflow_id=workflow_id(),
                 duration_ms=request.durationMs,
                 revision=result.revision,
+                attempt=record.attempt,
                 detail={
                     "category": "transcription",
                     "attempt": record.attempt,
@@ -262,13 +290,14 @@ class Transcribe:
     async def fail_transcription(self, request: TranscribeInput, message: str) -> None:
         """Record a terminal failure in words safe to show, and clean up."""
         async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
-            await db.fail_transcription(conn, request.sourceId, message)
+            await db.fail_transcription(conn, request.sourceId, message, run_id())
         shutil.rmtree(self._scratch(request), ignore_errors=True)
 
     def activities(self) -> list[Callable[..., Any]]:
         """Everything the worker registers."""
         return [
             self.claim_transcription,
+            self.mark_transcript_unavailable,
             self.transcribe_source,
             self.write_revision,
             self.finalize_transcription,

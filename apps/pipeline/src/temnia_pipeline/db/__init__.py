@@ -155,11 +155,17 @@ async def finalize_source(  # noqa: PLR0913
     scope: Scope,
     source_id: UUID,
     workflow_id: str,
+    run_id: str,
     artifacts: list[ArtifactRecord],
     duration_ms: int,
     processing_seconds: int,
 ) -> int:
     """Insert artifact rows, mark the source ready, and write the ledger entries.
+
+    The processing entry carries an idempotency key of the source and the
+    Temporal run: a retry of this activity after a commit whose acknowledgement
+    was lost inserts nothing, and a re-ingest (a new run) meters again because
+    it was paid for again. The storage entry is a delta and needs no key.
 
     The storage figure is read back from the rows just written (SUM), so the
     per-artifact attribution and the ledger cannot drift. It is metered as a
@@ -236,8 +242,10 @@ async def finalize_source(  # noqa: PLR0913
         )
     await conn.execute(
         """
-        INSERT INTO usage_ledger (organization_id, kind, quantity, source_id, workflow_id, detail)
-        VALUES (%s, 'processing_seconds', %s, %s, %s, %s::jsonb)
+        INSERT INTO usage_ledger
+            (organization_id, kind, quantity, source_id, workflow_id, detail, idempotency_key)
+        VALUES (%s, 'processing_seconds', %s, %s, %s, %s::jsonb, %s)
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
         """,
         (
             scope.organizationId,
@@ -245,6 +253,7 @@ async def finalize_source(  # noqa: PLR0913
             source_id,
             workflow_id,
             json.dumps({"stage": "ingest", "wallSeconds": processing_seconds}),
+            f"processing:{source_id}:{run_id}",
         ),
     )
     return storage_bytes
@@ -263,8 +272,16 @@ async def fail_source(conn: AsyncConnection[dict[str, Any]], source_id: UUID, me
     )
 
 
+class StaleRunError(RuntimeError):
+    """The row belongs to a later run of the same workflow; this one may not write it."""
+
+
 async def claim_transcription(
-    conn: AsyncConnection[dict[str, Any]], source_id: UUID, organization_id: UUID, workflow_id: str
+    conn: AsyncConnection[dict[str, Any]],
+    source_id: UUID,
+    organization_id: UUID,
+    workflow_id: str,
+    run_id: str,
 ) -> int:
     """Insert or claim the source's transcript row; returns the attempt, or 0.
 
@@ -272,6 +289,12 @@ async def claim_transcription(
     or `ready` returns 0, which is what makes a second workflow for the same
     source a no-op rather than a second GPU job; the unique index on
     `source_id` is what the upsert conflicts on.
+
+    Idempotent per run. The claim commits and its acknowledgement can be lost
+    (a worker killed in between), and Temporal then runs the activity again in
+    the same run. That retry finds its own `run_id` on a `processing` row and
+    gets the same attempt back, touching nothing else; without this rule it saw
+    `processing`, returned 0, and stranded the row with no run behind it.
 
     A retry from the web sets a `ready` or `failed` row back to `pending` first,
     so the two rules do not contradict each other: this activity refuses to
@@ -282,20 +305,28 @@ async def claim_transcription(
         await conn.execute(
             """
             INSERT INTO transcript (organization_id, source_id, status, attempts, workflow_id,
-                                    stage, percent, heartbeat_at)
+                                    run_id, stage, percent, heartbeat_at)
             VALUES (%(organization_id)s, %(source_id)s, 'processing', 1, %(workflow_id)s,
-                    'download', NULL, now())
+                    %(run_id)s, 'download', NULL, now())
             ON CONFLICT (source_id) DO UPDATE
-               SET status = 'processing', attempts = transcript.attempts + 1,
-                   workflow_id = %(workflow_id)s, stage = 'download', percent = NULL,
+               SET status = 'processing',
+                   attempts = CASE WHEN transcript.run_id = EXCLUDED.run_id
+                                   THEN transcript.attempts ELSE transcript.attempts + 1 END,
+                   workflow_id = EXCLUDED.workflow_id, run_id = EXCLUDED.run_id,
+                   stage = CASE WHEN transcript.run_id = EXCLUDED.run_id
+                                THEN transcript.stage ELSE 'download' END,
+                   percent = CASE WHEN transcript.run_id = EXCLUDED.run_id
+                                  THEN transcript.percent ELSE NULL END,
                    error_message = NULL, heartbeat_at = now(), updated_at = now()
              WHERE transcript.status IN ('pending', 'failed')
+                OR (transcript.status = 'processing' AND transcript.run_id = EXCLUDED.run_id)
          RETURNING attempts
             """,
             {
                 "organization_id": organization_id,
                 "source_id": source_id,
                 "workflow_id": workflow_id,
+                "run_id": run_id,
             },
         )
     ).fetchone()
@@ -307,20 +338,24 @@ async def report_transcription_progress(
     source_id: UUID,
     stage: str,
     percent: int | None,
+    run_id: str,
 ) -> None:
-    """Best-effort progress, and the heartbeat the surface reads to say "stalled"."""
+    """Best-effort progress, and the heartbeat the surface reads to say "stalled".
+
+    Fenced on the run: a late write from a run that lost the row changes nothing.
+    """
     await conn.execute(
         """
         UPDATE transcript
            SET stage = %s, percent = %s, heartbeat_at = now(), updated_at = now()
-         WHERE source_id = %s AND status = 'processing'
+         WHERE source_id = %s AND status = 'processing' AND run_id = %s
         """,
-        (stage, percent, source_id),
+        (stage, percent, source_id, run_id),
     )
 
 
 async def next_transcript_revision(
-    conn: AsyncConnection[dict[str, Any]], source_id: UUID, attempt: int
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, attempt: int, run_id: str
 ) -> tuple[UUID, int, bool]:
     """The revision this attempt writes: its transcript, its number, and whether it exists.
 
@@ -331,14 +366,24 @@ async def next_transcript_revision(
 
     The number is the next after every revision the transcript has, not the
     attempt number, because a user's corrections write revisions too and a
-    machine re-run must never land on top of one.
+    machine re-run must never land on top of one. The transcript row is locked
+    for the rest of the transaction, so a correction saving at the same moment
+    waits, sees the machine revision as current, and is refused as stale; or it
+    commits first and the machine run computes the number after it. A run that
+    no longer owns the row (a later run claimed it) is told so and writes
+    nothing.
     """
     transcript = await (
-        await conn.execute("SELECT id FROM transcript WHERE source_id = %s", (source_id,))
+        await conn.execute(
+            "SELECT id, run_id FROM transcript WHERE source_id = %s FOR UPDATE", (source_id,)
+        )
     ).fetchone()
     if transcript is None:
         msg = f"no transcript row for source {source_id}"
         raise LookupError(msg)
+    if transcript["run_id"] != run_id:
+        msg = f"transcript for source {source_id} is owned by run {transcript['run_id']!r}"
+        raise StaleRunError(msg)
     transcript_id: UUID = transcript["id"]
     existing = await (
         await conn.execute(
@@ -376,17 +421,20 @@ async def record_transcript_revision(  # noqa: PLR0913
     provider: str,
     model: str,
     metadata: dict[str, Any],
+    run_id: str,
 ) -> None:
-    """Insert the machine revision and mark the transcript ready at it."""
+    """Insert the machine revision and mark the transcript ready at it.
+
+    A plain insert. The number was allocated under the row lock, so a conflict
+    here would mean the lock was not held; it must fail rather than overwrite
+    a correction's row with machine output, which the earlier upsert did.
+    """
     await conn.execute(
         """
         INSERT INTO transcript_revision
             (organization_id, transcript_id, revision, storage_key, size_bytes, kind,
              base_revision, word_count, metadata)
         VALUES (%s, %s, %s, %s, %s, 'machine', NULL, %s, %s::jsonb)
-        ON CONFLICT (transcript_id, revision) DO UPDATE
-           SET storage_key = EXCLUDED.storage_key, size_bytes = EXCLUDED.size_bytes,
-               word_count = EXCLUDED.word_count, metadata = EXCLUDED.metadata
         """,
         (
             organization_id,
@@ -404,9 +452,9 @@ async def record_transcript_revision(  # noqa: PLR0913
            SET current_revision = %s, language = %s, provider = %s, model = %s,
                status = 'ready', ready_at = now(), stage = NULL, percent = NULL,
                error_message = NULL, heartbeat_at = now(), updated_at = now()
-         WHERE id = %s
+         WHERE id = %s AND run_id = %s
         """,
-        (revision, language, provider, model, transcript_id),
+        (revision, language, provider, model, transcript_id, run_id),
     )
 
 
@@ -418,6 +466,7 @@ async def finalize_transcription(  # noqa: PLR0913
     workflow_id: str,
     duration_ms: int,
     revision: int,
+    attempt: int,
     detail: dict[str, Any],
 ) -> int:
     """Meter the run and the bytes it left behind; returns the storage delta.
@@ -425,7 +474,10 @@ async def finalize_transcription(  # noqa: PLR0913
     Two entries. `transcription_seconds` is the audio's own duration, because
     that is the cost driver whatever the engine took in wall time; the GPU
     seconds and the GPU ride along in detail, so dollars per source-hour can be
-    computed from the ledger alone.
+    computed from the ledger alone. It is keyed by source and attempt, so a
+    retry of this activity after a lost acknowledgement inserts nothing and a
+    second engine run (a new attempt) meters again; the review's reproduction
+    of one 60-second run metered as 120 cannot recur.
 
     Storage is a delta against earlier `transcript` entries for this source, the
     same pattern the artifact ledger uses. Revisions are new objects, so the
@@ -434,8 +486,10 @@ async def finalize_transcription(  # noqa: PLR0913
     """
     await conn.execute(
         """
-        INSERT INTO usage_ledger (organization_id, kind, quantity, source_id, workflow_id, detail)
-        VALUES (%s, 'transcription_seconds', %s, %s, %s, %s::jsonb)
+        INSERT INTO usage_ledger
+            (organization_id, kind, quantity, source_id, workflow_id, detail, idempotency_key)
+        VALUES (%s, 'transcription_seconds', %s, %s, %s, %s::jsonb, %s)
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
         """,
         (
             organization_id,
@@ -443,6 +497,7 @@ async def finalize_transcription(  # noqa: PLR0913
             source_id,
             workflow_id,
             json.dumps(detail),
+            f"transcription:{source_id}:{attempt}",
         ),
     )
     stored = await (
@@ -487,15 +542,40 @@ async def finalize_transcription(  # noqa: PLR0913
 
 
 async def fail_transcription(
-    conn: AsyncConnection[dict[str, Any]], source_id: UUID, message: str
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, message: str, run_id: str
 ) -> None:
-    """Terminal failure: the row says why, in words safe to render."""
+    """Terminal failure: the row says why, in words safe to render. Fenced on the run."""
     await conn.execute(
         """
         UPDATE transcript
            SET status = 'failed', error_message = %s, stage = NULL, percent = NULL,
                updated_at = now()
-         WHERE source_id = %s
+         WHERE source_id = %s AND run_id = %s
         """,
-        (message[:2000], source_id),
+        (message[:2000], source_id, run_id),
+    )
+
+
+async def mark_transcript_unavailable(
+    conn: AsyncConnection[dict[str, Any]], source_id: UUID, organization_id: UUID, message: str
+) -> None:
+    """A transcript that never got a run: no audio, or a dispatch that failed.
+
+    Written by the ingest, which owns no transcript run, so it is not fenced on
+    one; instead it refuses to touch a row that is `processing` or `ready`,
+    which belongs to a run or to a finished transcript. The message carries a
+    type name in front (`NoAudioError:`, `DispatchError:`) that the surface
+    classifies, the same rule the runner's failures follow. Without this row the
+    tab said "Queued" for ever.
+    """
+    await conn.execute(
+        """
+        INSERT INTO transcript (organization_id, source_id, status, attempts, error_message)
+        VALUES (%s, %s, 'failed', 0, %s)
+        ON CONFLICT (source_id) DO UPDATE
+           SET status = 'failed', error_message = EXCLUDED.error_message, stage = NULL,
+               percent = NULL, updated_at = now()
+         WHERE transcript.status IN ('pending', 'failed')
+        """,
+        (organization_id, source_id, message[:2000]),
     )

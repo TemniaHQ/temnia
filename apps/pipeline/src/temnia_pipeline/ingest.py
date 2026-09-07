@@ -85,6 +85,11 @@ class Context:
         )
 
 
+def run_id() -> str:
+    """The run's identity, which keys the ledger entry a retry could repeat."""
+    return activity.info().workflow_run_id or "unknown"
+
+
 def workflow_id() -> str:
     """The running workflow's id, for the rows it writes."""
     return activity.info().workflow_id or "unknown"
@@ -403,6 +408,7 @@ class Ingest:
                 scope=request.scope,
                 source_id=request.sourceId,
                 workflow_id=workflow_id(),
+                run_id=run_id(),
                 artifacts=artifacts,
                 duration_ms=probed.durationMs,
                 processing_seconds=processing_seconds,
