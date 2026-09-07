@@ -135,7 +135,7 @@ class Transcribe:
                 job, on_progress=on_progress, resume=resume_handle()
             )
         except ApplicationError as error:
-            await self._mark_retrying(request, error)
+            await self.mark_retrying(request, error)
             raise
 
         raw_key = raw.raw_key or job.raw_key
@@ -152,7 +152,7 @@ class Transcribe:
             call_id=live_handle,
         )
 
-    async def _mark_retrying(self, request: TranscribeInput, error: ApplicationError) -> None:
+    async def mark_retrying(self, request: TranscribeInput, error: ApplicationError) -> None:
         """Park the row at `processing / retrying` when another attempt is coming.
 
         The surface must never flash Failed between two attempts (S2 plan §5).

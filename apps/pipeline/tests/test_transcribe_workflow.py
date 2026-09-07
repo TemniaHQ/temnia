@@ -36,6 +36,7 @@ from temnia_pipeline.settings import (
 )
 from temnia_pipeline.transcription.activities import Transcribe
 from temnia_pipeline.transcription.factory import make_transcription
+from temnia_pipeline.transcription.runner import provider_failure, transcription_failure
 from temnia_pipeline.workflows import TranscribeWorkflow
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from psycopg import AsyncConnection
 
     from temnia_pipeline.transcode import Transcoder
+    from temnia_pipeline.transcription import TranscribeJob
 
 FIXTURES = Path(__file__).parent / "fixtures" / "transcripts"
 RECORDING = FIXTURES / "speech-40s.whisperx.json"
@@ -349,4 +351,137 @@ async def test_a_retry_after_a_reset_writes_the_next_revision(
     assert len(ledger) == 2
     assert ledger[1]["detail"]["revision"] == 2
     assert ledger[1]["quantity"] > 0
+    await db.close_pool()
+
+
+class FlakyProvider:
+    """Fails the way a preempted container does, and watches the row while it does.
+
+    The row's state *between* two attempts is a user-facing state with words of
+    its own ("being retried"), and it is only observable from inside a later
+    attempt, which is what this provider is for.
+    """
+
+    def __init__(self, database_url: str, source_id: uuid.UUID) -> None:
+        self.database_url = database_url
+        self.source_id = source_id
+        self.seen: list[tuple[str, str | None]] = []
+        self.stages: list[str | None] = []
+
+    @property
+    def name(self) -> str:
+        return "flaky"
+
+    @property
+    def model(self) -> str:
+        return "flaky"
+
+    @property
+    def version(self) -> str:
+        return "1"
+
+    async def start(self, job: TranscribeJob) -> str:
+        _ = job
+        async with db.scoped(self.database_url, SEEDED) as conn:
+            row = await transcript_row(conn, self.source_id)
+        self.seen.append((row["status"], row["stage"]))
+        msg = "the container was preempted"
+        raise ConnectionError(msg)
+
+    async def peek(self) -> str | None:
+        async with db.scoped(self.database_url, SEEDED) as conn:
+            row = await transcript_row(conn, self.source_id)
+        return row["stage"]
+
+    async def status(self, handle: str) -> object:
+        raise AssertionError(handle)
+
+    async def progress(self, handle: str) -> object:
+        raise AssertionError(handle)
+
+
+@pytest.mark.timeout(180)
+async def test_the_row_says_retrying_between_attempts_and_fails_readably_after_the_last(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    ctx = context(url)
+    provider = FlakyProvider(url, source_id)
+    ctx.transcription.provider = provider  # pyright: ignore[reportAttributeAccessIssue]
+    request = TranscribeInput(
+        scope=SEEDED,
+        sourceId=source_id,
+        artifactPrefix=prefix,
+        audioKey=prefix + "audio/audio.m4a",
+        durationMs=DURATION_MS,
+    )
+    with pytest.raises(WorkflowFailureError):
+        await run_workflow(ctx, request)
+
+    # Four attempts, the retry policy's maximum, and the row was `processing`
+    # at every one of them. The surface must never flash Failed while another
+    # attempt is coming; only the workflow, after the last one, writes `failed`.
+    assert len(provider.seen) == 4
+    assert all(status == "processing" for status, _ in provider.seen)
+
+    async with db.scoped(url, SEEDED) as conn:
+        row = await transcript_row(conn, source_id)
+        assert row["status"] == "failed"
+        assert row["stage"] is None
+        assert row["percent"] is None
+        assert row["current_revision"] is None
+        # Words a person reads, not a stack trace, and not the enum.
+        assert "preempted" in row["error_message"]
+        ledger = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM usage_ledger WHERE source_id = %s", (source_id,)
+            )
+        ).fetchone()
+        assert ledger is not None
+        # Nothing was produced, so nothing is metered.
+        assert ledger["n"] == 0
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
+async def test_a_retryable_failure_parks_the_stage_at_retrying_and_a_terminal_one_does_not(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """The state the plan calls Retrying, written by the activity that is about to lose.
+
+    The workflow test above proves the row stays `processing` across four
+    attempts; this proves the words the surface reads while it does, and that a
+    terminal failure is left alone for the workflow to word properly.
+    """
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    transcribe = Transcribe(context(url))
+    request = TranscribeInput(
+        scope=SEEDED,
+        sourceId=source_id,
+        artifactPrefix=prefix,
+        audioKey=prefix + "audio/audio.m4a",
+        durationMs=DURATION_MS,
+    )
+    async with db.scoped(url, SEEDED) as conn:
+        assert await db.claim_transcription(conn, source_id, SEEDED.organizationId, "wf-retrying")
+
+    await transcribe.mark_retrying(request, provider_failure("the container was preempted"))
+    async with db.scoped(url, SEEDED) as conn:
+        row = await transcript_row(conn, source_id)
+    assert (row["status"], row["stage"]) == ("processing", "retrying")
+
+    async with db.scoped(url, SEEDED) as conn:
+        await conn.execute(
+            "UPDATE transcript SET stage = 'align' WHERE source_id = %s", (source_id,)
+        )
+    await transcribe.mark_retrying(
+        request, transcription_failure("this recording is in a language we cannot align yet")
+    )
+    async with db.scoped(url, SEEDED) as conn:
+        row = await transcript_row(conn, source_id)
+    # Untouched: after the last attempt the workflow writes the real message,
+    # and a row that said "being retried" when nothing was coming would lie.
+    assert row["stage"] == "align"
     await db.close_pool()
