@@ -23,10 +23,15 @@
       // legacy's, and reformatting it would put the parity fixtures and the
       // code they were dumped from out of step.
       "!tools/legacy-reference/lib",
-      // Recorded engine responses, read only by Python. They are kept exactly
-      // as the engine emits them, and Python's json writes the bare NaN a
-      // whisperx alignment score can be, which is not JSON biome can parse.
-      "!apps/pipeline/tests/fixtures"
+      // Recorded engine responses and the substrate renderings, read only by
+      // Python. They are kept exactly as the engine or the frozen oracle emits
+      // them, and Python's json writes the bare NaN a whisperx alignment score
+      // can be, which is not JSON biome can parse.
+      "!apps/pipeline/tests/fixtures",
+      // Eval parity snapshots, dumped by the legacy's TypeScript and frozen:
+      // reformatting them would edit the evidence the scorers are replayed
+      // against.
+      "!apps/pipeline/tests/parity"
     ]
   },
   "linter": {

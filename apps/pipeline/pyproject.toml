@@ -14,6 +14,9 @@ dependencies = [
     "temporalio>=1.32,<2",
 ]
 
+[project.scripts]
+temnia-eval = "temnia_pipeline.evals.runner:main"
+
 [dependency-groups]
 dev = [
     "boto3-stubs[s3]>=1.40",
@@ -74,6 +77,22 @@ convention = "google"
 # (PERF401), and the typographic quotes are part of the ported regexes
 # (RUF001, RUF003).
 "src/temnia_pipeline/substrate/grid.py" = ["PERF401", "RUF001", "RUF003"]
+# The eval scorers and their replay are line-for-line ports too, and the
+# snapshots compare their output byte for byte. The spec constants stay inline
+# where the TypeScript has them (PLR2004), the control flow keeps its shape
+# (C901, PERF401, PLR0911, FBT001), and a docstring per scorer would restate
+# the name: what each one means is its cases in tests/parity/ (D101, D103).
+"src/temnia_pipeline/evals/parity.py" = ["D103", "PLR0911"]
+"src/temnia_pipeline/evals/review_metrics.py" = ["D101", "D103"]
+"src/temnia_pipeline/evals/runner.py" = ["D103"]
+"src/temnia_pipeline/evals/scorers.py" = [
+    "C901",
+    "D101",
+    "D103",
+    "FBT001",
+    "PERF401",
+    "PLR2004",
+]
 
 [tool.pyright]
 pythonVersion = "3.13"
