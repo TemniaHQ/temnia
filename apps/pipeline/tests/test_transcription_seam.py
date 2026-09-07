@@ -29,6 +29,7 @@ from temnia_pipeline.transcription import (
     TranscribeRaw,
     TranscriptionProgress,
     Unknown,
+    Unreachable,
 )
 from temnia_pipeline.transcription.factory import make_transcription
 from temnia_pipeline.transcription.recorded import (
@@ -40,6 +41,7 @@ from temnia_pipeline.transcription.recorded import (
 )
 from temnia_pipeline.transcription.runner import (
     RECORDED_POLL_SECONDS,
+    UNREACHABLE_TICKS,
     TranscriptionRunner,
     classify,
 )
@@ -364,15 +366,19 @@ class TestTheRunner:
         provider = ScriptedProvider([Done(raw())], resumed={"handle-old": Unknown()})
         _, reported = await self._run(provider, resume="handle-old")
         assert provider.starts == 1
-        assert reported[0][1] == "handle-1-1"
+        # The old handle is heartbeated once before the provider is asked (so
+        # a retry keeps it if the question fails); every tick after carries the
+        # new run's.
+        assert reported[0][1] == "handle-old"
+        assert reported[-1][1] == "handle-1-1"
 
     async def test_a_failed_handle_starts_a_new_run(self) -> None:
         provider = ScriptedProvider([Done(raw())], resumed={"handle-old": Failed("Whatever: boom")})
         _, _reported = await self._run(provider, resume="handle-old")
         assert provider.starts == 1
 
-    async def test_a_provider_that_cannot_be_polled_starts_a_new_run(self) -> None:
-        """A poll failing while reattaching must not be worse than not reattaching."""
+    async def test_a_provider_that_cannot_be_polled_is_retried_not_started_again(self) -> None:
+        """Not being able to ask says nothing about the run; a second start pays the GPU twice."""
 
         class Rude(ScriptedProvider):
             async def status(self, handle: str) -> RunStatus:
@@ -382,7 +388,49 @@ class TestTheRunner:
                 return await super().status(handle)
 
         provider = Rude([Done(raw())])
-        _, _reported = await self._run(provider, resume="handle-old")
+        with pytest.raises(ApplicationError) as caught:
+            await self._run(provider, resume="handle-old")
+        assert caught.value.non_retryable is False
+        assert provider.starts == 0
+
+    async def test_an_unreachable_provider_at_reattach_keeps_the_handle(self) -> None:
+        """The review's duplicate spawn (I05): a transport failure used to read as a dead run."""
+        provider = ScriptedProvider(
+            [Done(raw())], resumed={"handle-old": Unreachable("ConnectionError: reset by peer")}
+        )
+        reported: list[tuple[TranscriptionProgress, str | None]] = []
+
+        async def on_progress(note: TranscriptionProgress, handle: str | None) -> None:
+            reported.append((note, handle))
+
+        runner = TranscriptionRunner(provider, poll_seconds=0.0)
+        with pytest.raises(ApplicationError) as caught:
+            await runner.run(JOB, on_progress=on_progress, resume="handle-old")
+        assert caught.value.non_retryable is False
+        assert "could not reach" in str(caught.value)
+        assert provider.starts == 0
+        # Heartbeated before the first status read, so the next attempt has it.
+        assert reported[0][1] == "handle-old"
+
+    async def test_unreachable_polls_are_ridden_out(self) -> None:
+        provider = ScriptedProvider(
+            [
+                Unreachable("GRPCError: unavailable"),
+                Unreachable("OSError: x"),
+                Running(),
+                Done(raw()),
+            ]
+        )
+        _, reported = await self._run(provider)
+        assert provider.starts == 1
+        assert len(reported) == 4
+
+    async def test_a_provider_unreachable_for_too_long_is_retried_with_its_handle(self) -> None:
+        provider = ScriptedProvider([Unreachable("GRPCError: unavailable")] * UNREACHABLE_TICKS)
+        with pytest.raises(ApplicationError) as caught:
+            await self._run(provider)
+        assert caught.value.non_retryable is False
+        assert "unreachable for" in str(caught.value)
         assert provider.starts == 1
 
     async def test_a_vanished_run_is_retryable(self) -> None:

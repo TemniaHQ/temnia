@@ -28,7 +28,7 @@ from temnia_pipeline.media import hls
 # undefined until some caller happens to have it in scope (AGENTS.md, Python
 # pipeline). `media.facts` is exactly the record and none of the decoder.
 from temnia_pipeline.media.facts import VideoFacts  # noqa: TC001
-from temnia_pipeline.storage import key_exists, read_text
+from temnia_pipeline.storage import key_exists, list_objects, read_text
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -110,6 +110,18 @@ class LadderResult(BaseModel):
     call_id: str | None = None
 
 
+async def ladder_inventory_matches(
+    store: S3Store, job: LadderJob, manifest: hls.LadderManifest
+) -> bool:
+    """True when the prefix holds every rendition playlist and the manifest's bytes."""
+    objects = dict(await list_objects(store, job.hls_prefix))
+    for name in manifest.renditions:
+        if f"{job.hls_prefix}{name}/index.m3u8" not in objects:
+            return False
+    published = sum(size for key, size in objects.items() if key != job.manifest_key)
+    return published == manifest.total_bytes
+
+
 class LadderProgress(BaseModel):
     """How far the ladder has got, in the two stages the UI already shows."""
 
@@ -141,10 +153,15 @@ class Transcoder(Protocol):
 async def stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
     """Read back a published ladder and return its result when it is whole.
 
-    Whole means all three: the manifest is there, it covers the source the
-    probe measured, and the master playlist a player asks for first is a real
-    key. A prefix left half written by a killed upload fails the third check
-    even though the second passed, because the manifest goes up last.
+    Whole means all four: the manifest is there, it covers the source the
+    probe measured, the master playlist a player asks for first is a real key,
+    and the objects under the prefix are the ones the manifest was written
+    over: every rendition's playlist exists and the bytes add up to the
+    manifest's total. The manifest goes up last, so its presence says the
+    upload finished; it says nothing about an object lost since, and a ladder
+    reused with a missing rendition plays until the player asks for it (S2
+    review, I30). The listing is one call per thousand objects and runs on the
+    reuse path only, a retry after a crash.
     """
     text = await read_text(store, job.manifest_key)
     if text is None:
@@ -153,6 +170,8 @@ async def stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
     if not hls.manifest_covers(manifest, job.expected_seconds):
         return None
     if not await key_exists(store, job.master_playlist_key):
+        return None
+    if not await ladder_inventory_matches(store, job, manifest):
         return None
     return LadderResult(
         renditions=manifest.renditions,

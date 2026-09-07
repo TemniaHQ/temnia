@@ -27,7 +27,7 @@ from temnia_pipeline.transcode import (
     LadderResult,
     stored_ladder,
 )
-from temnia_pipeline.transcode.modal_client import Done, Failed, Running, Unknown
+from temnia_pipeline.transcode.modal_client import Done, Failed, Running, Unknown, Unreachable
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -39,6 +39,12 @@ if TYPE_CHECKING:
 log = logging.getLogger("temnia.transcode.modal")
 
 POLL_SECONDS = 10.0
+
+# Consecutive polls Modal may be unreachable for before the attempt gives up
+# and lets Temporal retry it: three minutes at the ten-second tick, inside the
+# five-minute heartbeat timeout. Every tick still heartbeats the call id, so
+# the retry reattaches to the same call and never spawns another.
+UNREACHABLE_TICKS = 18
 
 # The exceptions that mean the encode itself is wrong, not the infrastructure.
 # A source ffmpeg cannot read, or an output that came out short, fails the same
@@ -139,23 +145,42 @@ class ModalTranscoder:
         if published is not None:
             log.info("ladder already published under %s; skipping Modal", job.hls_prefix)
             return published
-        call_id = await self._attach(job, resume)
+        call_id = await self._attach(job, on_progress, resume)
         return await self._poll(job, call_id, on_progress)
 
-    async def _attach(self, job: LadderJob, resume: str | None) -> str:
-        """Keep an earlier attempt's call when it is still alive, otherwise spawn."""
+    async def _attach(
+        self, job: LadderJob, on_progress: ProgressCallback, resume: str | None
+    ) -> str:
+        """Keep an earlier attempt's call when it may still be alive, otherwise spawn.
+
+        The call id is heartbeated before Modal is asked anything, so an
+        attempt that fails on its first status read still hands the id to the
+        attempt after it. Only Modal's own word that the call is gone
+        (`Unknown`) or over (`Failed`) spawns another; not being able to ask
+        is a retry of this attempt, never a second GPU job.
+        """
         if resume is None:
             return await self.client.spawn(job)
+        await on_progress(LadderProgress(stage="hls", percent=0), resume)
         status = await self.client.status(resume)
-        if isinstance(status, Running | Done):
-            log.info("reattaching to Modal call %s", resume)
-            return resume
-        # A failed or forgotten call has nothing to wait for. Spawning again is
-        # safe: the function writes under one prefix and the manifest goes up
-        # last, so the worst case is work done twice, never a half ladder that
-        # looks whole.
-        log.info("Modal call %s is %s; spawning a new one", resume, type(status).__name__.lower())
-        return await self.client.spawn(job)
+        match status:
+            case Running() | Done():
+                log.info("reattaching to Modal call %s", resume)
+                return resume
+            case Unreachable(message=message):
+                msg = f"could not reach Modal to check call {resume}: {message}"
+                raise modal_failure(msg)
+            case _:
+                # A failed or forgotten call has nothing to wait for. Spawning
+                # again is safe: the function writes under one prefix and the
+                # manifest goes up last, so the worst case is work done twice,
+                # never a half ladder that looks whole.
+                log.info(
+                    "Modal call %s is %s; spawning a new one",
+                    resume,
+                    type(status).__name__.lower(),
+                )
+                return await self.client.spawn(job)
 
     async def _poll(
         self, job: LadderJob, call_id: str, on_progress: ProgressCallback
@@ -170,6 +195,7 @@ class ModalTranscoder:
         # is the second GPU job this whole design exists to avoid. Repeating a
         # note is free; the activity throttles its own database write.
         latest = LadderProgress(stage="hls", percent=0)
+        unreachable = 0
         while True:
             note = await self.client.progress(call_id)
             if note is not None:
@@ -184,7 +210,18 @@ class ModalTranscoder:
                 case Unknown():
                     msg = f"Modal has no record of call {call_id}"
                     raise modal_failure(msg)
+                case Unreachable(message=message):
+                    unreachable += 1
+                    if unreachable >= UNREACHABLE_TICKS:
+                        msg = (
+                            f"Modal was unreachable for {unreachable} polls of call "
+                            f"{call_id}: {message}"
+                        )
+                        raise modal_failure(msg)
+                    log.warning("Modal call %s unreachable (%s); polling on", call_id, message)
+                    await asyncio.sleep(self.poll_seconds)
                 case Running():
+                    unreachable = 0
                     await asyncio.sleep(self.poll_seconds)
 
     async def _verify(self, job: LadderJob, call_id: str, result: LadderResult) -> LadderResult:

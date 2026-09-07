@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from temnia_pipeline.modal_errors import transport_errors
 from temnia_pipeline.transcode import LadderJob, LadderProgress, LadderResult
 
 if TYPE_CHECKING:
@@ -75,7 +76,14 @@ class Unknown:
     """Modal has never heard of this call id, or its result has expired."""
 
 
-CallStatus = Running | Done | Failed | Unknown
+@dataclass(frozen=True, slots=True)
+class Unreachable:
+    """Modal could not be asked; the call may be running fine. Never a verdict."""
+
+    message: str
+
+
+CallStatus = Running | Done | Failed | Unknown | Unreachable
 
 
 class ModalClient(Protocol):
@@ -121,6 +129,10 @@ class RealModalClient:
             return Running()
         except (NotFoundError, OutputExpiredError):
             return Unknown()
+        except transport_errors() as error:
+            # We could not ask. The encode may be fine; only a caller that
+            # knows the difference can avoid spawning it again (S2 review, I05).
+            return Unreachable(f"{type(error).__name__}: {error}")
         except Exception as error:  # noqa: BLE001
             # Anything the function raised arrives here, including the
             # deterministic ffmpeg and truncation failures the caller has to

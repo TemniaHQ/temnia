@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from temnia_pipeline.modal_errors import transport_errors
 from temnia_pipeline.transcription import (
     Done,
     Failed,
@@ -26,6 +27,7 @@ from temnia_pipeline.transcription import (
     TranscribeRaw,
     TranscriptionProgress,
     Unknown,
+    Unreachable,
 )
 
 if TYPE_CHECKING:
@@ -107,6 +109,10 @@ class ModalWhisperXProvider:
             return Running()
         except (NotFoundError, OutputExpiredError):
             return Unknown()
+        except transport_errors() as error:
+            # We could not ask. The run may be fine; only a caller that knows
+            # the difference can avoid starting it again (S2 review, I05).
+            return Unreachable(f"{type(error).__name__}: {error}")
         except Exception as error:  # noqa: BLE001
             # Anything the function raised arrives here, including the
             # deterministic language failure the caller has to tell apart from

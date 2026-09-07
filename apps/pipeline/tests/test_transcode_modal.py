@@ -26,6 +26,7 @@ from temnia_pipeline.transcode import (
 )
 from temnia_pipeline.transcode import modal_client as modal_client_module
 from temnia_pipeline.transcode.modal import (
+    UNREACHABLE_TICKS,
     DeploymentError,
     ModalTranscoder,
     assert_deployment,
@@ -38,6 +39,7 @@ from temnia_pipeline.transcode.modal_client import (
     RealModalClient,
     Running,
     Unknown,
+    Unreachable,
 )
 
 if TYPE_CHECKING:
@@ -81,14 +83,23 @@ def manifest(
 
 
 class FakeStore:
-    """Just the two reads `stored_ladder` makes, keyed like the real bucket."""
+    """The reads and the listing `stored_ladder` makes, keyed like the real bucket."""
 
     def __init__(self, objects: dict[str, str] | None = None) -> None:
         self.objects = dict(objects or {})
+        self.sizes: dict[str, int] = {}
 
-    def publish(self, ladder: hls.LadderManifest) -> None:
+    def publish(
+        self, ladder: hls.LadderManifest, *, missing: str | None = None, short_by: int = 0
+    ) -> None:
+        """What the function leaves behind: playlists, the manifest, and the bytes it counts."""
         self.objects[PREFIX + "hls/master.m3u8"] = "#EXTM3U\n"
+        for name in ladder.renditions:
+            if name != missing:
+                self.objects[PREFIX + f"hls/{name}/index.m3u8"] = "#EXTM3U\n"
         self.objects[PREFIX + "hls/manifest.json"] = ladder.model_dump_json(by_alias=True)
+        # The bytes the manifest counts, carried by one object for simplicity.
+        self.sizes[PREFIX + "hls/master.m3u8"] = ladder.total_bytes - short_by
 
 
 async def _read_text(store: S3Store, key: str) -> str | None:
@@ -99,11 +110,17 @@ async def _key_exists(store: S3Store, key: str) -> bool:
     return key in cast("FakeStore", store).objects
 
 
+async def _list_objects(store: S3Store, prefix: str) -> list[tuple[str, int]]:
+    fake = cast("FakeStore", store)
+    return [(key, fake.sizes.get(key, 0)) for key in fake.objects if key.startswith(prefix)]
+
+
 @pytest.fixture(autouse=True)
 def _fake_storage(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]  # a pytest fixture is called by name, not by reference
     """`stored_ladder` is the only storage the transcoder touches."""
     monkeypatch.setattr("temnia_pipeline.transcode.read_text", _read_text)
     monkeypatch.setattr("temnia_pipeline.transcode.key_exists", _key_exists)
+    monkeypatch.setattr("temnia_pipeline.transcode.list_objects", _list_objects)
 
 
 class FakeModalClient:
@@ -245,7 +262,8 @@ async def test_a_reattached_call_heartbeats_its_id_from_the_first_tick() -> None
     seen: list[tuple[LadderProgress, str | None]] = []
     await transcoder(client, store).run(JOB, on_progress=collect(seen), resume="fc-earlier")
 
-    assert [call_id for _, call_id in seen] == ["fc-earlier"]
+    # Once before Modal is asked, then on the poll tick: never anything else.
+    assert [call_id for _, call_id in seen] == ["fc-earlier", "fc-earlier"]
 
 
 async def test_a_running_call_is_reattached_to_rather_than_spawned_again() -> None:
@@ -326,6 +344,59 @@ async def test_a_short_manifest_is_not_reuse() -> None:
     store = FakeStore()
     store.publish(manifest(renditions={**FULL_LADDER, "720p": 80.0}))
     assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_a_ladder_missing_a_rendition_playlist_is_not_reuse() -> None:
+    """The manifest says the upload finished, not that nothing was lost since (S2 review, I30)."""
+    store = FakeStore()
+    store.publish(manifest(), missing="720p")
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_a_ladder_whose_bytes_do_not_add_up_is_not_reuse() -> None:
+    store = FakeStore()
+    store.publish(manifest(), short_by=1)
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_an_unreachable_modal_at_reattach_is_retried_not_respawned() -> None:
+    """The review's duplicate spawn (I05): a transport failure read as a dead call."""
+    client = FakeModalClient(resumed={"fc-earlier": Unreachable("ConnectionError: reset by peer")})
+    seen: list[tuple[LadderProgress, str | None]] = []
+    with pytest.raises(ApplicationError) as caught:
+        await transcoder(client, FakeStore()).run(
+            JOB, on_progress=collect(seen), resume="fc-earlier"
+        )
+    assert caught.value.non_retryable is False
+    assert client.spawns == []
+    # Heartbeated before the status read, so the next attempt has the id.
+    assert seen[0][1] == "fc-earlier"
+
+
+async def test_unreachable_polls_are_ridden_out() -> None:
+    store = FakeStore()
+    published = manifest()
+    client = FakeModalClient(
+        statuses=[
+            Unreachable("GRPCError: unavailable"),
+            Unreachable("OSError: reset"),
+            Done(result_of(published)),
+        ],
+        on_spawn=lambda: store.publish(published),
+    )
+    result = await transcoder(client, store).run(JOB, on_progress=collect([]), resume=None)
+    assert result.total_bytes == published.total_bytes
+    assert len(client.spawns) == 1
+
+
+async def test_modal_unreachable_for_too_long_is_retryable_and_never_respawns() -> None:
+    unreachable: list[CallStatus] = [Unreachable("GRPCError: unavailable")] * UNREACHABLE_TICKS
+    client = FakeModalClient(statuses=unreachable)
+    with pytest.raises(ApplicationError) as caught:
+        await transcoder(client, FakeStore()).run(JOB, on_progress=collect([]), resume=None)
+    assert caught.value.non_retryable is False
+    assert "unreachable for" in str(caught.value)
+    assert len(client.spawns) == 1
 
 
 async def test_a_result_whose_ladder_is_short_fails_terminally() -> None:

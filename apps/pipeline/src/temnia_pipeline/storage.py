@@ -165,10 +165,15 @@ async def upload_tree(
 
 async def list_keys(store: S3Store, prefix: str) -> list[str]:
     """Every key under the prefix."""
-    keys: list[str] = []
+    return [key for key, _ in await list_objects(store, prefix)]
+
+
+async def list_objects(store: S3Store, prefix: str) -> list[tuple[str, int]]:
+    """Every key under the prefix with its size, for an inventory check."""
+    found: list[tuple[str, int]] = []
     async for page in obs.list(store, prefix):  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        keys.extend(str(item["path"]) for item in page)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
-    return keys
+        found.extend((str(item["path"]), int(item["size"])) for item in page)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+    return found
 
 
 async def delete_prefix(store: S3Store, prefix: str) -> int:
