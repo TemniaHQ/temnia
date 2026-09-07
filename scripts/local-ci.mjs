@@ -220,6 +220,26 @@ function dockerLogsTail(name) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
+/** Remove containers and images left by gate runs that never reached their cleanup. */
+function sweepStaleGateRuns() {
+  const list = (args) =>
+    (spawnSync("docker", args, { encoding: "utf8" }).stdout ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  const containers = list(["ps", "-aq", "--filter", "name=temnia-gate-"]);
+  if (containers.length > 0) {
+    spawnSync("docker", ["rm", "-f", ...containers], { stdio: "ignore" });
+  }
+  const images = [
+    ...list(["images", "-q", "--filter", "reference=temnia-web:gate-*"]),
+    ...list(["images", "-q", "--filter", "reference=temnia-pipeline:gate-*"]),
+  ];
+  if (images.length > 0) {
+    spawnSync("docker", ["image", "rm", "-f", ...images], { stdio: "ignore" });
+  }
+}
+
 async function runFullGate(sha) {
   const startedAt = new Date().toISOString();
   const stamp = `${Date.now().toString(36)}_${process.pid}`;
@@ -303,6 +323,13 @@ async function runFullGate(sha) {
     run("pnpm", ["turbo", "run", "build", "lint", "typecheck", "test"], {
       env,
     });
+
+    // A gate run that was killed, or that died on a full disk, never reaches the
+    // cleanup below, and its 3 GB pipeline image stays behind; enough of them
+    // filled the disk and took Docker Desktop down on 2026-09-07. Sweep the
+    // leftovers of earlier runs and cap the build cache before building again.
+    sweepStaleGateRuns();
+    run("docker", ["builder", "prune", "-f", "--keep-storage", "8GB"]);
 
     run("docker", [
       "build",
