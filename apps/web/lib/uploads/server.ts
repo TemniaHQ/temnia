@@ -1,25 +1,27 @@
 /**
- * Multipart upload control, server side. The browser never holds credentials
- * and never talks multipart to the store: it PUTs file slices to part URLs
- * signed here. Create, ListParts, Complete, and Abort run here, which is also
- * why the same code works on Garage and R2 (R2 has no presigned POST).
+ * Multipart upload control, server side. The browser (Uppy 6) PUTs file
+ * slices to part URLs signed here and lists parts through a URL signed here;
+ * Create runs here before the browser starts, and Complete and Abort are the
+ * app's own routes, handed to Uppy as the "presigned" URL for those calls.
+ * The store's part list is the one truth about what has been uploaded.
  */
 import { createHash } from "node:crypto";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  HeadObjectCommand,
   ListPartsCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { browserStorage, storage, storageSettings } from "@/lib/storage/client";
+import { partSizeForBytes, type UploadedPart } from "./parts";
 
-const MIB = 1024 * 1024;
-const MAX_PARTS = 9000;
 const PART_URL_TTL_SECONDS = 3600;
 /** Resume window: an upload idle this long is aborted by the reaper. */
 export const UPLOAD_IDLE_TTL_HOURS = 24;
+
 /**
  * A live upload signs a part at least this often; older than this, another
  * browser may adopt it. UPLOAD_ADOPT_GRACE_SECONDS exists for the resume e2e.
@@ -29,28 +31,12 @@ export function adoptGraceSeconds(): number {
   return Number.isFinite(override) && override > 0 ? override : 60;
 }
 
-export interface UploadedPart {
-  etag: string;
-  partNumber: number;
-  size: number;
-}
-
-/**
- * Part size is a deterministic function of file size and never changes
- * between deploys, or a resumed upload would mis-align its parts. 16 MiB
- * carries files to 140 GB within 9000 parts; larger files scale the part.
- * R2 requires every non-final part to be the same size and at least 5 MiB.
- * UPLOAD_PART_SIZE_BYTES exists for the resume e2e, which needs several
- * parts from a small file.
- */
+/** The recorded part size for a new upload; UPLOAD_PART_SIZE_BYTES is the e2e override. */
 export function partSizeFor(sizeBytes: number): number {
-  const override = Number(process.env.UPLOAD_PART_SIZE_BYTES);
-  if (Number.isFinite(override) && override >= 5 * MIB) {
-    return override;
-  }
-  const minimum = 16 * MIB;
-  const needed = Math.ceil(sizeBytes / MAX_PARTS / MIB) * MIB;
-  return Math.max(minimum, needed);
+  return partSizeForBytes(
+    sizeBytes,
+    Number(process.env.UPLOAD_PART_SIZE_BYTES)
+  );
 }
 
 /**
@@ -125,24 +111,53 @@ export async function listUploadedParts(
   return parts;
 }
 
-export function signPartUrls(
+/** The stored object's size, or null when no object exists at the key. */
+export async function headObjectSize(key: string): Promise<number | null> {
+  try {
+    const out = await storage().send(
+      new HeadObjectCommand({ Bucket: storageSettings().bucket, Key: key })
+    );
+    return out.ContentLength ?? null;
+  } catch (error) {
+    const { name } = error as { name?: string };
+    if (name === "NotFound" || name === "NoSuchKey") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export function signPartUrl(
   key: string,
   uploadId: string,
-  partNumbers: number[]
-): Promise<string[]> {
-  return Promise.all(
-    partNumbers.map((partNumber) =>
-      getSignedUrl(
-        browserStorage(),
-        new UploadPartCommand({
-          Bucket: storageSettings().bucket,
-          Key: key,
-          PartNumber: partNumber,
-          UploadId: uploadId,
-        }),
-        { expiresIn: PART_URL_TTL_SECONDS }
-      )
-    )
+  partNumber: number
+): Promise<string> {
+  return getSignedUrl(
+    browserStorage(),
+    new UploadPartCommand({
+      Bucket: storageSettings().bucket,
+      Key: key,
+      PartNumber: partNumber,
+      UploadId: uploadId,
+    }),
+    { expiresIn: PART_URL_TTL_SECONDS }
+  );
+}
+
+/** Uppy lists parts itself when it resumes; the URL is signed here, never touched as liveness. */
+export function signListPartsUrl(
+  key: string,
+  uploadId: string
+): Promise<string> {
+  return getSignedUrl(
+    browserStorage(),
+    new ListPartsCommand({
+      Bucket: storageSettings().bucket,
+      Key: key,
+      MaxParts: 1000,
+      UploadId: uploadId,
+    }),
+    { expiresIn: PART_URL_TTL_SECONDS }
   );
 }
 
@@ -182,32 +197,4 @@ export async function abortMultipart(
       throw error;
     }
   }
-}
-
-export function partCountFor(sizeBytes: number, partSize: number): number {
-  return Math.max(1, Math.ceil(sizeBytes / partSize));
-}
-
-/** Which parts still need uploading, given what the store already holds. */
-export function missingParts(
-  sizeBytes: number,
-  partSize: number,
-  uploaded: UploadedPart[]
-): number[] {
-  const count = partCountFor(sizeBytes, partSize);
-  const have = new Set<number>();
-  for (const part of uploaded) {
-    const expected =
-      part.partNumber === count ? sizeBytes - (count - 1) * partSize : partSize;
-    if (part.size === expected) {
-      have.add(part.partNumber);
-    }
-  }
-  const missing: number[] = [];
-  for (let n = 1; n <= count; n += 1) {
-    if (!have.has(n)) {
-      missing.push(n);
-    }
-  }
-  return missing;
 }
