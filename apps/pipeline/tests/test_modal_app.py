@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
 
 from temnia_pipeline import modal_app
-from temnia_pipeline.transcode import CONTRACT_VERSION
+from temnia_pipeline.media.facts import VideoFacts
+from temnia_pipeline.media.ffmpeg import FfmpegError
+from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob
 from temnia_pipeline.transcode.modal_client import LADDER_FUNCTION, VERSION_FUNCTION
 from temnia_pipeline.transcription import TranscribeJob, UnsupportedLanguageError
 from temnia_pipeline.transcription.modal_whisperx import (
@@ -23,7 +27,12 @@ from temnia_pipeline.transcription.modal_whisperx import (
     VERSION,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 BANNED = ("temporalio", "psycopg", "av")
+
+PREFIX = "org/0192e8a0-0000-7000-8000-000000000001/source/0192e8a0-0000-7000-8000-0000000000aa/"
 
 # Also builds a job from a plain dict, which is what the container does with
 # the payload Modal hands it. Pydantic resolves `LadderJob.video` lazily, so a
@@ -150,3 +159,117 @@ def test_the_module_a_container_imports_pulls_in_no_worker_dependencies() -> Non
         [sys.executable, "-c", ISOLATION_PROBE], capture_output=True, text=True, check=True
     )
     assert finished.stdout.strip() == ""
+
+
+class FakeFfmpeg:
+    """Stands in for `run_ffmpeg`: records the arguments, writes what the ladder reads back."""
+
+    def __init__(self, out_dir: Path, *, failures: int) -> None:
+        self.out_dir = out_dir
+        self.failures = failures
+        self.calls: list[list[str]] = []
+
+    async def __call__(self, ffmpeg: str, args: list[str], *, on_progress: object = None) -> str:
+        _ = (ffmpeg, on_progress)
+        self.calls.append(args)
+        if len(self.calls) <= self.failures:
+            # What a card that cannot decode this profile, or a driver that
+            # will not initialise the decoder, actually looks like.
+            msg = (
+                "ffmpeg exited 1: Failed setup for format cuda: "
+                "hwaccel initialisation returned error"
+            )
+            raise FfmpegError(msg)
+        (self.out_dir / "master.m3u8").write_text("#EXTM3U\n#EXT-X-VERSION:6\n")
+        iframes = self.out_dir / "iframes"
+        iframes.mkdir(parents=True, exist_ok=True)
+        (iframes / "index.m3u8").write_text(
+            "#EXTM3U\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXTINF:2.000,\niframes.mp4\n#EXT-X-ENDLIST\n"
+        )
+        (iframes / "iframes.mp4").write_bytes(b"0" * 1024)
+        return ""
+
+    def decoders(self) -> list[str]:
+        """Which graph each attempt asked for, read off the arguments themselves."""
+        return ["cuda" if "-hwaccel" in args else "cpu" for args in self.calls]
+
+
+def _ladder_job(codec: str = "h264", pix_fmt: str | None = "yuv420p") -> LadderJob:
+    return LadderJob(
+        master_key=PREFIX + "master/master.mov",
+        artifact_prefix=PREFIX,
+        size_bytes=1024,
+        video=VideoFacts(
+            width=1920,
+            height=1080,
+            fps=Fraction(25),
+            variable_frame_rate=False,
+            codec=codec,
+            pix_fmt=pix_fmt,
+        ),
+        has_audio=True,
+        expected_seconds=4.0,
+    )
+
+
+async def _run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, job: LadderJob, *, failures: int
+) -> tuple[FakeFfmpeg, str]:
+    out_dir = tmp_path / "hls"
+    fake = FakeFfmpeg(out_dir, failures=failures)
+    monkeypatch.setattr("temnia_pipeline.media.hls.run_ffmpeg", fake)
+
+    async def on_encode(seconds: float) -> None:
+        _ = seconds
+
+    _rungs, decoder = await modal_app.run_ladder(job, tmp_path / "master.mov", out_dir, on_encode)
+    return fake, decoder
+
+
+async def test_a_decodable_source_runs_once_on_the_gpu(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake, decoder = await _run(monkeypatch, tmp_path, _ladder_job(), failures=0)
+
+    assert decoder == "cuda"
+    assert fake.decoders() == ["cuda"]
+
+
+async def test_a_cuda_graph_that_fails_is_encoded_again_on_the_cpu(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A profile this card refuses, or a driver that will not initialise, costs
+    the GPU attempt and still produces a ladder."""
+    fake, decoder = await _run(monkeypatch, tmp_path, _ladder_job(), failures=1)
+
+    assert fake.decoders() == ["cuda", "cpu"]
+    # What is recorded is what produced the ladder, not what was asked for.
+    assert decoder == "cpu"
+
+
+async def test_a_second_failure_is_the_encode_failure_the_worker_classifies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One retry, in one direction. `FfmpegError` is terminal at the worker."""
+    with pytest.raises(FfmpegError):
+        await _run(monkeypatch, tmp_path, _ladder_job(), failures=2)
+
+
+async def test_a_source_the_gpu_cannot_decode_never_spends_an_attempt_on_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ProRes is the master format this matters most for, and it is decided
+    from the probe rather than from a failed run."""
+    job = _ladder_job(codec="prores", pix_fmt="yuv422p10le")
+    fake, decoder = await _run(monkeypatch, tmp_path, job, failures=0)
+
+    assert fake.decoders() == ["cpu"]
+    assert decoder == "cpu"
+
+
+async def test_a_cpu_run_that_fails_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job = _ladder_job(codec="prores", pix_fmt="yuv422p10le")
+    with pytest.raises(FfmpegError):
+        await _run(monkeypatch, tmp_path, job, failures=1)

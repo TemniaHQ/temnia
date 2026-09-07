@@ -11,10 +11,11 @@ Deploy from `apps/pipeline`:
     uv run modal deploy --env staging -m temnia_pipeline.modal_app
 
 The image is a CUDA runtime with BtbN's glibc ffmpeg, because Temnia's worker
-ffmpeg (`mwader/static-ffmpeg:8.1.2`) is a static musl build with no NVENC.
-The tarball is pinned by sha256 against a release tag that BtbN rebuilds in
-place, so the day the build behind `latest` moves, this image fails to build
-loudly instead of quietly encoding with something else.
+ffmpeg (`mwader/static-ffmpeg:8.1.2`) is a static musl build carrying neither
+NVENC nor the CUDA decoder the ladder now uses. The tarball is pinned by sha256
+against a release tag that BtbN rebuilds in place, so the day the build behind
+`latest` moves, this image fails to build loudly instead of quietly encoding
+with something else.
 
 Everything this module imports at container start must come from the media,
 storage, and transcode packages: no temporalio, no psycopg, and no database.
@@ -30,11 +31,12 @@ import subprocess
 import time
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import modal
 
 from temnia_pipeline.media import hls
+from temnia_pipeline.media.ffmpeg import FfmpegError
 from temnia_pipeline.settings import (
     DEFAULT_MODAL_APP,
     DEFAULT_PROGRESS_DICT,
@@ -45,6 +47,9 @@ from temnia_pipeline.storage import download, make_store, upload_file, upload_tr
 from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult
 from temnia_pipeline.transcode.local import verify_ladder
 from temnia_pipeline.transcription import TranscribeJob, TranscribeRaw, assert_alignable
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 # BtbN's `latest` tag is rebuilt in place, so the URL alone pins nothing. The
 # checksum is of the tarball downloaded on 2026-09-07; `sha256sum -c` in the
@@ -59,6 +64,9 @@ FFMPEG_DIR = "ffmpeg-n8.1-latest-linux64-gpl-8.1"
 FFMPEG = "/usr/local/bin/ffmpeg"
 
 GPU = "L4"
+# The video rungs, on every graph: the intra-only rendition stays on libx264
+# whatever decodes, because one frame every two seconds is not worth a GPU.
+ENCODER: hls.Encoder = "h264_nvenc"
 LADDER_TIMEOUT_SECONDS = 3 * 60 * 60
 # WhisperX on an L4 is reported at 20 to 70x realtime for ASR and alignment and
 # nearer 10x for diarization, so a 2.5-hour episode is plausibly 15 to 40
@@ -189,6 +197,64 @@ def _throttled(stage: str) -> Any:  # noqa: ANN401
     return report
 
 
+async def run_ladder(
+    request: LadderJob,
+    master: Path,
+    out_dir: Path,
+    on_encode: Callable[[float], Awaitable[None]],
+) -> tuple[list[hls.Rung], hls.Decoder]:
+    """Ladder on the GPU decoder where the source allows it, on the CPU where not.
+
+    `cuda_decodable` reads the codec and the pixel format the worker probed and
+    keeps everything NVDEC does not read off the GPU path before any time is
+    spent. What that check cannot see is a profile or a level this particular
+    card refuses, or a driver that will not initialise the decoder at all, and
+    the answer to both is the same ffmpeg exit: so a CUDA run that fails is run
+    again on the CPU graph, which is the ladder Temnia shipped through S1 and
+    the whole of S2 so far.
+
+    Exactly one retry, and only in that direction. A CPU run that fails fails,
+    and so does the second attempt, as `TranscodeFailure` through the worker's
+    classifier. The cost of the fallback is the wasted GPU minutes of the first
+    attempt, which is why `cuda_decodable` is narrow rather than hopeful.
+
+    The retry restarts the encode, so the progress note the worker is reading
+    goes back down. That is honest: the work really did start again, and the
+    activity's heartbeat cares only that a note keeps arriving.
+    """
+    decoder: hls.Decoder = "cuda" if hls.cuda_decodable(request.video) else "cpu"
+    try:
+        rungs = await hls.transcode_ladder(
+            FFMPEG,
+            master,
+            out_dir,
+            request.video,
+            has_audio=request.has_audio,
+            expected_seconds=request.expected_seconds,
+            on_progress=on_encode,
+            encoder=ENCODER,
+            decoder=decoder,
+        )
+    except FfmpegError as error:
+        if decoder == "cpu":
+            raise
+        print(f"the CUDA ladder failed, encoding again on the CPU graph: {error}")  # noqa: T201
+        await _write_progress("hls", 0)
+        rungs = await hls.transcode_ladder(
+            FFMPEG,
+            master,
+            out_dir,
+            request.video,
+            has_audio=request.has_audio,
+            expected_seconds=request.expected_seconds,
+            on_progress=on_encode,
+            encoder=ENCODER,
+            decoder="cpu",
+        )
+        decoder = "cpu"
+    return rungs, decoder
+
+
 @app.function(  # pyright: ignore[reportUnknownMemberType]
     gpu=GPU,
     cpu=LADDER_CPUS,
@@ -199,11 +265,11 @@ def _throttled(stage: str) -> Any:  # noqa: ANN401
 async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     """Build the HLS ladder on the GPU and publish it under the job's prefix.
 
-    Decode and scale run on the four CPUs: NVENC has no ProRes decoder, and a
-    hybrid graph is the whole reason this is an L4 and not an A100. Every
-    playlist is verified before a byte is uploaded, and the manifest goes up
-    last, so the worker's completion check cannot pass over a half published
-    prefix.
+    Decode, scale, and the video rungs all run on the card when the source is
+    one NVDEC reads, and on the CPU otherwise; `run_ladder` decides and falls
+    back. Every playlist is verified before a byte is uploaded, and the
+    manifest goes up last, so the worker's completion check cannot pass over a
+    half published prefix.
     """
     # First, before the job is even parsed: a secret that is absent or missing
     # a key must fail here, by name. Falling back to the dev Garage defaults
@@ -224,16 +290,7 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     async def on_encode(seconds: float) -> None:
         await encode(seconds, request.expected_seconds)
 
-    rungs = await hls.transcode_ladder(
-        FFMPEG,
-        master,
-        out_dir,
-        request.video,
-        has_audio=request.has_audio,
-        expected_seconds=request.expected_seconds,
-        on_progress=on_encode,
-        encoder="h264_nvenc",
-    )
+    rungs, decoder = await run_ladder(request, master, out_dir, on_encode)
     renditions = verify_ladder(out_dir, rungs, request)
 
     publish = _throttled("publish")
@@ -248,8 +305,9 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
         iframes=request.video is not None,
         segment_seconds=hls.SEGMENT_SECONDS,
         total_bytes=total,
-        encoder="h264_nvenc",
+        encoder=ENCODER,
         produced_by="modal",
+        decoder=decoder,
         call_id=modal.current_function_call_id(),
     )
     await upload_file(store, request.manifest_key, hls.write_manifest(out_dir, manifest))
@@ -258,7 +316,8 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
         renditions=renditions,
         total_bytes=total,
         manifest_key=request.manifest_key,
-        encoder="h264_nvenc",
+        encoder=ENCODER,
+        decoder=decoder,
         call_id=modal.current_function_call_id(),
     )
     return result.model_dump(mode="json", by_alias=True)
