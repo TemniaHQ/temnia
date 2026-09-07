@@ -38,9 +38,11 @@ const REVISION_URL = /transcript\/rev-\d+\.json/;
 // on a production build is React #418 and nothing else (the S1 lesson).
 const HYDRATION =
   /Minified React error #(418|423|425)|Hydration failed|cannot contain a nested|validateDOMNesting/;
-const WAITING_STATE = /notReady|pending/;
+// Every state a healthy run passes through before Ready: on a fast machine
+// the tab can be caught in any of them.
+const WAITING_STATE = /notReady|pending|processing/;
 const WAITING_WORDS =
-  /The transcript starts after processing finishes\.|Queued for transcription\./;
+  /The transcript starts after processing finishes\.|Queued for transcription\.|Transcribing/;
 const RESTARTED_STATE = /pending|processing/;
 const INGEST_TIMEOUT_MS = 180_000;
 // Either failure state is on the row within a second or two of the ingest
