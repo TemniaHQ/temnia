@@ -212,6 +212,22 @@ decided belongs to an organization, and never an organization id.
    deploying one function without the other: they share `CONTRACT_VERSION`, and the worker's boot
    probe refuses a version it does not speak.
 
+5b. **Smoke the speech path**, after every deploy of the Modal app and before a real source is
+   trusted to it:
+
+   ```bash
+   uv run modal run --env staging -m temnia_pipeline.modal_app::smoke
+   ```
+
+   It uploads a nine-second real-speech sample under a throwaway `smoke/` prefix, runs the deployed
+   `transcribe` exactly as the worker would (image, secrets, the gated diarization model, the GPU),
+   normalises the result with the worker's own normaliser, checks that "chapters" and "smoke" were
+   heard, removes what it wrote, and prints the words, the language, the speakers, the GPU seconds
+   and the wall seconds. It exits non-zero on a miss. This is the step the boot probe cannot be:
+   the probe checks a version constant on a CPU, and on 2026-09-07 a green probe sat beside an
+   image that could not build and a diarization call that could not run (S2 review, I29). Paste
+   the numbers into the day's log; they are the first measured GPU seconds per audio second.
+
 6. **If the worker will not start**, its log carries one line naming the variables that put it on
    Modal, for example `TRANSCODE_BACKEND=modal and TRANSCRIPTION_PROVIDER=modal:`.
    `cannot reach the Modal app …` is a token or a missing deployment; `… speaks media contract 'x'
@@ -301,6 +317,11 @@ rebuilds only the targets whose files changed.
 3. On the page, run the hello workflow: the result names the seeded organization id and a Python
    worker host. In the Temporal UI the workflow shows one completed activity on task queue
    `temnia-pipeline`.
+3a. Deploy order matters when a migration ships with pipeline code that writes the new columns
+   (the S2 hardening's `transcript.run_id` and `usage_ledger.idempotency_key`, migration 0002):
+   the web's release phase applies migrations, so the web deploys first. A pipeline container that
+   starts before it will fail its claims retryably until the release line below has printed; a
+   worker that keeps failing them after that is on the wrong commit.
 3b. From S1: the web container's log opens with `release: migrations applied, seed rows present`;
    `/projects` lists projects; a master uploaded on a project page reaches `Ready` and plays on its
    source page with the waveform painted. The sprint's scale run is

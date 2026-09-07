@@ -7,6 +7,7 @@ that drags Temporal or the database into a container that has neither.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from fractions import Fraction
@@ -93,6 +94,35 @@ def test_the_worker_and_the_app_agree_on_the_function_names() -> None:
     assert hasattr(modal_app, VERSION_FUNCTION)
     assert hasattr(modal_app, TRANSCRIBE_FUNCTION)
     assert modal_app.version.local() == CONTRACT_VERSION
+
+
+def test_the_release_smoke_is_deployed_beside_the_functions_it_proves() -> None:
+    """The boot probe checks a constant; the smoke runs the speech path (S2 review, I29)."""
+    assert hasattr(modal_app, "smoke_transcribe")
+    assert modal_app.SMOKE_FIXTURE.exists()
+    assert modal_app.SMOKE_FIXTURE.stat().st_size < 200_000
+    meta = json.loads(modal_app.SMOKE_META.read_text())
+    assert meta["durationMs"] == 8824
+    assert meta["expect"] == ["chapters", "smoke"]
+
+
+def test_every_call_gets_its_own_scratch_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Per call, not per source: a warm container serves many (S2 review, I27)."""
+    monkeypatch.setattr(modal_app, "WORK_DIR", tmp_path / "work")
+    first = modal_app.scratch_dir("ladder")
+    second = modal_app.scratch_dir("ladder")
+    assert first != second
+    assert first.parent == tmp_path / "work"
+    assert first.name.startswith("ladder-")
+    assert first.is_dir()
+
+
+def test_the_disk_preflight_refuses_with_the_numbers(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match=r"GB free under .* and .* GB needed"):
+        modal_app.assert_disk_headroom(tmp_path, 1 << 60)
+    modal_app.assert_disk_headroom(tmp_path, 1)
 
 
 def test_one_contract_version_covers_both_functions() -> None:
