@@ -5,6 +5,16 @@ later stage can round the same word differently. Everything the engine leaves
 out is filled in here and marked, rather than being passed on as a hole for
 the viewer, the cue builder, and the substrate to each guess about.
 
+Two rules from the S2 review (2026-09-07) shape this module. The shape of the
+response is checked, not tolerated: a response with no segment list, or a
+segment or word that is not an object, is a contract error the runner treats
+as terminal, with the raw response kept in storage for a person to read;
+tolerating it made `{"unexpected": 123}` a valid empty transcript. And the
+words are never reordered: the order of the words is what was said, and the
+times are the estimate, so a word alignment placed before its predecessor keeps
+its place and has its time repaired and flagged. Sorting by time rewrote the
+sentence.
+
 The contract's two refinements do not survive Zod's JSON Schema emission, so
 they are restated at the bottom of this module and tested on both sides:
 words ascend by start, and none may end more than two seconds after the media
@@ -29,7 +39,7 @@ from temnia_pipeline.contracts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Sequence
 
 # Words may end this far past the probed duration before the run is refused:
 # a container's duration and the last frame of audio disagree by rounding, and
@@ -43,7 +53,7 @@ _SPEAKER = re.compile(r"^SPEAKER_0*(\d+)$")
 
 
 class TranscriptContractError(ValueError):
-    """The normalised transcript breaks a rule the contract cannot express."""
+    """The response, or the normalised transcript, breaks a rule the contract cannot express."""
 
 
 def normalize_speaker(speaker: object) -> str | None:
@@ -88,90 +98,148 @@ class _Draft:
     segment: tuple[int | None, int | None]
 
 
-def _drafts(segments: Iterable[object]) -> list[_Draft]:
+def _segment_words(position: int, segment: dict[str, Any]) -> list[object]:
+    """The word objects of one segment, or the words its text splits into.
+
+    A segment with a word list is what alignment produces, empty for music and
+    silence. One with text and no word list at all is a segment alignment never
+    saw; its text is kept as untimed words for the fill below rather than
+    disappearing, because a person heard those words.
+    """
+    raw_words = segment.get("words")
+    if raw_words is None:
+        text = segment.get("text")
+        if isinstance(text, str):
+            return [{"word": piece} for piece in text.split()]
+        return []
+    if not isinstance(raw_words, list):
+        msg = f"segment {position} has words of type {type(raw_words).__name__}, not a list"
+        raise TranscriptContractError(msg)
+    return cast("list[object]", raw_words)
+
+
+def _drafts(segments: Sequence[object]) -> list[_Draft]:
     """Every word in every segment, with the segment's own bounds carried along.
 
-    A segment with no words at all is dropped rather than turned into one long
-    word: whisperx emits them for music and silence, and an empty segment that
-    became a word would put text on screen that nobody said.
+    A whitespace-only word is dropped: whisperx emits them for music and
+    silence, and an empty word would put nothing on screen under a timestamp.
+    Anything that is not the shape whisperx emits is a contract error, never a
+    silent omission.
     """
     drafts: list[_Draft] = []
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-        raw_words = segment.get("words")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if not isinstance(raw_words, list):
-            continue
-        bounds = (_seconds_to_ms(segment.get("start")), _seconds_to_ms(segment.get("end")))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        segment_speaker = normalize_speaker(segment.get("speaker"))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        for raw in raw_words:  # pyright: ignore[reportUnknownVariableType]
+    for position, found in enumerate(segments):
+        if not isinstance(found, dict):
+            msg = f"segment {position} is {type(found).__name__}, not an object"
+            raise TranscriptContractError(msg)
+        segment = cast("dict[str, Any]", found)
+        bounds = (_seconds_to_ms(segment.get("start")), _seconds_to_ms(segment.get("end")))
+        segment_speaker = normalize_speaker(segment.get("speaker"))
+        for index, raw in enumerate(_segment_words(position, segment)):
             if not isinstance(raw, dict):
-                continue
-            text = str(raw.get("word", "")).strip()  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                msg = f"word {index} of segment {position} is {type(raw).__name__}, not an object"
+                raise TranscriptContractError(msg)
+            word = cast("dict[str, Any]", raw)
+            text = str(word.get("word", "")).strip()
             if not text:
                 continue
             drafts.append(
                 _Draft(
                     text=text,
-                    start_ms=_seconds_to_ms(raw.get("start")),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-                    end_ms=_seconds_to_ms(raw.get("end")),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                    start_ms=_seconds_to_ms(word.get("start")),
+                    end_ms=_seconds_to_ms(word.get("end")),
                     # A word with no diarization overlap takes the enclosing
                     # segment's speaker; a segment with none leaves it null,
                     # which the viewer renders as an unattributed run.
-                    speaker=normalize_speaker(raw.get("speaker")) or segment_speaker,  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-                    confidence=_confidence(raw.get("score")),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                    speaker=normalize_speaker(word.get("speaker")) or segment_speaker,
+                    confidence=_confidence(word.get("score")),
                     segment=bounds,
                 )
             )
     return drafts
 
 
-def _anchor_before(drafts: Sequence[_Draft], index: int) -> int | None:
-    """The last known time at or before `index`, from a word or its segment."""
-    for previous in reversed(range(index)):
-        candidate = drafts[previous].end_ms or drafts[previous].start_ms
-        if candidate is not None:
-            return candidate
-    return drafts[index].segment[0]
+def _spread(
+    points: list[int | None],
+    weights: Sequence[int],
+    window: tuple[int, int],
+    anchors: tuple[int, int],
+) -> None:
+    """Fill the points in `window` between the two `anchors`, in proportion to the weights.
 
-
-def _anchor_after(drafts: Sequence[_Draft], index: int) -> int | None:
-    """The next known time after `index`, from a word or its segment."""
-    for following in range(index + 1, len(drafts)):
-        candidate = drafts[following].start_ms or drafts[following].end_ms
-        if candidate is not None:
-            return candidate
-    return drafts[index].segment[1]
+    `weights[i]` is the weight of the stretch from point `i` to point `i + 1`.
+    Anchors that cross (the time after is before the time before) leave no
+    span to share, and every point takes the earlier one: no duration is
+    invented where the evidence has none.
+    """
+    first, last = window
+    before, after = anchors
+    span = max(after - before, 0)
+    lead = weights[first - 1] if first > 0 else 0
+    total = lead + sum(weights[first:last])
+    run = 0
+    for index in range(first, last):
+        run += weights[index - 1] if index > 0 else 0
+        points[index] = before + (round(span * run / total) if total > 0 else 0)
 
 
 def _fill(drafts: Sequence[_Draft]) -> list[TranscriptWord]:
-    """Give every word a start and an end, marking the ones we invented.
+    """Give every word a start and an end, in the order it was spoken.
 
-    Numbers and symbols come back from whisperx without timestamps because the
-    alignment model has no phonemes for them. Dropping those words would lose
-    text the user can see in the audio; leaving them at zero would send a click
-    to the top of the recording. They are interpolated between their neighbours
-    and flagged, so the surface can show them as approximate.
+    The words' starts and ends are one ascending sequence of time points, two
+    per word. Every run of missing points between two known ones shares the
+    span between them in proportion to the words' lengths in characters (the
+    gap between two words weighs nothing, so untimed neighbours abut). The
+    known time on either side is the nearest timed point, or the segment's own
+    bound, or zero and then nothing. Filling one word and using it as the next
+    word's anchor gave the second of two untimed words no duration (review
+    finding I08); a run is filled as a whole.
+
+    Then, in lexical order, a word that starts before its predecessor takes the
+    predecessor's start, and an end before its own start is raised to it. That
+    keeps the contract's ascending starts without reordering a single word.
+    Every word a rule touched is `interpolated`, which the viewer shows as
+    approximate.
     """
-    filled: list[TranscriptWord] = []
+    count = len(drafts)
+    points: list[int | None] = []
+    for draft in drafts:
+        points.extend((draft.start_ms, draft.end_ms))
+    # Weight of the stretch from point i to point i + 1: a word's own length in
+    # characters, and nothing between one word's end and the next word's start.
+    weights = [0] * max(2 * count - 1, 0)
     for index, draft in enumerate(drafts):
-        timing = (
-            WordTiming.aligned
-            if draft.start_ms is not None and draft.end_ms is not None
-            else WordTiming.interpolated
-        )
-        start = draft.start_ms
-        end = draft.end_ms
-        if start is None:
-            before = _anchor_before(drafts, index)
-            start = before if before is not None else (end if end is not None else 0)
-        if end is None:
-            after = _anchor_after(drafts, index)
-            end = after if after is not None else start
-        start = max(start, 0)
-        end = max(end, start)
-        draft.start_ms = start
-        draft.end_ms = end
+        weights[2 * index] = max(len(draft.text), 1)
+    touched = [False] * count
+
+    index = 0
+    while index < len(points):
+        if points[index] is not None:
+            index += 1
+            continue
+        first = index
+        while index < len(points) and points[index] is None:
+            index += 1
+        last = index
+        earlier = points[first - 1] if first > 0 else drafts[first // 2].segment[0]
+        later = points[last] if last < len(points) else drafts[(last - 1) // 2].segment[1]
+        before = earlier if earlier is not None else (later if later is not None else 0)
+        after = later if later is not None else before
+        _spread(points, weights, (first, last), (before, after))
+        for point in range(first, last):
+            touched[point // 2] = True
+
+    filled: list[TranscriptWord] = []
+    previous_start = 0
+    for word_index, draft in enumerate(drafts):
+        start = cast("int", points[2 * word_index])
+        end = cast("int", points[2 * word_index + 1])
+        if start < previous_start:
+            start = previous_start
+            touched[word_index] = True
+        if end < start:
+            end = start
+            touched[word_index] = True
+        previous_start = start
         filled.append(
             TranscriptWord(
                 text=draft.text,
@@ -179,7 +247,7 @@ def _fill(drafts: Sequence[_Draft]) -> list[TranscriptWord]:
                 endMs=end,
                 speaker=draft.speaker,
                 confidence=draft.confidence,
-                timing=timing,
+                timing=WordTiming.interpolated if touched[word_index] else WordTiming.aligned,
             )
         )
     return filled
@@ -234,12 +302,13 @@ def normalize_whisperx(
     comparable against what it replaces.
     """
     found = raw.get("segments")
-    drafts = _drafts(cast("list[Any]", found) if isinstance(found, list) else [])
-    words = _fill(drafts)
-    # Alignment can move a word before the one that preceded it in the
-    # segment; the contract promises ascending starts to everything that reads
-    # a transcript, so the sort happens here rather than in each reader.
-    words.sort(key=lambda word: (word.startMs, word.endMs))
+    if not isinstance(found, list):
+        msg = (
+            "the engine's response has no segments list "
+            f"(got {type(found).__name__}); it is not a transcript"
+        )
+        raise TranscriptContractError(msg)
+    words = _fill(_drafts(cast("list[object]", found)))
     speakers: list[str] = []
     for word in words:
         if word.speaker is not None and word.speaker not in speakers:
