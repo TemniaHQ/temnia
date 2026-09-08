@@ -69,7 +69,7 @@ async def download(store: S3Store, key: str, dest: Path, *, expected_size: int |
     return size
 
 
-async def read_text(store: S3Store, key: str) -> str | None:
+async def read_text(store: S3Store, key: str, *, max_bytes: int | None = None) -> str | None:
     """Fetch a small object as text; None when the key is not there.
 
     For completion markers, where absent is an answer and not a fault.
@@ -78,6 +78,9 @@ async def read_text(store: S3Store, key: str) -> str | None:
         result = await obs.get_async(store, key)
     except FileNotFoundError:
         return None
+    if max_bytes is not None and result.meta["size"] > max_bytes:
+        msg = f"object exceeds {max_bytes} bytes: {key}"
+        raise ValueError(msg)
     return bytes(await result.bytes_async()).decode()
 
 
@@ -168,11 +171,16 @@ async def list_keys(store: S3Store, prefix: str) -> list[str]:
     return [key for key, _ in await list_objects(store, prefix)]
 
 
-async def list_objects(store: S3Store, prefix: str) -> list[tuple[str, int]]:
+async def list_objects(
+    store: S3Store, prefix: str, *, max_objects: int | None = None
+) -> list[tuple[str, int]]:
     """Every key under the prefix with its size, for an inventory check."""
     found: list[tuple[str, int]] = []
     async for page in obs.list(store, prefix):  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         found.extend((str(item["path"]), int(item["size"])) for item in page)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+        if max_objects is not None and len(found) > max_objects:
+            msg = f"object inventory exceeds {max_objects} objects under {prefix}"
+            raise ValueError(msg)
     return found
 
 

@@ -2,6 +2,10 @@
 
 import { Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { WordEdit } from "@/lib/transcript/drafts";
+
+export type { WordEdit } from "@/lib/transcript/drafts";
+
 import { FieldError } from "@/components/ui/field";
 import {
   InputGroup,
@@ -9,20 +13,6 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/components/ui/input-group";
-
-export interface WordEdit {
-  /**
-   * What the person has typed, or null until they touch the input. It lives in
-   * the reader's state, not in this component's: the row this editor sits in
-   * is virtualised and unmounts when it scrolls out of the retained range,
-   * which took the draft with it (S2 review, I21).
-   */
-  draft: string | null;
-  /** Why the last save was refused, when the edit itself was the problem. */
-  error: string | null;
-  index: number;
-  pending: boolean;
-}
 
 interface TranscriptWordEditorProps {
   edit: WordEdit;

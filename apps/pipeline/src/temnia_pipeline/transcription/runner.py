@@ -51,6 +51,7 @@ TERMINAL_TYPES = (
     "TranscriptContractError",
     "InvalidMediaError",
     "ValidationError",
+    "RemoteProtocolError",
 )
 _TERMINAL_PREFIXES = tuple(f"{name}:" for name in TERMINAL_TYPES)
 
@@ -127,6 +128,8 @@ class TranscriptionRunner:
             case Running() | Done():
                 log.info("reattaching to transcription %s", resume)
                 return resume
+            case Failed(message=message) if classify(message).non_retryable:
+                raise classify(message)
             case Unreachable(message=message):
                 msg = f"could not reach the provider to check transcription {resume}: {message}"
                 raise provider_failure(msg)

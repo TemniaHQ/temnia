@@ -48,9 +48,11 @@ runbook had assumed the bare app name.
   From S2 it also carries `TRANSCODE_BACKEND=modal`, `TRANSCRIPTION_PROVIDER=modal`,
   `MODAL_ENVIRONMENT=staging`, `MODAL_TOKEN_ID`, and `MODAL_TOKEN_SECRET` (§2c). With either of
   those two set to `modal` the worker calls the deployed `version` function before it serves the
-  queue and exits non-zero on a bad token or a Modal app deployed from another commit, so Dokploy
-  reports a failed deploy and keeps the previous container. One probe covers both functions: they
-  share an app and a contract version, so a half deployed pair cannot get past it either.
+  queue and exits non-zero on a bad token or an incompatible media protocol, so Dokploy reports
+  a failed deploy and keeps the previous container. This checks compatibility, not an exact commit
+  or every function's health; the deployed speech smoke below checks the selected build. A worker
+  already running does not repeat the boot probe, so incompatible protocol changes require the
+  drain-and-replace sequence in §2c.
   The work volume no longer holds ladders once the backend is `modal`: only the master and the audio
   extract stay on it, and transcription reads the extract from R2 inside the Modal function rather
   than from the volume.
@@ -200,13 +202,25 @@ decided belongs to an organization, and never an organization id.
    minutes already spent. Which decoder produced a ladder is recorded in `hls/manifest.json` and in
    the hls artifact's metadata as `decoder`, so a slow run can be read rather than guessed at.
    `"decoder": "cpu"` on an H.264 master means the fallback fired, and the container's log says why.
-5. **Deploy**, and redeploy from the same commit whenever the pipeline image is deployed:
+5. **Before deploying protocol 4, drain protocol 3.** Pause new uploads/ingest, let the old workers
+   finish their activities, and verify that no running or retrying workflow retains a version-3
+   GPU call handle. Resolve uncertain calls while the old deployment still exists. Stop the old
+   workers only after this drain. Deploy Modal from the exact checkout intended for the new pipeline,
+   run the deployed smoke below, then deploy/start the matching pipeline image and resume ingest.
+   Version 4 uses result envelopes; version-3 workers cannot parse them, and version 4 refuses
+   unframed old results. Deploying Modal first while old workers keep polling is unsafe.
+   If work cannot drain, defer this rollout. A separate Modal environment alone does not isolate
+   Temporal: workers on the same namespace/task queue could still pick up incompatible retries.
+   Concurrent versions require explicit Temporal version/queue routing and source ownership, which
+   this release does not add. Do not abandon an unknown paid call merely to complete the rollout.
+
+5a. **Deploy**, using the same checkout as the matching pipeline image:
 
    ```bash
    uv run modal deploy --env staging -m temnia_pipeline.modal_app
    ```
 
-   One deploy publishes `ladder`, `transcribe`, and `version`. The first build is long: it adds
+   One deploy publishes `ladder`, `transcribe`, `version`, `deployment_identity`, and `smoke_transcribe`. The first build is long: it adds
    torch 2.8 from PyTorch's cu126 index (the oldest index that carries torch 2.8; the wheels bundle their own CUDA libraries, so the image's 12.4 runtime only has to provide the driver, and no second copy
    of the CUDA libraries comes along) and whisperx 3.8.6 on top of the NVENC ffmpeg. There is no
    deploying one function without the other: they share `CONTRACT_VERSION`, and the worker's boot
@@ -216,11 +230,17 @@ decided belongs to an organization, and never an organization id.
    trusted to it:
 
    ```bash
-   uv run modal run --env staging -m temnia_pipeline.modal_app::smoke
+   uv run --frozen python -m temnia_pipeline.modal_smoke --app temnia-media --environment staging
    ```
 
+   Run this from the deployment checkout. The CLI resolves existing deployed functions by app
+   and environment; it does not create a `modal run` ephemeral app. It checks the deployed protocol
+   and source/config fingerprint before and after execution, and verifies the actual GPU outcome
+   carries the expected build identity. A stale, mixed, or changed deployment fails the smoke.
+   The fingerprint covers package Python source, dependency lock/config, and the pipeline Dockerfile;
+   it identifies those inputs rather than attesting mutable upstream package/model bytes.
    It uploads a nine-second real-speech sample under a throwaway `smoke/` prefix, runs the deployed
-   `transcribe` exactly as the worker would (image, secrets, the gated diarization model, the GPU),
+   `transcribe` through its real image, secrets, gated diarization model, and GPU,
    normalises the result with the worker's own normaliser, checks that "chapters" and "smoke" were
    heard, removes what it wrote, and prints the words, the language, the speakers, the GPU seconds
    and the wall seconds. It exits non-zero on a miss. This is the step the boot probe cannot be:
@@ -231,8 +251,8 @@ decided belongs to an organization, and never an organization id.
 6. **If the worker will not start**, its log carries one line naming the variables that put it on
    Modal, for example `TRANSCODE_BACKEND=modal and TRANSCRIPTION_PROVIDER=modal:`.
    `cannot reach the Modal app …` is a token or a missing deployment; `… speaks media contract 'x'
-   and this worker speaks 'y'` means the two halves came from different commits, so deploy the Modal
-   app again from the commit the image was built from.
+   and this worker speaks 'y'` means the media protocols differ. Follow the paired rollout above;
+   do not replace a live incompatible app underneath its old workers.
 
 ## 2d. Record the gate's transcription fixture (once, after the first staging run)
 

@@ -14,7 +14,7 @@ import {
   usageLedger,
 } from "@temnia/db";
 import { WorkflowNotFoundError } from "@temporalio/client";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
@@ -30,7 +30,6 @@ import {
   readRevision,
   writeRevision,
 } from "@/lib/transcript/queries";
-import { STALL_AFTER_MS } from "@/lib/transcript/state";
 
 const IdSchema = z.uuid();
 
@@ -55,48 +54,48 @@ export type TranscriptActionResult =
   | { ok: true }
   | { invalid?: true; message: string; ok: false; stale?: true };
 
+const CLOSED_EXECUTIONS = new Set([
+  "COMPLETED",
+  "FAILED",
+  "CANCELED",
+  "TERMINATED",
+  "TIMED_OUT",
+]);
+
 const STILL_RUNNING_MESSAGE = "Transcription is still running.";
 const NOT_QUEUED_MESSAGE = "Transcription could not be queued. Try again.";
+const STATUS_UNKNOWN_MESSAGE =
+  "Transcription status could not be checked. Try again in a moment.";
+const START_UNKNOWN_MESSAGE =
+  "Could not confirm whether transcription started. Try again in a moment.";
+const ROW_CHANGED_MESSAGE =
+  "Transcription changed while you were retrying. Refresh and try again.";
 
-/**
- * Whether the source's transcription workflow is alive, asked of Temporal.
- *
- * A row can say `processing` for a run that is gone: a worker killed before
- * it wrote, an execution that timed out. Trusting the row left those rows
- * unretryable for ever (S2 review, I19). When Temporal itself cannot be
- * asked, a fresh heartbeat is believed and a stale one is not.
- */
-async function transcriptionIsRunning(
-  sourceId: string,
-  heartbeatAt: Date | null
-): Promise<boolean> {
+/** Control-plane uncertainty is never permission to replace a run. */
+async function transcriptionExecution(
+  sourceId: string
+): Promise<"running" | "closed" | "unknown"> {
   try {
     const client = await getTemporalClient();
     const description = await client.workflow
       .getHandle(`transcribe-${sourceId}`)
       .describe();
-    return description.status.name === "RUNNING";
-  } catch (error) {
-    if (error instanceof WorkflowNotFoundError) {
-      return false;
+    if (CLOSED_EXECUTIONS.has(description.status.name)) {
+      return "closed";
     }
-    return (
-      heartbeatAt !== null &&
-      Date.now() - heartbeatAt.getTime() <= STALL_AFTER_MS
-    );
+    // UNKNOWN provides no evidence of closure; CONTINUED_AS_NEW may already
+    // have a live successor, so neither authorizes replacing its database row.
+    return description.status.name === "RUNNING" ? "running" : "unknown";
+  } catch (error) {
+    return error instanceof WorkflowNotFoundError ? "closed" : "unknown";
   }
 }
 
 /**
- * Start transcription again for a source whose previous run is over.
- *
- * A `ready`, `failed`, or `pending` row is parked at `pending`: the claim
- * activity refuses to interrupt a run, so the user's Retry is the only thing
- * that says a finished transcript may be replaced. A row still `processing`
- * is retried only when Temporal says its run is gone; a live run is left
- * alone and the workflow id policy makes a second start a no-op anyway. A
- * start Temporal refuses is written to the row as a typed failure, so the tab
- * says so and offers Retry instead of "Queued" for ever.
+ * Reserve only the row we inspected, after confirming its workflow is closed.
+ * The temporary dispatch token in run_id owns this pending transition; the
+ * worker replaces it with its real Temporal run id when it claims the row.
+ * This also distinguishes concurrent retries of an already-pending row.
  */
 export async function retryTranscription(
   sourceId: string
@@ -109,9 +108,14 @@ export async function retryTranscription(
     const [row] = await tx
       .select({
         durationMs: source.durationMs,
-        heartbeatAt: transcript.heartbeatAt,
         status: source.status,
+        transcriptAttempts: transcript.attempts,
+        transcriptRevision: transcript.currentRevision,
+        transcriptRunId: transcript.runId,
         transcriptStatus: transcript.status,
+        // Preserve Postgres microseconds: a JS Date would truncate them and
+        // make an unchanged Python-written row fail the comparison below.
+        transcriptUpdatedAt: sql<string | null>`${transcript.updatedAt}::text`,
       })
       .from(source)
       .leftJoin(transcript, eq(transcript.sourceId, source.id))
@@ -125,24 +129,57 @@ export async function retryTranscription(
       ok: false,
     };
   }
-  if (
-    found.transcriptStatus === "processing" &&
-    (await transcriptionIsRunning(id.data, found.heartbeatAt))
-  ) {
-    return { message: STILL_RUNNING_MESSAGE, ok: false };
+  const execution = await transcriptionExecution(id.data);
+  if (execution !== "closed") {
+    return {
+      message:
+        execution === "running"
+          ? STILL_RUNNING_MESSAGE
+          : STATUS_UNKNOWN_MESSAGE,
+      ok: false,
+    };
   }
   const { durationMs } = found;
+  const dispatchToken = `dispatch:${randomUUID()}`;
   const started = await scoped(async (tx, scope) => {
-    if (found.transcriptStatus) {
-      await tx
-        .update(transcript)
-        .set({
-          errorMessage: null,
-          percent: null,
-          stage: null,
-          status: "pending",
-        })
-        .where(eq(transcript.sourceId, id.data));
+    const reserved = {
+      errorMessage: null,
+      heartbeatAt: null,
+      percent: null,
+      runId: dispatchToken,
+      stage: null,
+      status: "pending" as const,
+    };
+    const rows = found.transcriptStatus
+      ? await tx
+          .update(transcript)
+          .set(reserved)
+          .where(
+            and(
+              eq(transcript.sourceId, id.data),
+              eq(transcript.status, found.transcriptStatus),
+              eq(transcript.attempts, found.transcriptAttempts ?? 0),
+              found.transcriptRunId === null
+                ? isNull(transcript.runId)
+                : eq(transcript.runId, found.transcriptRunId),
+              found.transcriptRevision === null
+                ? isNull(transcript.currentRevision)
+                : eq(transcript.currentRevision, found.transcriptRevision),
+              sql`${transcript.updatedAt}::text = ${found.transcriptUpdatedAt}`
+            )
+          )
+          .returning({ id: transcript.id })
+      : await tx
+          .insert(transcript)
+          .values({
+            ...reserved,
+            organizationId: scope.organizationId,
+            sourceId: id.data,
+          })
+          .onConflictDoNothing({ target: transcript.sourceId })
+          .returning({ id: transcript.id });
+    if (rows.length === 0) {
+      return null;
     }
     const prefix = sourcePrefix(scope.organizationId, id.data);
     return {
@@ -153,39 +190,45 @@ export async function retryTranscription(
       sourceId: id.data,
     };
   });
+  if (!started) {
+    revalidatePath(`/sources/${id.data}`);
+    return { message: ROW_CHANGED_MESSAGE, ok: false };
+  }
   try {
     const client = await getTemporalClient();
     await client.workflow.start(WORKFLOWS.transcribe, {
       args: [started],
       taskQueue: TASK_QUEUES.pipeline,
       workflowExecutionTimeout: "6 hours",
-      // USE_EXISTING attaches to a run already going rather than failing; the
-      // reuse policy is what lets a completed or failed run start again under
-      // the same id, which is how a retry keeps one workflow per source.
       workflowId: `transcribe-${id.data}`,
       workflowIdConflictPolicy: "USE_EXISTING",
       workflowIdReusePolicy: "ALLOW_DUPLICATE",
     });
   } catch (error) {
+    // A lost start acknowledgement may still have launched a real workflow.
+    // Preserve the reservation unless Temporal confirms no execution is live.
+    const afterStart = await transcriptionExecution(id.data);
+    if (afterStart !== "closed") {
+      revalidatePath(`/sources/${id.data}`);
+      return afterStart === "running"
+        ? { ok: true }
+        : { message: START_UNKNOWN_MESSAGE, ok: false };
+    }
     const reason = error instanceof Error ? error.message : String(error);
-    await scoped(async (tx, scope) => {
-      // Only a row still waiting for this start; a claim that raced in owns it.
+    await scoped(async (tx) => {
       await tx
-        .insert(transcript)
-        .values({
+        .update(transcript)
+        .set({
           errorMessage: `DispatchError: ${reason}`.slice(0, 2000),
-          organizationId: scope.organizationId,
-          sourceId: id.data,
           status: "failed",
         })
-        .onConflictDoUpdate({
-          set: {
-            errorMessage: `DispatchError: ${reason}`.slice(0, 2000),
-            status: "failed",
-          },
-          setWhere: sql`${transcript.status} = 'pending'`,
-          target: transcript.sourceId,
-        });
+        .where(
+          and(
+            eq(transcript.sourceId, id.data),
+            eq(transcript.status, "pending"),
+            eq(transcript.runId, dispatchToken)
+          )
+        );
     });
     revalidatePath(`/sources/${id.data}`);
     return { message: NOT_QUEUED_MESSAGE, ok: false };

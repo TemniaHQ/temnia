@@ -18,6 +18,7 @@ import pytest
 
 from conftest import SubstrateFixture
 from temnia_pipeline.contracts import TranscriptWord, WordTiming
+from temnia_pipeline.substrate.backends import PINNED_REVISIONS, LoadedModel
 from temnia_pipeline.substrate.model import Layers
 from temnia_pipeline.substrate.protocol import Segmenter
 from temnia_pipeline.substrate.sat import SaTSegmenter, word_char_starts, word_groups
@@ -138,3 +139,37 @@ def test_an_adapter_needs_a_style_and_a_language_together() -> None:
     )
     with pytest.raises(ValueError, match="style_or_domain and language together"):
         SaTSegmenter(style_or_domain="ted").segment([word])
+
+
+def test_provenance_keeps_the_loaded_snapshot_when_pins_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Model:
+        def split(
+            self,
+            text_or_texts: str,
+            threshold: float | None = None,
+            *,
+            do_paragraph_segmentation: bool = False,
+            strip_whitespace: bool = False,
+        ) -> object:
+            _ = (threshold, do_paragraph_segmentation, strip_whitespace)
+            return [text_or_texts]
+
+    loads = 0
+
+    def load(*args: object, **kwargs: object) -> LoadedModel[Model]:
+        nonlocal loads
+        _ = (args, kwargs)
+        loads += 1
+        return LoadedModel(Model(), "a" * 40, "b" * 40)
+
+    monkeypatch.setattr("temnia_pipeline.substrate.sat.load_sat", load)
+    segmenter = SaTSegmenter()
+    first = segmenter.segment([FakeWord("Hello.")])
+    monkeypatch.setitem(PINNED_REVISIONS, "segment-any-text/sat-3l-sm", "c" * 40)
+    second = segmenter.segment([FakeWord("Next.")])
+    assert loads == 1
+    assert first.provenance.versions["sat_revision"] == "a" * 40
+    assert second.provenance.versions["sat_revision"] == "a" * 40
+    assert second.provenance.versions["sat_tokenizer_revision"] == "b" * 40

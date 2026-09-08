@@ -127,7 +127,7 @@ def test_the_disk_preflight_refuses_with_the_numbers(tmp_path: Path) -> None:
 
 def test_one_contract_version_covers_both_functions() -> None:
     """A ladder deployed without its transcription is a failed deploy, not a surprise."""
-    assert CONTRACT_VERSION == "3"
+    assert CONTRACT_VERSION == "4"
 
 
 def test_the_provider_reports_the_model_and_release_the_image_pins() -> None:
@@ -269,7 +269,8 @@ async def test_a_cuda_graph_that_fails_is_encoded_again_on_the_cpu(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A profile this card refuses, or a driver that will not initialise, costs
-    the GPU attempt and still produces a ladder."""
+    the GPU attempt and still produces a ladder.
+    """
     fake, decoder = await _run(monkeypatch, tmp_path, _ladder_job(), failures=1)
 
     assert fake.decoders() == ["cuda", "cpu"]
@@ -289,7 +290,8 @@ async def test_a_source_the_gpu_cannot_decode_never_spends_an_attempt_on_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ProRes is the master format this matters most for, and it is decided
-    from the probe rather than from a failed run."""
+    from the probe rather than from a failed run.
+    """
     job = _ladder_job(codec="prores", pix_fmt="yuv422p10le")
     fake, decoder = await _run(monkeypatch, tmp_path, job, failures=0)
 

@@ -330,3 +330,131 @@ class TestTheContractCheck:
         result.words = [result.words[5], *result.words[:5], *result.words[6:]]
         with pytest.raises(TranscriptContractError, match="sorted by startMs"):
             assert_contract(result)
+
+
+@pytest.mark.parametrize(
+    "word", [{}, {"text": "speech"}, {"word": None}, {"word": 3}, {"word": {}}]
+)
+def test_malformed_word_fields_are_terminal_contract_errors(word: dict[str, object]) -> None:
+    with pytest.raises(TranscriptContractError, match="string word field"):
+        normalize_whisperx({"segments": [{"words": [word]}]}, 4000, PROVIDER)
+
+
+@pytest.mark.parametrize("segment", [{}, {"words": None}, {"text": None}, {"text": 3, "words": []}])
+def test_a_segment_must_supply_valid_words_or_text(segment: dict[str, object]) -> None:
+    with pytest.raises(TranscriptContractError):
+        normalize_whisperx({"segments": [segment]}, 4000, PROVIDER)
+
+
+@pytest.mark.parametrize("empty", [None, []])
+def test_empty_alignment_preserves_nonempty_speech(empty: object) -> None:
+    result = normalize_whisperx(
+        {"segments": [{"start": 1, "end": 3, "text": "actual speech", "words": empty}]},
+        4000,
+        PROVIDER,
+    )
+    assert [(w.text, w.startMs, w.endMs) for w in result.words] == [
+        ("actual", 1000, 2000),
+        ("speech", 2000, 3000),
+    ]
+    assert all(w.timing == WordTiming.interpolated for w in result.words)
+
+
+@pytest.mark.parametrize("text", ["", "  ", "♪ ♫", "[Music]", "[silence]", "(no speech)"])
+def test_explicit_nonspeech_does_not_become_fabricated_words(text: str) -> None:
+    empty: list[object] = []
+    for words in (None, empty):
+        result = normalize_whisperx(
+            {"segments": [{"start": 0, "end": 3, "text": text, "words": words}]},
+            4000,
+            PROVIDER,
+        )
+        assert result.words == []
+
+
+def test_the_spoken_word_music_is_preserved() -> None:
+    result = normalize_whisperx(
+        {"segments": [{"start": 0, "end": 3, "text": "music", "words": []}]},
+        4000,
+        PROVIDER,
+    )
+    assert [word.text for word in result.words] == ["music"]
+
+
+def test_a_middle_segment_never_interpolates_across_its_neighbours_pauses() -> None:
+    assert _times(
+        [
+            _segment([_word("before", 0, 1)], start=0, end=1),
+            {"start": 10, "end": 12, "text": "hello there"},
+            _segment([_word("after", 30, 31)], start=30, end=31),
+        ]
+    ) == [
+        ("before", 0, 1000),
+        ("hello", 10000, 11000),
+        ("there", 11000, 12000),
+        ("after", 30000, 31000),
+    ]
+
+
+def test_adjacent_alignment_failures_keep_separate_segment_bounds() -> None:
+    assert _times(
+        [
+            {"start": 0, "end": 2, "text": "first words", "words": []},
+            {"start": 20, "end": 22, "text": "later words", "words": []},
+        ]
+    ) == [
+        ("first", 0, 1000),
+        ("words", 1000, 2000),
+        ("later", 20000, 21000),
+        ("words", 21000, 22000),
+    ]
+
+
+def test_partial_word_anchors_in_middle_segments_respect_their_own_bounds() -> None:
+    assert _times(
+        [
+            _segment([_word("before", 0, 1)]),
+            _segment([_word("start"), _word("middle", 11, 12), _word("end")], start=10, end=13),
+            _segment([_word("after", 30, 31)]),
+        ]
+    ) == [
+        ("before", 0, 1000),
+        ("start", 10000, 11000),
+        ("middle", 11000, 12000),
+        ("end", 12000, 13000),
+        ("after", 30000, 31000),
+    ]
+
+
+def test_overlapping_segments_preserve_aligned_evidence_and_bound_missing_words() -> None:
+    result = normalize_whisperx(
+        {
+            "segments": [
+                _segment([_word("held", 0, 10)], start=0, end=10),
+                _segment([_word("yes"), _word("indeed", 6, 7)], start=5, end=7),
+            ]
+        },
+        12000,
+        PROVIDER,
+    )
+    assert [(w.text, w.startMs, w.endMs) for w in result.words] == [
+        ("held", 0, 10000),
+        ("yes", 5000, 6000),
+        ("indeed", 6000, 7000),
+    ]
+    assert [w.timing for w in result.words] == [
+        WordTiming.aligned,
+        WordTiming.interpolated,
+        WordTiming.aligned,
+    ]
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_only_blank_alignment_tokens_cannot_erase_segment_speech(blank: str) -> None:
+    result = normalize_whisperx(
+        {"segments": [{"start": 1, "end": 3, "text": "actual speech", "words": [{"word": blank}]}]},
+        4000,
+        PROVIDER,
+    )
+    assert [word.text for word in result.words] == ["actual", "speech"]
+    assert all(word.timing == WordTiming.interpolated for word in result.words)

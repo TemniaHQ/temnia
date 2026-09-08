@@ -24,6 +24,7 @@ function row(over: Partial<TranscriptRowSummary> = {}): TranscriptRowSummary {
     percent: null,
     stage: null,
     status: "pending",
+    updatedAt: new Date(NOW - 1000).toISOString(),
     wordCount: null,
     ...over,
   };
@@ -123,6 +124,29 @@ describe("transcriptState", () => {
         status: "processing",
       }).kind
     ).toBe("processing");
+  });
+
+  it("offers recovery before retry wording when retrying has gone stale", () => {
+    expect(
+      state({
+        heartbeatAt: new Date(NOW - 86_400_000).toISOString(),
+        stage: "retrying",
+        status: "processing",
+      })
+    ).toMatchObject({ kind: "stalled", retry: true });
+  });
+
+  it("ages a missing heartbeat from the last row update", () => {
+    for (const stage of ["download", "retrying"]) {
+      expect(
+        state({
+          heartbeatAt: null,
+          stage,
+          status: "processing",
+          updatedAt: new Date(NOW - STALL_AFTER_MS - 1).toISOString(),
+        })
+      ).toMatchObject({ kind: "stalled", retry: true });
+    }
   });
 
   it("never reads a clock the server does not have: now 0 is not stalled", () => {

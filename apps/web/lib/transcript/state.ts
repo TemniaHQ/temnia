@@ -63,6 +63,8 @@ export interface TranscriptRowSummary {
   percent: number | null;
   stage: string | null;
   status: "pending" | "processing" | "ready" | "failed";
+  /** Used to age a claimed row before its first heartbeat. */
+  updatedAt: string;
   /** The current revision's word count; zero is a recording with no speech. */
   wordCount: number | null;
 }
@@ -134,14 +136,7 @@ function processingState(
   row: TranscriptRowSummary,
   now: number
 ): TranscriptTabState {
-  if (row.stage === "retrying") {
-    return {
-      kind: "retrying",
-      retry: false,
-      words: "Transcription stopped unexpectedly and is being retried.",
-    };
-  }
-  const beat = row.heartbeatAt ? Date.parse(row.heartbeatAt) : Number.NaN;
+  const beat = Date.parse(row.heartbeatAt ?? row.updatedAt);
   if (!Number.isNaN(beat) && now - beat > STALL_AFTER_MS) {
     // No promise of a retry: the row cannot know whether a run is still
     // behind it. Retry is offered, and the action asks Temporal first.
@@ -149,6 +144,13 @@ function processingState(
       kind: "stalled",
       retry: true,
       words: "Transcription has not reported progress for a while.",
+    };
+  }
+  if (row.stage === "retrying") {
+    return {
+      kind: "retrying",
+      retry: false,
+      words: "Transcription stopped unexpectedly and is being retried.",
     };
   }
   return {

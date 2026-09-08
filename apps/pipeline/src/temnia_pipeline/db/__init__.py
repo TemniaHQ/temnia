@@ -484,6 +484,10 @@ async def finalize_transcription(  # noqa: PLR0913
     delta is usually just this revision's size, but a source whose revisions
     were replaced or removed still meters correctly.
     """
+    # Corrections take this same row lock with their revision compare-and-swap.
+    # Acquire it before touching the ledger: both totals must describe the same
+    # committed revision set, and every writer must take locks in the same order.
+    await conn.execute("SELECT id FROM transcript WHERE source_id = %s FOR UPDATE", (source_id,))
     await conn.execute(
         """
         INSERT INTO usage_ledger

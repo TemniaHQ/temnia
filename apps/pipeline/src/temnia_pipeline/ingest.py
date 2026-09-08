@@ -207,7 +207,9 @@ class Ingest:
 
         await self._progress(request, "hls", 0)
         try:
-            result = await self.ctx.transcoder.reuse(job)
+            result = await self.ctx.transcoder.reuse(
+                job, on_progress=on_progress, resume=resume_call_id()
+            )
             if result is None:
                 result = await self.ctx.transcoder.run(
                     job, on_progress=on_progress, resume=resume_call_id()

@@ -14,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pydantic import ValidationError
+
 from temnia_pipeline.modal_errors import transport_errors
+from temnia_pipeline.modal_protocol import RemoteFailure, read_outcome
 from temnia_pipeline.transcode import LadderJob, LadderProgress, LadderResult
 
 if TYPE_CHECKING:
@@ -119,7 +122,7 @@ class RealModalClient:
         )
         return str(call.object_id)
 
-    async def status(self, call_id: str) -> CallStatus:
+    async def status(self, call_id: str) -> CallStatus:  # noqa: PLR0911
         """Poll with a zero timeout: still running is a TimeoutError, not an error."""
         from modal.exception import NotFoundError, OutputExpiredError  # noqa: PLC0415
 
@@ -142,7 +145,16 @@ class RealModalClient:
             # guessing from wording. Safe to show: ffmpeg.py sanitises what it
             # puts in these messages.
             return Failed(f"{type(error).__name__}: {error}")
-        return Done(LadderResult.model_validate(payload))
+        try:
+            outcome = read_outcome(payload)
+            if isinstance(outcome, RemoteFailure):
+                return Failed(outcome.description)
+            return Done(LadderResult.model_validate(outcome.payload))
+        except ValidationError:
+            return Failed(
+                "RemoteProtocolError: invalid or incompatible Modal result; "
+                "redeploy app and worker together"
+            )
 
     async def progress(self, call_id: str) -> LadderProgress | None:
         """Read the function's own progress note; a missing one is not a fault.

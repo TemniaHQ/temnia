@@ -52,7 +52,7 @@ UNREACHABLE_TICKS = 18
 # attempt one. `RealModalClient.status` puts the type name in front of the
 # message, which is what makes this a rule about the exception rather than
 # about its wording.
-TERMINAL_TYPES = ("FfmpegError", "TruncatedOutputError")
+TERMINAL_TYPES = ("FfmpegError", "TruncatedOutputError", "RemoteProtocolError")
 _TERMINAL_PREFIXES = tuple(f"{name}:" for name in TERMINAL_TYPES)
 
 # The fallback, for a message that reached us without a type name in front of
@@ -133,15 +133,21 @@ class ModalTranscoder:
         self.store = store
         self.poll_seconds = poll_seconds
 
-    async def reuse(self, job: LadderJob) -> LadderResult | None:
+    async def reuse(
+        self,
+        job: LadderJob,
+        *,
+        on_progress: ProgressCallback | None = None,
+        resume: str | None = None,
+    ) -> LadderResult | None:
         """A ladder already published under this prefix, or None."""
-        return await stored_ladder(self.store, job)
+        return await stored_ladder(self.store, job, on_progress=on_progress, resume=resume)
 
     async def run(
         self, job: LadderJob, *, on_progress: ProgressCallback, resume: str | None = None
     ) -> LadderResult:
         """Reattach or spawn, then poll until the call ends, reporting progress."""
-        published = await self.reuse(job)
+        published = await self.reuse(job, on_progress=on_progress, resume=resume)
         if published is not None:
             log.info("ladder already published under %s; skipping Modal", job.hls_prefix)
             return published
@@ -167,6 +173,8 @@ class ModalTranscoder:
             case Running() | Done():
                 log.info("reattaching to Modal call %s", resume)
                 return resume
+            case Failed(message=message) if classify(message).non_retryable:
+                raise classify(message)
             case Unreachable(message=message):
                 msg = f"could not reach Modal to check call {resume}: {message}"
                 raise modal_failure(msg)
@@ -204,7 +212,7 @@ class ModalTranscoder:
             status = await self.client.status(call_id)
             match status:
                 case Done(result=result):
-                    return await self._verify(job, call_id, result)
+                    return await self._verify(job, call_id, result, on_progress)
                 case Failed(message=message):
                     raise classify(message)
                 case Unknown():
@@ -224,7 +232,9 @@ class ModalTranscoder:
                     unreachable = 0
                     await asyncio.sleep(self.poll_seconds)
 
-    async def _verify(self, job: LadderJob, call_id: str, result: LadderResult) -> LadderResult:
+    async def _verify(
+        self, job: LadderJob, call_id: str, result: LadderResult, on_progress: ProgressCallback
+    ) -> LadderResult:
         """Trust the storage, not the return value.
 
         The function asserts every playlist before it uploads, and this reads
@@ -232,7 +242,7 @@ class ModalTranscoder:
         thing, because the one failure that reached users in the legacy was an
         encode that reported success on a truncated output.
         """
-        published = await self.reuse(job)
+        published = await self.reuse(job, on_progress=on_progress, resume=call_id)
         if published is None:
             msg = (
                 f"the ladder from Modal call {call_id} is not complete in storage: "

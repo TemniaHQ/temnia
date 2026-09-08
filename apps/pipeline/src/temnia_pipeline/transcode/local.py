@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from temnia_pipeline import storage
 from temnia_pipeline.media import hls
+from temnia_pipeline.media.hls_inventory import local_inventory
 from temnia_pipeline.transcode import (
     LadderJob,
     LadderProgress,
@@ -53,9 +54,15 @@ class LocalTranscoder:
         self.store = store
         self.work_root = work_root
 
-    async def reuse(self, job: LadderJob) -> LadderResult | None:
+    async def reuse(
+        self,
+        job: LadderJob,
+        *,
+        on_progress: ProgressCallback | None = None,
+        resume: str | None = None,
+    ) -> LadderResult | None:
         """A ladder already published under this prefix, or None."""
-        return await stored_ladder(self.store, job)
+        return await stored_ladder(self.store, job, on_progress=on_progress, resume=resume)
 
     async def run(
         self, job: LadderJob, *, on_progress: ProgressCallback, resume: str | None = None
@@ -93,14 +100,15 @@ class LocalTranscoder:
         # tree upload: a reader that saw it would believe a half published
         # prefix was whole.
         (out_dir / hls.MANIFEST_NAME).unlink(missing_ok=True)
-        total = await storage.upload_tree(
-            self.store, job.hls_prefix, out_dir, on_progress=publishing
-        )
+        artifacts, playlist_hashes = local_inventory(out_dir, set(renditions))
+        await storage.upload_tree(self.store, job.hls_prefix, out_dir, on_progress=publishing)
         manifest = hls.LadderManifest(
             renditions=renditions,
             iframes=job.video is not None,
             segment_seconds=hls.SEGMENT_SECONDS,
-            total_bytes=total,
+            total_bytes=sum(artifacts.values()),
+            artifacts=artifacts,
+            playlist_sha256=playlist_hashes,
             encoder=ENCODER,
             produced_by="local",
             decoder=DECODER,
@@ -108,13 +116,11 @@ class LocalTranscoder:
         await storage.upload_file(
             self.store, job.manifest_key, hls.write_manifest(out_dir, manifest)
         )
-        return LadderResult(
-            renditions=renditions,
-            total_bytes=total,
-            manifest_key=job.manifest_key,
-            encoder=ENCODER,
-            decoder=DECODER,
-        )
+        result = await self.reuse(job, on_progress=on_progress)
+        if result is None:
+            msg = "published HLS ladder failed inventory verification"
+            raise hls.TruncatedOutputError(msg)
+        return result
 
     async def _ensure_master(self, job: LadderJob) -> Path:
         master = master_path(self.work_root, job)

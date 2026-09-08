@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 import pytest
 
 from conftest import SubstrateFixture
-from temnia_pipeline.substrate.backends import MAX_CHANGE_POINT_UNITS
+from temnia_pipeline.substrate.backends import MAX_CHANGE_POINT_UNITS, PINNED_REVISIONS, LoadedModel
 from temnia_pipeline.substrate.changepoint import (
     EmbeddingChangePointSegmenter,
     target_count,
@@ -189,3 +189,61 @@ def test_the_base_segmenters_own_candidates_are_replaced_not_merged(
     assert {candidate.kind for candidate in layers.candidates} == {"topic"}
     assert layers.sentences == base.sentences
     assert layers.paragraphs == base.paragraphs
+
+
+@pytest.mark.parametrize("minimum", [0, -1, 1.5, True, float("nan"), float("inf")])
+def test_invalid_minimum_is_refused_before_loading_or_embedding(
+    minimum: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(*args: object, **kwargs: object) -> object:
+        _ = (args, kwargs)
+        pytest.fail("invalid parameters reached model loading")
+
+    monkeypatch.setattr("temnia_pipeline.substrate.changepoint.load_encoder", never)
+    with pytest.raises((TypeError, ValueError), match="min_sentences must be"):
+        make_segmenter("changepoint", sentences_from="legacy", min_sentences=minimum)
+
+
+@pytest.mark.parametrize("minimum", [0, -1])
+def test_direct_segmenter_construction_also_refuses_nonpositive_minimum(minimum: int) -> None:
+    with pytest.raises(ValueError, match="min_sentences must be a positive whole number"):
+        EmbeddingChangePointSegmenter(LegacyRulesSegmenter(), min_sentences=minimum)
+
+
+def test_a_positive_minimum_is_applied() -> None:
+    segmenter = make_segmenter("changepoint", sentences_from="legacy", min_sentences=2)
+    assert isinstance(segmenter, EmbeddingChangePointSegmenter)
+    assert segmenter.min_sentences == 2
+
+
+def test_embedding_provenance_keeps_the_loaded_instance_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Encoder:
+        def encode(
+            self,
+            sentences: list[str],
+            *,
+            normalize_embeddings: bool = False,
+            batch_size: int = 32,
+        ) -> object:
+            _ = (normalize_embeddings, batch_size)
+            return [[float(i % 2), float(1 - i % 2)] for i in range(len(sentences))]
+
+    loads = 0
+
+    def load(*args: object, **kwargs: object) -> LoadedModel[Encoder]:
+        nonlocal loads
+        _ = (args, kwargs)
+        loads += 1
+        return LoadedModel(Encoder(), "a" * 40)
+
+    monkeypatch.setattr("temnia_pipeline.substrate.changepoint.load_encoder", load)
+    segmenter = EmbeddingChangePointSegmenter(_ManySentences(8))
+    first = segmenter.segment([])
+    monkeypatch.setitem(PINNED_REVISIONS, segmenter.embedding_model, "b" * 40)
+    second = segmenter.segment([])
+    assert loads == 1
+    assert first.provenance.versions["embedding_revision"] == "a" * 40
+    assert second.provenance.versions["embedding_revision"] == "a" * 40

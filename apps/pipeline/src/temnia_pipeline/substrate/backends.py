@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -39,50 +41,65 @@ if TYPE_CHECKING:
 #: bigger matrix.
 MAX_CHANGE_POINT_UNITS = 10_000
 
-#: The Hugging Face revision each model is pinned to. A model name resolves to
-#: whatever the hub's `main` points at on the day, so two clean image builds
-#: could carry different weights under one name (S2 review, I15);
-#: `scripts/fetch_models.py` refuses a build whose resolved revision differs,
-#: and the provenance records the one it loaded. Bump deliberately, with the
-#: eval runner re-run on the fixtures.
+#: Immutable revisions, including SaT's separately loaded tokenizer. The setup
+#: script duplicates this list to keep the image's model layer ahead of source.
+#: Tests compare both lists. Other audition models must use repo@<full commit>.
+DEFAULT_SAT_TOKENIZER = "facebookAI/xlm-roberta-base"
 PINNED_REVISIONS: dict[str, str] = {
     "segment-any-text/sat-3l-sm": "137da054051ad9f1eac42025f758db4ac9f22535",
     "sentence-transformers/all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    DEFAULT_SAT_TOKENIZER: "e73636d4f797dec63c3081bb6ed5c7b0bb3f2089",
 }
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedModel[T]:
+    """A model and the immutable snapshot identity captured when it was loaded."""
+
+    value: T
+    revision: str
+    tokenizer_revision: str | None = None
+
+
 def configure_model_cache(models_dir: Path | None = None) -> Path:
-    """Point `HF_HOME` at the model cache and return it.
+    """Use one effective HF_HOME for setup, loading, and provenance.
 
-    Idempotent, and it never overrides an `HF_HOME` the caller already set: the
-    pipeline image bakes the weights in and sets it, and a developer may point
-    at a shared cache. `TOKENIZERS_PARALLELISM` is set because the tokenizers
-    library warns on every process fork otherwise, which under pytest is pages
-    of noise about a decision this code does not make.
+    An explicitly configured shared HF_HOME takes precedence. All loaders use
+    absolute snapshot paths below this root, independent of libraries caching
+    their environment settings at import time.
     """
-    import os  # noqa: PLC0415
-
-    root = models_dir or ModelSettings.from_env().models_dir
+    root = Path(os.environ.get("HF_HOME") or (models_dir or ModelSettings.from_env().models_dir))
+    root = root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_HOME", str(root))
+    os.environ["HF_HOME"] = str(root)
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     return root
 
 
-def model_revision(repo: str, models_dir: Path | None = None) -> str | None:
-    """The commit the cache resolved `repo` to, or None when it is not cached.
+def model_snapshot(name: str, root: Path) -> Path:
+    """Find a pinned local snapshot, never a mutable branch or a network download.
 
-    Read from the hub cache's `refs/main`, which the loaders write when they
-    resolve a name; the pinned revision in `PINNED_REVISIONS` is what it is
-    checked against at image build time, and the value here is what a run's
-    provenance records.
+    Setup fetches defaults; an audition can prefetch another repo at an explicit
+    full commit and select it as repo@commit. Missing snapshots fail at load.
     """
-    root = Path(os.environ.get("HF_HOME") or (models_dir or ModelSettings.from_env().models_dir))
-    ref = root / "hub" / f"models--{repo.replace('/', '--')}" / "refs" / "main"
-    try:
-        return ref.read_text().strip() or None
-    except OSError:
-        return None
+    repo, separator, revision = name.partition("@")
+    if not separator:
+        revision = PINNED_REVISIONS.get(repo, "")
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        msg = f"model {name!r} needs an immutable revision; use repo@<40-character commit>"
+        raise ValueError(msg)
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", repo) is None:
+        msg = f"invalid model repository {repo!r}; expected owner/name"
+        raise ValueError(msg)
+    snapshot = root / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / revision
+    if not snapshot.is_dir():
+        msg = (
+            f"model snapshot {repo}@{revision} is missing from {root}; "
+            "prefetch the immutable snapshot before running the worker "
+            "(scripts/fetch_models.py fetches the defaults)"
+        )
+        raise FileNotFoundError(msg)
+    return snapshot
 
 
 def prime_skops() -> None:
@@ -136,31 +153,50 @@ def load_sat(
     style_or_domain: str | None = None,
     language: str | None = None,
     models_dir: Path | None = None,
-) -> SaTModel:
-    """Load a Segment-any-Text model, with its LoRA adapter when one is asked for.
+) -> LoadedModel[SaTModel]:
+    """Load SaT, its tokenizer, and any adapter from immutable local snapshots.
 
-    `style_or_domain` and `language` select an adapter (`ted` plus a language
-    code is the transcribed-speech one); wtpsplit wants both or neither, which
-    is checked here rather than inside the model's own error.
+    SaT's from_pretrained_kwargs apply to weights but not its tokenizer or hub
+    adapter downloads. Local paths cover all three and keep loading offline.
     """
-    configure_model_cache(models_dir)
-    prime_skops()
     if (style_or_domain is None) != (language is None):
         msg = (
             "a Segment-any-Text adapter needs style_or_domain and language together; "
             f"got style_or_domain={style_or_domain!r}, language={language!r}"
         )
         raise ValueError(msg)
+    root = configure_model_cache(models_dir)
+    snapshot = model_snapshot(model if "/" in model else f"segment-any-text/{model}", root)
+    tokenizer = model_snapshot(DEFAULT_SAT_TOKENIZER, root)
+    adapter = None
+    if style_or_domain is not None and language is not None:
+        for component in (style_or_domain, language):
+            if re.fullmatch(r"[\w-]+", component) is None:
+                msg = f"invalid adapter path component {component!r}"
+                raise ValueError(msg)
+        adapter = snapshot / "loras" / style_or_domain / language
+        if not adapter.is_dir():
+            msg = f"adapter is missing from the pinned model snapshot: {adapter}"
+            raise FileNotFoundError(msg)
+    prime_skops()
     from wtpsplit import SaT  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs]
 
-    # Passed as a pair or not at all: wtpsplit annotates both as `str` with a
-    # None default, so handing it two Nones is a type error for no gain.
-    loaded = (  # pyright: ignore[reportUnknownVariableType]
-        SaT(model, style_or_domain=style_or_domain, language=language)
-        if style_or_domain is not None and language is not None
-        else SaT(model)
-    )
-    return cast("SaTModel", loaded)
+    if adapter is not None and style_or_domain is not None and language is not None:
+        loaded = SaT(  # pyright: ignore[reportUnknownVariableType]
+            str(snapshot),
+            tokenizer_name_or_path=str(tokenizer),
+            from_pretrained_kwargs={"local_files_only": True},
+            style_or_domain=style_or_domain,
+            language=language,
+            lora_path=str(adapter),
+        )
+    else:
+        loaded = SaT(  # pyright: ignore[reportUnknownVariableType]
+            str(snapshot),
+            tokenizer_name_or_path=str(tokenizer),
+            from_pretrained_kwargs={"local_files_only": True},
+        )
+    return LoadedModel(cast("SaTModel", loaded), snapshot.name, tokenizer.name)
 
 
 def sat_segments(segments: object) -> list[str]:
@@ -203,16 +239,19 @@ class TextEncoder(Protocol):
         ...
 
 
-def load_encoder(name: str, *, models_dir: Path | None = None) -> TextEncoder:
-    """Load a sentence-embedding model onto the CPU."""
-    configure_model_cache(models_dir)
+def load_encoder(name: str, *, models_dir: Path | None = None) -> LoadedModel[TextEncoder]:
+    """Load one immutable local sentence-embedding snapshot onto the CPU."""
+    root = configure_model_cache(models_dir)
+    snapshot = model_snapshot(name, root)
     prime_skops()
     from sentence_transformers import (  # noqa: PLC0415  # pyright: ignore[reportMissingTypeStubs]
         SentenceTransformer,
     )
 
-    loaded = SentenceTransformer(name)  # pyright: ignore[reportUnknownVariableType]
-    return cast("TextEncoder", loaded)
+    loaded = SentenceTransformer(  # pyright: ignore[reportUnknownVariableType]
+        str(snapshot), local_files_only=True, device="cpu"
+    )
+    return LoadedModel(cast("TextEncoder", loaded), snapshot.name)
 
 
 def truncated_count(encoder: TextEncoder, texts: Sequence[str]) -> int | None:
@@ -275,6 +314,14 @@ class _KernelCPD(Protocol):
         ...
 
 
+def positive_integer(value: object, *, name: str) -> int:
+    """Reject invalid segment sizes before a model is loaded or a kernel is fitted."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        msg = f"{name} must be a positive whole number, not {value!r}"
+        raise ValueError(msg)
+    return value
+
+
 class KernelSegmentation:
     """A fitted RBF kernel change-point model over one embedding matrix.
 
@@ -287,6 +334,7 @@ class KernelSegmentation:
     """
 
     def __init__(self, matrix: NDArray[np.float64], *, min_size: int = 4) -> None:
+        min_size = positive_integer(min_size, name="min_size")
         if matrix.shape[0] > MAX_CHANGE_POINT_UNITS:
             msg = (
                 f"kernel change-point detection is quadratic in the number of units and this "

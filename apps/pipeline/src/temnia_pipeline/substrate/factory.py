@@ -50,9 +50,17 @@ def _number(params: dict[str, object], key: str, default: float | None) -> float
 
 def _whole(params: dict[str, object], key: str, default: int) -> int:
     value = params.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or int(value) != value
+    ):
         msg = f"{key} must be a whole number, not {value!r}"
         raise TypeError(msg)
+    if value <= 0:
+        msg = f"{key} must be a positive whole number, not {value!r}"
+        raise ValueError(msg)
     return int(value)
 
 

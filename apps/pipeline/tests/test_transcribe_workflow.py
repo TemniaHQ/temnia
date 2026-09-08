@@ -12,6 +12,7 @@ It never skips silently.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
@@ -655,3 +656,124 @@ async def test_a_correction_that_lands_first_pushes_the_machine_revision_after_i
     assert row["current_revision"] == 2
     assert row["status"] == "ready"
     await db.close_pool()
+
+
+async def _publish_correction_for_accounting(
+    conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID
+) -> None:
+    # The web's revision CAS takes the transcript row lock before inserting a
+    # revision and reconciling storage. Exercise that transaction on real rows.
+    row = await (
+        await conn.execute(
+            "UPDATE transcript SET current_revision = 2"
+            " WHERE source_id = %s AND current_revision = 1 RETURNING id",
+            (source_id,),
+        )
+    ).fetchone()
+    assert row is not None
+    await conn.execute(
+        "INSERT INTO transcript_revision"
+        " (organization_id, transcript_id, revision, storage_key, size_bytes, kind,"
+        " base_revision, word_count, metadata)"
+        " VALUES (%s, %s, 2, 'org/test/correction.json', 110, 'correction', 1, 1, '{}')",
+        (SEEDED.organizationId, row["id"]),
+    )
+    await conn.execute(
+        "INSERT INTO usage_ledger (organization_id, kind, quantity, source_id, detail)"
+        " SELECT %s, 'storage_bytes',"
+        " (SELECT SUM(size_bytes) FROM transcript_revision WHERE transcript_id = %s)"
+        ' - COALESCE(SUM(quantity), 0), %s, \'{"category":"transcript"}\'::jsonb'
+        " FROM usage_ledger WHERE source_id = %s AND kind = 'storage_bytes'"
+        " AND detail->>'category' = 'transcript'",
+        (SEEDED.organizationId, row["id"], source_id, source_id),
+    )
+
+
+async def _finalize_for_accounting(
+    conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID
+) -> None:
+    await db.finalize_transcription(
+        conn,
+        organization_id=SEEDED.organizationId,
+        source_id=source_id,
+        workflow_id="accounting-race",
+        duration_ms=60_000,
+        revision=1,
+        attempt=1,
+        detail={"category": "transcription", "attempt": 1},
+    )
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("machine_first", [True, False])
+async def test_correction_and_finalizer_serialize_storage_accounting(
+    source: tuple[str, uuid.UUID, uuid.UUID], *, machine_first: bool
+) -> None:
+    """Two real connections must block on the same row in either arrival order."""
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "accounting-race", "run-accounting"
+        )
+        row = await transcript_row(conn, source_id)
+        await db.record_transcript_revision(
+            conn,
+            organization_id=SEEDED.organizationId,
+            transcript_id=row["id"],
+            revision=1,
+            attempt=1,
+            storage_key=f"{prefix}transcript/rev-1.json",
+            size_bytes=100,
+            word_count=1,
+            language="en",
+            provider="recorded",
+            model="fixture",
+            metadata={},
+            run_id="run-accounting",
+        )
+    first = _finalize_for_accounting if machine_first else _publish_correction_for_accounting
+    second = _publish_correction_for_accounting if machine_first else _finalize_for_accounting
+    started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+    async def competing_transaction() -> None:
+        async with db.scoped(url, SEEDED) as other:
+            started.set_result(other.info.backend_pid)
+            await second(other, source_id)
+
+    task: asyncio.Task[None] | None = None
+    try:
+        async with db.scoped(url, SEEDED) as conn:
+            await first(conn, source_id)
+            task = asyncio.create_task(competing_transaction())
+            other_pid = await asyncio.wait_for(started, timeout=5)
+            # Inspect PostgreSQL's actual blocker graph; a timing-only sleep
+            # could pass even when the second transaction does not take a lock.
+            async with asyncio.timeout(5):
+                while True:
+                    blockers = await (
+                        await conn.execute("SELECT pg_blocking_pids(%s) AS pids", (other_pid,))
+                    ).fetchone()
+                    assert blockers is not None
+                    if conn.info.backend_pid in blockers["pids"]:
+                        break
+                    assert not task.done(), "accounting bypassed the transcript lock"
+                    await asyncio.sleep(0.01)
+    finally:
+        if task is not None:
+            await asyncio.wait_for(task, timeout=5)
+
+    async with db.scoped(url, SEEDED) as conn:
+        # Lost acknowledgement: rerunning finalization still adds no usage.
+        await _finalize_for_accounting(conn, source_id)
+        totals = await (
+            await conn.execute(
+                "SELECT kind, SUM(quantity)::bigint AS total FROM usage_ledger"
+                " WHERE source_id = %s GROUP BY kind",
+                (source_id,),
+            )
+        ).fetchall()
+    assert {entry["kind"]: entry["total"] for entry in totals} == {
+        "storage_bytes": 210,
+        "transcription_seconds": 60,
+    }

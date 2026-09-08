@@ -96,26 +96,47 @@ class _Draft:
     speaker: str | None
     confidence: float | None
     segment: tuple[int | None, int | None]
+    segment_index: int
+
+
+# Only explicit non-speech annotations, never ordinary words such as "music".
+_NO_SPEECH = re.compile(
+    r"(?:[♪♫♬♩\s]+|\[(?:music|silence|no speech)\]|\((?:music|silence|no speech)\))",
+    re.IGNORECASE,
+)
+
+
+def _blank_word(value: object) -> bool:
+    """Only a valid word object with empty text counts as a blank alignment token."""
+    if not isinstance(value, dict):
+        return False
+    word = cast("dict[str, Any]", value).get("word")
+    return isinstance(word, str) and not word.strip()
 
 
 def _segment_words(position: int, segment: dict[str, Any]) -> list[object]:
-    """The word objects of one segment, or the words its text splits into.
-
-    A segment with a word list is what alignment produces, empty for music and
-    silence. One with text and no word list at all is a segment alignment never
-    saw; its text is kept as untimed words for the fill below rather than
-    disappearing, because a person heard those words.
-    """
+    """Keep spoken text when alignment is absent or empty; refuse malformed fields."""
     raw_words = segment.get("words")
-    if raw_words is None:
-        text = segment.get("text")
-        if isinstance(text, str):
-            return [{"word": piece} for piece in text.split()]
-        return []
-    if not isinstance(raw_words, list):
+    if raw_words is not None and not isinstance(raw_words, list):
         msg = f"segment {position} has words of type {type(raw_words).__name__}, not a list"
         raise TranscriptContractError(msg)
-    return cast("list[object]", raw_words)
+    text = segment.get("text")
+    if "text" in segment and not isinstance(text, str):
+        msg = f"segment {position} has a non-string text field"
+        raise TranscriptContractError(msg)
+    if raw_words:
+        word_objects = cast("list[object]", raw_words)
+        if not all(_blank_word(word) for word in word_objects):
+            return word_objects
+    if isinstance(text, str):
+        stripped = text.strip()
+        if not stripped or _NO_SPEECH.fullmatch(stripped):
+            return []
+        return [{"word": piece} for piece in text.split()]
+    if isinstance(raw_words, list):
+        return []
+    msg = f"segment {position} has neither a word list nor text"
+    raise TranscriptContractError(msg)
 
 
 def _drafts(segments: Sequence[object]) -> list[_Draft]:
@@ -139,7 +160,11 @@ def _drafts(segments: Sequence[object]) -> list[_Draft]:
                 msg = f"word {index} of segment {position} is {type(raw).__name__}, not an object"
                 raise TranscriptContractError(msg)
             word = cast("dict[str, Any]", raw)
-            text = str(word.get("word", "")).strip()
+            value = word.get("word")
+            if not isinstance(value, str):
+                msg = f"word {index} of segment {position} has no string word field"
+                raise TranscriptContractError(msg)
+            text = value.strip()
             if not text:
                 continue
             drafts.append(
@@ -153,6 +178,7 @@ def _drafts(segments: Sequence[object]) -> list[_Draft]:
                     speaker=normalize_speaker(word.get("speaker")) or segment_speaker,
                     confidence=_confidence(word.get("score")),
                     segment=bounds,
+                    segment_index=position,
                 )
             )
     return drafts
@@ -182,35 +208,42 @@ def _spread(
         points[index] = before + (round(span * run / total) if total > 0 else 0)
 
 
-def _fill(drafts: Sequence[_Draft]) -> list[TranscriptWord]:
-    """Give every word a start and an end, in the order it was spoken.
-
-    The words' starts and ends are one ascending sequence of time points, two
-    per word. Every run of missing points between two known ones shares the
-    span between them in proportion to the words' lengths in characters (the
-    gap between two words weighs nothing, so untimed neighbours abut). The
-    known time on either side is the nearest timed point, or the segment's own
-    bound, or zero and then nothing. Filling one word and using it as the next
-    word's anchor gave the second of two untimed words no duration (review
-    finding I08); a run is filled as a whole.
-
-    Then, in lexical order, a word that starts before its predecessor takes the
-    predecessor's start, and an end before its own start is raised to it. That
-    keeps the contract's ascending starts without reordering a single word.
-    Every word a rule touched is `interpolated`, which the viewer shows as
-    approximate.
-    """
-    count = len(drafts)
+def _timeline(drafts: Sequence[_Draft]) -> tuple[list[int | None], list[int], list[int]]:
+    """Word points with segment bounds inserted as anchors and word offsets retained."""
     points: list[int | None] = []
-    for draft in drafts:
-        points.extend((draft.start_ms, draft.end_ms))
-    # Weight of the stretch from point i to point i + 1: a word's own length in
-    # characters, and nothing between one word's end and the next word's start.
-    weights = [0] * max(2 * count - 1, 0)
-    for index, draft in enumerate(drafts):
-        weights[2 * index] = max(len(draft.text), 1)
-    touched = [False] * count
+    weights: list[int] = []
+    offsets: list[int] = []
 
+    def append(value: int | None, weight: int = 0) -> None:
+        if points:
+            weights.append(weight)
+        points.append(value)
+
+    for index, draft in enumerate(drafts):
+        if index == 0 or draft.segment_index != drafts[index - 1].segment_index:
+            if index:
+                append(drafts[index - 1].segment[1])
+            append(draft.segment[0])
+        offsets.append(len(points))
+        append(draft.start_ms)
+        append(draft.end_ms, max(len(draft.text), 1))
+    if drafts:
+        append(drafts[-1].segment[1])
+    return points, weights, offsets
+
+
+def _fill(drafts: Sequence[_Draft]) -> list[TranscriptWord]:
+    """Fill missing runs within segment evidence, then repair in lexical order.
+
+    Segment bounds participate in the same point sequence as word times. A
+    known segment start/end therefore stops a missing run, including in the
+    middle of a transcript. Unknown bounds can borrow neighbouring evidence;
+    known bounds never disappear into a long pause between other segments.
+    Character weights divide only missing word spans, with no invented gaps.
+    Valid aligned times and overlaps remain intact. Repairs are flagged.
+    """
+    points, weights, offsets = _timeline(drafts)
+    touched = [draft.start_ms is None or draft.end_ms is None for draft in drafts]
     index = 0
     while index < len(points):
         if points[index] is not None:
@@ -220,19 +253,17 @@ def _fill(drafts: Sequence[_Draft]) -> list[TranscriptWord]:
         while index < len(points) and points[index] is None:
             index += 1
         last = index
-        earlier = points[first - 1] if first > 0 else drafts[first // 2].segment[0]
-        later = points[last] if last < len(points) else drafts[(last - 1) // 2].segment[1]
+        earlier = points[first - 1] if first > 0 else None
+        later = points[last] if last < len(points) else None
         before = earlier if earlier is not None else (later if later is not None else 0)
         after = later if later is not None else before
         _spread(points, weights, (first, last), (before, after))
-        for point in range(first, last):
-            touched[point // 2] = True
 
     filled: list[TranscriptWord] = []
     previous_start = 0
-    for word_index, draft in enumerate(drafts):
-        start = cast("int", points[2 * word_index])
-        end = cast("int", points[2 * word_index + 1])
+    for word_index, (draft, offset) in enumerate(zip(drafts, offsets, strict=True)):
+        start = cast("int", points[offset])
+        end = cast("int", points[offset + 1])
         if start < previous_start:
             start = previous_start
             touched[word_index] = True

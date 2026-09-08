@@ -100,6 +100,7 @@ export default async function SourcePage({
                 percent: row.percent,
                 stage: row.stage,
                 status: row.status,
+                updatedAt: row.updatedAt.toISOString(),
                 wordCount: transcript?.current?.wordCount ?? null,
               }
             : null

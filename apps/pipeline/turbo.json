@@ -29,6 +29,8 @@
         "uv.lock"
       ],
       "env": [
+        "HF_HOME",
+        "HF_HUB_OFFLINE",
         "TEMNIA_MODELS_DIR",
         "TEMNIA_MODEL_TESTS",
         "TEMPORAL_ADDRESS",

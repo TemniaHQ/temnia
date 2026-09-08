@@ -309,6 +309,33 @@ in both Modal adapters, and no runner spawns on it). The PRD's "a retry re-pays 
 bounded and reported, because the crash window between a provider's answer and Temnia's commit cannot
 be closed by a checkpoint.
 
+**2026-09-08 — S2 follow-up: outcomes carry their origin, models their loaded identity.**
+The second review's fourteen remaining defects are tracked in
+`docs/plans/s2-hardening-followup-360-view.md`. Modal media protocol **4** returns an explicit
+success/failure envelope: a remote `OSError` or `TimeoutError` is a computation failure, while
+transport uncertainty retains the call handle. The old exception-class heuristic could not
+distinguish them because Modal rethrows serialized remote exceptions as their original classes.
+This is an incompatible paired rollout: drain version-3 work before replacing the Modal app and
+workers; the staging runbook gives the sequence. A separate smoke CLI resolves the deployed app
+and environment and checks its source/config fingerprint; importing a local Modal entry point
+does not prove the deployed app works. Fingerprints identify build inputs, not immutable upstream
+wheel or GPU model bytes.
+
+SaT weights, its separately loaded XLM-R tokenizer, and MiniLM now load explicit local commit
+snapshots. Setup fetches those exact revisions and verifies their required files; runtime does
+not resolve `main`. `HF_HOME` takes precedence over `TEMNIA_MODELS_DIR` in both setup and runtime,
+and all loaders receive absolute paths from that one root. Provenance is captured with the loaded
+model, not read later from a mutable cache reference. Other audition models require a prefetched
+`repo@<full commit>` snapshot; the default fetch script intentionally downloads only the pinned
+default files. The gate performs this setup explicitly before its offline model tests.
+
+Transcript edits retain the revision of their loaded bytes, and asynchronous saves retain their
+own draft identity. A retry reserves only the observed row using a temporary `dispatch:<uuid>`
+run id; the worker replaces it when claiming. Unknown Temporal status never authorizes resetting
+the row. Corrections and machine finalization take the same transcript row lock before reconciling
+storage usage. HLS reuse verifies named objects, sizes, and playlist references; retained extra
+objects are included in recorded storage usage rather than removed during a possibly concurrent retry.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

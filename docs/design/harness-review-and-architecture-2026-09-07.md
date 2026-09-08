@@ -487,3 +487,44 @@ Use the evidence to design auditions. Do not convert supplier benchmarks or an u
 6. **Optimize from accepted edits.** Targeted prompt optimization, selective alternatives, routing improvements, and eventual distillation only after the evaluation corpus supports them.
 
 The first milestone is a chapter workflow that can be watched, corrected, resumed, and costed end to end. This document does not approve code changes, replace the existing PRD/stack decisions, or claim the milestone has passed.
+
+
+## Second review follow-up — 2026-09-08
+
+Rajesh authorized implementation of the second review's fourteen residual findings on the existing
+PR #23. The plan was recorded in the PR before code changes:
+[`s2-hardening-followup-360-view.md`](../plans/s2-hardening-followup-360-view.md).
+
+| Residual issue | Implemented behavior and regression evidence |
+| --- | --- |
+| Missing times cross known segment boundaries | Segment start/end anchors participate in interpolation; tests keep the unaligned 10–12 s passage inside that interval, including consecutive missing and partial timings |
+| Displayed transcript and edit revision disagree | Loaded bytes and revision update together; edits capture that revision, and a browser test delays revision 2 after a speaker-turn merge |
+| Remote OSError/TimeoutError treated as network loss/running | Protocol 4 frames application failures before SDK serialization; tests round-trip real SDK serialized errors and distinguish genuine local transport failures |
+| Malformed/empty alignment silently drops speech | Invalid word fields fail, blank alignment falls back to spoken segment text, and explicit nonspeech stays empty |
+| Stale retrying and missing-heartbeat rows have no recovery | Liveness is checked before stage wording, with updatedAt as the fallback clock |
+| Retry overwrites a newer run or treats unknown status as dead | Only explicit terminal/absent Temporal status permits a snapshot CAS; a unique pending dispatch token owns failure handling and is replaced by worker claim |
+| A late save destroys another word draft | Draft IDs own save responses; drafts retain their base revision and need explicit review against newer content |
+| Retry action rejection escapes the panel | Typed refusals, network loss, and server errors remain actionable; a rejected cached Temporal connection can reconnect |
+| Machine finalization races correction storage accounting | Both paths take the transcript row lock; two real connections verify blocking in both orders and a final 210-byte ledger with no duplicate duration charge |
+| Smoke exercises a local ephemeral app | A standalone CLI resolves deployed app/environment handles and checks helper and GPU build identities; wrong/mixed/changed builds fail |
+| Stale image cleanup deletes an active run's shared image | Cleanup removes abandoned tags instead of image IDs; a fake Docker listing proves shared-image/live-tag preservation |
+| Aggregate HLS bytes mask missing objects | Named sizes, playlist hashes, rendition/init/segment references and byte ranges are checked; corrupt text rejects reuse, while transport failures retain uncertainty |
+| Cache/pin check reports different weights than were loaded | Setup and runtime share one effective cache and explicit immutable weight/tokenizer snapshots; provenance stays with the loaded instance, and real model tests run offline |
+| Nonpositive min_sentences reaches expensive work | Factory and direct construction reject nonpositive/fractional values before loading/embedding |
+
+The HLS inventory has bounded object/playlist sizes and a five-minute reuse check, with heartbeats
+preserving a saved call handle. Old markers without named inventory trigger regeneration. Retained
+unreferenced objects are counted in storage rather than deleted while another attempt may be using
+them. Media presence/length and playlist hashes are verified; same-size media corruption still needs
+cryptographic media-object verification. That is not claimed by this check.
+
+Preflight validation included the full pipeline suite with real models offline, the web unit suite,
+strict Python/TypeScript checks, repository lint, and an actual local ffmpeg/storage reuse smoke.
+Four additional Playwright tests cover delayed revision loads, all three delayed-save outcomes,
+a 27,900-word virtualized transcript, and refused/lost retry responses. The exact-SHA local gate
+and production-image browser results are recorded by PR #23's required checks at delivery.
+
+The live GPU smoke and staging scale run remain post-deployment verification. Protocol 4 requires
+draining version-3 work before deploying both halves; the runbook specifies the order. This batch
+does not deploy or merge the PR, implement S3's edit compiler, or establish exactly-once paid work
+across an unknown provider submission acknowledgment.

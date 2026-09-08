@@ -9,7 +9,7 @@ Deploy from `apps/pipeline`:
 
     uv run modal run --env staging -m temnia_pipeline.modal_app::probe        # the throwaway check
     uv run modal deploy --env staging -m temnia_pipeline.modal_app
-    uv run modal run --env staging -m temnia_pipeline.modal_app::smoke        # after every deploy
+    uv run python -m temnia_pipeline.modal_smoke --app temnia-media --environment staging
 
 The smoke runs the deployed speech path on a nine-second real sample and is
 the release step the worker's boot probe cannot be: the probe checks a version
@@ -47,6 +47,9 @@ import modal
 from temnia_pipeline.contracts import TranscriptProvider, WordTiming
 from temnia_pipeline.media import hls
 from temnia_pipeline.media.ffmpeg import FfmpegError
+from temnia_pipeline.media.hls_inventory import local_inventory
+from temnia_pipeline.modal_build import BUILD_ENV, source_build_id
+from temnia_pipeline.modal_protocol import RemoteFailure, capture_outcome, read_outcome
 from temnia_pipeline.settings import (
     DEFAULT_MODAL_APP,
     DEFAULT_PROGRESS_DICT,
@@ -61,7 +64,7 @@ from temnia_pipeline.storage import (
     upload_file,
     upload_tree,
 )
-from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult
+from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, stored_ladder
 from temnia_pipeline.transcode.local import verify_ladder
 from temnia_pipeline.transcription import TranscribeJob, TranscribeRaw, assert_alignable
 from temnia_pipeline.transcription.normalize import normalize_whisperx
@@ -150,6 +153,8 @@ FFMPEG_INSTALL = (
     f"rm -rf /tmp/ffmpeg.tar.xz /tmp/{FFMPEG_DIR}",
 )
 
+BUILD_ID = source_build_id() if modal.is_local() else os.environ[BUILD_ENV]
+
 # The SDK's `from_registry` and `App.function` are typed with `Unknown`
 # parameters, which pyright strict reports; the ignores are about the stubs,
 # not about these arguments.
@@ -165,7 +170,7 @@ image = (
     # Every model cache the three stages use, on one Volume: HF_HOME covers the
     # alignment and diarization models, and whisperx reads the Whisper weights
     # from the same tree.
-    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR})
+    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR, BUILD_ENV: BUILD_ID})
     .add_local_python_source("temnia_pipeline")
 )
 
@@ -316,6 +321,7 @@ async def run_ladder(
     timeout=LADDER_TIMEOUT_SECONDS,
     secrets=[modal.Secret.from_name(R2_SECRET)],
 )
+@capture_outcome
 async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     """Build the HLS ladder on the GPU and publish it under the job's prefix.
 
@@ -357,7 +363,8 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
             await publish(done, total_bytes)
 
         await _write_progress("publish", 0)
-        total = await upload_tree(
+        artifacts, playlist_hashes = local_inventory(out_dir, set(renditions))
+        await upload_tree(
             store,
             request.hls_prefix,
             out_dir,
@@ -368,7 +375,9 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
             renditions=renditions,
             iframes=request.video is not None,
             segment_seconds=hls.SEGMENT_SECONDS,
-            total_bytes=total,
+            total_bytes=sum(artifacts.values()),
+            artifacts=artifacts,
+            playlist_sha256=playlist_hashes,
             encoder=ENCODER,
             produced_by="modal",
             decoder=decoder,
@@ -376,14 +385,10 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
         )
         await upload_file(store, request.manifest_key, hls.write_manifest(out_dir, manifest))
         await _write_progress("publish", 100)
-        result = LadderResult(
-            renditions=renditions,
-            total_bytes=total,
-            manifest_key=request.manifest_key,
-            encoder=ENCODER,
-            decoder=decoder,
-            call_id=modal.current_function_call_id(),
-        )
+        result = await stored_ladder(store, request)
+        if result is None:
+            msg = "published HLS ladder failed inventory verification"
+            raise hls.TruncatedOutputError(msg)
         return result.model_dump(mode="json", by_alias=True)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -421,6 +426,7 @@ def alignable_languages() -> set[str]:
     secrets=[modal.Secret.from_name(R2_SECRET), modal.Secret.from_name(HF_SECRET)],
     volumes={MODEL_DIR: models},
 )
+@capture_outcome
 async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
     """Transcribe, align, and diarize one audio extract on the GPU.
 
@@ -526,10 +532,18 @@ def version() -> str:
     return CONTRACT_VERSION
 
 
+@app.function()  # pyright: ignore[reportUnknownMemberType]
+def deployment_identity() -> dict[str, str]:
+    """The input fingerprint sealed into this deployed image, plus its protocol."""
+    return {"protocol": CONTRACT_VERSION, "build": BUILD_ID}
+
+
 @app.function(  # pyright: ignore[reportUnknownMemberType]
     secrets=[modal.Secret.from_name(R2_SECRET)], timeout=SMOKE_TIMEOUT_SECONDS
 )
-async def smoke_transcribe(sample: bytes, duration_ms: int, expected: list[str]) -> dict[str, Any]:
+async def smoke_transcribe(
+    sample: bytes, duration_ms: int, expected: list[str], identity: dict[str, str]
+) -> dict[str, Any]:
     """The release smoke: the deployed speech path on a real sample, end to end.
 
     Uploads the sample under a throwaway prefix, runs `transcribe` exactly as
@@ -538,6 +552,10 @@ async def smoke_transcribe(sample: bytes, duration_ms: int, expected: list[str])
     One short GPU call; it proves the image, the secrets, the gated model, the
     speech path, and the store together.
     """
+    current = {"protocol": CONTRACT_VERSION, "build": BUILD_ID}
+    if identity != current:
+        msg = f"smoke reached a different deployment: expected {identity!r}, got {current!r}"
+        raise RuntimeError(msg)
     settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
     store = make_store(settings)
     prefix = f"smoke/{uuid.uuid4()}/"
@@ -553,7 +571,13 @@ async def smoke_transcribe(sample: bytes, duration_ms: int, expected: list[str])
         payload = await cast("Any", transcribe).remote.aio(
             job.model_dump(mode="json", by_alias=True)
         )
-        raw = TranscribeRaw.model_validate(payload)
+        outcome = read_outcome(payload)
+        if outcome.build != BUILD_ID:
+            msg = f"speech GPU build mismatch: expected {BUILD_ID}, got {outcome.build}"
+            raise RuntimeError(msg)
+        if isinstance(outcome, RemoteFailure):
+            raise RuntimeError(outcome.description)  # noqa: TRY004
+        raw = TranscribeRaw.model_validate(outcome.payload)
         transcript = normalize_whisperx(
             raw.raw,
             duration_ms,
@@ -564,6 +588,8 @@ async def smoke_transcribe(sample: bytes, duration_ms: int, expected: list[str])
     text = " ".join(word.text for word in transcript.words)
     lowered = text.lower()
     return {
+        "identity": current,
+        "gpuBuild": outcome.build,
         "words": len(transcript.words),
         "language": transcript.language,
         "speakers": transcript.speakers,
@@ -617,21 +643,3 @@ def nvenc_probe() -> str:
 def probe() -> None:
     """`uv run modal run --env staging -m temnia_pipeline.modal_app::probe`."""
     print(nvenc_probe.remote())  # noqa: T201
-
-
-@app.local_entrypoint()
-def smoke() -> None:
-    """`uv run modal run --env staging -m temnia_pipeline.modal_app::smoke`: the release smoke.
-
-    Run after every deploy of this app, before the worker that speaks its
-    contract is trusted with a real source. Exits non-zero when the deployed
-    speech path produced no words or missed one it must hear.
-    """
-    meta = json.loads(SMOKE_META.read_text())
-    report = smoke_transcribe.remote(
-        SMOKE_FIXTURE.read_bytes(), int(meta["durationMs"]), list(meta["expect"])
-    )
-    print(json.dumps(report, indent=2))  # noqa: T201
-    if report["words"] == 0 or report["missing"]:
-        msg = "the smoke failed: see the report above"
-        raise SystemExit(msg)

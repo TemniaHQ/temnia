@@ -16,6 +16,7 @@ from temporalio.exceptions import ApplicationError
 
 from temnia_pipeline.media import hls
 from temnia_pipeline.media.facts import VideoFacts
+from temnia_pipeline.media.hls_inventory import playlist_hash
 from temnia_pipeline.settings import TranscodeSettings
 from temnia_pipeline.transcode import (
     CONTRACT_VERSION,
@@ -93,24 +94,45 @@ class FakeStore:
         self, ladder: hls.LadderManifest, *, missing: str | None = None, short_by: int = 0
     ) -> None:
         """What the function leaves behind: playlists, the manifest, and the bytes it counts."""
-        self.objects[PREFIX + "hls/master.m3u8"] = "#EXTM3U\n"
-        for name in ladder.renditions:
-            if name != missing:
-                self.objects[PREFIX + f"hls/{name}/index.m3u8"] = "#EXTM3U\n"
-        self.objects[PREFIX + "hls/manifest.json"] = ladder.model_dump_json(by_alias=True)
-        # The bytes the manifest counts, carried by one object for simplicity.
-        self.sizes[PREFIX + "hls/master.m3u8"] = ladder.total_bytes - short_by
+        prefix = PREFIX + "hls/"
+        master = "#EXTM3U\n" + "".join(
+            f"#EXT-X-STREAM-INF:BANDWIDTH=1000\n{name}/index.m3u8\n" for name in ladder.renditions
+        )
+        complete = {"master.m3u8": master}
+        for name, seconds in ladder.renditions.items():
+            complete[f"{name}/index.m3u8"] = (
+                '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n'
+                f"#EXTINF:{seconds},\nseg_00000.m4s\n#EXT-X-ENDLIST\n"
+            )
+            complete[f"{name}/init.mp4"] = "init"
+            complete[f"{name}/seg_00000.m4s"] = "media"
+        ladder.artifacts = {name: len(text.encode()) for name, text in complete.items()}
+        ladder.playlist_sha256 = {
+            name: playlist_hash(text) for name, text in complete.items() if name.endswith(".m3u8")
+        }
+        first_segment = next(name for name in complete if name.endswith(".m4s"))
+        ladder.artifacts[first_segment] += ladder.total_bytes - sum(ladder.artifacts.values())
+        for name, text in complete.items():
+            if name != f"{missing}/index.m3u8":
+                self.objects[prefix + name] = text
+                self.sizes[prefix + name] = ladder.artifacts[name]
+        self.sizes[prefix + first_segment] -= short_by
+        self.objects[prefix + "manifest.json"] = ladder.model_dump_json(by_alias=True)
+        self.sizes[prefix + "manifest.json"] = len(self.objects[prefix + "manifest.json"].encode())
+
+    def retained_bytes(self) -> int:
+        return sum(self.sizes[key] for key in self.objects)
 
 
-async def _read_text(store: S3Store, key: str) -> str | None:
+async def _read_text(store: S3Store, key: str, *, max_bytes: int | None = None) -> str | None:
+    _ = max_bytes
     return cast("FakeStore", store).objects.get(key)
 
 
-async def _key_exists(store: S3Store, key: str) -> bool:
-    return key in cast("FakeStore", store).objects
-
-
-async def _list_objects(store: S3Store, prefix: str) -> list[tuple[str, int]]:
+async def _list_objects(
+    store: S3Store, prefix: str, *, max_objects: int | None = None
+) -> list[tuple[str, int]]:
+    _ = max_objects
     fake = cast("FakeStore", store)
     return [(key, fake.sizes.get(key, 0)) for key in fake.objects if key.startswith(prefix)]
 
@@ -119,7 +141,6 @@ async def _list_objects(store: S3Store, prefix: str) -> list[tuple[str, int]]:
 def _fake_storage(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]  # a pytest fixture is called by name, not by reference
     """`stored_ladder` is the only storage the transcoder touches."""
     monkeypatch.setattr("temnia_pipeline.transcode.read_text", _read_text)
-    monkeypatch.setattr("temnia_pipeline.transcode.key_exists", _key_exists)
     monkeypatch.setattr("temnia_pipeline.transcode.list_objects", _list_objects)
 
 
@@ -204,7 +225,7 @@ async def test_a_fresh_spawn_reports_progress_and_returns_the_published_ladder()
 
     assert len(client.spawns) == 1
     assert result.renditions == FULL_LADDER
-    assert result.total_bytes == 987_654
+    assert result.total_bytes == store.retained_bytes()
     assert result.encoder == "h264_nvenc"
     # Which decoder produced it comes from the manifest the function wrote,
     # never from what the worker would have asked for.
@@ -292,7 +313,7 @@ async def test_a_call_that_finished_while_the_worker_was_gone_is_taken_as_it_is(
     result = await transcoder(client, store).run(JOB, on_progress=collect([]), resume="fc-earlier")
 
     assert client.spawns == []
-    assert result.total_bytes == 987_654
+    assert result.total_bytes == store.retained_bytes()
 
 
 @pytest.mark.parametrize("earlier", [Failed("the container died"), Unknown()])
@@ -385,7 +406,7 @@ async def test_unreachable_polls_are_ridden_out() -> None:
         on_spawn=lambda: store.publish(published),
     )
     result = await transcoder(client, store).run(JOB, on_progress=collect([]), resume=None)
-    assert result.total_bytes == published.total_bytes
+    assert result.total_bytes == store.retained_bytes()
     assert len(client.spawns) == 1
 
 
@@ -572,3 +593,84 @@ async def test_a_raised_exception_reaches_the_classifier_with_its_type_name(
     assert isinstance(status, Failed)
     assert status.message == "TruncatedOutputError: 720p/index.m3u8 covers 60.0s of 151.0s"
     assert classify(status.message).non_retryable
+
+
+@pytest.mark.parametrize("name", ["top/init.mp4", "top/seg_00000.m4s", "iframes/index.m3u8"])
+async def test_missing_named_media_is_not_masked_by_an_equal_sized_extra(name: str) -> None:
+    store = FakeStore()
+    store.publish(manifest())
+    key = JOB.hls_prefix + name
+    store.objects.pop(key)
+    store.objects[JOB.hls_prefix + "unreferenced.m4s"] = "stale"
+    store.sizes[JOB.hls_prefix + "unreferenced.m4s"] = store.sizes[key]
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_stale_extra_objects_do_not_break_retry_and_are_counted() -> None:
+    store = FakeStore()
+    store.publish(manifest())
+    stale = JOB.hls_prefix + "old/seg_99999.m4s"
+    store.objects[stale] = "stale"
+    store.sizes[stale] = 12345
+    result = await transcoder(FakeModalClient(), store).reuse(JOB)
+    assert result is not None
+    assert result.total_bytes == store.retained_bytes()
+    assert result.total_bytes > manifest().total_bytes + 12345
+
+
+async def test_equal_size_playlist_changes_are_rejected() -> None:
+    store = FakeStore()
+    store.publish(manifest())
+    key = JOB.hls_prefix + "top/index.m3u8"
+    store.objects[key] = store.objects[key].replace("seg_00000", "seg_00001")
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_legacy_manifest_is_rebuilt_instead_of_reused_without_evidence() -> None:
+    store = FakeStore()
+    old = manifest()
+    store.publish(old)
+    store.objects[JOB.manifest_key] = old.model_dump_json(
+        by_alias=True, exclude={"artifacts", "playlist_sha256"}
+    )
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_a_resumed_incompatible_result_never_spawns_again() -> None:
+    client = FakeModalClient(resumed={"fc-old": Failed("RemoteProtocolError: version 3")})
+    with pytest.raises(ApplicationError) as caught:
+        await transcoder(client, FakeStore()).run(JOB, on_progress=collect([]), resume="fc-old")
+    assert caught.value.non_retryable
+    assert client.spawns == []
+
+
+@pytest.mark.parametrize("broken", ["master.m3u8", "manifest.json"])
+async def test_invalid_utf8_marker_or_playlist_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch,
+    broken: str,
+) -> None:
+    store = FakeStore()
+    store.publish(manifest())
+
+    async def unreadable(
+        store: S3Store,
+        key: str,
+        *,
+        max_bytes: int | None = None,
+    ) -> str | None:
+        if key == JOB.hls_prefix + broken:
+            return b"\xff".decode()
+        return await _read_text(store, key, max_bytes=max_bytes)
+
+    monkeypatch.setattr("temnia_pipeline.transcode.read_text", unreadable)
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None
+
+
+async def test_a_marker_missing_one_required_playlist_hash_is_not_reused() -> None:
+    store = FakeStore()
+    published = manifest()
+    store.publish(published)
+    assert published.playlist_sha256 is not None
+    published.playlist_sha256.pop("top/index.m3u8")
+    store.objects[JOB.manifest_key] = published.model_dump_json(by_alias=True)
+    assert await transcoder(FakeModalClient(), store).reuse(JOB) is None

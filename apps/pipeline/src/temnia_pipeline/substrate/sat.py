@@ -47,7 +47,6 @@ from typing import TYPE_CHECKING
 from temnia_pipeline.substrate.backends import (
     library_version,
     load_sat,
-    model_revision,
     sat_paragraph_lengths,
     sat_segments,
 )
@@ -138,13 +137,18 @@ class SaTSegmenter:
         self.threshold = threshold
         self.paragraphs = paragraphs
         self._sat: SaTModel | None = None
+        self._revision: str | None = None
+        self._tokenizer_revision: str | None = None
 
     def _load(self) -> SaTModel:
         """Load once per instance; a two-hour episode is one `split` call."""
         if self._sat is None:
-            self._sat = load_sat(
+            loaded = load_sat(
                 self.model, style_or_domain=self.style_or_domain, language=self.language
             )
+            self._sat = loaded.value
+            self._revision = loaded.revision
+            self._tokenizer_revision = loaded.tokenizer_revision
         return self._sat
 
     def _provenance(self, *, paragraph_source: str, shots: int) -> Provenance:
@@ -167,10 +171,11 @@ class SaTSegmenter:
                 "transformers": library_version("transformers"),
                 "wtpsplit": library_version("wtpsplit"),
                 **(
-                    {"sat_revision": revision}
-                    if (revision := model_revision(f"segment-any-text/{self.model}")) is not None
+                    {"sat_tokenizer_revision": self._tokenizer_revision}
+                    if self._tokenizer_revision is not None
                     else {}
                 ),
+                **({"sat_revision": self._revision} if self._revision is not None else {}),
             },
         )
 

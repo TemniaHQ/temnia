@@ -160,19 +160,37 @@ def test_scdet_parsing_pairs_time_with_score() -> None:
 def _write_playlist(path: Path, seconds: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     entries = "".join(f"#EXTINF:2.000,\nseg_{i:05d}.m4s\n" for i in range(int(seconds / 2)))
-    path.write_text(f"#EXTM3U\n#EXT-X-INDEPENDENT-SEGMENTS\n{entries}#EXT-X-ENDLIST\n")
+    path.write_text(
+        f'#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXT-X-INDEPENDENT-SEGMENTS\n{entries}#EXT-X-ENDLIST\n'
+    )
+    (path.parent / "init.mp4").write_bytes(b"init")
+    for i in range(int(seconds / 2)):
+        (path.parent / f"seg_{i:05d}.m4s").write_bytes(b"media")
 
 
 def test_a_complete_ladder_from_an_earlier_attempt_is_recognised(tmp_path: Path) -> None:
     rungs = hls.plan_rungs(facts(720))
     out = tmp_path / "hls"
     (out).mkdir()
-    (out / "master.m3u8").write_text("#EXTM3U\n")
+    (out / "master.m3u8").write_text(
+        "#EXTM3U\n"
+        + "".join(
+            f"#EXT-X-STREAM-INF:BANDWIDTH=1000\n{name}/index.m3u8\n"
+            for name in [*(rung.name for rung in rungs), "audio", "iframes"]
+        )
+    )
     for rung in rungs:
         _write_playlist(out / rung.name / "index.m3u8", 120)
     _write_playlist(out / "audio" / "index.m3u8", 120)
     _write_playlist(out / "iframes" / "index.m3u8", 118)
     assert hls.ladder_is_complete(out, rungs, has_audio=True, iframes=True, expected_seconds=120)
+    # A missing segment cannot be reused even with intact playlists.
+    segment = out / "top" / "seg_00000.m4s"
+    segment.unlink()
+    assert not hls.ladder_is_complete(
+        out, rungs, has_audio=True, iframes=True, expected_seconds=120
+    )
+    segment.write_bytes(b"media")
     # A truncated rung, or a missing one, means encode again.
     _write_playlist(out / "360p" / "index.m3u8", 60)
     assert not hls.ladder_is_complete(
@@ -411,7 +429,8 @@ def test_manifest_round_trips_through_camel_case_json(tmp_path: Path) -> None:
 
 def test_a_manifest_written_before_the_gpu_decode_reads_back_as_cpu() -> None:
     """Every S1 and early S2 ladder decoded on the CPU, and a reuse check must
-    still read one rather than raise inside `stored_ladder`."""
+    still read one rather than raise inside `stored_ladder`.
+    """
     text = _manifest().model_dump_json(by_alias=True, exclude={"decoder"})
     assert hls.read_manifest(text).decoder == "cpu"
 

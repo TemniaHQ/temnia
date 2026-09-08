@@ -45,7 +45,7 @@ from temnia_pipeline.substrate.backends import (
     encode_sentences,
     library_version,
     load_encoder,
-    model_revision,
+    positive_integer,
     truncated_count,
 )
 from temnia_pipeline.substrate.model import BoundaryCandidate, Layers, Provenance
@@ -170,11 +170,13 @@ class EmbeddingChangePointSegmenter:
         target_per_hour: float = DEFAULT_TARGET_PER_HOUR,
         min_sentences: int = 4,
     ) -> None:
+        min_sentences = positive_integer(min_sentences, name="min_sentences")
         self.sentences_from = sentences_from
         self.embedding_model = embedding_model
         self.target_per_hour = target_per_hour
         self.min_sentences = min_sentences
         self._encoder = None
+        self._embedding_revision: str | None = None
 
     def _provenance(
         self, base: Provenance, target: int, truncated: int | None = None
@@ -193,9 +195,8 @@ class EmbeddingChangePointSegmenter:
             "ruptures": library_version("ruptures"),
             "sentence_transformers": library_version("sentence-transformers"),
         }
-        revision = model_revision(self.embedding_model)
-        if revision is not None:
-            versions["embedding_revision"] = revision
+        if self._embedding_revision is not None:
+            versions["embedding_revision"] = self._embedding_revision
         return Provenance(
             segmenter=self.name,
             models={**base.models, "embedding": self.embedding_model},
@@ -235,7 +236,9 @@ class EmbeddingChangePointSegmenter:
                 base=self._with_provenance(base, provenance), target=target, fitted=None
             )
         if self._encoder is None:
-            self._encoder = load_encoder(self.embedding_model)
+            loaded = load_encoder(self.embedding_model)
+            self._encoder = loaded.value
+            self._embedding_revision = loaded.revision
         texts = [sentence.text for sentence in base.sentences]
         truncated = truncated_count(self._encoder, texts)
         matrix = encode_sentences(self._encoder, texts)
