@@ -15,6 +15,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import {
   Progress,
   ProgressLabel,
   ProgressValue,
@@ -42,7 +46,13 @@ const HEADINGS: Record<string, string> = {
 };
 
 interface TranscriptPanelProps {
+  annotationsUrl: string | null;
   labels: Readonly<Record<string, string>>;
+  revisions: Array<{
+    annotationsUrl: string;
+    revision: number;
+    url: string;
+  }>;
   /** The media-proxy URL of the current revision, or null when there is none. */
   revisionUrl: string | null;
   row: TranscriptRowSummary | null;
@@ -61,9 +71,11 @@ interface TranscriptPanelProps {
  * sources table.
  */
 export function TranscriptPanel({
+  annotationsUrl,
   labels,
   revisionUrl,
   row,
+  revisions,
   sourceId,
   sourceStatus,
   title,
@@ -75,6 +87,8 @@ export function TranscriptPanel({
   // agree on every state, including the one that depends on the clock, which
   // is what keeps the stall check out of the hydration diff.
   const [now, setNow] = useState(0);
+  const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
+  const [readerEpoch, setReaderEpoch] = useState(0);
 
   const state = transcriptState({ now, row, sourceStatus });
   const active = isInFlight(state);
@@ -111,14 +125,51 @@ export function TranscriptPanel({
     });
   };
 
-  if (state.kind === "ready" && revisionUrl && row?.currentRevision) {
+  if (
+    state.kind === "ready" &&
+    revisionUrl &&
+    annotationsUrl &&
+    row?.currentRevision
+  ) {
+    const selected =
+      revisions.find(
+        (revision) =>
+          revision.revision === (selectedRevision ?? row.currentRevision)
+      ) ?? revisions[0];
+    if (!selected) {
+      return null;
+    }
     return (
-      <div data-state="ready" data-testid="transcript-tab">
+      <div
+        className="space-y-2"
+        data-state="ready"
+        data-testid="transcript-tab"
+      >
+        <NativeSelect
+          aria-label="Transcript revision"
+          onChange={(event) => {
+            setSelectedRevision(Number(event.target.value));
+            setReaderEpoch((epoch) => epoch + 1);
+          }}
+          value={selected.revision}
+        >
+          {revisions.map((revision) => (
+            <NativeSelectOption
+              key={revision.revision}
+              value={revision.revision}
+            >
+              Revision {revision.revision}
+              {revision.revision === row.currentRevision ? " · current" : ""}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
         <TranscriptReader
-          baseRevision={row.currentRevision}
-          key={sourceId}
+          annotationsUrl={selected.annotationsUrl}
+          baseRevision={selected.revision}
+          key={`${sourceId}:${readerEpoch}`}
           labels={labels}
-          revisionUrl={revisionUrl}
+          readOnly={selected.revision !== row.currentRevision}
+          revisionUrl={selected.url}
           sourceId={sourceId}
           title={title}
         />

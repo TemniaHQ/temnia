@@ -12,7 +12,11 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { TranscriptV1 } from "@temnia/contracts";
+import {
+  type TranscriptRevisionAnnotations,
+  TranscriptRevisionAnnotationsSchema,
+  type TranscriptV1,
+} from "@temnia/contracts";
 import { selectTime, usePlayer } from "@videojs/react";
 import { useRouter } from "next/navigation";
 import {
@@ -25,9 +29,8 @@ import {
   useTransition,
 } from "react";
 import {
-  correctTranscript,
+  correctTranscriptStructure,
   type TranscriptActionResult,
-  updateSpeakerLabels,
 } from "@/app/actions/transcript";
 import { TranscriptParagraph } from "@/components/sources/transcript-paragraph";
 import { TranscriptSpeakersDialog } from "@/components/sources/transcript-speakers-dialog";
@@ -41,10 +44,15 @@ import {
   InputGroupInput,
   InputGroupText,
 } from "@/components/ui/input-group";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toggle } from "@/components/ui/toggle";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { clearSessionUuid, stableSessionUuid } from "@/lib/harness/client";
 import { fetchRevision } from "@/lib/transcript/content";
 import {
   EMPTY_DRAFTS,
@@ -55,19 +63,26 @@ import { STALE_REVISION_MESSAGE } from "@/lib/transcript/edits";
 import {
   buildParagraphs,
   findMatches,
+  type Paragraph,
   paragraphAt,
+  type TranscriptMatch,
   wordAt,
 } from "@/lib/transcript/paragraphs";
+import { legacyAnnotations } from "@/lib/transcript/structure";
+import { wordsByUtterance } from "@/lib/transcript/utterances";
 
 interface LoadedRevision {
+  annotations: TranscriptRevisionAnnotations;
   content: TranscriptV1;
   revision: number;
 }
 
 interface TranscriptReaderProps {
+  annotationsUrl: string;
   /** The revision at revisionUrl; edits use it only after those bytes load. */
   baseRevision: number;
   labels: Readonly<Record<string, string>>;
+  readOnly: boolean;
   revisionUrl: string;
   sourceId: string;
   /** Names the two caption downloads, so a folder of exports is readable. */
@@ -76,6 +91,8 @@ interface TranscriptReaderProps {
 
 /** A row is about four lines; the virtualiser measures the real one on mount. */
 const ESTIMATED_ROW_PX = 92;
+const WHITESPACE = /\s+/;
+const NONNEGATIVE_INTEGER = /^\d+$/;
 
 /** A save that threw rather than answered: the network, the store, the database. */
 const SAVE_FAILED_MESSAGE =
@@ -90,6 +107,23 @@ function exportName(title: string, format: string): string {
   return `${cleaned || "transcript"}.${format}`;
 }
 
+function focusedWords(
+  paragraph: Paragraph,
+  match: TranscriptMatch | null
+): readonly [first: number, last: number] {
+  if (
+    !match ||
+    paragraph.lastWord < match.firstWord ||
+    paragraph.firstWord > match.lastWord
+  ) {
+    return [-1, -1];
+  }
+  return [
+    Math.max(paragraph.firstWord, match.firstWord),
+    Math.min(paragraph.lastWord, match.lastWord),
+  ];
+}
+
 /**
  * The transcript, once there is one.
  *
@@ -99,9 +133,12 @@ function exportName(title: string, format: string): string {
  * from the player store the source page provides, so following and seeking
  * share the one player with the pane beside it rather than a lifted ref.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the transcript surface coordinates playback, virtualized search, retained drafts, and explicit revision commands
 export function TranscriptReader({
+  annotationsUrl,
   baseRevision,
   labels,
+  readOnly,
   revisionUrl,
   sourceId,
   title,
@@ -138,17 +175,64 @@ export function TranscriptReader({
   const [stale, setStale] = useState(false);
   const [speakersOpen, setSpeakersOpen] = useState(false);
   const [speakersError, setSpeakersError] = useState<string | null>(null);
+  const [structureText, setStructureText] = useState("");
+  const [structureStart, setStructureStart] = useState("");
+  const [structureEnd, setStructureEnd] = useState("");
+  const [undoRevision, setUndoRevision] = useState("");
+  const [mergeSpeaker, setMergeSpeaker] = useState("");
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `loadAttempt` is the retry; a new value is a new request
   useEffect(() => {
     const controller = new AbortController();
     setLoadError(null);
-    fetchRevision(revisionUrl, controller.signal)
-      .then((next) => {
+    Promise.all([
+      fetchRevision(revisionUrl, controller.signal),
+      fetch(annotationsUrl, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then(async (response) => {
+        if (!response.ok) {
+          throw new Error("annotation metadata unavailable");
+        }
+        return (await response.json()) as {
+          annotations: unknown;
+          legacySpeakerLabels: Record<string, string>;
+          machineRevision: number;
+          transcriptId: string;
+        };
+      }),
+    ])
+      .then(([next, metadata]) => {
         if (!controller.signal.aborted) {
           // A router refresh changes the URL/number before the JSON arrives.
           // Keep the previous pair intact until both can move together.
-          setLoaded({ content: next, revision: baseRevision });
+          const parsed = TranscriptRevisionAnnotationsSchema.safeParse(
+            metadata.annotations
+          );
+          setLoaded({
+            annotations: parsed.success
+              ? parsed.data
+              : legacyAnnotations(
+                  metadata.transcriptId,
+                  metadata.machineRevision,
+                  next,
+                  metadata.legacySpeakerLabels
+                ),
+            content: next,
+            revision: baseRevision,
+          });
+          const resolved = parsed.success
+            ? parsed.data
+            : legacyAnnotations(
+                metadata.transcriptId,
+                metadata.machineRevision,
+                next,
+                metadata.legacySpeakerLabels
+              );
+          dispatchDraft({
+            identityIds: resolved.wordIdentities.map((identity) => identity.id),
+            type: "rebase",
+          });
         }
       })
       .catch((error: unknown) => {
@@ -161,9 +245,20 @@ export function TranscriptReader({
         }
       });
     return () => controller.abort();
-  }, [baseRevision, revisionUrl, loadAttempt]);
+  }, [annotationsUrl, baseRevision, revisionUrl, loadAttempt]);
 
   const words = content?.words;
+  const displayLabels = useMemo(
+    () =>
+      loaded
+        ? Object.fromEntries(
+            Object.entries(loaded.annotations.speakerIdentities).map(
+              ([raw, identity]) => [raw, identity.label]
+            )
+          )
+        : labels,
+    [labels, loaded]
+  );
   const paragraphs = useMemo(
     () => (content ? buildParagraphs(content.words, content.utterances) : []),
     [content]
@@ -174,8 +269,12 @@ export function TranscriptReader({
   );
   const activeWord = words ? wordAt(words, currentTime * 1000) : -1;
   const activeParagraph = paragraphAt(paragraphs, activeWord);
-  const focusedWord = matches[matchIndex] ?? -1;
-  const focusedParagraph = paragraphAt(paragraphs, focusedWord);
+  const safeMatchIndex = Math.min(matchIndex, Math.max(0, matches.length - 1));
+  const focusedMatch = matches[safeMatchIndex] ?? null;
+  const focusedParagraph = paragraphAt(
+    paragraphs,
+    focusedMatch?.firstWord ?? -1
+  );
   const editParagraph = paragraphAt(paragraphs, edit?.index ?? -1);
 
   const virtualizer = useVirtualizer({
@@ -242,9 +341,27 @@ export function TranscriptReader({
       startTransition(async () => {
         let result: TranscriptActionResult;
         try {
-          result = await correctTranscript(sourceId, owner.baseRevision, [
-            { index, text },
+          const targetId = loaded?.annotations.wordIdentities[index]?.id;
+          if (!targetId) {
+            throw new Error("word identity missing");
+          }
+          const intent = JSON.stringify([
+            "replace",
+            owner.baseRevision,
+            targetId,
+            text,
           ]);
+          const key = `transcript-command:${sourceId}:${intent}`;
+          result = await correctTranscriptStructure(sourceId, {
+            action: "replace",
+            baseRevision: owner.baseRevision,
+            mutationKey: stableSessionUuid(key),
+            targetId,
+            text,
+          });
+          if (result.ok) {
+            clearSessionUuid(key);
+          }
         } catch {
           dispatchDraft({
             error: SAVE_FAILED_MESSAGE,
@@ -265,7 +382,7 @@ export function TranscriptReader({
         }
       });
     },
-    [edit, refused, router, sourceId]
+    [edit, loaded, refused, router, sourceId]
   );
 
   const assignSpeaker = useCallback(
@@ -278,10 +395,37 @@ export function TranscriptReader({
       startTransition(async () => {
         let result: TranscriptActionResult;
         try {
-          result = await correctTranscript(sourceId, revision, {
-            speaker,
-            utteranceIndex,
+          const targetSpeakerIdentityId =
+            loaded.annotations.speakerIdentities[speaker]?.identityId;
+          const targetIds = (
+            wordsByUtterance(loaded.content.words, loaded.content.utterances)[
+              utteranceIndex
+            ] ?? []
+          )
+            .map(
+              (index) => loaded.annotations.wordIdentities[index]?.id ?? null
+            )
+            .filter((identity): identity is string => identity !== null);
+          if (!targetSpeakerIdentityId || targetIds.length === 0) {
+            throw new Error("speaker identity missing");
+          }
+          const intent = JSON.stringify([
+            "reassign_speaker",
+            revision,
+            targetIds,
+            targetSpeakerIdentityId,
+          ]);
+          const key = `transcript-command:${sourceId}:${intent}`;
+          result = await correctTranscriptStructure(sourceId, {
+            action: "reassign_speaker",
+            baseRevision: revision,
+            mutationKey: stableSessionUuid(key),
+            targetIds,
+            targetSpeakerIdentityId,
           });
+          if (result.ok) {
+            clearSessionUuid(key);
+          }
         } catch {
           setAssignError(SAVE_FAILED_MESSAGE);
           return;
@@ -300,11 +444,38 @@ export function TranscriptReader({
 
   const saveSpeakers = useCallback(
     (next: Record<string, string>) => {
+      if (!loaded) {
+        return;
+      }
       setSpeakersError(null);
       startTransition(async () => {
         let result: TranscriptActionResult;
         try {
-          result = await updateSpeakerLabels(sourceId, next);
+          const renamed = Object.fromEntries(
+            Object.entries(next).map(([raw, label]) => {
+              const identity =
+                loaded.annotations.speakerIdentities[raw]?.identityId;
+              if (!identity) {
+                throw new Error("speaker identity missing");
+              }
+              return [identity, label];
+            })
+          );
+          const intent = JSON.stringify([
+            "rename_speakers",
+            loaded.revision,
+            renamed,
+          ]);
+          const key = `transcript-command:${sourceId}:${intent}`;
+          result = await correctTranscriptStructure(sourceId, {
+            action: "rename_speakers",
+            baseRevision: loaded.revision,
+            labels: renamed,
+            mutationKey: stableSessionUuid(key),
+          });
+          if (result.ok) {
+            clearSessionUuid(key);
+          }
         } catch {
           setSpeakersError(SAVE_FAILED_MESSAGE);
           return;
@@ -317,7 +488,7 @@ export function TranscriptReader({
         setSpeakersError(result.message);
       });
     },
-    [router, sourceId]
+    [loaded, router, sourceId]
   );
 
   const openRename = useCallback(() => setSpeakersOpen(true), []);
@@ -345,6 +516,23 @@ export function TranscriptReader({
       }
       const word = content?.words[index];
       if (editMode && loaded && word) {
+        const orphaned = draftState.drafts.find(
+          (draft) => draft.id === draftState.activeId && draft.index < 0
+        );
+        const identityId =
+          loaded.annotations.wordIdentities[index]?.id ??
+          `missing:${loaded.revision}:${index}`;
+        if (orphaned) {
+          dispatchDraft({
+            id: orphaned.id,
+            identityId,
+            index,
+            original: word.text,
+            revision: loaded.revision,
+            type: "retarget",
+          });
+          return;
+        }
         const existing = draftState.drafts.find(
           (draft) => draft.index === index
         );
@@ -358,6 +546,7 @@ export function TranscriptReader({
               draft: word.text,
               error: null,
               id: nextDraftId.current,
+              identityId,
               index,
               original: word.text,
               pending: false,
@@ -375,7 +564,15 @@ export function TranscriptReader({
     };
     viewport.addEventListener("click", onWordClick);
     return () => viewport.removeEventListener("click", onWordClick);
-  }, [content, draftState.drafts, editMode, loaded, seek, viewport]);
+  }, [
+    content,
+    draftState.activeId,
+    draftState.drafts,
+    editMode,
+    loaded,
+    seek,
+    viewport,
+  ]);
 
   const step = (delta: number) => {
     if (matches.length > 0) {
@@ -424,6 +621,44 @@ export function TranscriptReader({
     }
   };
 
+  const runStructural = (payload: Record<string, unknown>) => {
+    if (!loaded) {
+      return;
+    }
+    startTransition(async () => {
+      const frozen = {
+        ...payload,
+        baseRevision: loaded.revision,
+      };
+      const intent = JSON.stringify(frozen);
+      const key = `transcript-command:${sourceId}:${intent}`;
+      try {
+        const result = await correctTranscriptStructure(sourceId, {
+          ...frozen,
+          mutationKey: stableSessionUuid(key),
+        });
+        if (result.ok) {
+          clearSessionUuid(key);
+          dispatchDraft({ type: "closeAfterStructure" });
+          router.refresh();
+        } else if (!refused(result)) {
+          setAssignError(result.message);
+        }
+      } catch {
+        setAssignError(SAVE_FAILED_MESSAGE);
+      }
+    });
+  };
+
+  const selectedIdentity = edit?.identityId;
+  const selectedWord = content?.words[edit?.index ?? -1];
+  const tokens = structureText.trim().split(WHITESPACE).filter(Boolean);
+  const canInsert = Boolean(selectedIdentity) || content?.words.length === 0;
+  const [firstSpeaker] = content?.speakers ?? [];
+  const currentSpeakerIdentity = selectedWord?.speaker
+    ? loaded?.annotations.speakerIdentities[selectedWord.speaker]?.identityId
+    : null;
+
   const items = virtualizer.getVirtualItems();
   return (
     <TooltipProvider>
@@ -454,7 +689,7 @@ export function TranscriptReader({
                 <InputGroupText data-testid="transcript-match-count">
                   {matches.length === 0
                     ? "No matches"
-                    : `${matchIndex + 1}/${matches.length}`}
+                    : `${safeMatchIndex + 1}/${matches.length}`}
                 </InputGroupText>
               ) : null}
               <InputGroupButton
@@ -498,6 +733,7 @@ export function TranscriptReader({
           </Toggle>
           <Toggle
             data-testid="transcript-edit-mode"
+            disabled={readOnly}
             onPressedChange={(next) => {
               setEditMode(next);
               dispatchDraft({ type: "close" });
@@ -511,6 +747,7 @@ export function TranscriptReader({
           </Toggle>
           <Button
             data-testid="transcript-speakers"
+            disabled={readOnly}
             onClick={openRename}
             size="sm"
             variant="outline"
@@ -529,7 +766,7 @@ export function TranscriptReader({
                 <a
                   data-testid={`transcript-${format}`}
                   download={exportName(title, format)}
-                  href={`/api/sources/${sourceId}/transcript.${format}`}
+                  href={`/api/sources/${sourceId}/transcript.${format}?revision=${baseRevision}`}
                 />
               }
               size="sm"
@@ -539,6 +776,208 @@ export function TranscriptReader({
               {format.toUpperCase()}
             </Button>
           ))}
+        </div>
+
+        <div
+          className="flex flex-wrap items-center gap-2"
+          data-testid="transcript-structure-controls"
+          hidden={readOnly || !editMode}
+        >
+          <InputGroup className="w-44">
+            <InputGroupInput
+              aria-label="Structural edit words"
+              onChange={(event) => setStructureText(event.target.value)}
+              placeholder="Words for split or insert"
+              value={structureText}
+            />
+          </InputGroup>
+          <InputGroup className="w-28">
+            <InputGroupInput
+              aria-label="Inserted word start milliseconds"
+              inputMode="numeric"
+              onChange={(event) => setStructureStart(event.target.value)}
+              placeholder="start ms"
+              value={structureStart}
+            />
+          </InputGroup>
+          <InputGroup className="w-28">
+            <InputGroupInput
+              aria-label="Inserted word end milliseconds"
+              inputMode="numeric"
+              onChange={(event) => setStructureEnd(event.target.value)}
+              placeholder="end ms"
+              value={structureEnd}
+            />
+          </InputGroup>
+          <span className="text-muted-foreground text-xs">
+            Manual millisecond timings are approximate; confirm them against
+            playback.
+          </span>
+          <Button
+            disabled={pending || !selectedIdentity}
+            onClick={() =>
+              runStructural({ action: "delete", targetIds: [selectedIdentity] })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Delete word
+          </Button>
+          <Button
+            disabled={pending || !selectedIdentity || tokens.length === 0}
+            onClick={() =>
+              runStructural({
+                action: "split",
+                targetId: selectedIdentity,
+                tokens,
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Split word
+          </Button>
+          <Button
+            disabled={
+              pending ||
+              !canInsert ||
+              tokens.length === 0 ||
+              !NONNEGATIVE_INTEGER.test(structureStart) ||
+              !NONNEGATIVE_INTEGER.test(structureEnd)
+            }
+            onClick={() =>
+              runStructural({
+                action: "insert",
+                anchorId: selectedIdentity ?? null,
+                endMs: Number(structureEnd),
+                side: "before",
+                speakerIdentityId: currentSpeakerIdentity,
+                startMs: Number(structureStart),
+                tokens,
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Insert before
+          </Button>
+          <Button
+            disabled={
+              pending ||
+              !canInsert ||
+              tokens.length === 0 ||
+              !NONNEGATIVE_INTEGER.test(structureStart) ||
+              !NONNEGATIVE_INTEGER.test(structureEnd)
+            }
+            onClick={() =>
+              runStructural({
+                action: "insert",
+                anchorId: selectedIdentity ?? null,
+                endMs: Number(structureEnd),
+                side: "after",
+                speakerIdentityId: currentSpeakerIdentity,
+                startMs: Number(structureStart),
+                tokens,
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Insert after
+          </Button>
+          {content?.words.length === 0 ? (
+            <span className="text-muted-foreground text-xs">
+              The first inserted words will use Unknown speaker.
+            </span>
+          ) : null}
+          <Button
+            disabled={
+              pending ||
+              !selectedIdentity ||
+              !loaded?.annotations.wordIdentities[(edit?.index ?? -1) + 1]
+            }
+            onClick={() =>
+              runStructural({
+                action: "merge",
+                targetIds: [
+                  selectedIdentity,
+                  loaded?.annotations.wordIdentities[(edit?.index ?? -1) + 1]
+                    ?.id,
+                ],
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Merge next
+          </Button>
+          <InputGroup className="w-28">
+            <InputGroupInput
+              aria-label="Undo to revision"
+              inputMode="numeric"
+              onChange={(event) => setUndoRevision(event.target.value)}
+              placeholder="revision"
+              value={undoRevision}
+            />
+          </InputGroup>
+          <Button
+            disabled={
+              pending ||
+              !NONNEGATIVE_INTEGER.test(undoRevision) ||
+              Number(undoRevision) >= (loaded?.revision ?? 0)
+            }
+            onClick={() =>
+              runStructural({
+                action: "undo",
+                targetRevision: Number(undoRevision),
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Undo
+          </Button>
+          {content && content.speakers.length > 1 ? (
+            <>
+              <NativeSelect
+                aria-label="Speaker identity to merge"
+                onChange={(event) => setMergeSpeaker(event.target.value)}
+                size="sm"
+                value={mergeSpeaker}
+              >
+                <NativeSelectOption value="">Merge speaker…</NativeSelectOption>
+                {content.speakers.slice(1).map((speaker) => (
+                  <NativeSelectOption key={speaker} value={speaker}>
+                    {displayLabels[speaker] ?? speaker}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <Button
+                disabled={pending || !mergeSpeaker}
+                onClick={() => {
+                  const sourceIdentity =
+                    loaded?.annotations.speakerIdentities[mergeSpeaker]
+                      ?.identityId;
+                  const targetIdentity = firstSpeaker
+                    ? loaded?.annotations.speakerIdentities[firstSpeaker]
+                        ?.identityId
+                    : null;
+                  if (sourceIdentity && targetIdentity) {
+                    runStructural({
+                      action: "merge_speakers",
+                      sourceIdentityIds: [sourceIdentity],
+                      targetIdentityId: targetIdentity,
+                    });
+                  }
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Merge into{" "}
+                {displayLabels[firstSpeaker ?? ""] ?? "first speaker"}
+              </Button>
+            </>
+          ) : null}
         </div>
 
         {stale ? (
@@ -594,6 +1033,13 @@ export function TranscriptReader({
           </Alert>
         ) : null}
 
+        {content?.words.length === 0 ? (
+          <p className="text-muted-foreground text-sm" role="status">
+            This revision contains no lexical text. You can insert words or undo
+            to an earlier revision.
+          </p>
+        ) : null}
+
         {content ? null : (
           <div className="flex flex-col gap-3" data-testid="transcript-loading">
             <Skeleton className="h-16 w-full" />
@@ -616,6 +1062,9 @@ export function TranscriptReader({
                 >
                   {items.map((item) => {
                     const paragraph = paragraphs[item.index];
+                    const [focusedFirstWord, focusedLastWord] = paragraph
+                      ? focusedWords(paragraph, focusedMatch)
+                      : [-1, -1];
                     return paragraph ? (
                       <div
                         className="absolute top-0 left-0 w-full"
@@ -629,16 +1078,16 @@ export function TranscriptReader({
                             item.index === activeParagraph ? activeWord : -1
                           }
                           edit={item.index === editParagraph ? edit : null}
-                          focusedWord={
-                            item.index === focusedParagraph ? focusedWord : -1
-                          }
-                          labels={labels}
+                          focusedFirstWord={focusedFirstWord}
+                          focusedLastWord={focusedLastWord}
+                          labels={displayLabels}
                           onAssign={assignSpeaker}
                           onCancelEdit={cancelEdit}
                           onDraft={draftWord}
                           onRenameSpeakers={openRename}
                           onSaveEdit={saveWord}
                           paragraph={paragraph}
+                          readOnly={readOnly}
                           speakers={content.speakers}
                           words={content.words}
                         />
@@ -664,7 +1113,7 @@ export function TranscriptReader({
       </div>
       <TranscriptSpeakersDialog
         error={speakersError}
-        labels={labels}
+        labels={displayLabels}
         onOpenChange={setSpeakersOpen}
         onSave={saveSpeakers}
         open={speakersOpen}

@@ -1,0 +1,38 @@
+{
+  "$defs": {
+    "TranscriptSpeakerIdentity": {
+      "$id": "#/$defs/TranscriptSpeakerIdentity",
+      "type": "object",
+      "properties": {
+        "identityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "parentIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "identityId",
+        "label",
+        "parentIdentityIds"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptSpeakerIdentity"
+    }
+  },
+  "$id": "TranscriptSpeakerIdentity.json",
+  "$ref": "#/$defs/TranscriptSpeakerIdentity",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

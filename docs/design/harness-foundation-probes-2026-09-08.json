@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "recordedOn": "2026-09-08",
+  "r2ConditionalCreate": {
+    "checks": {
+      "firstCreateSucceeded": true,
+      "originalBytesPreserved": true,
+      "probeObjectRemoved": true,
+      "secondCreateRefusedAsAlreadyExists": true
+    },
+    "observedAt": "2026-09-08T14:01:34.814825+00:00",
+    "passed": true,
+    "probe": "obstore-s3-create-mode",
+    "sha256": "0860b3b49b0688bcc8402f98472223a4f35255798cfaaefd4cccf94f808deca9",
+    "sizeBytes": 26,
+    "store": "staging-r2"
+  },
+  "cpuSpeechDetector": {
+    "source": "apps/web/e2e/fixtures/speech-40s.mp4",
+    "sourceSha256": "31ae0e36255c429b9842b7fdc2cfe2edec9034096ac1b188be943173381a57af",
+    "elapsedSeconds": 1.073,
+    "provenance": "Actual ONNX CPU detector on synthesized speech media; no human accuracy labels",
+    "evidence": {
+      "detector": "silero-vad-6.2.1-op15-16khz",
+      "detector_revision": "7e30209a3e901f9842f81b225f3e93d8199902b1",
+      "detector_sha256": "7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49",
+      "duration_ms": 40128,
+      "window_count": 1254,
+      "intervals": [
+        {
+          "start_ms": 482,
+          "end_ms": 2014,
+          "probability_min": 0.12216365337371826,
+          "probability_mean": 0.9650297438104948,
+          "probability_max": 0.9999992847442627
+        },
+        {
+          "start_ms": 2242,
+          "end_ms": 6942,
+          "probability_min": 0.02593037486076355,
+          "probability_mean": 0.9874429313503966,
+          "probability_max": 0.9999995231628418
+        },
+        {
+          "start_ms": 7714,
+          "end_ms": 9182,
+          "probability_min": 0.08300483226776123,
+          "probability_mean": 0.9650886829780496,
+          "probability_max": 0.9999988079071045
+        },
+        {
+          "start_ms": 9314,
+          "end_ms": 13854,
+          "probability_min": 0.011025875806808472,
+          "probability_mean": 0.9767793167225072,
+          "probability_max": 0.9999997019767761
+        },
+        {
+          "start_ms": 14562,
+          "end_ms": 16638,
+          "probability_min": 0.06067577004432678,
+          "probability_mean": 0.9763084535415356,
+          "probability_max": 0.999999463558197
+        },
+        {
+          "start_ms": 17186,
+          "end_ms": 19358,
+          "probability_min": 0.048572003841400146,
+          "probability_mean": 0.9671943902092821,
+          "probability_max": 0.9999994039535522
+        },
+        {
+          "start_ms": 19458,
+          "end_ms": 22078,
+          "probability_min": 0.08375170826911926,
+          "probability_mean": 0.9695246514023804,
+          "probability_max": 0.9999995827674866
+        },
+        {
+          "start_ms": 22242,
+          "end_ms": 24446,
+          "probability_min": 0.07451260089874268,
+          "probability_mean": 0.9662972278353097,
+          "probability_max": 0.9999997019767761
+        },
+        {
+          "start_ms": 25250,
+          "end_ms": 26270,
+          "probability_min": 0.22097069025039673,
+          "probability_mean": 0.9531683344393969,
+          "probability_max": 0.9999988079071045
+        },
+        {
+          "start_ms": 26434,
+          "end_ms": 28702,
+          "probability_min": 0.2183845341205597,
+          "probability_mean": 0.9766874980758613,
+          "probability_max": 0.9999991655349731
+        },
+        {
+          "start_ms": 29250,
+          "end_ms": 31838,
+          "probability_min": 0.013945341110229492,
+          "probability_mean": 0.9623116747832593,
+          "probability_max": 0.9999996423721313
+        },
+        {
+          "start_ms": 31970,
+          "end_ms": 35902,
+          "probability_min": 0.14154782891273499,
+          "probability_mean": 0.9804258557354532,
+          "probability_max": 0.9999995231628418
+        },
+        {
+          "start_ms": 36610,
+          "end_ms": 37278,
+          "probability_min": 0.07821959257125854,
+          "probability_mean": 0.8499955506551833,
+          "probability_max": 0.9999964237213135
+        },
+        {
+          "start_ms": 37538,
+          "end_ms": 39166,
+          "probability_min": 0.04696780443191528,
+          "probability_mean": 0.9659310725389743,
+          "probability_max": 0.9999994039535522
+        }
+      ],
+      "probability_quantiles": {
+        "p10": 0.015117260813713075,
+        "p50": 0.9999904036521912,
+        "p90": 0.9999985694885254,
+        "p99": 0.9999995231628418
+      },
+      "probability_histogram": [
+        217,
+        6,
+        7,
+        4,
+        7,
+        3,
+        3,
+        1,
+        6,
+        1000
+      ]
+    }
+  },
+  "limits": [
+    "No live model gateway calls or audition results.",
+    "Speech detector fixture is synthesized speech; no human accuracy labels.",
+    "No additive GPU speech app deployment or checkpoint recovery qualification yet.",
+    "Full harness integration and exact-SHA release gate still pending."
+  ],
+  "modalContainerCrash": {
+    "observedAt": "2026-09-08T14:42:24.761780+00:00",
+    "functionRetries": 0,
+    "gpu": null,
+    "callId": "fc-01M20QFSFXH3QR8NRK8J3QSCM6",
+    "result": {
+      "admissionRefused": true,
+      "firstContainer": "ta-01M20QFT38K4MX3046JBTP122R",
+      "retryContainer": "ta-01M20QG9M12QH9EYQDVR2CS7WR",
+      "inferenceCalls": 0
+    },
+    "applicationStopped": true,
+    "admissionObjectRemoved": true,
+    "limits": [
+      "CPU only; no speech model or GPU execution.",
+      "Does not qualify crashes before the function enters the admission guard.",
+      "No provider invoice was obtained."
+    ]
+  },
+  "longSourceCpuSpeechDetector": {
+    "observedAt": "2026-09-08T14:57:36.831264+00:00",
+    "sourceId": "01a07b1d-3b3b-727d-9456-824effb25346",
+    "sourceDurationMs": 9060473,
+    "elapsedSeconds": 23.618,
+    "inputSha256": {
+      "audio.m4a": "85615a2b6e04512cb333b80c4af6080a0f2017b355146b289303ed57bacc0c91",
+      "transcript.json": "c4222ccd028e5be24270c8411baaba589000bf997578161b322b674c8e1b51be",
+      "raw.json": "eb1c67e08b3964743a816ba327ec0e666ef54067055c6df30f70d914c417984a"
+    },
+    "fullProbeReportSha256": "2c5e98e91f8fb326f835dd3eccaf1ba754013c49956b1823eaf478774ea19a7f",
+    "detector": "silero-vad-6.2.1-op15-16khz",
+    "detectorRevision": "7e30209a3e901f9842f81b225f3e93d8199902b1",
+    "detectorSha256": "7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49",
+    "decodedDurationMs": 9060473,
+    "windows": 283140,
+    "speechIntervals": 3534,
+    "assessment": {
+      "status": "needs_review",
+      "detected_speech_ms": 7372712,
+      "recognized_span_ms": 7517795,
+      "overlap_ms": 6718953,
+      "uncovered_speech_ms": 653759,
+      "uncovered_tail_ms": 434,
+      "largest_uncovered_ms": 2119,
+      "recognition_outside_detector_ms": 798842,
+      "threshold_version": "speech-coverage-thresholds/1-provisional",
+      "warnings": [
+        "independent detector found a material recognition omission; listen and review"
+      ]
+    },
+    "largestUncoveredRecognitionIntervals": [
+      [
+        1847639,
+        1849758
+      ],
+      [
+        1461960,
+        1463998
+      ],
+      [
+        8846306,
+        8847881
+      ],
+      [
+        5036326,
+        5037886
+      ],
+      [
+        1095042,
+        1096597
+      ],
+      [
+        8637250,
+        8638783
+      ],
+      [
+        5879229,
+        5880734
+      ],
+      [
+        3014117,
+        3015559
+      ],
+      [
+        1400412,
+        1401758
+      ],
+      [
+        89673,
+        91006
+      ],
+      [
+        7667074,
+        7668382
+      ],
+      [
+        8325066,
+        8326347
+      ],
+      [
+        1320386,
+        1321662
+      ],
+      [
+        7140482,
+        7141758
+      ],
+      [
+        7509858,
+        7511072
+      ],
+      [
+        8785698,
+        8786910
+      ],
+      [
+        613874,
+        615038
+      ],
+      [
+        7587311,
+        7588431
+      ],
+      [
+        7134850,
+        7135934
+      ],
+      [
+        8429306,
+        8430387
+      ]
+    ],
+    "speechAfterLastRecognizedWord": [
+      [
+        9044040,
+        9044062
+      ],
+      [
+        9044322,
+        9044734
+      ]
+    ],
+    "limits": [
+      "Independent detector agreement only; not human transcript or speaker accuracy.",
+      "Existing protocol4 raw segment spans, not new checkpointed recognition output.",
+      "No GPU/model gateway call or source mutation performed.",
+      "The provisional total-unmatched threshold flags accumulated short gaps; no human-calibrated threshold or omission label exists."
+    ]
+  },
+  "controlActivityCapacity": {
+    "probe": "actual Temporal workers; no provider calls",
+    "scenarios": [
+      {
+        "separate_control_queue": false,
+        "occupied_media_slots": 2,
+        "control_completed_while_media_blocked": false,
+        "observed_seconds": 2.002
+      },
+      {
+        "separate_control_queue": true,
+        "occupied_media_slots": 2,
+        "control_completed_while_media_blocked": true,
+        "observed_seconds": 0.007
+      }
+    ],
+    "observedAt": "2026-09-08T15:18:28Z",
+    "limits": [
+      "Scheduling proof on the Temporal time-skipping test server, not a production latency benchmark.",
+      "Test server emitted capability/shutdown warnings; result does not rely on heartbeat retention or shutdown timing."
+    ]
+  }
+}

@@ -9,6 +9,8 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
+COPY LICENSES ./LICENSES
+COPY THIRD_PARTY_NOTICES.md ./
 # Dependencies first: this layer survives source-only changes.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
@@ -24,6 +26,12 @@ RUN /app/.venv/bin/python scripts/fetch_models.py
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
+# Independent speech coverage uses this exact verified ONNX file and performs
+# no network access during an activity. The setup script imports its verifier
+# from the installed project, so it runs after the source/package sync.
+COPY scripts/fetch_silero_vad.py ./scripts/
+RUN /app/.venv/bin/python scripts/fetch_silero_vad.py \
+    /opt/temnia-models/silero_vad_16k_op15.onnx
 
 FROM python:3.13-slim AS runner
 # ffmpeg 8.1.2, the exact release, as a static binary from an image pinned by

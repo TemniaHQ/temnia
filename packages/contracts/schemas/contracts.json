@@ -58,6 +58,1288 @@
       "additionalProperties": false,
       "title": "ArtifactRecord"
     },
+    "ChapterBoundary": {
+      "$id": "#/$defs/ChapterBoundary",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "time": {
+          "$ref": "#/$defs/RationalTime"
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "candidateId",
+        "id",
+        "reasons",
+        "requiresReview",
+        "time",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterBoundary"
+    },
+    "ChapterCheck": {
+      "$id": "#/$defs/ChapterCheck",
+      "type": "object",
+      "properties": {
+        "expected": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "measured": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        }
+      },
+      "required": [
+        "expected",
+        "measured",
+        "message",
+        "name",
+        "sectionId",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterCheck"
+    },
+    "ChapterChecks": {
+      "$id": "#/$defs/ChapterChecks",
+      "type": "object",
+      "properties": {
+        "editorialReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "editorialStatus": {
+          "type": "string",
+          "enum": [
+            "not_run",
+            "passed",
+            "needs_review",
+            "failed"
+          ]
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "technicalChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterCheck"
+          }
+        },
+        "verifierFamily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "editorialReasons",
+        "editorialStatus",
+        "editSha256",
+        "technicalChecks",
+        "verifierFamily",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterChecks"
+    },
+    "ChapterEditSpec": {
+      "$id": "#/$defs/ChapterEditSpec",
+      "type": "object",
+      "properties": {
+        "boundaries": {
+          "minItems": 2,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterBoundary"
+          }
+        },
+        "compilerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "evidenceArtifactId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterSection"
+          }
+        },
+        "sourceAudioSampleRate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sourceFrameRate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "boundaries",
+        "compilerVersion",
+        "durationMs",
+        "evidenceArtifactId",
+        "evidenceSha256",
+        "sections",
+        "sourceAudioSampleRate",
+        "sourceFrameRate",
+        "sourceId",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterEditSpec"
+    },
+    "ChapterExport": {
+      "$id": "#/$defs/ChapterExport",
+      "type": "object",
+      "properties": {
+        "chapters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterRender"
+          }
+        },
+        "createdAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+          "type": "string",
+          "format": "date-time"
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "manifestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "chapters",
+        "createdAt",
+        "editSha256",
+        "manifestKey",
+        "revision",
+        "runId",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterExport"
+    },
+    "ChapterProposal": {
+      "$id": "#/$defs/ChapterProposal",
+      "type": "object",
+      "properties": {
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterProposalSection"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "sections",
+        "summary",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterProposal"
+    },
+    "ChapterProposalSection": {
+      "$id": "#/$defs/ChapterProposalSection",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ]
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "quoteWordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "id",
+        "kind",
+        "lastSentenceId",
+        "quoteWordIds",
+        "reason",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterProposalSection"
+    },
+    "ChapterRender": {
+      "$id": "#/$defs/ChapterRender",
+      "type": "object",
+      "properties": {
+        "captions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "media": {
+          "$ref": "#/$defs/HarnessArtifactRef"
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "captions",
+        "checks",
+        "durationMs",
+        "editSha256",
+        "media",
+        "sectionId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRender"
+    },
+    "ChapterRenders": {
+      "$id": "#/$defs/ChapterRenders",
+      "type": "object",
+      "properties": {
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "chapter-renders/1"
+        },
+        "renders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterRender"
+          }
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "editSha256",
+        "format",
+        "renders",
+        "runId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRenders"
+    },
+    "ChapterReviewAction": {
+      "$id": "#/$defs/ChapterReviewAction",
+      "type": "string",
+      "enum": [
+        "accept",
+        "reject",
+        "nudge",
+        "restore",
+        "merge",
+        "undo",
+        "retry",
+        "cancel",
+        "raise_budget"
+      ],
+      "title": "ChapterReviewAction"
+    },
+    "ChapterReviewInput": {
+      "$id": "#/$defs/ChapterReviewInput",
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ChapterReviewAction"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "boundaryId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "budgetMicros": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "otherSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "targetRevision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "targetTimeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "action",
+        "baseRevision",
+        "boundaryId",
+        "budgetMicros",
+        "mutationKey",
+        "otherSectionId",
+        "reason",
+        "runId",
+        "scope",
+        "sectionId",
+        "sourceId",
+        "targetRevision",
+        "targetTimeMs"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterReviewInput"
+    },
+    "ChapterReviewOutput": {
+      "$id": "#/$defs/ChapterReviewOutput",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "conflict",
+            "refused"
+          ]
+        }
+      },
+      "required": [
+        "message",
+        "mutationKey",
+        "revision",
+        "runId",
+        "state"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterReviewOutput"
+    },
+    "ChapterRunConfig": {
+      "$id": "#/$defs/ChapterRunConfig",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "recorded",
+            "gateway"
+          ]
+        },
+        "evidenceWindowSentences": {
+          "default": 80,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "maxDispatches": {
+          "default": 32,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxOutputTokens": {
+          "default": 8192,
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 32768
+        },
+        "maxRenderConcurrency": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxRepairs": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "routeSnapshotId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "backend",
+        "evidenceWindowSentences",
+        "maxDispatches",
+        "maxOutputTokens",
+        "maxRenderConcurrency",
+        "maxRepairs",
+        "routeSnapshotId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRunConfig"
+    },
+    "ChapterRunInput": {
+      "$id": "#/$defs/ChapterRunInput",
+      "type": "object",
+      "properties": {
+        "brief": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "budgetMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "config": {
+          "$ref": "#/$defs/ChapterRunConfig"
+        },
+        "requestKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "brief",
+        "budgetMicros",
+        "config",
+        "requestKey",
+        "runId",
+        "scope",
+        "sourceId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRunInput"
+    },
+    "ChapterRunOutput": {
+      "$id": "#/$defs/ChapterRunOutput",
+      "type": "object",
+      "properties": {
+        "editArtifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidenceArtifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "$ref": "#/$defs/HarnessRunStatus"
+        }
+      },
+      "required": [
+        "editArtifact",
+        "errorMessage",
+        "evidenceArtifact",
+        "revision",
+        "runId",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRunOutput"
+    },
+    "ChapterSection": {
+      "$id": "#/$defs/ChapterSection",
+      "type": "object",
+      "properties": {
+        "endBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ]
+        },
+        "quoteWordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reviewState": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "accepted",
+            "rejected"
+          ]
+        },
+        "startBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endBoundaryId",
+        "flags",
+        "id",
+        "kind",
+        "quoteWordIds",
+        "reason",
+        "reviewState",
+        "startBoundaryId",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterSection"
+    },
+    "HarnessArtifactKind": {
+      "$id": "#/$defs/HarnessArtifactKind",
+      "type": "string",
+      "enum": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint"
+      ],
+      "title": "HarnessArtifactKind"
+    },
+    "HarnessArtifactRef": {
+      "$id": "#/$defs/HarnessArtifactRef",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/HarnessArtifactKind"
+        },
+        "sha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "sha256",
+        "sizeBytes",
+        "storageKey"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessArtifactRef"
+    },
+    "HarnessBoundaryCandidate": {
+      "$id": "#/$defs/HarnessBoundaryCandidate",
+      "type": "object",
+      "properties": {
+        "clearanceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "edge",
+            "sentence",
+            "turn",
+            "pause",
+            "shot"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sentenceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "clearanceMs",
+        "id",
+        "kind",
+        "reasons",
+        "requiresReview",
+        "score",
+        "sentenceId",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessBoundaryCandidate"
+    },
+    "HarnessEvidence": {
+      "$id": "#/$defs/HarnessEvidence",
+      "type": "object",
+      "properties": {
+        "audioSampleRate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessBoundaryCandidate"
+          }
+        },
+        "config": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "frameRate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelVersions": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "pauses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidencePause"
+          }
+        },
+        "sentences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceSentence"
+          }
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceShot"
+          }
+        },
+        "sourceFingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sourceStart": {
+          "$ref": "#/$defs/SignedRationalTime"
+        },
+        "speechCoverage": {
+          "$ref": "#/$defs/SpeechCoverage"
+        },
+        "transcriptId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transcriptRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "transcriptSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "videoTimeBase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "words": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceWord"
+          }
+        }
+      },
+      "required": [
+        "audioSampleRate",
+        "boundaries",
+        "config",
+        "durationMs",
+        "frameRate",
+        "modelVersions",
+        "pauses",
+        "sentences",
+        "shots",
+        "sourceFingerprint",
+        "sourceId",
+        "sourceStart",
+        "speechCoverage",
+        "transcriptId",
+        "transcriptRevision",
+        "transcriptSha256",
+        "version",
+        "videoTimeBase",
+        "words"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidence"
+    },
+    "HarnessEvidencePause": {
+      "$id": "#/$defs/HarnessEvidencePause",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "leftWordId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "rightWordId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "leftWordId",
+        "rightWordId",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidencePause"
+    },
+    "HarnessEvidenceSentence": {
+      "$id": "#/$defs/HarnessEvidenceSentence",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "speakers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string"
+        },
+        "wordIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "speakers",
+        "startMs",
+        "text",
+        "wordIds"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceSentence"
+    },
+    "HarnessEvidenceShot": {
+      "$id": "#/$defs/HarnessEvidenceShot",
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "score",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceShot"
+    },
+    "HarnessEvidenceWord": {
+      "$id": "#/$defs/HarnessEvidenceWord",
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lineageIds": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "speaker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timing": {
+          "type": "string",
+          "enum": [
+            "aligned",
+            "interpolated"
+          ]
+        },
+        "wordIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "confidence",
+        "endMs",
+        "id",
+        "lineageIds",
+        "speaker",
+        "startMs",
+        "text",
+        "timing",
+        "wordIndex"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceWord"
+    },
+    "HarnessRunStatus": {
+      "$id": "#/$defs/HarnessRunStatus",
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "needs_review",
+        "ready",
+        "budget_paused",
+        "outcome_unknown",
+        "failed",
+        "cancelled"
+      ],
+      "title": "HarnessRunStatus"
+    },
     "HelloInput": {
       "$id": "#/$defs/HelloInput",
       "type": "object",
@@ -200,6 +1482,28 @@
       ],
       "title": "IngestStage"
     },
+    "PositiveRational": {
+      "$id": "#/$defs/PositiveRational",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "PositiveRational"
+    },
     "ProbeResult": {
       "$id": "#/$defs/ProbeResult",
       "type": "object",
@@ -275,6 +1579,28 @@
       "additionalProperties": false,
       "title": "ProbeResult"
     },
+    "RationalTime": {
+      "$id": "#/$defs/RationalTime",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "RationalTime"
+    },
     "Scope": {
       "$id": "#/$defs/Scope",
       "type": "object",
@@ -296,6 +1622,139 @@
       ],
       "additionalProperties": false,
       "title": "Scope"
+    },
+    "SeededScope": {
+      "$id": "#/$defs/SeededScope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "default": "0192e8a0-0000-7000-8000-000000000001",
+          "type": "string",
+          "const": "0192e8a0-0000-7000-8000-000000000001"
+        },
+        "userId": {
+          "default": "0192e8a0-0000-7000-8000-000000000002",
+          "type": "string",
+          "const": "0192e8a0-0000-7000-8000-000000000002"
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "SeededScope"
+    },
+    "SignedRationalTime": {
+      "$id": "#/$defs/SignedRationalTime",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "SignedRationalTime"
+    },
+    "SpeechCoverage": {
+      "$id": "#/$defs/SpeechCoverage",
+      "type": "object",
+      "properties": {
+        "detector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorHash": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorRevision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpeechCoverageInterval"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "clear",
+            "needs_review"
+          ]
+        },
+        "uncoveredSpeechMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "uncoveredTailMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "detector",
+        "detectorHash",
+        "detectorRevision",
+        "intervals",
+        "status",
+        "uncoveredSpeechMs",
+        "uncoveredTailMs",
+        "warnings"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverage"
+    },
+    "SpeechCoverageInterval": {
+      "$id": "#/$defs/SpeechCoverageInterval",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverageInterval"
     },
     "TranscribeInput": {
       "$id": "#/$defs/TranscribeInput",
@@ -394,6 +1853,446 @@
       "additionalProperties": false,
       "title": "TranscribeOutput"
     },
+    "TranscriptCorrectionMetadata": {
+      "$id": "#/$defs/TranscriptCorrectionMetadata",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "delete",
+            "insert",
+            "split",
+            "merge",
+            "rename_speakers",
+            "reassign_speaker",
+            "merge_speakers",
+            "undo"
+          ]
+        },
+        "affectedIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "annotations": {
+          "$ref": "#/$defs/TranscriptRevisionAnnotations"
+        },
+        "artifactSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "command": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "replace"
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetId",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "delete"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "insert"
+                },
+                "anchorId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "endMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                },
+                "speakerIdentityId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "startMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "tokens": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "anchorId",
+                "endMs",
+                "side",
+                "speakerIdentityId",
+                "startMs",
+                "tokens"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "split"
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "tokens": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetId",
+                "tokens"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "merge"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "rename_speakers"
+                },
+                "labels": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "labels"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "reassign_speaker"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "targetSpeakerIdentityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds",
+                "targetSpeakerIdentityId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "merge_speakers"
+                },
+                "sourceIdentityIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "targetIdentityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "sourceIdentityIds",
+                "targetIdentityId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "undo"
+                },
+                "targetRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetRevision"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "deletedIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "action",
+        "affectedIdentityIds",
+        "annotations",
+        "artifactSha256",
+        "baseRevision",
+        "command",
+        "deletedIdentityIds",
+        "mutationKey"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptCorrectionMetadata"
+    },
     "TranscriptProvider": {
       "$id": "#/$defs/TranscriptProvider",
       "type": "object",
@@ -419,15 +2318,83 @@
       "additionalProperties": false,
       "title": "TranscriptProvider"
     },
+    "TranscriptRevisionAnnotations": {
+      "$id": "#/$defs/TranscriptRevisionAnnotations",
+      "type": "object",
+      "properties": {
+        "speakerIdentities": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/TranscriptSpeakerIdentity"
+          }
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "wordIdentities": {
+          "maxItems": 250000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TranscriptWordIdentity"
+          }
+        }
+      },
+      "required": [
+        "speakerIdentities",
+        "version",
+        "wordIdentities"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptRevisionAnnotations"
+    },
+    "TranscriptSpeakerIdentity": {
+      "$id": "#/$defs/TranscriptSpeakerIdentity",
+      "type": "object",
+      "properties": {
+        "identityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "parentIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "identityId",
+        "label",
+        "parentIdentityIds"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptSpeakerIdentity"
+    },
     "TranscriptStage": {
       "$id": "#/$defs/TranscriptStage",
       "type": "string",
       "enum": [
+        "planning",
         "download",
         "model",
         "transcribe",
         "align",
         "diarize",
+        "speech_coverage",
         "write",
         "retrying"
       ],
@@ -562,6 +2529,40 @@
       ],
       "additionalProperties": false,
       "title": "TranscriptWord"
+    },
+    "TranscriptWordIdentity": {
+      "$id": "#/$defs/TranscriptWordIdentity",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "timingOrigin": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "manual"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "parentIds",
+        "timingOrigin"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptWordIdentity"
     },
     "WordTiming": {
       "$id": "#/$defs/WordTiming",

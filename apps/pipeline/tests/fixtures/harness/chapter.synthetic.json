@@ -1,0 +1,82 @@
+{
+  "format": "chapter-recorded-fixture/1",
+  "grounding": {
+    "evidenceFixture": "../substrate/speech-40s.transcript.json",
+    "note": "Editorial choices are deterministic test data grounded in the speech-40s transcript; they are not a measured quality claim."
+  },
+  "outputs": {
+    "propose": {
+      "output": {
+        "sections": [
+          {
+            "firstSentenceId": "s000000",
+            "id": "opening-context",
+            "kind": "keep",
+            "lastSentenceId": "s000003",
+            "quoteWordIds": ["w000005", "w000024"],
+            "reason": "Introduces the transcript-first editing premise.",
+            "title": "Transcript as the editing spine"
+          },
+          {
+            "firstSentenceId": "s000004",
+            "id": "bridge-question",
+            "kind": "drop",
+            "lastSentenceId": "s000004",
+            "quoteWordIds": ["w000037"],
+            "reason": "Deliberate test omission used to exercise drop review.",
+            "title": "Transition question"
+          },
+          {
+            "firstSentenceId": "s000005",
+            "id": "timed-editing",
+            "kind": "keep",
+            "lastSentenceId": "s000008",
+            "quoteWordIds": ["w000044", "w000060"],
+            "reason": "Explains how timestamps and speaker structure make editing tractable.",
+            "title": "Timestamps turn editing into search"
+          },
+          {
+            "firstSentenceId": "s000009",
+            "id": "human-finish",
+            "kind": "keep",
+            "lastSentenceId": "s000012",
+            "quoteWordIds": ["w000068", "w000088"],
+            "reason": "Closes with diarization and the remaining human correction step.",
+            "title": "The final human pass"
+          }
+        ],
+        "summary": "Three retained chapters and one explicit transition drop cover the source sentence grid.",
+        "version": 1
+      },
+      "providerResponseId": "synthetic-proposal-speech-40s-v1",
+      "synthetic": true
+    },
+    "summary": {
+      "output": {
+        "units": [
+          {
+            "firstSentenceId": "s000000",
+            "id": "summary-0",
+            "lastSentenceId": "s000012",
+            "quoteWordIds": ["w000005", "w000068"],
+            "text": "The speakers explain a transcript-first workflow, timestamped edits, and a short human diarization pass."
+          }
+        ],
+        "version": 1
+      },
+      "providerResponseId": "synthetic-summary-speech-40s-v1",
+      "synthetic": true
+    },
+    "verify": {
+      "output": {
+        "inspectedModalities": "text_evidence_and_technical_report",
+        "reasons": ["A deliberate drop remains for human acceptance."],
+        "status": "needs_review",
+        "version": 1
+      },
+      "providerResponseId": "synthetic-verifier-speech-40s-v1",
+      "synthetic": true
+    }
+  },
+  "synthetic": true
+}

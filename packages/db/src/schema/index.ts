@@ -12,6 +12,7 @@
  * - Python never declares DDL; it derives models from the migrated database.
  */
 export * from "./columns.ts";
+export * from "./harness.ts";
 export * from "./identity.ts";
 export * from "./media.ts";
 export * from "./scope.ts";

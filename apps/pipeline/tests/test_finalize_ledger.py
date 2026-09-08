@@ -164,3 +164,41 @@ async def test_artifact_delta_never_nets_against_the_master() -> None:
         assert status["status"] == "ready"
         await conn.execute("DELETE FROM project WHERE id = %s", (project["id"],))
     await db.close_pool()
+
+
+async def test_ingest_claim_refuses_a_source_fenced_for_deletion() -> None:
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        project = await (
+            await conn.execute(
+                "INSERT INTO project (organization_id, name) VALUES (%s, %s) RETURNING id",
+                (SEEDED.organizationId, "deleting ingest claim test"),
+            )
+        ).fetchone()
+        assert project is not None
+        source = await (
+            await conn.execute(
+                """
+                INSERT INTO source (organization_id, project_id, title, original_filename,
+                                    content_type, size_bytes, master_key, status,
+                                    deletion_requested_at)
+                VALUES (%s, %s, 'deleting', 'deleting.mp4', 'video/mp4', 1,
+                        'org/x/deleting', 'uploaded', now())
+                RETURNING id
+                """,
+                (SEEDED.organizationId, project["id"]),
+            )
+        ).fetchone()
+        assert source is not None
+
+        assert not await db.claim_source(conn, source["id"], "wf-deleting")
+        row = await (
+            await conn.execute(
+                "SELECT status, ingest_workflow_id FROM source WHERE id = %s",
+                (source["id"],),
+            )
+        ).fetchone()
+        assert row is not None
+        assert (row["status"], row["ingest_workflow_id"]) == ("uploaded", None)
+        await conn.execute("DELETE FROM project WHERE id = %s", (project["id"],))
+    await db.close_pool()

@@ -133,26 +133,102 @@ export function paragraphAt(
     : -1;
 }
 
+/** A contiguous hit in the current revision's flat word array. */
+export interface TranscriptMatch {
+  /** Index of the first matching word, inclusive. */
+  firstWord: number;
+  /** Index of the last matching word, inclusive. */
+  lastWord: number;
+}
+
+/** Unicode letters, marks and numbers; punctuation separates phrase terms. */
+const SEARCH_TERM = /[\p{L}\p{M}\p{N}]+/gu;
+
+function normalizeSearchText(text: string): string {
+  // Compatibility composition makes full-width/canonical variants agree.
+  // Lowercasing without a locale keeps the result stable between server and
+  // browser while still applying Unicode's default case mappings.
+  return text.normalize("NFKC").toLowerCase();
+}
+
+function phraseTerms(text: string): string[] {
+  return normalizeSearchText(text).match(SEARCH_TERM) ?? [];
+}
+
+function compareMatches(a: TranscriptMatch, b: TranscriptMatch): number {
+  return a.firstWord - b.firstWord || a.lastWord - b.lastWord;
+}
+
+function phrasePrefix(terms: readonly string[]): number[] {
+  const prefix = new Array<number>(terms.length).fill(0);
+  for (let index = 1, matched = 0; index < terms.length; index += 1) {
+    while (matched > 0 && terms[index] !== terms[matched]) {
+      matched = prefix[matched - 1] ?? 0;
+    }
+    if (terms[index] === terms[matched]) {
+      matched += 1;
+    }
+    prefix[index] = matched;
+  }
+  return prefix;
+}
+
 /**
- * Every word whose text contains the query, case-insensitively.
+ * Every literal word hit and multi-term phrase hit, in transcript order.
  *
- * Per word, not across words: the words are what the viewer can scroll to and
- * highlight, and a phrase that straddles two of them has no single place to
- * put the focus ring. Semantic and phrase search arrive with embeddings at S7.
+ * Literal matching preserves the reader's original behavior: a one-word
+ * query can match inside a word and can include punctuation. Phrase matching
+ * additionally compares Unicode-normalized terms, so spaces, punctuation and
+ * typographic punctuation can separate terms without becoming part of the
+ * match. A phrase can span display paragraphs; its result remains one word
+ * span for the virtualized reader to scroll to and highlight.
  */
 export function findMatches(
   words: readonly Pick<TranscriptWord, "text">[],
   query: string
-): number[] {
-  const needle = query.trim().toLowerCase();
+): TranscriptMatch[] {
+  const needle = normalizeSearchText(query.trim());
   if (!needle) {
     return [];
   }
-  const matches: number[] = [];
+
+  const matches: TranscriptMatch[] = [];
   for (const [index, word] of words.entries()) {
-    if (word.text.toLowerCase().includes(needle)) {
-      matches.push(index);
+    if (normalizeSearchText(word.text).includes(needle)) {
+      matches.push({ firstWord: index, lastWord: index });
     }
   }
-  return matches;
+
+  const wanted = phraseTerms(query);
+  if (wanted.length < 2) {
+    return matches;
+  }
+
+  const transcriptTerms = words.flatMap((word, wordIndex) =>
+    phraseTerms(word.text).map((text) => ({ text, wordIndex }))
+  );
+  const prefix = phrasePrefix(wanted);
+  for (let index = 0, matched = 0; index < transcriptTerms.length; index += 1) {
+    while (matched > 0 && transcriptTerms[index]?.text !== wanted[matched]) {
+      matched = prefix[matched - 1] ?? 0;
+    }
+    if (transcriptTerms[index]?.text === wanted[matched]) {
+      matched += 1;
+    }
+    if (matched === wanted.length) {
+      const start = index - wanted.length + 1;
+      const firstWord = transcriptTerms[start]?.wordIndex;
+      const lastWord = transcriptTerms[index]?.wordIndex;
+      if (firstWord !== undefined && lastWord !== undefined) {
+        matches.push({ firstWord, lastWord });
+      }
+      matched = prefix[matched - 1] ?? 0;
+    }
+  }
+
+  matches.sort(compareMatches);
+  return matches.filter(
+    (match, index) =>
+      index === 0 || compareMatches(match, matches[index - 1] ?? match) !== 0
+  );
 }

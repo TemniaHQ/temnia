@@ -1,0 +1,530 @@
+{
+  "$defs": {
+    "HarnessBoundaryCandidate": {
+      "$id": "#/$defs/HarnessBoundaryCandidate",
+      "type": "object",
+      "properties": {
+        "clearanceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "edge",
+            "sentence",
+            "turn",
+            "pause",
+            "shot"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sentenceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "clearanceMs",
+        "id",
+        "kind",
+        "reasons",
+        "requiresReview",
+        "score",
+        "sentenceId",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessBoundaryCandidate"
+    },
+    "HarnessEvidence": {
+      "$id": "#/$defs/HarnessEvidence",
+      "type": "object",
+      "properties": {
+        "audioSampleRate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessBoundaryCandidate"
+          }
+        },
+        "config": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "frameRate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelVersions": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "pauses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidencePause"
+          }
+        },
+        "sentences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceSentence"
+          }
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceShot"
+          }
+        },
+        "sourceFingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sourceStart": {
+          "$ref": "#/$defs/SignedRationalTime"
+        },
+        "speechCoverage": {
+          "$ref": "#/$defs/SpeechCoverage"
+        },
+        "transcriptId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transcriptRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "transcriptSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "videoTimeBase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "words": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessEvidenceWord"
+          }
+        }
+      },
+      "required": [
+        "audioSampleRate",
+        "boundaries",
+        "config",
+        "durationMs",
+        "frameRate",
+        "modelVersions",
+        "pauses",
+        "sentences",
+        "shots",
+        "sourceFingerprint",
+        "sourceId",
+        "sourceStart",
+        "speechCoverage",
+        "transcriptId",
+        "transcriptRevision",
+        "transcriptSha256",
+        "version",
+        "videoTimeBase",
+        "words"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidence"
+    },
+    "HarnessEvidencePause": {
+      "$id": "#/$defs/HarnessEvidencePause",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "leftWordId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "rightWordId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "leftWordId",
+        "rightWordId",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidencePause"
+    },
+    "HarnessEvidenceSentence": {
+      "$id": "#/$defs/HarnessEvidenceSentence",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "speakers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string"
+        },
+        "wordIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "speakers",
+        "startMs",
+        "text",
+        "wordIds"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceSentence"
+    },
+    "HarnessEvidenceShot": {
+      "$id": "#/$defs/HarnessEvidenceShot",
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "score",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceShot"
+    },
+    "HarnessEvidenceWord": {
+      "$id": "#/$defs/HarnessEvidenceWord",
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lineageIds": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "speaker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timing": {
+          "type": "string",
+          "enum": [
+            "aligned",
+            "interpolated"
+          ]
+        },
+        "wordIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "confidence",
+        "endMs",
+        "id",
+        "lineageIds",
+        "speaker",
+        "startMs",
+        "text",
+        "timing",
+        "wordIndex"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceWord"
+    },
+    "PositiveRational": {
+      "$id": "#/$defs/PositiveRational",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "PositiveRational"
+    },
+    "SignedRationalTime": {
+      "$id": "#/$defs/SignedRationalTime",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "SignedRationalTime"
+    },
+    "SpeechCoverage": {
+      "$id": "#/$defs/SpeechCoverage",
+      "type": "object",
+      "properties": {
+        "detector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorHash": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorRevision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpeechCoverageInterval"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "clear",
+            "needs_review"
+          ]
+        },
+        "uncoveredSpeechMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "uncoveredTailMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "detector",
+        "detectorHash",
+        "detectorRevision",
+        "intervals",
+        "status",
+        "uncoveredSpeechMs",
+        "uncoveredTailMs",
+        "warnings"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverage"
+    },
+    "SpeechCoverageInterval": {
+      "$id": "#/$defs/SpeechCoverageInterval",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverageInterval"
+    }
+  },
+  "$id": "HarnessEvidence.json",
+  "$ref": "#/$defs/HarnessEvidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

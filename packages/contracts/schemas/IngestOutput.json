@@ -58,87 +58,6 @@
       "additionalProperties": false,
       "title": "ArtifactRecord"
     },
-    "HelloInput": {
-      "$id": "#/$defs/HelloInput",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 80,
-          "description": "Who to greet."
-        },
-        "scope": {
-          "$ref": "#/$defs/Scope"
-        }
-      },
-      "required": [
-        "name",
-        "scope"
-      ],
-      "additionalProperties": false,
-      "title": "HelloInput"
-    },
-    "HelloOutput": {
-      "$id": "#/$defs/HelloOutput",
-      "type": "object",
-      "properties": {
-        "greeting": {
-          "type": "string"
-        },
-        "organizationId": {
-          "type": "string",
-          "format": "uuid",
-          "description": "Echoed from the input scope, never invented."
-        },
-        "workerHost": {
-          "type": "string"
-        },
-        "workerLanguage": {
-          "type": "string",
-          "const": "python"
-        }
-      },
-      "required": [
-        "greeting",
-        "organizationId",
-        "workerHost",
-        "workerLanguage"
-      ],
-      "additionalProperties": false,
-      "title": "HelloOutput"
-    },
-    "IngestInput": {
-      "$id": "#/$defs/IngestInput",
-      "type": "object",
-      "properties": {
-        "artifactPrefix": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Prefix every derived artifact is written under; ends with '/'."
-        },
-        "masterKey": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The uploaded master's storage key."
-        },
-        "scope": {
-          "$ref": "#/$defs/Scope"
-        },
-        "sourceId": {
-          "type": "string",
-          "format": "uuid"
-        }
-      },
-      "required": [
-        "artifactPrefix",
-        "masterKey",
-        "scope",
-        "sourceId"
-      ],
-      "additionalProperties": false,
-      "title": "IngestInput"
-    },
     "IngestOutput": {
       "$id": "#/$defs/IngestOutput",
       "type": "object",
@@ -184,6 +103,81 @@
       ],
       "additionalProperties": false,
       "title": "IngestOutput"
+    },
+    "ProbeResult": {
+      "$id": "#/$defs/ProbeResult",
+      "type": "object",
+      "properties": {
+        "audioChannels": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "audioCodec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "variableFrameRate": {
+          "type": "boolean"
+        },
+        "videoCodec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "audioChannels",
+        "audioCodec",
+        "durationMs",
+        "fps",
+        "height",
+        "sizeBytes",
+        "variableFrameRate",
+        "videoCodec",
+        "width"
+      ],
+      "additionalProperties": false,
+      "title": "ProbeResult"
     }
   },
   "$id": "IngestOutput.json",

@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "SpeechCoverage": {
+      "$id": "#/$defs/SpeechCoverage",
+      "type": "object",
+      "properties": {
+        "detector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorHash": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorRevision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SpeechCoverageInterval"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "clear",
+            "needs_review"
+          ]
+        },
+        "uncoveredSpeechMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "uncoveredTailMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "detector",
+        "detectorHash",
+        "detectorRevision",
+        "intervals",
+        "status",
+        "uncoveredSpeechMs",
+        "uncoveredTailMs",
+        "warnings"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverage"
+    },
+    "SpeechCoverageInterval": {
+      "$id": "#/$defs/SpeechCoverageInterval",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "SpeechCoverageInterval"
+    }
+  },
+  "$id": "SpeechCoverage.json",
+  "$ref": "#/$defs/SpeechCoverage",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

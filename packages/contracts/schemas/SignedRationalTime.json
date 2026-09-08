@@ -1,0 +1,29 @@
+{
+  "$defs": {
+    "SignedRationalTime": {
+      "$id": "#/$defs/SignedRationalTime",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "SignedRationalTime"
+    }
+  },
+  "$id": "SignedRationalTime.json",
+  "$ref": "#/$defs/SignedRationalTime",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

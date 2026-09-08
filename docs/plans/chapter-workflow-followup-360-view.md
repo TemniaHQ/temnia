@@ -1,6 +1,6 @@
 # Follow-up plan: complete and qualify the chapter workflow
 
-2026-09-08. **Status: planned, not implemented.** This follow-up PR initially records staging evidence and this implementation plan. It does not claim the editing architecture is built, or that the component proposals below are accepted decisions. No runtime code is changed by this document.
+2026-09-08. **Status: chapter implementation on PR #24; this is the original planning record.** The initial commit recorded staging evidence and this plan. The accepted implementation decisions are now in `docs/pipeline-architecture.md`; the [implementation status](../design/harness-implementation-status-2026-09-08.md) and [live qualification](../design/checkpointed-speech-qualification-2026-09-09.md) distinguish completed mechanisms from remaining measurements. Exact-commit delivery is established by the PR's verified checks.
 
 ## Current evidence
 

@@ -7,6 +7,11 @@ published to the internet: ports 80 and 443 close when the tunnel goes live, and
 recovery path. Facts that are only true on Rajesh's machine (SSH alias, key path) live in Claude's
 memory, not here.
 
+The additive PR #24 chapter/checkpointed-speech rollout and recovery procedure is in
+[Chapter harness rollout and recovery](chapter-harness.md). Its deployment is independent of the
+historical protocol-3-to-4 procedure below; consult the implementation-status record before claiming
+that either opt-in feature is enabled on shared staging.
+
 ## 1. Topology
 
 | Target | Dokploy service type | Source | Reached as |

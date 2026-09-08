@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "ChapterRender": {
+      "$id": "#/$defs/ChapterRender",
+      "type": "object",
+      "properties": {
+        "captions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "media": {
+          "$ref": "#/$defs/HarnessArtifactRef"
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "captions",
+        "checks",
+        "durationMs",
+        "editSha256",
+        "media",
+        "sectionId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRender"
+    },
+    "HarnessArtifactKind": {
+      "$id": "#/$defs/HarnessArtifactKind",
+      "type": "string",
+      "enum": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint"
+      ],
+      "title": "HarnessArtifactKind"
+    },
+    "HarnessArtifactRef": {
+      "$id": "#/$defs/HarnessArtifactRef",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/HarnessArtifactKind"
+        },
+        "sha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "sha256",
+        "sizeBytes",
+        "storageKey"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessArtifactRef"
+    }
+  },
+  "$id": "ChapterRender.json",
+  "$ref": "#/$defs/ChapterRender",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

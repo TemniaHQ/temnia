@@ -15,6 +15,8 @@ import {
 } from "@/lib/transcript/state";
 
 const NOW = Date.parse("2026-09-07T12:00:00.000Z");
+const JUST_UPDATED = /Updated just now$/;
+const ZERO_PERCENT = / · 0%$/;
 
 function row(over: Partial<TranscriptRowSummary> = {}): TranscriptRowSummary {
   return {
@@ -79,10 +81,65 @@ describe("transcriptState", () => {
     });
   });
 
+  it.each([
+    "planning",
+    "model",
+    "transcribe",
+    "align",
+    "diarize",
+    "speech_coverage",
+  ])(
+    "treats a provider's placeholder zero in %s as indeterminate and shows liveness",
+    (stage) => {
+      expect(state({ percent: 0, stage, status: "processing" })).toEqual({
+        kind: "processing",
+        percent: null,
+        retry: false,
+        words: expect.stringMatching(JUST_UPDATED),
+      });
+    }
+  );
+
+  it.each([
+    ["planning", "Preparing speech analysis"],
+    ["speech_coverage", "Checking speech coverage"],
+  ])(
+    "names checkpointed speech stage %s without inventing 0%%",
+    (stage, label) => {
+      expect(state({ percent: 0, stage, status: "processing" })).toMatchObject({
+        kind: "processing",
+        percent: null,
+        words: `Transcribing · ${label} · Updated just now`,
+      });
+    }
+  );
+
+  it.each(["download", "write"])(
+    "retains measured zero progress for %s",
+    (stage) => {
+      expect(state({ percent: 0, stage, status: "processing" })).toMatchObject({
+        kind: "processing",
+        percent: 0,
+        words: expect.stringMatching(ZERO_PERCENT),
+      });
+    }
+  );
+
+  it("reports an aging heartbeat while progress is indeterminate", () => {
+    expect(
+      state({
+        heartbeatAt: new Date(NOW - 72_000).toISOString(),
+        percent: 0,
+        stage: "transcribe",
+        status: "processing",
+      })
+    ).toHaveProperty("words", "Transcribing · Listening · Updated 1m ago");
+  });
+
   it("says only what it knows when there is no stage or percent", () => {
     expect(state({ status: "processing" })).toHaveProperty(
       "words",
-      "Transcribing"
+      "Transcribing · Updated just now"
     );
   });
 
@@ -90,6 +147,18 @@ describe("transcriptState", () => {
     expect(
       state({ percent: 5, stage: "quantise", status: "processing" })
     ).toHaveProperty("words", "Transcribing · 5%");
+  });
+
+  it("does not invent liveness when neither timestamp can be read", () => {
+    expect(
+      state({
+        heartbeatAt: "not a timestamp",
+        percent: 0,
+        stage: "align",
+        status: "processing",
+        updatedAt: "not a timestamp",
+      })
+    ).toHaveProperty("words", "Transcribing · Aligning words");
   });
 
   it("says a retry is coming instead of flashing failed", () => {
@@ -256,14 +325,10 @@ describe("transcriptState", () => {
     expect(JSON.stringify(failed)).not.toContain("temnia/work");
   });
 
-  it("is empty, with a retry, for a recording with no speech", () => {
+  it("keeps an empty immutable revision in the editor without paid retry", () => {
     expect(
       state({ currentRevision: 1, status: "ready", wordCount: 0 })
-    ).toEqual({
-      kind: "empty",
-      retry: true,
-      words: "No speech was detected in this recording.",
-    });
+    ).toEqual({ kind: "ready", retry: false });
   });
 
   it("is empty when a ready row somehow has no revision", () => {

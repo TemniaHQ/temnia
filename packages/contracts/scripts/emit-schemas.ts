@@ -118,8 +118,90 @@ for (const name of names) {
     dropUuidPattern(schemas[name])
   ) as Record<string, unknown>;
   defs[name] = schema;
+}
+
+function referenceSegments(ref: string): string[] {
+  if (!ref.startsWith("#/")) {
+    throw new Error(`unsupported nonlocal JSON Schema reference: ${ref}`);
+  }
+  const segments = decodeURIComponent(ref.slice(1))
+    .split("/")
+    .slice(1)
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const [namespace, definition] = segments;
+  if (namespace !== "$defs" || !definition) {
+    throw new Error(`invalid JSON Schema definition reference: ${ref}`);
+  }
+  return segments;
+}
+
+function definitionName(ref: string): string {
+  const segments = referenceSegments(ref);
+  const [, definition] = segments;
+  if (!definition) {
+    throw new Error(`invalid JSON Schema definition reference: ${ref}`);
+  }
+  let value: unknown = { $defs: defs };
+  for (const segment of segments) {
+    if (
+      !(value && typeof value === "object" && Object.hasOwn(value, segment))
+    ) {
+      throw new Error(`JSON Schema reference does not resolve: ${ref}`);
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return definition;
+}
+
+function references(node: unknown): Set<string> {
+  const found = new Set<string>();
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        visit(child);
+      }
+      return;
+    }
+    if (!(value && typeof value === "object")) {
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$ref" && typeof child === "string") {
+        found.add(definitionName(child));
+      } else {
+        visit(child);
+      }
+    }
+  }
+  visit(node);
+  return found;
+}
+
+function reachableDefinitions(root: string): Record<string, unknown> {
+  const visited = new Set<string>();
+  const pending = [root];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (name === undefined || visited.has(name)) {
+      continue;
+    }
+    const schema = defs[name];
+    if (schema === undefined) {
+      throw new Error(
+        `JSON Schema definition ${name} is referenced but absent`
+      );
+    }
+    visited.add(name);
+    pending.push(...references(schema));
+  }
+  return Object.fromEntries(
+    [...visited].sort().map((name) => [name, defs[name]])
+  );
+}
+
+for (const name of names) {
   emit(`${name}.json`, {
-    $defs: defs,
+    $defs: reachableDefinitions(name),
     $id: `${name}.json`,
     $ref: `#/$defs/${name}`,
     $schema: "https://json-schema.org/draft/2020-12/schema",

@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "ChapterProposal": {
+      "$id": "#/$defs/ChapterProposal",
+      "type": "object",
+      "properties": {
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterProposalSection"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "sections",
+        "summary",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterProposal"
+    },
+    "ChapterProposalSection": {
+      "$id": "#/$defs/ChapterProposalSection",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ]
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "quoteWordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "id",
+        "kind",
+        "lastSentenceId",
+        "quoteWordIds",
+        "reason",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterProposalSection"
+    }
+  },
+  "$id": "ChapterProposal.json",
+  "$ref": "#/$defs/ChapterProposal",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

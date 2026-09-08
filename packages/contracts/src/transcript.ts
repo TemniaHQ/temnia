@@ -171,11 +171,13 @@ export type TranscribeOutput = z.infer<typeof TranscribeOutputSchema>;
  */
 export const TranscriptStageSchema = z
   .enum([
+    "planning",
     "download",
     "model",
     "transcribe",
     "align",
     "diarize",
+    "speech_coverage",
     "write",
     "retrying",
   ])
@@ -217,3 +219,196 @@ export function transcriptRawKey(
 ): string {
   return `${artifactPrefix}${TRANSCRIPT_SUBDIR}raw-${attempt}.json`;
 }
+
+const identityId = () => z.string().min(1).max(256);
+const uniqueIdentityIds = z
+  .array(identityId())
+  .max(500)
+  .refine((values) => new Set(values).size === values.length, {
+    error: "identity ids must be unique",
+  });
+
+export const TranscriptWordIdentitySchema = z
+  .object({
+    id: identityId(),
+    parentIds: uniqueIdentityIds,
+    timingOrigin: z.enum(["provider", "manual"]),
+  })
+  .strict()
+  .meta({ id: "TranscriptWordIdentity", title: "TranscriptWordIdentity" });
+export type TranscriptWordIdentity = z.infer<
+  typeof TranscriptWordIdentitySchema
+>;
+
+export const TranscriptSpeakerIdentitySchema = z
+  .object({
+    identityId: identityId(),
+    label: z.string().max(80),
+    parentIdentityIds: uniqueIdentityIds,
+  })
+  .strict()
+  .meta({
+    id: "TranscriptSpeakerIdentity",
+    title: "TranscriptSpeakerIdentity",
+  });
+export type TranscriptSpeakerIdentity = z.infer<
+  typeof TranscriptSpeakerIdentitySchema
+>;
+
+export const TranscriptRevisionAnnotationsSchema = z
+  .object({
+    speakerIdentities: z.record(
+      z.string().min(1).max(256),
+      TranscriptSpeakerIdentitySchema
+    ),
+    version: z.literal(1),
+    wordIdentities: z.array(TranscriptWordIdentitySchema).max(250_000),
+  })
+  .strict()
+  .superRefine((annotations, ctx) => {
+    const wordIds = annotations.wordIdentities.map((identity) => identity.id);
+    if (new Set(wordIds).size !== wordIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "word identity ids must be unique",
+        path: ["wordIdentities"],
+      });
+    }
+    const speakerIds = Object.values(annotations.speakerIdentities).map(
+      (identity) => identity.identityId
+    );
+    if (new Set(speakerIds).size !== speakerIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "speaker identity ids must be unique",
+        path: ["speakerIdentities"],
+      });
+    }
+  })
+  .meta({
+    id: "TranscriptRevisionAnnotations",
+    title: "TranscriptRevisionAnnotations",
+  });
+export type TranscriptRevisionAnnotations = z.infer<
+  typeof TranscriptRevisionAnnotationsSchema
+>;
+
+const commandBase = {
+  baseRevision: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+  mutationKey: z.uuid(),
+};
+const targetIds = uniqueIdentityIds.min(1).max(200);
+const manualTokens = z.array(z.string().trim().min(1).max(200)).min(1).max(50);
+
+export const TranscriptCorrectionCommandSchema = z
+  .discriminatedUnion("action", [
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("replace"),
+        targetId: identityId(),
+        text: z.string().trim().min(1).max(200),
+      })
+      .strict(),
+    z
+      .object({ ...commandBase, action: z.literal("delete"), targetIds })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("insert"),
+        anchorId: identityId().nullable(),
+        endMs: z.int().nonnegative(),
+        side: z.enum(["before", "after"]),
+        speakerIdentityId: identityId().nullable(),
+        startMs: z.int().nonnegative(),
+        tokens: manualTokens,
+      })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("split"),
+        targetId: identityId(),
+        tokens: manualTokens,
+      })
+      .strict(),
+    z
+      .object({ ...commandBase, action: z.literal("merge"), targetIds })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("rename_speakers"),
+        labels: z.record(identityId(), z.string().trim().min(1).max(80)),
+      })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("reassign_speaker"),
+        targetIds,
+        targetSpeakerIdentityId: identityId(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("merge_speakers"),
+        sourceIdentityIds: targetIds,
+        targetIdentityId: identityId(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commandBase,
+        action: z.literal("undo"),
+        targetRevision: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict(),
+  ])
+  .superRefine((command, ctx) => {
+    if (
+      command.action === "undo" &&
+      command.targetRevision >= command.baseRevision
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "undo targetRevision must be earlier than baseRevision",
+        path: ["targetRevision"],
+      });
+    }
+  });
+export type TranscriptCorrectionCommand = z.infer<
+  typeof TranscriptCorrectionCommandSchema
+>;
+
+export const TranscriptCorrectionMetadataSchema = z
+  .object({
+    action: z.enum([
+      "replace",
+      "delete",
+      "insert",
+      "split",
+      "merge",
+      "rename_speakers",
+      "reassign_speaker",
+      "merge_speakers",
+      "undo",
+    ]),
+    affectedIdentityIds: uniqueIdentityIds,
+    annotations: TranscriptRevisionAnnotationsSchema,
+    artifactSha256: z.string().regex(/^[a-fA-F0-9]{64}$/),
+    baseRevision: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+    command: TranscriptCorrectionCommandSchema,
+    deletedIdentityIds: uniqueIdentityIds,
+    mutationKey: z.uuid(),
+  })
+  .strict()
+  .meta({
+    id: "TranscriptCorrectionMetadata",
+    title: "TranscriptCorrectionMetadata",
+  });
+export type TranscriptCorrectionMetadata = z.infer<
+  typeof TranscriptCorrectionMetadataSchema
+>;

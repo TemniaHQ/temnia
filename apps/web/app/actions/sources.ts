@@ -6,7 +6,16 @@ import {
   TASK_QUEUES,
   WORKFLOWS,
 } from "@temnia/contracts";
-import { source, upload, usageLedger } from "@temnia/db";
+import {
+  harnessArtifact,
+  harnessOperation,
+  harnessRun,
+  source,
+  transcript,
+  upload,
+  usageLedger,
+} from "@temnia/db";
+import { WorkflowNotFoundError } from "@temporalio/client";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -34,6 +43,7 @@ export async function retryIngest(
   const started = await scoped(async (tx, scope) => {
     const [row] = await tx
       .select({
+        deletionRequestedAt: source.deletionRequestedAt,
         masterKey: source.masterKey,
         projectId: source.projectId,
         status: source.status,
@@ -41,7 +51,12 @@ export async function retryIngest(
       .from(source)
       .where(eq(source.id, id.data))
       .limit(1);
-    if (!row || row.status === "uploading" || row.status === "processing") {
+    if (
+      !row ||
+      row.deletionRequestedAt ||
+      row.status === "uploading" ||
+      row.status === "processing"
+    ) {
       return null;
     }
     return {
@@ -84,8 +99,10 @@ export async function retryIngest(
  * Removes a source: any open multipart upload is aborted at the store, every
  * object under the source's prefix is deleted, the storage the ledger counted
  * for it is written back as a negative entry, then the row goes (its upload
- * and artifact rows cascade). A running ingest is cancelled first.
+ * and artifact rows cascade). Both deterministic writer workflows must be
+ * proven naturally completed or absent before storage is touched.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: deletion deliberately keeps the source lock, history fence, both remote-writer proofs, storage cleanup, ledger, and row deletion in one fail-closed operation
 export async function deleteSource(
   sourceId: string
 ): Promise<SourceActionResult> {
@@ -94,17 +111,44 @@ export async function deleteSource(
     return { message: "not a source id", ok: false };
   }
   const found = await scoped(async (tx, scope) => {
+    await tx.execute(
+      sql`SELECT 1 FROM ${source} WHERE ${source.id} = ${id.data} FOR UPDATE`
+    );
     const [row] = await tx
       .select({
+        deletionRequestedAt: source.deletionRequestedAt,
         projectId: source.projectId,
         status: source.status,
+        transcriptStatus: transcript.status,
         workflowId: source.ingestWorkflowId,
       })
       .from(source)
+      .leftJoin(transcript, eq(transcript.sourceId, source.id))
       .where(eq(source.id, id.data))
       .limit(1);
     if (!row) {
       return null;
+    }
+    for (const historyTable of [
+      harnessRun,
+      harnessArtifact,
+      harnessOperation,
+    ]) {
+      // biome-ignore lint/performance/noAwaitInLoops: one transaction and three indexed existence probes
+      const history = await tx
+        .select({ id: historyTable.id })
+        .from(historyTable)
+        .where(eq(historyTable.sourceId, id.data))
+        .limit(1);
+      if (history.length > 0) {
+        return { history: true as const, projectId: row.projectId };
+      }
+    }
+    if (!row.deletionRequestedAt) {
+      await tx
+        .update(source)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(source.id, id.data));
     }
     const open = await tx
       .select({
@@ -115,6 +159,7 @@ export async function deleteSource(
       .where(and(eq(upload.sourceId, id.data), eq(upload.status, "active")));
     return {
       ...row,
+      history: false as const,
       open,
       prefix: sourcePrefix(scope.organizationId, id.data),
     };
@@ -122,12 +167,55 @@ export async function deleteSource(
   if (!found) {
     return { message: "source not found", ok: false };
   }
-  if (found.status === "processing" && found.workflowId) {
-    const client = await getTemporalClient();
-    await client.workflow
-      .getHandle(found.workflowId)
-      .cancel()
-      .catch(() => undefined);
+  if (found.history) {
+    return {
+      message: "This source has editing history and cannot be deleted.",
+      ok: false,
+    };
+  }
+  const client = await getTemporalClient().catch(() => null);
+  let writerBlock: "running" | "reconcile" | "unknown" | null = client
+    ? null
+    : "unknown";
+  if (client) {
+    for (const workflowId of [`ingest-${id.data}`, `transcribe-${id.data}`]) {
+      try {
+        // biome-ignore lint/performance/noAwaitInLoops: both deterministic external writers need individual closure evidence
+        const description = await client.workflow
+          .getHandle(workflowId)
+          .describe();
+        if (description.status.name === "COMPLETED") {
+          continue;
+        }
+        if (
+          ["RUNNING", "PAUSED", "CONTINUED_AS_NEW"].includes(
+            description.status.name
+          )
+        ) {
+          writerBlock ??= "running";
+        } else {
+          writerBlock = "reconcile";
+        }
+      } catch (error) {
+        if (!(error instanceof WorkflowNotFoundError)) {
+          writerBlock ??= "unknown";
+        }
+      }
+    }
+  }
+  if (writerBlock) {
+    const messages = {
+      reconcile:
+        "Media processing ended without proof that its external writers stopped. The source remains fenced until its outcome is reconciled.",
+      running:
+        "Media processing is still running. The source remains fenced; try deletion again after it completes.",
+      unknown:
+        "Deletion could not confirm the media processing outcome. The source remains fenced; try again later.",
+    } as const;
+    return {
+      message: messages[writerBlock],
+      ok: false,
+    };
   }
   for (const part of found.open) {
     // biome-ignore lint/performance/noAwaitInLoops: at most one open upload per source

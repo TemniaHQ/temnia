@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import timedelta
 
 from temporalio import workflow
@@ -9,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import (
     ActivityError,
     ApplicationError,
+    CancelledError,
     WorkflowAlreadyStartedError,
 )
 from temporalio.workflow import ParentClosePolicy
@@ -29,6 +32,11 @@ with workflow.unsafe.imports_passed_through():
         TranscribeOutput,
     )
     from temnia_pipeline.transcription import TranscribeRecord
+    from temnia_pipeline.transcription.checkpointed import (
+        CheckpointedTranscription,
+        CoverageRecord,
+        TranscriptionPlan,
+    )
 
 # Deterministic failures (bad media, truncated output) are terminal on attempt
 # one; everything else (network, disk, a killed worker) retries a few times.
@@ -234,8 +242,11 @@ class TranscribeWorkflow:
     """
 
     @workflow.run
-    async def run(self, request: TranscribeInput) -> TranscribeOutput:
+    async def run(self, request: TranscribeInput) -> TranscribeOutput:  # noqa: C901, PLR0912
         """Claim, transcribe, write the revision, meter."""
+        checkpointed_run = False
+        stage_handle = None
+        coverage_handle = None
         attempt = await workflow.execute_activity(
             "claim_transcription",
             request,
@@ -251,17 +262,55 @@ class TranscribeWorkflow:
             msg = "the transcript is not in a claimable state"
             raise ApplicationError(msg, non_retryable=True, type="NotClaimable")
         try:
-            record = await workflow.execute_activity(
-                "transcribe_source",
-                args=[request, attempt],
-                result_type=TranscribeRecord,
-                # Five hours bounds the activity; the deployed function's own
-                # timeout is four, so the function gives up first and this
-                # never hides a run that is already over.
-                start_to_close_timeout=timedelta(hours=5),
-                heartbeat_timeout=timedelta(minutes=5),
-                retry_policy=TRANSCRIBE_RETRY,
-            )
+            if workflow.patched("checkpointed-speech-v1"):
+                plan = await workflow.execute_activity(
+                    "choose_transcription_plan",
+                    request,
+                    result_type=TranscriptionPlan,
+                    start_to_close_timeout=timedelta(minutes=30),
+                    heartbeat_timeout=timedelta(seconds=10),
+                    retry_policy=TRANSCRIBE_RETRY,
+                )
+                if plan.backend == "modal-checkpointed":
+                    checkpointed_run = True
+                    coverage_handle = workflow.start_activity(
+                        "speech_coverage",
+                        args=[request, plan],
+                        result_type=CoverageRecord,
+                        start_to_close_timeout=timedelta(hours=4),
+                        heartbeat_timeout=timedelta(seconds=10),
+                        retry_policy=TRANSCRIBE_RETRY,
+                        cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                    )
+                    stage_handle = workflow.start_activity(
+                        "checkpointed_transcribe",
+                        args=[request, plan],
+                        result_type=CheckpointedTranscription,
+                        start_to_close_timeout=timedelta(hours=4),
+                        heartbeat_timeout=timedelta(seconds=10),
+                        retry_policy=TRANSCRIBE_RETRY,
+                        cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                    )
+                    stages = await stage_handle
+                    await workflow.execute_activity(
+                        "mark_speech_coverage_progress",
+                        request,
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=TRANSCRIBE_RETRY,
+                    )
+                    coverage = await coverage_handle
+                    record = await workflow.execute_activity(
+                        "assemble_checkpointed_transcript",
+                        args=[request, attempt, plan, stages, coverage],
+                        result_type=TranscribeRecord,
+                        start_to_close_timeout=timedelta(minutes=15),
+                        heartbeat_timeout=timedelta(seconds=10),
+                        retry_policy=TRANSCRIBE_RETRY,
+                    )
+                else:
+                    record = await self._legacy_transcribe(request, attempt)
+            else:
+                record = await self._legacy_transcribe(request, attempt)
             written = await workflow.execute_activity(
                 "write_revision",
                 args=[request, record],
@@ -270,7 +319,7 @@ class TranscribeWorkflow:
                 heartbeat_timeout=timedelta(minutes=5),
                 retry_policy=TRANSCRIBE_RETRY,
             )
-            return await workflow.execute_activity(
+            finalized = await workflow.execute_activity(
                 "finalize_transcription",
                 args=[request, record, written],
                 result_type=TranscribeOutput,
@@ -279,10 +328,24 @@ class TranscribeWorkflow:
             )
         except ActivityError as error:
             cause = error.cause
+            if checkpointed_run:
+                handles = tuple(
+                    handle for handle in (stage_handle, coverage_handle) if handle is not None
+                )
+                for handle in handles:
+                    if not handle.done():
+                        handle.cancel()
+                for handle in handles:
+                    with contextlib.suppress(ActivityError, CancelledError, asyncio.CancelledError):
+                        await handle
             message = (
-                cause.message
-                if isinstance(cause, ApplicationError)
-                else "The transcription did not complete. Try again from the source page."
+                "The transcription was cancelled."
+                if isinstance(cause, CancelledError)
+                else (
+                    cause.message
+                    if isinstance(cause, ApplicationError)
+                    else "The transcription did not complete. Try again from the source page."
+                )
             )
             await workflow.execute_activity(
                 "fail_transcription",
@@ -290,4 +353,45 @@ class TranscribeWorkflow:
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )
+            if checkpointed_run:
+                if isinstance(cause, CancelledError) or (
+                    isinstance(cause, ApplicationError) and cause.type == "SpeechCancelled"
+                ):
+                    outcome = "cancelled"
+                elif isinstance(cause, ApplicationError) and cause.type == "BudgetExceeded":
+                    outcome = "budget_paused"
+                else:
+                    outcome = "failed"
+                await workflow.execute_activity(
+                    "settle_checkpointed_speech_run",
+                    args=[request, outcome],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                    result_type=bool,
+                )
             raise
+        else:
+            if checkpointed_run:
+                await workflow.execute_activity(
+                    "settle_checkpointed_speech_run",
+                    args=[request, "ready"],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                    result_type=bool,
+                )
+            return finalized
+
+    @staticmethod
+    async def _legacy_transcribe(request: TranscribeInput, attempt: int) -> TranscribeRecord:
+        """Keep the protocol-4 activity command intact for old and selected new runs."""
+        return await workflow.execute_activity(
+            "transcribe_source",
+            args=[request, attempt],
+            result_type=TranscribeRecord,
+            # Five hours bounds the activity; the deployed function's own
+            # timeout is four, so the function gives up first and this
+            # never hides a run that is already over.
+            start_to_close_timeout=timedelta(hours=5),
+            heartbeat_timeout=timedelta(minutes=5),
+            retry_policy=TRANSCRIBE_RETRY,
+        )

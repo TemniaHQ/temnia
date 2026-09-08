@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "ChapterCheck": {
+      "$id": "#/$defs/ChapterCheck",
+      "type": "object",
+      "properties": {
+        "expected": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "measured": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        }
+      },
+      "required": [
+        "expected",
+        "measured",
+        "message",
+        "name",
+        "sectionId",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterCheck"
+    },
+    "ChapterChecks": {
+      "$id": "#/$defs/ChapterChecks",
+      "type": "object",
+      "properties": {
+        "editorialReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "editorialStatus": {
+          "type": "string",
+          "enum": [
+            "not_run",
+            "passed",
+            "needs_review",
+            "failed"
+          ]
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "technicalChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterCheck"
+          }
+        },
+        "verifierFamily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "editorialReasons",
+        "editorialStatus",
+        "editSha256",
+        "technicalChecks",
+        "verifierFamily",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterChecks"
+    }
+  },
+  "$id": "ChapterChecks.json",
+  "$ref": "#/$defs/ChapterChecks",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -13,9 +13,24 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from temnia_pipeline import db
 from temnia_pipeline.activities import say_hello
+from temnia_pipeline.harness.activities import HarnessActivities
+from temnia_pipeline.harness.cassettes import CassetteStore
+from temnia_pipeline.harness.gateway import GatewayConfig
+from temnia_pipeline.harness.models import (
+    ModelRuntime,
+    clear_model_runtime,
+    configure_model_runtime,
+    harness_pydantic_ai_plugin,
+)
+from temnia_pipeline.harness.queues import control_task_queue
+from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunWorkflow
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
+from temnia_pipeline.speech.activities import SpeechActivities
+from temnia_pipeline.speech.assets import SIZE_BYTES, verify_asset
+from temnia_pipeline.speech.client import SpeechModalClient, assert_checkpointed_deployment
 from temnia_pipeline.transcription.activities import Transcribe
 from temnia_pipeline.workflows import (
     HelloWorkflow,
@@ -29,6 +44,7 @@ log = logging.getLogger("temnia.worker")
 # One ladder at a time per worker: the ladder is CPU-bound and two of them
 # only halve each other's speed while doubling the scratch disk in use.
 MAX_CONCURRENT_ACTIVITIES = 2
+MAX_CONCURRENT_CONTROL_ACTIVITIES = 4
 
 
 async def assert_modal_deployment(ctx: Context) -> None:
@@ -71,31 +87,75 @@ async def assert_modal_deployment(ctx: Context) -> None:
 
 async def run_worker(settings: TemporalSettings) -> None:
     """Connect, serve the pipeline queue, and drain on SIGTERM or SIGINT."""
+    ctx = Context.from_env()
+    harness_settings = HarnessSettings.from_env()
+    snapshot = harness_settings.validate_boot()
+    await db.assert_reachable(ctx.settings.database_url)
+    await assert_modal_deployment(ctx)
+    if ctx.settings.transcription.provider == "modal-checkpointed":
+        with ctx.settings.transcription.speech_vad_model_path.open("rb") as asset:
+            verify_asset(asset.read(SIZE_BYTES + 1))
+        await asyncio.wait_for(
+            assert_checkpointed_deployment(
+                SpeechModalClient(ctx.settings.transcription), ctx.settings.transcription
+            ),
+            timeout=60,
+        )
+    if snapshot is not None:
+        gateway = (
+            GatewayConfig(api_key=harness_settings.gateway_api_key)
+            if harness_settings.gateway_api_key is not None
+            and harness_settings.backend == "gateway"
+            else None
+        )
+        synthetic = harness_settings.backend == "recorded" and harness_settings.allow_recorded
+        configure_model_runtime(
+            ModelRuntime(
+                database_url=ctx.settings.database_url,
+                store=ctx.store,
+                cassette_store=CassetteStore(
+                    ctx.settings.work_root / "harness-cassettes", allow_synthetic=synthetic
+                ),
+                gateway=gateway,
+                allow_synthetic=synthetic,
+            )
+        )
     client = await Client.connect(
         settings.address,
         namespace=settings.namespace,
         data_converter=pydantic_data_converter,
+        # Worker inherits client plugins. Registering it again on Worker would
+        # run its transformation twice (Temporal's worker emits a warning).
+        plugins=[harness_pydantic_ai_plugin()],
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    ctx = Context.from_env()
-    await db.assert_reachable(ctx.settings.database_url)
-    await assert_modal_deployment(ctx)
     ingest = Ingest(ctx)
     reaper = Reaper(ctx)
     transcribe = Transcribe(ctx)
+    speech = SpeechActivities(ctx)
+    harness = HarnessActivities(ctx, harness_settings, snapshot)
     worker = Worker(
         client,
         task_queue=settings.task_queue,
-        workflows=[HelloWorkflow, IngestWorkflow, ReaperWorkflow, TranscribeWorkflow],
+        workflows=[
+            HelloWorkflow,
+            IngestWorkflow,
+            ReaperWorkflow,
+            TranscribeWorkflow,
+            ChapterRunWorkflow,
+            ChapterReviewWorkflow,
+        ],
         activities=[
             say_hello,
             *ingest.activities(),
             *reaper.activities(),
             *transcribe.activities(),
+            *speech.activities(),
+            *harness.activities(),
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
         # The contract models are pydantic; passing pydantic through the sandbox
@@ -107,14 +167,21 @@ async def run_worker(settings: TemporalSettings) -> None:
             )
         ),
     )
+    control_worker = Worker(
+        client,
+        task_queue=control_task_queue(settings.task_queue),
+        activities=harness.control_activities(),
+        max_concurrent_activities=MAX_CONCURRENT_CONTROL_ACTIVITIES,
+    )
     await ensure_reaper_schedule(client, settings.task_queue)
     log.info(
         "worker up: %s ns=%s queue=%s", settings.address, settings.namespace, settings.task_queue
     )
     try:
-        async with worker:
+        async with worker, control_worker:
             await stop.wait()
     finally:
+        clear_model_runtime()
         await db.close_pool()
     log.info("worker drained")
 

@@ -1,0 +1,547 @@
+{
+  "$defs": {
+    "TranscriptCorrectionMetadata": {
+      "$id": "#/$defs/TranscriptCorrectionMetadata",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "delete",
+            "insert",
+            "split",
+            "merge",
+            "rename_speakers",
+            "reassign_speaker",
+            "merge_speakers",
+            "undo"
+          ]
+        },
+        "affectedIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "annotations": {
+          "$ref": "#/$defs/TranscriptRevisionAnnotations"
+        },
+        "artifactSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "command": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "replace"
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetId",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "delete"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "insert"
+                },
+                "anchorId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "endMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                },
+                "speakerIdentityId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "startMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "tokens": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "anchorId",
+                "endMs",
+                "side",
+                "speakerIdentityId",
+                "startMs",
+                "tokens"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "split"
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "tokens": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetId",
+                "tokens"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "merge"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "rename_speakers"
+                },
+                "labels": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "labels"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "reassign_speaker"
+                },
+                "targetIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "targetSpeakerIdentityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetIds",
+                "targetSpeakerIdentityId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "merge_speakers"
+                },
+                "sourceIdentityIds": {
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "targetIdentityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "sourceIdentityIds",
+                "targetIdentityId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "baseRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mutationKey": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "undo"
+                },
+                "targetRevision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "baseRevision",
+                "mutationKey",
+                "action",
+                "targetRevision"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "deletedIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "action",
+        "affectedIdentityIds",
+        "annotations",
+        "artifactSha256",
+        "baseRevision",
+        "command",
+        "deletedIdentityIds",
+        "mutationKey"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptCorrectionMetadata"
+    },
+    "TranscriptRevisionAnnotations": {
+      "$id": "#/$defs/TranscriptRevisionAnnotations",
+      "type": "object",
+      "properties": {
+        "speakerIdentities": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/TranscriptSpeakerIdentity"
+          }
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "wordIdentities": {
+          "maxItems": 250000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TranscriptWordIdentity"
+          }
+        }
+      },
+      "required": [
+        "speakerIdentities",
+        "version",
+        "wordIdentities"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptRevisionAnnotations"
+    },
+    "TranscriptSpeakerIdentity": {
+      "$id": "#/$defs/TranscriptSpeakerIdentity",
+      "type": "object",
+      "properties": {
+        "identityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "parentIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "identityId",
+        "label",
+        "parentIdentityIds"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptSpeakerIdentity"
+    },
+    "TranscriptWordIdentity": {
+      "$id": "#/$defs/TranscriptWordIdentity",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "timingOrigin": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "manual"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "parentIds",
+        "timingOrigin"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptWordIdentity"
+    }
+  },
+  "$id": "TranscriptCorrectionMetadata.json",
+  "$ref": "#/$defs/TranscriptCorrectionMetadata",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

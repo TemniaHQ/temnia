@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "ChapterRunConfig": {
+      "$id": "#/$defs/ChapterRunConfig",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "recorded",
+            "gateway"
+          ]
+        },
+        "evidenceWindowSentences": {
+          "default": 80,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "maxDispatches": {
+          "default": 32,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxOutputTokens": {
+          "default": 8192,
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 32768
+        },
+        "maxRenderConcurrency": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxRepairs": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "routeSnapshotId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "backend",
+        "evidenceWindowSentences",
+        "maxDispatches",
+        "maxOutputTokens",
+        "maxRenderConcurrency",
+        "maxRepairs",
+        "routeSnapshotId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRunConfig"
+    },
+    "ChapterRunInput": {
+      "$id": "#/$defs/ChapterRunInput",
+      "type": "object",
+      "properties": {
+        "brief": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "budgetMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "config": {
+          "$ref": "#/$defs/ChapterRunConfig"
+        },
+        "requestKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "brief",
+        "budgetMicros",
+        "config",
+        "requestKey",
+        "runId",
+        "scope",
+        "sourceId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRunInput"
+    },
+    "Scope": {
+      "$id": "#/$defs/Scope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The organization every row is scoped to."
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The acting user inside that organization."
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "Scope"
+    }
+  },
+  "$id": "ChapterRunInput.json",
+  "$ref": "#/$defs/ChapterRunInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

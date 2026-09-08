@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "ChapterCheck": {
+      "$id": "#/$defs/ChapterCheck",
+      "type": "object",
+      "properties": {
+        "expected": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "measured": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        }
+      },
+      "required": [
+        "expected",
+        "measured",
+        "message",
+        "name",
+        "sectionId",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterCheck"
+    }
+  },
+  "$id": "ChapterCheck.json",
+  "$ref": "#/$defs/ChapterCheck",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

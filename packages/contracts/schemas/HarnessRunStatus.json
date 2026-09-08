@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "HarnessRunStatus": {
+      "$id": "#/$defs/HarnessRunStatus",
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "needs_review",
+        "ready",
+        "budget_paused",
+        "outcome_unknown",
+        "failed",
+        "cancelled"
+      ],
+      "title": "HarnessRunStatus"
+    }
+  },
+  "$id": "HarnessRunStatus.json",
+  "$ref": "#/$defs/HarnessRunStatus",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

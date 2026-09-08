@@ -19,7 +19,9 @@ const STAGE_LABELS: Record<TranscriptStage, string> = {
   diarize: "Identifying speakers",
   download: "Fetching audio",
   model: "Loading the model",
+  planning: "Preparing speech analysis",
   retrying: "Starting again",
+  speech_coverage: "Checking speech coverage",
   transcribe: "Listening",
   write: "Saving the transcript",
 };
@@ -65,7 +67,7 @@ export interface TranscriptRowSummary {
   status: "pending" | "processing" | "ready" | "failed";
   /** Used to age a claimed row before its first heartbeat. */
   updatedAt: string;
-  /** The current revision's word count; zero is a recording with no speech. */
+  /** The current revision's word count; zero remains an editable revision. */
   wordCount: number | null;
 }
 
@@ -82,14 +84,54 @@ function stageWords(stage: string | null): string | null {
   return STAGE_LABELS[stage as TranscriptStage] ?? null;
 }
 
-function processingWords(row: TranscriptRowSummary): string {
+/** Stages whose reported percentage represents completed transfer work. */
+const MEASURED_ZERO_STAGES = new Set(["download", "write"]);
+
+function visiblePercent(row: TranscriptRowSummary): number | null {
+  if (row.percent === null) {
+    return null;
+  }
+  const percent = Math.min(100, Math.max(0, row.percent));
+  return percent === 0 && !MEASURED_ZERO_STAGES.has(row.stage ?? "")
+    ? null
+    : percent;
+}
+
+function livenessWords(row: TranscriptRowSummary, now: number): string | null {
+  if (now <= 0) {
+    return null;
+  }
+  const beat = Date.parse(row.heartbeatAt ?? row.updatedAt);
+  if (Number.isNaN(beat)) {
+    return null;
+  }
+  const seconds = Math.max(0, Math.floor((now - beat) / 1000));
+  if (seconds < 15) {
+    return "Updated just now";
+  }
+  if (seconds < 60) {
+    return `Updated ${seconds}s ago`;
+  }
+  return `Updated ${Math.floor(seconds / 60)}m ago`;
+}
+
+function processingWords(
+  row: TranscriptRowSummary,
+  percent: number | null,
+  now: number
+): string {
   const parts = ["Transcribing"];
   const stage = stageWords(row.stage);
   if (stage) {
     parts.push(stage);
   }
-  if (row.percent !== null) {
-    parts.push(`${Math.min(100, Math.max(0, row.percent))}%`);
+  if (percent === null) {
+    const liveness = livenessWords(row, now);
+    if (liveness) {
+      parts.push(liveness);
+    }
+  } else {
+    parts.push(`${percent}%`);
   }
   return parts.join(" · ");
 }
@@ -153,11 +195,12 @@ function processingState(
       words: "Transcription stopped unexpectedly and is being retried.",
     };
   }
+  const percent = visiblePercent(row);
   return {
     kind: "processing",
-    percent: row.percent,
+    percent,
     retry: false,
-    words: processingWords(row),
+    words: processingWords(row, percent, now),
   };
 }
 
@@ -199,7 +242,7 @@ export function transcriptState({
   if (row.status === "failed") {
     return failedState(row);
   }
-  if (row.currentRevision === null || row.wordCount === 0) {
+  if (row.currentRevision === null) {
     return {
       kind: "empty",
       retry: true,

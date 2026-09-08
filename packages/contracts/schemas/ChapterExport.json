@@ -1,0 +1,166 @@
+{
+  "$defs": {
+    "ChapterExport": {
+      "$id": "#/$defs/ChapterExport",
+      "type": "object",
+      "properties": {
+        "chapters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterRender"
+          }
+        },
+        "createdAt": {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+          "type": "string",
+          "format": "date-time"
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "manifestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "chapters",
+        "createdAt",
+        "editSha256",
+        "manifestKey",
+        "revision",
+        "runId",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterExport"
+    },
+    "ChapterRender": {
+      "$id": "#/$defs/ChapterRender",
+      "type": "object",
+      "properties": {
+        "captions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "media": {
+          "$ref": "#/$defs/HarnessArtifactRef"
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "captions",
+        "checks",
+        "durationMs",
+        "editSha256",
+        "media",
+        "sectionId"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterRender"
+    },
+    "HarnessArtifactKind": {
+      "$id": "#/$defs/HarnessArtifactKind",
+      "type": "string",
+      "enum": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint"
+      ],
+      "title": "HarnessArtifactKind"
+    },
+    "HarnessArtifactRef": {
+      "$id": "#/$defs/HarnessArtifactRef",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/HarnessArtifactKind"
+        },
+        "sha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "sha256",
+        "sizeBytes",
+        "storageKey"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessArtifactRef"
+    }
+  },
+  "$id": "ChapterExport.json",
+  "$ref": "#/$defs/ChapterExport",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

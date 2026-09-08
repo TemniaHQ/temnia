@@ -1,63 +1,5 @@
 {
   "$defs": {
-    "ArtifactKind": {
-      "$id": "#/$defs/ArtifactKind",
-      "type": "string",
-      "enum": [
-        "master",
-        "hls",
-        "peaks",
-        "thumbnails",
-        "audio",
-        "shots"
-      ],
-      "title": "ArtifactKind"
-    },
-    "ArtifactRecord": {
-      "$id": "#/$defs/ArtifactRecord",
-      "type": "object",
-      "properties": {
-        "contentType": {
-          "type": "string",
-          "minLength": 1
-        },
-        "kind": {
-          "$ref": "#/$defs/ArtifactKind"
-        },
-        "metadata": {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {}
-        },
-        "sizeBytes": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "storageKey": {
-          "type": "string",
-          "minLength": 1
-        },
-        "storagePrefix": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "contentType",
-        "kind",
-        "metadata",
-        "sizeBytes",
-        "storageKey",
-        "storagePrefix"
-      ],
-      "additionalProperties": false,
-      "title": "ArtifactRecord"
-    },
     "HelloInput": {
       "$id": "#/$defs/HelloInput",
       "type": "object",
@@ -78,6 +20,28 @@
       ],
       "additionalProperties": false,
       "title": "HelloInput"
+    },
+    "Scope": {
+      "$id": "#/$defs/Scope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The organization every row is scoped to."
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The acting user inside that organization."
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "Scope"
     }
   },
   "$id": "HelloInput.json",

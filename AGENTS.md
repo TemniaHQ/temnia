@@ -336,6 +336,104 @@ the row. Corrections and machine finalization take the same transcript row lock 
 storage usage. HLS reuse verifies named objects, sizes, and playlist references; retained extra
 objects are included in recorded storage usage rather than removed during a possibly concurrent retry.
 
+**2026-09-08 — Chapter implementation: immutable revisions, physical attempts and finite review workflows.**
+PR #24 acts on the accepted review plan; the design and comparisons are in
+`docs/pipeline-architecture.md`. A finite ChapterRunWorkflow produces reviewable outputs; a
+finite ChapterReviewWorkflow per mutation UUID applies a revision compare-and-swap and stores
+its replayable outcome. Compared with a long-open review workflow, this keeps immutable database
+revisions authoritative across deployments and browser re-entry. Eight scoped tables separate
+artifacts/dependencies, runs, operations, attempts, reservations, revisions and review events.
+Atomic run-row reservations replace the earlier pre-call-only budget check; unknown outcomes
+retain exposure, known failures retain expenses, and actual charges above estimates are recorded
+before further dispatch is refused. App reads harness history; pipeline owns writes. Source
+history restricts deletion, with a source deletion fence before any object removal.
+
+PydanticAI's TemporalDurability capability remains the model integration, pinned at 2.40.0
+(the September 8 release is too new under the age rule). Paid dispatch guards execute inside
+its model activity, with provider and validation retries disabled; pinned-API replay tests must
+prove this placement. A qualified immutable route snapshot selects seats without a default
+vendor. Earlier prose said a gateway transport probe was confirmed; no saved probe artifact or
+configured credential was found in the inspected worktrees, shell or running staging services
+on September 8. Live qualification remains pending evidence; synthetic cassettes prove wiring.
+
+Speech recovery uses an additive temnia-speech app, protocol temnia-speech/1, with separate
+recognize/align/diarize checkpoints while protocol 4 drains. Single-use stage processes initially
+fence native GPU memory lifetime; compared with a checkpointed reused monolith this trades extra
+downloads/cold loads for attributable stage recovery. Batch repair is bounded to explicit
+recognition OOM, 16 -> 8 -> 4, never an uncertain remote outcome. Independent Silero v6.2.1 ONNX
+coverage runs on CPU with ONNX Runtime 1.29.0 and pinned, hash-verified offline weights; direct
+ONNX avoids the Python package's unnecessary conflicting audio dependency. Detector agreement
+is not transcription accuracy. These are implementation decisions, not claims of completed live
+qualification. The sprint plan and the older slice specification defer to this record.
+
+**2026-09-08 — Chapter time uses a source-relative output grid; source offset is a mapping, not a frame phase.** The compiler quantizes shared internal boundaries on a canonical frame/sample grid from source-relative zero. An absolute container start timestamp does not establish where decoded input frames lie. Rendering preserves selected-track offsets, handles VFR with explicit codec/frame tolerance, and checks actual artifacts. The first chapter renderer retains ffmpeg 8.1.2 after comparing current 9.0.1: its required accurate seek/timestamp/filter capabilities already exist on the matched CLI/PyAV line, while an upgrade requires chapter plus existing ladder/NVENC regression evidence. This does not assert a third-party incompatibility. Evidence: `docs/pipeline-architecture.md` and the official release catalogue inspected September 8.
+
+**2026-09-08 — GPU execution admission must survive provider container restarts.** A real CPU-only Modal fault probe showed two containers executing one submitted call despite `retries=0`. The second was stopped before inference by a create-only R2 claim. The checkpointed speech app adopts that guard: reuse an exact completed checkpoint, otherwise acquire one immutable admission claim before model work; an existing incomplete claim means unknown execution and no automatic retry. Keeping unguarded execution was rejected by the probe; changing compute providers is deferred to measured qualification. Ledger attempts count admitted invocations, not invisible provider container starts, and a reservation is not a guaranteed invoice ceiling. CPU and memory belong in the dated estimate alongside the GPU. Record and limits: `docs/design/harness-foundation-probes-2026-09-08.json`, `docs/pipeline-architecture.md`.
+
+**2026-09-08 — Short chapter controls have dedicated activity capacity in the same process.**
+The two media activity slots can be occupied for minutes or hours. A real Temporal probe held
+both and showed that a shared-queue control waited, while a second activity queue completed
+the control before either media slot was released. The Python process now serves short scoped
+chapter commands on `<configured pipeline queue>-control` with four slots; workflows and heavy
+activities keep the existing queue and two slots. Both workers start, fail and drain together,
+with the same namespace and no extra routing environment variable. This remains one durable
+runtime. Raising every activity's concurrency was rejected because it also raises CPU/disk
+pressure; local activities were compared against the current Temporal guide and rejected for
+these database commands because they add marker/replay semantics without useful savings.
+Only compact reads and transactions belong on control; object I/O, models and renders remain
+on the pipeline queue. The probe proves scheduling independence, not a production latency SLA
+or unlimited control capacity. Record: `docs/pipeline-architecture.md` and the PR #24 probe record.
+
+**2026-09-08 — Keep the three segmentation metrics, remove the NLTK runtime dependency.**
+The application used only Pk, WindowDiff and GHD. The current upstream advisory
+GHSA-8mgp-746c-j5xp lists NLTK through 3.10.3 with no patched release; inspection did not
+find the vulnerable model-path APIs on Temnia's execution path. Rather than carry the whole
+package or change the measured metric conventions, PR #24 narrowly adapts the three pure
+algorithms with Apache-2.0 attribution, original source hash and license in
+`apps/pipeline/THIRD_PARTY_NOTICES.md`. An oracle captured from installed NLTK 3.10.3
+before removal covers 18,228 exhaustive and seeded comparisons, including asymmetric GHD
+costs, with maximum difference 0.0. Incremental window counts and two-row GHD bound temporary
+memory. No downloader, initializer, model loader or file APIs are copied. The frozen dependency
+tree contains neither NLTK nor its sole-use defusedxml dependency. This replaces the 2026-09-07
+choice of the NLTK package, preserving its metric conventions and the frozen legacy baseline.
+
+**2026-09-08 — Human chapter approval closes editorial review; metadata-only decisions reuse checks.**
+The recorded end-to-end journey reached revision 13 with every section explicitly accepted, but
+the model's repeated `needs_review` verdict still prevented export. Accepting four sections also
+made four further verifier calls. The model identifies editorial concerns; a reasoned human
+acknowledgement resolves them. Export therefore requires every section accepted and every required
+technical check present exactly once with no failures; warnings and the earlier model verdict remain
+visible evidence. Technical failures
+cannot be overridden. Acceptance/rejection changes review metadata only and reuses verified media
+and checks through new revision-bound descriptors with immutable predecessor dependencies; it does
+not call a model or decode the unchanged files again. Content changes still trigger the relevant
+render/check/editorial path. A failed final export can resume from the accepted revision. Compared
+with making a model pass mandatory after human review, this avoids a review loop the user cannot
+close and repeated provider work that does not assess a changed edit. The browser fixture keeps its
+model verdict at `needs_review` to prove this distinction.
+
+**2026-09-08 — Large local source caches require an activity lease and bounded eviction.**
+The chapter evidence pass retains the verified master for rendering. A parent-directory mtime
+alone cannot protect a cache reopened by another worker, and lazy cleanup never runs on an idle
+worker. Use a stable per-run advisory lock outside the disposable directory, held for the full
+activity, with nonblocking eviction, terminal cleanup, expiry and disk-pressure cleanup. This
+was compared with mtime-only eviction and process-local locks; neither protects concurrent worker
+processes. The choice targets the existing Unix worker's local volume. Remote filesystem locking
+is not qualified by this decision. Fresh sources: Python 3.13's
+[fcntl reference](https://docs.python.org/3.13/library/fcntl.html) and the
+[Linux flock manual](https://man7.org/linux/man-pages/man2/flock.2.html), inspected September 8;
+the implementation must prove contention and cleanup behavior with real file locks.
+
+**2026-09-09 — Evidence identity is source-scoped; runs own references to it.** The complete
+chapter browser journey exposed a second-run collision: identical source/transcript/config evidence
+had the same producer fingerprint but different consumer `runId` metadata. New evidence omits that
+transient metadata; each scoped `harness_run.evidence_artifact_id` records consumption. Duplicate
+acceptance tolerates only that legacy evidence key while preserving exact bytes, stable metadata,
+transcript identity and dependency checks. Adding run ID to the fingerprint was rejected because it
+would turn identical evidence into duplicated artifacts and storage metering. The actual PostgreSQL
+regression proves two runs share one artifact/storage entry, and changed content or lineage still
+conflicts. The complete browser journey passes through the second run.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

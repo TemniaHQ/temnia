@@ -1,3 +1,4 @@
+export * from "./harness.ts";
 export * from "./hello.ts";
 export * from "./ingest.ts";
 export * from "./scope.ts";

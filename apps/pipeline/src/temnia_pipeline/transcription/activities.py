@@ -245,6 +245,7 @@ class Transcribe:
                         "speakers": len(transcript.speakers),
                         "gpu": record.gpu,
                         "gpuSeconds": record.gpu_seconds,
+                        **record.metadata,
                     },
                     run_id=run_id(),
                 )

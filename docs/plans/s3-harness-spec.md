@@ -1,4 +1,11 @@
-# S3 slice A — the harness chassis: implementation spec
+# S3 slice A — the harness chassis: historical implementation spec
+
+**Superseded for PR #24 on 2026-09-08 by [the pipeline architecture](../pipeline-architecture.md).**
+The text below preserves the earlier proposal. Its two-table schema, pre-call-only budget,
+parallel calls without reservations, automatic transport retry, silent gap repair and assumed
+gateway-probe completion are not implementation requirements. The current schema separates
+operations, physical attempts, reservations, artifacts and revisions; uncertain outcomes retain
+exposure. Review is part of the complete chapter path. No new `feat/s3-harness` branch is needed.
 
 Written 2026-09-07 with the harness design (the sprint-plan S3 row and the AGENTS.md decision of
 that date carry the design); amended 2026-09-08 after the S2 review (§ Amendments below, and the

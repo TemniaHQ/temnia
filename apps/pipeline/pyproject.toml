@@ -2,16 +2,18 @@
 name = "temnia-pipeline"
 version = "0.0.0"
 description = "Temnia media and editorial pipeline: Temporal workers, ffmpeg wrappers, harness sensors."
+license-files = ["LICENSES/NLTK-3.10.3.txt", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "av>=18.1,<19",
     "boto3>=1.40,<2",
     "modal>=1.5.5,<2",
-    "nltk>=3.9,<4",
     "numpy>=2.3,<3",
     "obstore>=0.11.1,<0.12",
+    "onnxruntime==1.29.0",
     "psycopg[binary,pool]>=3.3.5,<4",
     "pydantic>=2.13,<3",
+    "pydantic-ai-slim[openai,temporal]==2.40.0",
     "temporalio>=1.32,<2",
     # The substrate. torch is declared here rather than left to
     # sentence-transformers so the linux resolution can be pinned to the CPU
@@ -26,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 temnia-eval = "temnia_pipeline.evals.runner:main"
+temnia-harness = "temnia_pipeline.harness.cli:main"
 
 [dependency-groups]
 dev = [

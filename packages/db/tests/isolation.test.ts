@@ -28,6 +28,14 @@ import {
 } from "../src/client.ts";
 import {
   artifact,
+  chapterReviewEvent,
+  chapterRevision,
+  harnessArtifact,
+  harnessArtifactDependency,
+  harnessAttempt,
+  harnessOperation,
+  harnessReservation,
+  harnessRun,
   member,
   organization,
   project,
@@ -47,16 +55,23 @@ if (!ownerUrl) {
   );
 }
 const appRole = process.env.TEST_APP_ROLE ?? "temnia_app";
+const pipelineRole = process.env.TEST_PIPELINE_ROLE ?? "temnia_pipeline";
 // The probes run as the app role. Dev and gate databases share the compose
 // password; anything else sets TEST_APP_DATABASE_URL explicitly.
 const CREDENTIALS = /\/\/[^@]+@/;
+const FOREIGN_KEY_REJECTION = /foreign key constraint/;
+const PERMISSION_REJECTION = /permission denied/;
 const POLICY_REJECTION = /row-level security|duplicate key/;
 const appUrl =
   process.env.TEST_APP_DATABASE_URL ??
   ownerUrl.replace(CREDENTIALS, `//${appRole}:${appRole}@`);
+const pipelineUrl =
+  process.env.TEST_PIPELINE_DATABASE_URL ??
+  ownerUrl.replace(CREDENTIALS, `//${pipelineRole}:${pipelineRole}@`);
 
 const owner = new pg.Client({ connectionString: ownerUrl });
 let app: DatabaseHandle;
+let pipeline: DatabaseHandle;
 
 const A: Scope = SEEDED_SCOPE;
 
@@ -76,6 +91,22 @@ async function expectRejectedByPolicy(
   expect(message).toMatch(POLICY_REJECTION);
 }
 const B: Scope = PROBE_SCOPE;
+
+async function expectDatabaseRejected(
+  attempt: Promise<unknown>,
+  pattern: RegExp
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await attempt;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught, "the database accepted a forbidden write").toBeDefined();
+  const root = (caught as { cause?: unknown }).cause ?? caught;
+  const message = root instanceof Error ? root.message : String(root);
+  expect(message).toMatch(pattern);
+}
 
 interface TableRow {
   has_organization_id: boolean;
@@ -244,20 +275,45 @@ const probes: Probe[] = [
   },
 ];
 
+const harnessTables = [
+  chapterReviewEvent,
+  chapterRevision,
+  harnessArtifact,
+  harnessArtifactDependency,
+  harnessAttempt,
+  harnessOperation,
+  harnessReservation,
+  harnessRun,
+] as const;
+
 beforeAll(async () => {
   await owner.connect();
   app = createDatabase(appUrl, 2);
+  pipeline = createDatabase(pipelineUrl, 2);
 });
 
 afterAll(async () => {
-  // Owner cleanup of anything a probe left behind (cascades from project).
+  // History uses RESTRICT, so remove the disposable harness graph in reverse.
+  await owner.query("DELETE FROM chapter_review_event");
+  await owner.query("DELETE FROM chapter_revision");
+  await owner.query("DELETE FROM harness_reservation");
+  await owner.query("DELETE FROM harness_attempt");
+  await owner.query("DELETE FROM harness_operation");
+  await owner.query("DELETE FROM harness_run");
+  await owner.query("DELETE FROM harness_artifact_dependency");
+  await owner.query("DELETE FROM harness_artifact");
+  // Owner cleanup of anything else a probe left behind (cascades from project).
   await owner.query(`DELETE FROM project WHERE name = 'probe project'`);
+  await owner.query(
+    `DELETE FROM project WHERE name = 'harness isolation project'`
+  );
   await owner.query(`DELETE FROM organization WHERE slug LIKE 'probe-%'`);
   await owner.query(
     `DELETE FROM "user" WHERE email LIKE 'probe-%@example.invalid'`
   );
   await owner.end();
   await app.close();
+  await pipeline.close();
 });
 
 async function catalogue(): Promise<TableRow[]> {
@@ -301,33 +357,62 @@ describe("every owned table", () => {
 
   it("has a probe in this suite", async () => {
     const rows = await catalogue();
-    const probed = new Set(probes.map((p) => getTableName(p.table)));
+    const probed = new Set([
+      ...probes.map((p) => getTableName(p.table)),
+      ...harnessTables.map((table) => getTableName(table)),
+    ]);
     const unprobed = rows
       .map((r) => r.table_name)
       .filter((t) => !probed.has(t));
     expect(unprobed, "add a probe for every new table").toEqual([]);
   });
 
-  it("grants the app and pipeline roles DML and nothing more", async () => {
+  it("grants each role exactly the operations its writer boundary needs", async () => {
     const { rows } = await owner.query<{
+      grantee: string;
       table_name: string;
       privileges: string[];
     }>(`
-      SELECT table_name::text, array_agg(DISTINCT privilege_type::text ORDER BY privilege_type::text) AS privileges
+      SELECT grantee::text, table_name::text,
+             array_agg(DISTINCT privilege_type::text ORDER BY privilege_type::text) AS privileges
       FROM information_schema.role_table_grants
       WHERE table_schema = 'public' AND grantee IN ('temnia_app', 'temnia_pipeline')
         AND table_name NOT LIKE '\\_\\_drizzle%'
-      GROUP BY table_name
+      GROUP BY grantee, table_name
     `);
     const tables = (await catalogue()).map((r) => r.table_name);
+    const immutable = new Set([
+      "chapter_review_event",
+      "chapter_revision",
+      "harness_artifact",
+      "harness_artifact_dependency",
+    ]);
+    const mutable = new Set([
+      "harness_attempt",
+      "harness_operation",
+      "harness_reservation",
+      "harness_run",
+    ]);
     for (const table of tables) {
-      const grant = rows.find((r) => r.table_name === table);
-      expect(grant?.privileges, `${table} grants`).toEqual([
-        "DELETE",
-        "INSERT",
-        "SELECT",
-        "UPDATE",
-      ]);
+      const appGrant = rows.find(
+        (r) => r.grantee === "temnia_app" && r.table_name === table
+      );
+      const pipelineGrant = rows.find(
+        (r) => r.grantee === "temnia_pipeline" && r.table_name === table
+      );
+      const isHarness = immutable.has(table) || mutable.has(table);
+      expect(appGrant?.privileges, `${table} app grants`).toEqual(
+        isHarness ? ["SELECT"] : ["DELETE", "INSERT", "SELECT", "UPDATE"]
+      );
+      let expectedPipeline = ["DELETE", "INSERT", "SELECT", "UPDATE"];
+      if (immutable.has(table)) {
+        expectedPipeline = ["INSERT", "SELECT"];
+      } else if (mutable.has(table)) {
+        expectedPipeline = ["INSERT", "SELECT", "UPDATE"];
+      }
+      expect(pipelineGrant?.privileges, `${table} pipeline grants`).toEqual(
+        expectedPipeline
+      );
     }
   });
 });
@@ -352,6 +437,293 @@ describe("the app role", () => {
       [appRole]
     );
     expect(rows).toEqual([]);
+  });
+});
+
+describe("harness writer boundary and scoped references", () => {
+  const sha = "a".repeat(64);
+  const otherSha = "b".repeat(64);
+  let sourceA = "";
+  let sourceB = "";
+  let transcriptA = "";
+  let evidenceArtifactId = "";
+  let proposalArtifactId = "";
+  let editArtifactId = "";
+  let runId = "";
+  let operationId = "";
+  let attemptId = "";
+
+  beforeAll(async () => {
+    const createSource = async (scope: Scope) => {
+      const [projectRow] = await withScope(app.db, scope, (tx) =>
+        tx
+          .insert(project)
+          .values({
+            name: "harness isolation project",
+            organizationId: scope.organizationId,
+          })
+          .returning({ id: project.id })
+      );
+      const [sourceRow] = await withScope(app.db, scope, (tx) =>
+        tx
+          .insert(source)
+          .values({
+            contentType: "video/mp4",
+            masterKey: `org/${scope.organizationId}/source/isolation/master.mp4`,
+            organizationId: scope.organizationId,
+            originalFilename: "isolation.mp4",
+            projectId: projectRow?.id ?? "",
+            sizeBytes: 1,
+            title: "harness isolation source",
+          })
+          .returning({ id: source.id })
+      );
+      return sourceRow?.id ?? "";
+    };
+
+    sourceA = await createSource(A);
+    sourceB = await createSource(B);
+    const [transcriptRow] = await withScope(app.db, A, (tx) =>
+      tx
+        .insert(transcript)
+        .values({ organizationId: A.organizationId, sourceId: sourceA })
+        .returning({ id: transcript.id })
+    );
+    transcriptA = transcriptRow?.id ?? "";
+    await withScope(app.db, A, (tx) =>
+      tx.insert(transcriptRevision).values({
+        kind: "machine",
+        organizationId: A.organizationId,
+        revision: 1,
+        sizeBytes: 1,
+        storageKey: `org/${A.organizationId}/source/isolation/transcript/rev-1.json`,
+        transcriptId: transcriptA,
+        wordCount: 1,
+      })
+    );
+
+    const artifacts = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessArtifact)
+        .values([
+          {
+            fingerprint: sha,
+            kind: "evidence",
+            organizationId: A.organizationId,
+            sha256: sha,
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/evidence.json`,
+            transcriptId: transcriptA,
+            transcriptRevision: 1,
+          },
+          {
+            fingerprint: otherSha,
+            kind: "proposal",
+            organizationId: A.organizationId,
+            sha256: otherSha,
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/proposal.json`,
+          },
+          {
+            fingerprint: "c".repeat(64),
+            kind: "edit",
+            organizationId: A.organizationId,
+            sha256: "c".repeat(64),
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/edit.json`,
+          },
+        ])
+        .returning({ id: harnessArtifact.id, kind: harnessArtifact.kind })
+    );
+    evidenceArtifactId =
+      artifacts.find((row) => row.kind === "evidence")?.id ?? "";
+    proposalArtifactId =
+      artifacts.find((row) => row.kind === "proposal")?.id ?? "";
+    editArtifactId = artifacts.find((row) => row.kind === "edit")?.id ?? "";
+
+    await withScope(pipeline.db, A, (tx) =>
+      tx.insert(harnessArtifactDependency).values({
+        artifactId: proposalArtifactId,
+        inputArtifactId: evidenceArtifactId,
+        organizationId: A.organizationId,
+        sourceId: sourceA,
+      })
+    );
+    const [run] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessRun)
+        .values({
+          budgetMicros: 10_000,
+          evidenceArtifactId,
+          lane: "chapters",
+          organizationId: A.organizationId,
+          requestKey: "0192e8a0-0000-7000-8000-000000000101",
+          sourceId: sourceA,
+        })
+        .returning({ id: harnessRun.id })
+    );
+    runId = run?.id ?? "";
+    const [operation] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessOperation)
+        .values({
+          configHash: sha,
+          inputHash: sha,
+          kind: "model",
+          organizationId: A.organizationId,
+          runId,
+          semanticKey: sha,
+          sourceId: sourceA,
+          stage: "propose",
+        })
+        .returning({ id: harnessOperation.id })
+    );
+    operationId = operation?.id ?? "";
+    const [attempt] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessAttempt)
+        .values({
+          attemptNumber: 1,
+          costStatus: "estimated",
+          estimatedCostMicros: 1000,
+          operationId,
+          organizationId: A.organizationId,
+          ownerToken: "isolation-owner",
+          provider: "recorded",
+          requestHash: sha,
+          runId,
+          sourceId: sourceA,
+        })
+        .returning({ id: harnessAttempt.id })
+    );
+    attemptId = attempt?.id ?? "";
+    await withScope(pipeline.db, A, async (tx) => {
+      await tx.insert(harnessReservation).values({
+        amountMicros: 1000,
+        attemptId,
+        organizationId: A.organizationId,
+        runId,
+        sourceId: sourceA,
+      });
+      await tx.insert(chapterRevision).values({
+        artifactId: editArtifactId,
+        mutationKey: "0192e8a0-0000-7000-8000-000000000102",
+        organizationId: A.organizationId,
+        revision: 1,
+        runId,
+        sourceId: sourceA,
+      });
+      await tx.insert(chapterReviewEvent).values({
+        action: "accept",
+        baseRevision: 1,
+        mutationKey: "0192e8a0-0000-7000-8000-000000000103",
+        organizationId: A.organizationId,
+        resultingRevision: 1,
+        runId,
+        sourceId: sourceA,
+        state: "applied",
+      });
+    });
+  });
+
+  it("lets the pipeline create and update mutable rows", async () => {
+    const [updated] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .update(harnessRun)
+        .set({ stage: "compile", status: "running" })
+        .where(eq(harnessRun.id, runId))
+        .returning({ id: harnessRun.id })
+    );
+    expect(updated?.id).toBe(runId);
+  });
+
+  it("gives the app read-only harness access", async () => {
+    for (const table of harnessTables) {
+      // biome-ignore lint/performance/noAwaitInLoops: each table is an independent RLS assertion
+      const rowsA = await withScope(app.db, A, (tx) => tx.select().from(table));
+      expect(
+        rowsA.length,
+        `${getTableName(table)} visible under A`
+      ).toBeGreaterThan(0);
+      const rowsB = await withScope(app.db, B, (tx) => tx.select().from(table));
+      expect(rowsB, `${getTableName(table)} hidden under B`).toEqual([]);
+      const unscoped = await app.db.select().from(table);
+      expect(unscoped, `${getTableName(table)} hidden without scope`).toEqual(
+        []
+      );
+    }
+
+    await expectDatabaseRejected(
+      withScope(app.db, A, (tx) =>
+        tx.insert(harnessRun).values({
+          budgetMicros: 1,
+          lane: "chapters",
+          organizationId: A.organizationId,
+          requestKey: "forbidden-app-write",
+          sourceId: sourceA,
+        })
+      ),
+      PERMISSION_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(app.db, A, (tx) =>
+        tx.update(harnessRun).set({ stage: "forbidden" })
+      ),
+      PERMISSION_REJECTION
+    );
+  });
+
+  it("keeps immutable history insert-only and all harness rows undeletable", async () => {
+    await expectDatabaseRejected(
+      withScope(pipeline.db, A, (tx) =>
+        tx
+          .update(harnessArtifact)
+          .set({ metadata: { changed: true } })
+          .where(eq(harnessArtifact.id, evidenceArtifactId))
+      ),
+      PERMISSION_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(pipeline.db, A, (tx) =>
+        tx.delete(harnessRun).where(eq(harnessRun.id, runId))
+      ),
+      PERMISSION_REJECTION
+    );
+  });
+
+  it("rejects cross-organization and cross-source composite references", async () => {
+    await expectDatabaseRejected(
+      withScope(pipeline.db, B, (tx) =>
+        tx.insert(harnessRun).values({
+          budgetMicros: 1,
+          evidenceArtifactId,
+          lane: "chapters",
+          organizationId: B.organizationId,
+          requestKey: "cross-organization-artifact",
+          sourceId: sourceB,
+        })
+      ),
+      FOREIGN_KEY_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(pipeline.db, B, (tx) =>
+        tx.insert(harnessAttempt).values({
+          attemptNumber: 2,
+          costStatus: "estimated",
+          estimatedCostMicros: 1,
+          operationId,
+          organizationId: B.organizationId,
+          ownerToken: "cross-org",
+          provider: "recorded",
+          requestHash: otherSha,
+          sourceId: sourceB,
+        })
+      ),
+      FOREIGN_KEY_REJECTION
+    );
   });
 });
 
@@ -436,10 +808,16 @@ describe("cross-organization probes", () => {
 
   it("counts what the probes left, per scope", async () => {
     const [countA] = await withScope(app.db, A, (tx) =>
-      tx.select({ n: sql<number>`count(*)::int` }).from(project)
+      tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(project)
+        .where(eq(project.name, "probe project"))
     );
     const [countB] = await withScope(app.db, B, (tx) =>
-      tx.select({ n: sql<number>`count(*)::int` }).from(project)
+      tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(project)
+        .where(eq(project.name, "probe project"))
     );
     expect(countA?.n).toBeGreaterThan(0);
     expect(countB?.n).toBe(0);

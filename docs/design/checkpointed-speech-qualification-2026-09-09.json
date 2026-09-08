@@ -1,0 +1,629 @@
+{
+  "format": "temnia-speech-qualification-summary/1",
+  "date": "2026-09-09",
+  "runs": [
+    {
+      "name": "failed-short",
+      "observedAt": "2026-09-08 18:55:26.611587+00:00",
+      "source": {
+        "durationMs": 8824,
+        "id": "bcae6044-54fe-4525-a19a-67bae66b41f1",
+        "sha256": "715fc82696abe02c22894319daa53aeb73074edf0dd75d5700d62ffcf966f23b",
+        "sizeBytes": 61192
+      },
+      "build": "1fa3a9eeab64c3997765183b45f1d3b4e55385c756ea222679f858fe44259206",
+      "status": "failed",
+      "dispatchCount": 3,
+      "reservedMicros": 3875001,
+      "actualInvoiceCostMicros": null,
+      "workflow": {
+        "checkpointedActivityAttempts": [],
+        "errorType": "WorkflowFailureError",
+        "injectedLostActivityResult": false,
+        "observedPhysicalDispatchCounts": []
+      },
+      "attempts": [
+        {
+          "id": "01a0825e-9384-7174-b594-f8b7921e0eea",
+          "stage": "recognize",
+          "state": "succeeded",
+          "remote_handle": "fc-01M215X647XKHCSRBB5XAJVFMH",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": 16,
+            "elapsedSeconds": 29.605608041,
+            "finishedAt": "2026-09-08T18:54:26.927453Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 4636803072,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.6942147900000002,
+              "download": 0.5367071279999998,
+              "inference": 2.2298756180000012,
+              "modelLoad": 19.758789246
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 7045410816,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": 16,
+            "sampleCount": 22,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T18:53:57.321792Z",
+            "torchAllocatedPeakBytes": 130252288,
+            "torchReservedPeakBytes": 180355072
+          }
+        },
+        {
+          "id": "01a0825f-2717-7144-8b78-648e656ea245",
+          "stage": "align",
+          "state": "succeeded",
+          "remote_handle": "fc-01M215YB19JC12AZ8C4S9G9C89",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 25.928841617,
+            "finishedAt": "2026-09-08T18:55:02.199517Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 851443712,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.7615471899999982,
+              "download": 0.2751446150000003,
+              "inference": 2.529209678000001,
+              "modelLoad": 14.926215393000001
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 5670223872,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": null,
+            "sampleCount": 17,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T18:54:36.270623Z",
+            "torchAllocatedPeakBytes": 526777344,
+            "torchReservedPeakBytes": 603979776
+          }
+        },
+        {
+          "id": "01a0825f-bbab-7a63-8ca7-0f4f72ab3f5e",
+          "stage": "diarize",
+          "state": "failed_known",
+          "remote_handle": "fc-01M215ZG2JEPG1A1XKCFAVANDP",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 7.502047172999999,
+            "finishedAt": "2026-09-08T18:55:21.851030Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 3145728,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "download": 0.4623948410000005,
+              "modelLoad": 2.395100000107675e-05
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 4061765632,
+            "progress": {
+              "percent": null,
+              "source": "none"
+            },
+            "requestedBatch": null,
+            "sampleCount": 1,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T18:55:14.348937Z",
+            "torchAllocatedPeakBytes": 0,
+            "torchReservedPeakBytes": 0
+          }
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "01a0825e-9833-73b8-8f04-102ca9703c7a",
+          "sha256": "72a1033016217fd5c8c0904c36e7cfe6ee2c9d4af934e81a8984e6e25e822eb6",
+          "sizeBytes": 1143,
+          "dependencies": []
+        },
+        {
+          "id": "01a0825f-2582-736e-a042-500a1da58863",
+          "sha256": "d6e8685de89302d9e0b9dd9b22db3a5673cab3ce20985414c339b9cc54ca8298",
+          "sizeBytes": 1810,
+          "dependencies": []
+        },
+        {
+          "id": "01a0825f-bb73-7391-a3bc-0704e32d2acd",
+          "sha256": "ceab26a6e929b39a1d600b6255d849452c35b0d00b8ed3da7184a3ff0a01d187",
+          "sizeBytes": 5389,
+          "dependencies": [
+            "01a0825f-2582-736e-a042-500a1da58863"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "corrected-short",
+      "observedAt": "2026-09-08 19:07:05.500923+00:00",
+      "source": {
+        "durationMs": 8824,
+        "id": "eef192ed-54a4-4910-aee4-b9a89b73c27d",
+        "sha256": "715fc82696abe02c22894319daa53aeb73074edf0dd75d5700d62ffcf966f23b",
+        "sizeBytes": 61192
+      },
+      "build": "9c4ab9a9f0eaaa123d068f15e9f3677dd1a2a20ef56c4ef379f3f6e0e3489f36",
+      "status": "ready",
+      "dispatchCount": 3,
+      "reservedMicros": 3875001,
+      "actualInvoiceCostMicros": null,
+      "workflow": {
+        "checkpointedActivityAttempts": [
+          1,
+          2
+        ],
+        "errorType": null,
+        "injectedLostActivityResult": true,
+        "observedPhysicalDispatchCounts": [
+          3,
+          3
+        ]
+      },
+      "attempts": [
+        {
+          "id": "01a08268-5a39-7790-9cb4-87b6006464f4",
+          "stage": "recognize",
+          "state": "succeeded",
+          "remote_handle": "fc-01M216GQNF81JP8YK5A2YJNTC5",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": 16,
+            "elapsedSeconds": 26.530573149000002,
+            "finishedAt": "2026-09-08T19:05:14.469805Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 4368367616,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.7337163030000013,
+              "download": 0.5478427870000004,
+              "inference": 2.519288816000003,
+              "modelLoad": 17.597298201999998
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 7033245696,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": 16,
+            "sampleCount": 19,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:04:47.939189Z",
+            "torchAllocatedPeakBytes": 130252288,
+            "torchReservedPeakBytes": 180355072
+          }
+        },
+        {
+          "id": "01a08269-1bc2-7acf-bc53-327b4da1fff7",
+          "stage": "align",
+          "state": "succeeded",
+          "remote_handle": "fc-01M216J81S1NSMQKH1534SASED",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 20.266838843000002,
+            "finishedAt": "2026-09-08T19:05:48.865954Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 851443712,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.5968415659999984,
+              "download": 0.5416889190000003,
+              "inference": 1.5273780730000013,
+              "modelLoad": 12.265324586999999
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 5674483712,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": null,
+            "sampleCount": 14,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:05:28.599063Z",
+            "torchAllocatedPeakBytes": 526777344,
+            "torchReservedPeakBytes": 603979776
+          }
+        },
+        {
+          "id": "01a08269-96a6-7317-b950-03df1ac9f681",
+          "stage": "diarize",
+          "state": "succeeded",
+          "remote_handle": "fc-01M216K6RSSN5MVH7B5FVZ27TC",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 25.66551716,
+            "finishedAt": "2026-09-08T19:06:25.983896Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 511705088,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.6697704000000009,
+              "download": 0.21937481799999947,
+              "inference": 2.141742274000002,
+              "modelLoad": 3.440964784000002
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 6635180032,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": null,
+            "sampleCount": 7,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:06:00.318275Z",
+            "torchAllocatedPeakBytes": 200158208,
+            "torchReservedPeakBytes": 255852544
+          }
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "01a08268-5eee-7715-a622-0c3058ad0813",
+          "sha256": "204626b7ea4f139ec8e86dee23e0b217993e953e310cf0bded601f98bf1c4287",
+          "sizeBytes": 1143,
+          "dependencies": []
+        },
+        {
+          "id": "01a08269-19f6-7a57-ba45-4eb77f36ecde",
+          "sha256": "9add8f9ffa73c614d85a5f2160180bf6ed0c7cbf3b253f0945db16ad8d89612b",
+          "sizeBytes": 1810,
+          "dependencies": []
+        },
+        {
+          "id": "01a08269-9668-763f-8db1-6f582db6c372",
+          "sha256": "3638a976579051300a9f47875dac7654b524df209ee5ffba147557297029e4c0",
+          "sizeBytes": 5389,
+          "dependencies": [
+            "01a08269-19f6-7a57-ba45-4eb77f36ecde"
+          ]
+        },
+        {
+          "id": "01a0826a-2811-7203-b295-d4a3804d4a36",
+          "sha256": "ded2b99e0c418cacae8925a91968999244863647802a496f18d433037b0af22f",
+          "sizeBytes": 6240,
+          "dependencies": [
+            "01a08269-9668-763f-8db1-6f582db6c372"
+          ]
+        }
+      ],
+      "transcript": {
+        "sha256": "40b599e6bbf34cf3b3eb0631784b35a87a51263b6ee2f674d80c9408e5144821",
+        "sizeBytes": 2804,
+        "wordCount": 27,
+        "speakerCount": 1,
+        "language": "en",
+        "firstWordStartMs": 31,
+        "lastWordEndMs": 8797
+      },
+      "coverage": {
+        "detected_speech_ms": 8526,
+        "largest_uncovered_ms": 175,
+        "overlap_ms": 8042,
+        "recognition_outside_detector_ms": 0,
+        "recognized_span_ms": 8042,
+        "status": "clear",
+        "threshold_version": "speech-coverage-thresholds/1-provisional",
+        "uncovered_speech_ms": 484,
+        "uncovered_tail_ms": 27,
+        "warnings": [
+          "clear means detector agreement only; it is not a transcription-accuracy claim"
+        ]
+      }
+    },
+    {
+      "name": "long",
+      "observedAt": "2026-09-08 19:27:23.970416+00:00",
+      "source": {
+        "durationMs": 9060473,
+        "id": "95c52aba-361f-4738-8111-fe993c3153d1",
+        "sha256": "85615a2b6e04512cb333b80c4af6080a0f2017b355146b289303ed57bacc0c91",
+        "sizeBytes": 110024458
+      },
+      "build": "9c4ab9a9f0eaaa123d068f15e9f3677dd1a2a20ef56c4ef379f3f6e0e3489f36",
+      "status": "ready",
+      "dispatchCount": 3,
+      "reservedMicros": 3875001,
+      "actualInvoiceCostMicros": null,
+      "workflow": {
+        "checkpointedActivityAttempts": [
+          1
+        ],
+        "errorType": null,
+        "injectedLostActivityResult": false,
+        "observedPhysicalDispatchCounts": [
+          3
+        ]
+      },
+      "attempts": [
+        {
+          "id": "01a0826c-d937-77f6-8e6e-2b48998c161d",
+          "stage": "recognize",
+          "state": "succeeded",
+          "remote_handle": "fc-01M216SQFZZ0M64SXJQAWMPCWF",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": 16,
+            "elapsedSeconds": 311.129071898,
+            "finishedAt": "2026-09-08T19:14:46.910143Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 10391388160,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 0.945645767999963,
+              "download": 2.0180625040000004,
+              "inference": 260.14481939399997,
+              "modelLoad": 43.783815724
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 7681671168,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": 16,
+            "sampleCount": 282,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:09:35.780998Z",
+            "torchAllocatedPeakBytes": 260831744,
+            "torchReservedPeakBytes": 432013312
+          }
+        },
+        {
+          "id": "01a08271-d0d5-73d2-af31-b11f986bc951",
+          "stage": "align",
+          "state": "succeeded",
+          "remote_handle": "fc-01M2173T9DZDB54AFEYV4EACDT",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 230.316767798,
+            "finishedAt": "2026-09-08T19:18:54.201941Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 3146776576,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 1.4192562080000073,
+              "download": 5.709431427999999,
+              "inference": 181.856245026,
+              "modelLoad": 36.02344961199999
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 6390599680,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": null,
+            "sampleCount": 200,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:15:03.885093Z",
+            "torchAllocatedPeakBytes": 883635712,
+            "torchReservedPeakBytes": 2898264064
+          }
+        },
+        {
+          "id": "01a08275-968a-75af-90b4-c3414e87e7c4",
+          "stage": "diarize",
+          "state": "succeeded",
+          "remote_handle": "fc-01M217BB7JGJD9DXN1PKVAA7PB",
+          "cost_status": "unknown",
+          "actual_cost_micros": null,
+          "reservation_state": "active",
+          "reservation_amount_micros": 1291667,
+          "telemetry": {
+            "complete": true,
+            "effectiveBatch": null,
+            "elapsedSeconds": 479.815164998,
+            "finishedAt": "2026-09-08T19:27:11.040823Z",
+            "gpuName": "NVIDIA L4",
+            "gpuTotalBytes": 24152899584,
+            "gpuUsedPeakBytes": 2363490304,
+            "metricsUnavailable": [
+              "nvidia_smi_pid",
+              "process_rss"
+            ],
+            "phaseSeconds": {
+              "checkpointWrite": 1.7737747820000322,
+              "download": 3.6910741469999993,
+              "inference": 425.68731612,
+              "modelLoad": 29.100708562
+            },
+            "pidGpuUsedPeakBytes": null,
+            "processPeakRssBytes": null,
+            "processRssBytes": 12884885504,
+            "progress": {
+              "percent": 100,
+              "source": "whisperx_callback"
+            },
+            "requestedBatch": null,
+            "sampleCount": 420,
+            "sampleIntervalSeconds": 1.0,
+            "startedAt": "2026-09-08T19:19:11.225601Z",
+            "torchAllocatedPeakBytes": 1707943936,
+            "torchReservedPeakBytes": 2105540608
+          }
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "01a0826d-434c-78d9-98f0-e7a6700b7d22",
+          "sha256": "3ae8e869f9a0f4a4fd021acf1d6afa2d06d0ba9a5293ff48157c297936effdba",
+          "sizeBytes": 532835,
+          "dependencies": []
+        },
+        {
+          "id": "01a08271-cf44-7890-b52b-2388eb0cfc37",
+          "sha256": "54961c5d0f7dd1a4d28d6d61e2d5cdc8262c11a299296b80eaa13726f82899f0",
+          "sizeBytes": 148349,
+          "dependencies": []
+        },
+        {
+          "id": "01a08275-966b-738f-a341-ee1c2101cd28",
+          "sha256": "b3931b68ea8d08faf2ce7fdf29c3a19b2309d0f39aada204fd1ee708c749f2dc",
+          "sizeBytes": 2854654,
+          "dependencies": [
+            "01a08271-cf44-7890-b52b-2388eb0cfc37"
+          ]
+        },
+        {
+          "id": "01a0827d-325d-767e-bb65-59bd59f15c6b",
+          "sha256": "02a4301cb704d6819b70c0b870f81d9402764f82892eba20cb9ade2739648017",
+          "sizeBytes": 3495497,
+          "dependencies": [
+            "01a08275-966b-738f-a341-ee1c2101cd28"
+          ]
+        }
+      ],
+      "transcript": {
+        "sha256": "41a1cd415e0f8044f12c0769cc4cd0846ed7bbef0026c75fc16b3a8f403282a5",
+        "sizeBytes": 2117717,
+        "wordCount": 20588,
+        "speakerCount": 2,
+        "language": "en",
+        "firstWordStartMs": 91,
+        "lastWordEndMs": 9044040
+      },
+      "coverage": {
+        "detected_speech_ms": 7372712,
+        "largest_uncovered_ms": 2119,
+        "overlap_ms": 6718893,
+        "recognition_outside_detector_ms": 798842,
+        "recognized_span_ms": 7517735,
+        "status": "needs_review",
+        "threshold_version": "speech-coverage-thresholds/1-provisional",
+        "uncovered_speech_ms": 653819,
+        "uncovered_tail_ms": 434,
+        "warnings": [
+          "detector and recognition disagree materially; listen and review"
+        ]
+      },
+      "workflowWallSeconds": 1084.81,
+      "comparisonToExistingAccepted": {
+        "deletedTokens": 6,
+        "insertedTokens": 7,
+        "matchedCasefoldTokens": 20581,
+        "matchingTokenSpeakerIdAgreement": 1.0,
+        "matchingTokenTimingAbsMsMedian": 0.0,
+        "matchingTokenTimingAbsMsP95": 0,
+        "newLastWordEndMs": 9044040,
+        "newSpeakers": 2,
+        "newWords": 20588,
+        "oldLastWordEndMs": 9044040,
+        "oldSha256": "c4222ccd028e5be24270c8411baaba589000bf997578161b322b674c8e1b51be",
+        "oldSpeakers": 2,
+        "oldWords": 20587,
+        "qualification": "objective output comparison; no human accuracy claim"
+      }
+    }
+  ],
+  "aggregate": {
+    "physicalAttempts": 9,
+    "retainedUnknownCostExposureMicros": 11625003,
+    "actualInvoiceCostMicros": null
+  },
+  "limits": [
+    "One long source is not human accuracy evidence",
+    "Sampled whole-device peaks exclude unavailable process high-water metrics",
+    "No live OOM occurred",
+    "Reservations are not an invoice ceiling",
+    "Editorial gateway auditions have not run"
+  ],
+  "cleanup": {
+    "ownedR2ObjectsDeleted": 28,
+    "ownedR2PrefixesVerifiedEmpty": 4,
+    "dedicatedDatabaseDropped": true,
+    "dedicatedNamespaceDeleted": true,
+    "temporaryCredentialFilesDeleted": true,
+    "additiveAppStopped": true,
+    "tasksAtStop": 0,
+    "privateEvidencePreserved": true,
+    "sharedStagingPreserved": true
+  }
+}

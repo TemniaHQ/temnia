@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "ChapterReviewOutput": {
+      "$id": "#/$defs/ChapterReviewOutput",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "conflict",
+            "refused"
+          ]
+        }
+      },
+      "required": [
+        "message",
+        "mutationKey",
+        "revision",
+        "runId",
+        "state"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterReviewOutput"
+    }
+  },
+  "$id": "ChapterReviewOutput.json",
+  "$ref": "#/$defs/ChapterReviewOutput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

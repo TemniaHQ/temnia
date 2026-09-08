@@ -1,0 +1,29 @@
+{
+  "$defs": {
+    "SeededScope": {
+      "$id": "#/$defs/SeededScope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "default": "0192e8a0-0000-7000-8000-000000000001",
+          "type": "string",
+          "const": "0192e8a0-0000-7000-8000-000000000001"
+        },
+        "userId": {
+          "default": "0192e8a0-0000-7000-8000-000000000002",
+          "type": "string",
+          "const": "0192e8a0-0000-7000-8000-000000000002"
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "SeededScope"
+    }
+  },
+  "$id": "SeededScope.json",
+  "$ref": "#/$defs/SeededScope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

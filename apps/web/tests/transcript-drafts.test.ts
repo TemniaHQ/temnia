@@ -11,6 +11,7 @@ function draft(id: number): WordEdit {
     draft: `correction ${id}`,
     error: null,
     id,
+    identityId: `word-${id}`,
     index: id,
     original: `word ${id}`,
     pending: false,
@@ -63,5 +64,56 @@ describe("word draft ownership", () => {
       draft: "correction 1",
       original: "new current word",
     });
+  });
+
+  it("tracks the stable identity after a splice and retains a deleted target", () => {
+    let moved = wordDrafts(EMPTY_DRAFTS, { edit: draft(1), type: "open" });
+    moved = wordDrafts(moved, {
+      identityIds: ["new", "word-1"],
+      type: "rebase",
+    });
+    expect(moved.drafts[0]).toMatchObject({ identityId: "word-1", index: 1 });
+    moved = wordDrafts(moved, { identityIds: ["new"], type: "rebase" });
+    expect(moved.drafts[0]).toMatchObject({
+      error: "That word was removed. Choose a new word to reapply this draft.",
+      identityId: "word-1",
+      index: -1,
+    });
+    moved = wordDrafts(moved, {
+      id: 1,
+      identityId: "replacement",
+      index: 0,
+      original: "replacement word",
+      revision: 3,
+      type: "retarget",
+    });
+    expect(moved.drafts[0]).toMatchObject({
+      baseRevision: 3,
+      draft: "correction 1",
+      error: null,
+      identityId: "replacement",
+      index: 0,
+      original: "replacement word",
+    });
+  });
+
+  it("drops an unchanged selection after structure but retains typed text", () => {
+    const unchanged = { ...draft(1), draft: "word 1" };
+    let selected = wordDrafts(EMPTY_DRAFTS, {
+      edit: unchanged,
+      type: "open",
+    });
+    selected = wordDrafts(selected, { type: "closeAfterStructure" });
+    expect(selected).toEqual(EMPTY_DRAFTS);
+
+    let typed = wordDrafts(EMPTY_DRAFTS, {
+      edit: unchanged,
+      type: "open",
+    });
+    typed = wordDrafts(typed, { text: "typed correction", type: "change" });
+    typed = wordDrafts(typed, { type: "closeAfterStructure" });
+    expect(typed.activeId).toBeNull();
+    expect(typed.drafts).toHaveLength(1);
+    expect(typed.drafts[0]?.draft).toBe("typed correction");
   });
 });

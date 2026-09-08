@@ -29,14 +29,32 @@ function downloadName(title: string, format: CaptionFormat): string {
 
 export async function captionResponse(
   sourceId: string,
-  format: CaptionFormat
+  format: CaptionFormat,
+  revision?: number
 ): Promise<Response> {
   const state = await getTranscript(sourceId);
   if (!state?.current || state.row.status !== "ready") {
     return new Response(null, { status: 404 });
   }
-  const content = await readRevision(state.current.storageKey);
-  const cues = buildCues(content, state.row.speakerLabels);
+  const selected = revision
+    ? state.revisions.find((item) => item.revision === revision)
+    : state.current;
+  if (!selected) {
+    return new Response(null, { status: 404 });
+  }
+  const content = await readRevision(selected.storageKey);
+  const parsed = TranscriptRevisionAnnotationsSchema.safeParse(
+    selected.metadata.annotations
+  );
+  const labels = parsed.success
+    ? Object.fromEntries(
+        Object.entries(parsed.data.speakerIdentities).map(([raw, identity]) => [
+          raw,
+          identity.label,
+        ])
+      )
+    : state.row.speakerLabels;
+  const cues = buildCues(content, labels);
   const { contentType, render } = FORMATS[format];
   return new Response(render(cues), {
     headers: {
@@ -47,8 +65,10 @@ export async function captionResponse(
       "Content-Type": contentType,
       // A correction writes a new revision and the number is in the tag, so a
       // cached export is only ever the export of the revision it names.
-      ETag: `"rev-${state.current.revision}"`,
+      ETag: `"rev-${selected.revision}"`,
     },
     status: 200,
   });
 }
+
+import { TranscriptRevisionAnnotationsSchema } from "@temnia/contracts";

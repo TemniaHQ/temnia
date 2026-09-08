@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DURATION_SLACK_MS,
+  TranscriptCorrectionCommandSchema,
+  TranscriptRevisionAnnotationsSchema,
   type TranscriptV1,
   TranscriptV1Schema,
   TranscriptWordSchema,
@@ -121,5 +123,26 @@ describe("the transcript contract", () => {
       `${PREFIX}transcript/rev-2.json`
     );
     expect(transcriptRawKey(PREFIX, 1)).toBe(`${PREFIX}transcript/raw-1.json`);
+  });
+
+  it("rejects a forward undo and duplicate stable identities", () => {
+    expect(
+      TranscriptCorrectionCommandSchema.safeParse({
+        action: "undo",
+        baseRevision: 3,
+        mutationKey: "01992ffe-0a00-7000-8000-000000000001",
+        targetRevision: 3,
+      }).success
+    ).toBe(false);
+    expect(
+      TranscriptRevisionAnnotationsSchema.safeParse({
+        speakerIdentities: {},
+        version: 1,
+        wordIdentities: [
+          { id: "same", parentIds: [], timingOrigin: "provider" },
+          { id: "same", parentIds: [], timingOrigin: "manual" },
+        ],
+      }).success
+    ).toBe(false);
   });
 });
