@@ -1,6 +1,8 @@
 # Temnia architecture and original-review status — 2026-09-08
 
-Runtime-code audit of PR #23, `fix/s2-review-findings`, at commit `7135852`. This report records the completed live GPU check and separates implemented fixes from unfinished architecture. No runtime code changed during this validation session.
+**Staging update:** PR #23 was subsequently merged as `555eb24`, the paired protocol-4 rollout completed, and a 151-minute recording passed one end-to-end transcription run in 11 minutes. [Measured evidence and limits](s2-staging-qualification-2026-09-08.md), [new-PR implementation plan](../plans/chapter-workflow-followup-360-view.md). The architecture gaps below remain open.
+
+Initial runtime-code audit of PR #23, `fix/s2-review-findings`, at commit `7135852`. This report records the completed live GPU check and separates implemented fixes from unfinished architecture. No runtime code changed during this validation session.
 
 **Conclusion: the fourteen second-review fixes are implemented, but the complete original review and proposed architecture are not.** Much of the architecture is adopted in documents only. The original hardening plan explicitly defers I16, I17, I24, I25, I28, I31 and language routing in I18. Sprint placement is an organizational choice, not a reason to call those items fixed.
 
@@ -28,7 +30,7 @@ Runtime-code audit of PR #23, `fix/s2-review-findings`, at commit `7135852`. Thi
 | I18 — language/scale | Partly fixed: ceiling checked before embeddings and truncation reported. No language routing, long-sentence recovery or implemented hierarchical fallback. [The current refusal](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/apps/pipeline/src/temnia_pipeline/substrate/changepoint.py#L226) recommends caller-side splitting/hierarchical processing. |
 | I24/I25 — search/edit semantics | Deferred. Phrase matching still fails across words; the edit contract supports replacement and turn reassignment, not deletion/split/merge or versioned speaker identity. |
 | I28 — memory envelope | Unqualified robustness risk, not a reproduced OOM. ASR stays referenced as alignment/diarization models load; batching is fixed and there are no intermediate reusable checkpoints or controlled OOM downgrade. [Model lifetimes](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/apps/pipeline/src/temnia_pipeline/modal_app.py#L482) |
-| I29 — real speech path | Mechanism implemented and live short-sample proof now passed; rollout and representative scale proof remain separate. See measured result below. |
+| I29 — real speech path | Mechanism implemented; short smoke, paired staging rollout and one 151-minute transcription now passed. Broader input/quality and failure-recovery qualification remain separate. See the linked staging report. |
 | I31 — attempt cost and actual compute liveness | Still open. GPU timing is returned only on success. Temporal may retry `transcribe_source` under the same claimed attempt; failed compute is absent from successful finalization. Terminal failure updates state but adds no cost record. [Workflow](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/apps/pipeline/src/temnia_pipeline/workflows.py#L254), [failure path](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/apps/pipeline/src/temnia_pipeline/transcription/activities.py#L289) |
 
 The explicit deferral record is [the original hardening plan](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/docs/plans/s2-hardening-360-view.md#L50). Known-handle reuse does not close an unknown provider submission acknowledgement; HLS presence/size and playlist hashes do not establish integrity against same-size binary media corruption. Those limits are already [documented](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/docs/design/harness-review-and-architecture-2026-09-07.md#L515).
@@ -41,14 +43,14 @@ The explicit deferral record is [the original hardening plan](https://github.com
 
 The audited review header's blanket statement that [“the defects are fixed”](https://github.com/TemniaHQ/temnia/blob/713585241af6e8dc55eafff27fde8f4d8e53a6bc/docs/design/harness-review-and-architecture-2026-09-07.md#L5) overstated the narrower implementation. This documentation follow-up corrects that header to distinguish fixes, partial mitigations and deferrals.
 
-## Measured live GPU result
+## Initial temporary-app smoke (before the later staging rollout)
 
 The standalone smoke passed against temporary deployed app `temnia-media-smoke-7135852` in environment `staging`, exact source build `3f2c496c9aa90a16ed74f4eb35bd38ebe4513eac7b17e8b3a3eeb6f33bd9ed55`.
 
 - Nine-second speech sample: 27 words, language `en`, one speaker, zero interpolated words.
 - All expected words present.
 - `gpuSeconds`: 29.2; measured wall time: 35.9 seconds.
-- Existing `temnia-media` remains protocol 3.
+- At this initial smoke, existing `temnia-media` remained protocol 3. The later staging report records its protocol-4 rollout.
 
 This demonstrates the temporary deployed build's real short speech path. It does not establish a production rollout, compatibility of old work with protocol 4, long-source throughput, peak VRAM, failed-attempt economics or the completed editing harness.
 
@@ -81,6 +83,8 @@ Returned smoke report:
 `gpuSeconds` measures elapsed time inside the GPU function; it is not a retrieved Modal invoice or full billed-container lifetime. `wallSeconds` measures the deployed smoke helper after its initial setup. Neither number establishes cost per audio-hour.
 
 ## Completion order
+
+The [follow-up plan](../plans/chapter-workflow-followup-360-view.md) starts with remaining S2 qualification and reliability, then builds the shared foundation and chapter path. Within that work:
 
 1. Resolve the dispatch/budget/unknown-outcome schema contradictions and define a generalized provider-attempt ledger.
 2. Persist versioned source evidence and canonical edit contracts, including uncertainty and correction dependencies.
