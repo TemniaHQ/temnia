@@ -141,6 +141,17 @@ would be too late. Lock order is source, run, operation, attempt/reservation whe
 are required. [Postgres row locks](https://www.postgresql.org/docs/current/explicit-locking.html)
 provide the exclusion; object storage is not part of the database transaction.
 
+A failed ingest is not automatically an unknown external writer. A bounded history query for the
+exact closed run may prove that it rejected the file during `probe_source`, before any media
+writer was scheduled. The locked source must also have no persisted probe duration; that marker
+commits before every transcode schedule and is never cleared by retry, ruling out an earlier run
+having admitted a writer. Eligible histories are the known `claim_source → probe_source →
+fail_source` failure or an explicitly false claim followed by `NotClaimable`. The latter lets a
+late retry remain harmless after deletion is fenced; retry metadata updates exclude fenced rows.
+Writer-bearing, incomplete, unavailable or oversized histories and
+other terminal states remain fenced. This preserves deletion of an unreadable upload without
+allowing a failed remote submission to be mistaken for confirmed cleanup.
+
 ## Paid attempts and recovery
 
 An operation can have several admitted provider attempts. Accepted customer transcription minutes and

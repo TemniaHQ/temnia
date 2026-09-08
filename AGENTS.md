@@ -434,6 +434,20 @@ would turn identical evidence into duplicated artifacts and storage metering. Th
 regression proves two runs share one artifact/storage entry, and changed content or lineage still
 conflicts. The complete browser journey passes through the second run.
 
+**2026-09-09 — Deletion distinguishes proven probe failure from uncertain media writers.**
+The production-image resume test exposed a blanket `FAILED` workflow fence: even an unreadable
+file rejected before external media dispatch could never be deleted. Keep the source-row fence
+and retained-history refusal. Any failed-run exception also requires `duration_ms IS NULL` under
+that lock: successful probe persistence precedes every transcode schedule, and retry never clears
+it. Bounded, complete history for the exact run must prove either `claim_source → probe_source →
+fail_source` with the known non-retryable probe failure, or a claim completed with `false` followed
+by non-retryable `NotClaimable`, with no writer-capable activity or child/external dispatch. The
+claim-only case handles a retry arriving after deletion was fenced; retry metadata updates cannot
+mutate a fenced source.
+Missing, oversized, truncated or ambiguous history and other terminal outcomes remain fenced.
+Allowing every failed workflow was rejected because a lost remote acknowledgement can leave a
+writer running. The existing resumed-upload deletion assertion remains the acceptance test.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

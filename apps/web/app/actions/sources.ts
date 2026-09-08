@@ -16,15 +16,17 @@ import {
   usageLedger,
 } from "@temnia/db";
 import { WorkflowNotFoundError } from "@temporalio/client";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
 import { deletePrefix } from "@/lib/storage/prefix";
 import { getTemporalClient } from "@/lib/temporal/client";
+import { provesPreWriterIngestFailure } from "@/lib/temporal/ingest-deletion-proof";
 import { abortMultipart } from "@/lib/uploads/server";
 
 const IdSchema = z.uuid();
+const TEMPORAL_RPC_DEADLINE_MS = 5000;
 
 export type SourceActionResult = { ok: true } | { ok: false; message: string };
 
@@ -81,16 +83,39 @@ export async function retryIngest(
     workflowId,
     workflowIdConflictPolicy: "USE_EXISTING",
   });
-  await scoped((tx) =>
-    tx
+  const retryAccepted = await scoped(async (tx) => {
+    const updated = await tx
       .update(source)
       .set({
         errorMessage: null,
         ingestWorkflowId: workflowId,
         status: "uploaded",
       })
-      .where(and(eq(source.id, id.data), eq(source.status, "failed")))
-  );
+      .where(
+        and(
+          eq(source.id, id.data),
+          eq(source.status, "failed"),
+          isNull(source.deletionRequestedAt)
+        )
+      )
+      .returning({ id: source.id });
+    if (updated.length > 0) {
+      return true;
+    }
+    // The workflow start is outside the source transaction. A deletion may
+    // have installed its durable fence during that RPC. The claim activity
+    // observes the same fence, and this read prevents reporting that the
+    // fenced source was successfully retried.
+    const [current] = await tx
+      .select({ deletionRequestedAt: source.deletionRequestedAt })
+      .from(source)
+      .where(eq(source.id, id.data))
+      .limit(1);
+    return Boolean(current && !current.deletionRequestedAt);
+  });
+  if (!retryAccepted) {
+    return { message: "this source cannot be retried right now", ok: false };
+  }
   revalidatePath(`/projects/${started.projectId}`);
   return { ok: true };
 }
@@ -117,6 +142,7 @@ export async function deleteSource(
     const [row] = await tx
       .select({
         deletionRequestedAt: source.deletionRequestedAt,
+        durationMs: source.durationMs,
         projectId: source.projectId,
         status: source.status,
         transcriptStatus: transcript.status,
@@ -181,10 +207,21 @@ export async function deleteSource(
     for (const workflowId of [`ingest-${id.data}`, `transcribe-${id.data}`]) {
       try {
         // biome-ignore lint/performance/noAwaitInLoops: both deterministic external writers need individual closure evidence
-        const description = await client.workflow
-          .getHandle(workflowId)
-          .describe();
+        const description = await client.withDeadline(
+          Date.now() + TEMPORAL_RPC_DEADLINE_MS,
+          () => client.workflow.getHandle(workflowId).describe()
+        );
         if (description.status.name === "COMPLETED") {
+          continue;
+        }
+        if (
+          workflowId === `ingest-${id.data}` &&
+          found.durationMs === null &&
+          description.status.name === "FAILED" &&
+          // The bounded exact-run proof reads Temporal only after the source
+          // fence is durable and before any object-storage side effect.
+          (await provesPreWriterIngestFailure(client, workflowId, description))
+        ) {
           continue;
         }
         if (

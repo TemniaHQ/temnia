@@ -34,7 +34,8 @@ const TERMINAL = resolve(process.cwd(), "e2e/fixtures/master-12s.mp4");
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
 // Machine revisions are `rev-N.json`; a correction's key carries its attempt.
-const REVISION_URL = /transcript\/rev-\d+(-[0-9a-f]{8})?\.json/;
+const REVISION_URL =
+  /transcript\/rev-\d+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{16})?\.json(?:\?|$)/;
 // The last two are what a nesting mistake looks like: the parser closes the
 // offending tag and the server HTML and the client tree stop agreeing, which
 // on a production build is React #418 and nothing else (the S1 lesson).

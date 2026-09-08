@@ -1,11 +1,17 @@
 import { resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import {
+  TranscriptRevisionAnnotationsSchema,
+  TranscriptV1Schema,
+} from "@temnia/contracts";
+import { wordsByUtterance } from "@/lib/transcript/utterances";
 import speech from "../tests/fixtures/speech-40s.transcript.json" with {
   type: "json",
 };
 import { uploadFixture } from "./helpers/upload";
 
-const REVISION_URL = /transcript\/rev-\d+(-[0-9a-f]{8})?\.json/;
+const REVISION_URL =
+  /transcript\/rev-\d+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{16})?\.json(?:\?|$)/;
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
 const INGEST_TIMEOUT_MS = 180_000;
@@ -39,14 +45,35 @@ async function ready(page: Page) {
   });
 }
 
+async function annotations(page: Page, sourceId: string, revision: number) {
+  const response = await page.request.get(
+    `/api/sources/${sourceId}/transcript-annotations?revision=${revision}`
+  );
+  expect(response.ok()).toBe(true);
+  const value = (await response.json()) as { annotations: unknown };
+  return TranscriptRevisionAnnotationsSchema.parse(value.annotations);
+}
+
 test("a delayed revision fetch cannot reassign a different speaker turn", async ({
   page,
 }) => {
   test.setTimeout(INGEST_TIMEOUT_MS + 90_000);
   const sourceId = await source(page);
   await ready(page);
+  const originalAnnotations = await annotations(page, sourceId, 1);
+  const original = TranscriptV1Schema.parse(speech);
+  const [, , , originalTurn] = wordsByUtterance(
+    original.words,
+    original.utterances
+  );
+  expect(originalTurn).toBeTruthy();
+  const originalTurnIds = (originalTurn ?? []).map(
+    (index) => originalAnnotations.wordIdentities[index]?.id
+  );
+  expect(originalTurnIds.every((id) => typeof id === "string")).toBe(true);
   const fetchGate = Promise.withResolvers<void>();
   let waiting = false;
+  let interceptedRevisionUrl = "";
   const submitted: unknown[][] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && request.headers()["next-action"]) {
@@ -56,6 +83,7 @@ test("a delayed revision fetch cannot reassign a different speaker turn", async 
   await page.route(REVISION_URL, async (route) => {
     if (route.request().url().includes("/rev-2-")) {
       waiting = true;
+      interceptedRevisionUrl = route.request().url();
       await fetchGate.promise;
     }
     await route.continue();
@@ -68,6 +96,7 @@ test("a delayed revision fetch cannot reassign a different speaker turn", async 
       .getByRole("menuitem", { exact: true, name: "Speaker 1" })
       .click();
     await expect.poll(() => waiting, { timeout: 20_000 }).toBe(true);
+    expect(interceptedRevisionUrl).toContain("/rev-2-");
     await expect(page.locator("[data-revision]")).toHaveAttribute(
       "data-revision",
       "1"
@@ -79,8 +108,12 @@ test("a delayed revision fetch cannot reassign a different speaker turn", async 
     await expect(page.getByTestId("transcript-stale")).toBeVisible({
       timeout: 20_000,
     });
-    expect(submitted.at(-1)?.[1]).toBe(1);
-    expect(submitted.at(-1)?.[2]).toMatchObject({ utteranceIndex: 3 });
+    expect(submitted.at(-1)?.[0]).toBe(sourceId);
+    expect(submitted.at(-1)?.[1]).toMatchObject({
+      action: "reassign_speaker",
+      baseRevision: 1,
+      targetIds: originalTurnIds,
+    });
     const exported = await page.request.get(
       `/api/sources/${sourceId}/transcript.vtt`
     );
@@ -127,7 +160,17 @@ test("late successful, refused, and failed saves preserve the next word's draft"
       }
       const args = JSON.parse(request.postData() ?? "[]") as unknown[];
       if (outcome === "refused") {
-        args[1] = 999;
+        const [, command] = args;
+        if (
+          !command ||
+          typeof command !== "object" ||
+          Array.isArray(command) ||
+          typeof (command as { baseRevision?: unknown }).baseRevision !==
+            "number"
+        ) {
+          throw new Error("unexpected transcript action request shape");
+        }
+        args[1] = { ...command, baseRevision: 999 };
       }
       // Use the real server action's response encoding, including its stale
       // refusal, but control when that response reaches this editor.

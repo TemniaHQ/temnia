@@ -110,6 +110,11 @@ must match. Provider-reported, reconciled and unknown expense remain distinct.
 Retained harness history prevents source deletion through the ordinary delete action. Never delete
 its object prefix to work around that refusal. Cancellation, retention and provider reconciliation
 must finish before a future explicit history-deletion operation can remove those dependencies.
+An ordinary unreadable upload can be deleted when bounded, complete history proves that its exact
+failed ingest run never scheduled an external media writer and no earlier successful probe is
+recorded. A late retry that explicitly failed to claim the fenced source is also eligible when
+its complete history proves no dispatch. Other failed or uncertain outcomes
+remain fenced; the delete action explains that distinction and does not remove their objects.
 
 ## Evaluate the result
 

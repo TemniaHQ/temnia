@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   ),
   deletePrefix: vi.fn(),
   getClient: vi.fn(),
+  provesPreWriterIngestFailure: vi.fn(),
   scoped: vi.fn(),
 }));
 
@@ -32,26 +33,46 @@ vi.mock("@/lib/uploads/server", () => ({
 vi.mock("@/lib/temporal/client", () => ({
   getTemporalClient: mocks.getClient,
 }));
+vi.mock("@/lib/temporal/ingest-deletion-proof", () => ({
+  provesPreWriterIngestFailure: mocks.provesPreWriterIngestFailure,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 function transaction(responses: unknown[][], events: string[]) {
   return {
+    delete: () => ({
+      where: () => {
+        events.push("source-delete");
+        return Promise.resolve([]);
+      },
+    }),
     execute: () => {
       events.push("source-lock");
       return Promise.resolve([]);
     },
+    insert: () => ({ values: () => Promise.resolve([]) }),
     select: () => {
       const query = {
         from: () => query,
         leftJoin: () => query,
         limit: () => Promise.resolve(responses.shift() ?? []),
         orderBy: () => query,
+        // biome-ignore lint/suspicious/noThenProperty: this intentionally models an awaited Drizzle query
+        then: (resolve: (value: unknown[]) => unknown) =>
+          Promise.resolve(responses.shift() ?? []).then(resolve),
         where: () => query,
       };
       return query;
     },
     update: () => ({
-      set: () => ({ where: () => Promise.resolve([]) }),
+      set: () => ({
+        where: () => {
+          const result = Promise.resolve([]);
+          return Object.assign(result, {
+            returning: () => Promise.resolve([]),
+          });
+        },
+      }),
     }),
   };
 }
@@ -70,6 +91,7 @@ beforeEach(() => {
   process.env.HARNESS_ENABLED = "1";
   process.env.HARNESS_MAX_RUN_BUDGET_MICROS = "2000000";
   process.env.HARNESS_ROUTE_SNAPSHOT_ID = "snapshot-v1";
+  mocks.provesPreWriterIngestFailure.mockResolvedValue(false);
 });
 
 describe("source deletion fence", () => {
@@ -80,6 +102,7 @@ describe("source deletion fence", () => {
         [
           {
             deletionRequestedAt: null,
+            durationMs: null,
             projectId: "project",
             status: "ready",
             transcriptStatus: "ready",
@@ -140,6 +163,7 @@ describe("source deletion fence", () => {
         [
           {
             deletionRequestedAt: null,
+            durationMs: 24_000,
             projectId: "project",
             status: "ready",
             transcriptStatus: "ready",
@@ -162,6 +186,7 @@ describe("source deletion fence", () => {
         getHandle: () => ({ cancel, describe: describeWorkflow }),
       })
     );
+    mocks.provesPreWriterIngestFailure.mockResolvedValue(true);
 
     await expect(deleteSource(SOURCE)).resolves.toEqual({
       message:
@@ -170,7 +195,62 @@ describe("source deletion fence", () => {
     });
     expect(describeWorkflow).toHaveBeenCalledTimes(2);
     expect(cancel).not.toHaveBeenCalled();
+    expect(mocks.provesPreWriterIngestFailure).not.toHaveBeenCalled();
     expect(mocks.deletePrefix).not.toHaveBeenCalled();
+  });
+
+  it("deletes after an exact known pre-writer ingest failure proof", async () => {
+    const events: string[] = [];
+    const tx = transaction(
+      [
+        [
+          {
+            deletionRequestedAt: null,
+            durationMs: null,
+            projectId: "project",
+            status: "failed",
+            transcriptStatus: null,
+            workflowId: `ingest-${SOURCE}`,
+          },
+        ],
+        [],
+        [],
+        [],
+        [],
+        [{ total: 0 }],
+      ],
+      events
+    );
+    mocks.scoped.mockImplementation((fn) => fn(tx, scope));
+    const description = {
+      historyLength: 23,
+      historySize: 10_342,
+      runId: RUN,
+      status: { name: "FAILED" },
+      type: "IngestWorkflow",
+    };
+    mocks.getClient.mockResolvedValue(
+      temporalClient({
+        getHandle: (workflowId: string) => ({
+          describe: async () =>
+            workflowId.startsWith("transcribe-")
+              ? { status: { name: "COMPLETED" } }
+              : description,
+        }),
+      })
+    );
+    mocks.provesPreWriterIngestFailure.mockResolvedValue(true);
+
+    await expect(deleteSource(SOURCE)).resolves.toEqual({ ok: true });
+    expect(mocks.provesPreWriterIngestFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      `ingest-${SOURCE}`,
+      description
+    );
+    expect(mocks.deletePrefix).toHaveBeenCalledWith(
+      `org/${scope.organizationId}/source/${SOURCE}/`
+    );
+    expect(events).toContain("source-delete");
   });
 });
 
