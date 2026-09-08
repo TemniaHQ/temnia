@@ -2,7 +2,7 @@
 
 Date: 2026-09-07  
 Status: review and design proposal; implementation changes are not authorized by this document.  
-Reconciled 2026-09-08: the architecture is adopted with amendments (AGENTS.md decision of that date; `docs/plans/s3-harness-spec.md`), and the defects are fixed on `fix/s2-review-findings` (`docs/plans/s2-hardening-360-view.md`, which maps every finding to a fix or a deferral).  
+Reconciled 2026-09-08: the architecture is adopted in design with amendments, not fully implemented. The fourteen second-review fixes are implemented on `fix/s2-review-findings`; original findings include partial mitigations and explicit deferrals. See the [implementation status and measured live GPU result](harness-implementation-status-2026-09-08.md) for the code/design distinction and remaining specification inconsistencies.
 Scope: PR #20's S2 implementation, the proposed editing harness, improved requirements, evaluation, reliability, and unit economics.
 
 Navigation: [implementation issues](#3-issues-in-the-current-implementation) · [stack](#4-stack-i-would-choose) · [architecture](#5-proposed-architecture) · [model selection](#6-perception-and-model-selection) · [cost and recovery](#7-cost-and-recovery-design) · [requirement changes](#8-requirements-i-would-improve) · [evaluation](#9-evaluation-and-release-proof) · [implementation order](#11-proposed-implementation-order).
