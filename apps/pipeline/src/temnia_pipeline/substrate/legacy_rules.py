@@ -75,7 +75,9 @@ class PackedParagraphs:
     candidates: tuple[BoundaryCandidate, ...]
 
 
-def pack_paragraphs(sentences: Sequence[Sentence]) -> PackedParagraphs:
+def pack_paragraphs(
+    sentences: Sequence[Sentence], *, whole_extent: bool = False
+) -> PackedParagraphs:
     """Group whole sentences into paragraphs by the legacy rule.
 
     A paragraph breaks on a speaker change, on a gap longer than
@@ -84,6 +86,12 @@ def pack_paragraphs(sentences: Sequence[Sentence]) -> PackedParagraphs:
     `pause`, speaker change first when both fired); the third is not, and the
     module docstring says why. The first paragraph opens the media rather than
     cutting it, so it is never a candidate either.
+
+    `whole_extent` ends a paragraph at the latest end of any sentence in it
+    rather than at its last sentence's end, which differ when speech overlaps.
+    The legacy took the last sentence's end and its parity oracle records
+    that, so the legacy segmenter keeps the default; the SaT segmenter, which
+    is production, asks for the whole extent (S2 review, I11).
     """
     paragraphs: list[Paragraph] = []
     candidates: list[BoundaryCandidate] = []
@@ -95,7 +103,11 @@ def pack_paragraphs(sentences: Sequence[Sentence]) -> PackedParagraphs:
             Paragraph(
                 id=len(paragraphs),
                 start_ms=sentences[start].start_ms,
-                end_ms=sentences[end].end_ms,
+                end_ms=(
+                    max(sentence.end_ms for sentence in sentences[start : end + 1])
+                    if whole_extent
+                    else sentences[end].end_ms
+                ),
                 sentence_start=start,
                 sentence_end=end,
                 speaker=sentences[start].speaker,

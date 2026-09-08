@@ -1,9 +1,10 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import {
   sourcePrefix,
   TASK_QUEUES,
-  transcriptRevisionKey,
+  transcriptCorrectionKey,
   WORKFLOWS,
 } from "@temnia/contracts";
 import {
@@ -12,7 +13,11 @@ import {
   transcriptRevision,
   usageLedger,
 } from "@temnia/db";
-import { and, eq, sql } from "drizzle-orm";
+import {
+  type WorkflowExecutionStatusName,
+  WorkflowNotFoundError,
+} from "@temporalio/client";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
@@ -23,7 +28,11 @@ import {
   STALE_REVISION_MESSAGE,
   type TranscriptEdits,
 } from "@/lib/transcript/edits";
-import { readRevision, writeRevision } from "@/lib/transcript/queries";
+import {
+  discardRevision,
+  readRevision,
+  writeRevision,
+} from "@/lib/transcript/queries";
 
 const IdSchema = z.uuid();
 
@@ -48,14 +57,48 @@ export type TranscriptActionResult =
   | { ok: true }
   | { invalid?: true; message: string; ok: false; stale?: true };
 
+const CLOSED_EXECUTIONS = new Set<WorkflowExecutionStatusName>([
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+  "TERMINATED",
+  "TIMED_OUT",
+]);
+
+const STILL_RUNNING_MESSAGE = "Transcription is still running.";
+const NOT_QUEUED_MESSAGE = "Transcription could not be queued. Try again.";
+const STATUS_UNKNOWN_MESSAGE =
+  "Transcription status could not be checked. Try again in a moment.";
+const START_UNKNOWN_MESSAGE =
+  "Could not confirm whether transcription started. Try again in a moment.";
+const ROW_CHANGED_MESSAGE =
+  "Transcription changed while you were retrying. Refresh and try again.";
+
+/** Control-plane uncertainty is never permission to replace a run. */
+async function transcriptionExecution(
+  sourceId: string
+): Promise<"running" | "closed" | "unknown"> {
+  try {
+    const client = await getTemporalClient();
+    const description = await client.workflow
+      .getHandle(`transcribe-${sourceId}`)
+      .describe();
+    if (CLOSED_EXECUTIONS.has(description.status.name)) {
+      return "closed";
+    }
+    // UNKNOWN provides no evidence of closure; CONTINUED_AS_NEW may already
+    // have a live successor, so neither authorizes replacing its database row.
+    return description.status.name === "RUNNING" ? "running" : "unknown";
+  } catch (error) {
+    return error instanceof WorkflowNotFoundError ? "closed" : "unknown";
+  }
+}
+
 /**
- * Start transcription again for a source whose previous run is over.
- *
- * A `ready` or `failed` row is parked back at `pending` first, in the same
- * scoped transaction that reads it: the claim activity refuses to interrupt a
- * run, so the user's Retry is the only thing that says a finished transcript
- * may be replaced. A row still `processing` is left alone and the workflow id
- * policy makes a second start a no-op anyway.
+ * Reserve only the row we inspected, after confirming its workflow is closed.
+ * The temporary dispatch token in run_id owns this pending transition; the
+ * worker replaces it with its real Temporal run id when it claims the row.
+ * This also distinguishes concurrent retries of an already-pending row.
  */
 export async function retryTranscription(
   sourceId: string
@@ -64,65 +107,135 @@ export async function retryTranscription(
   if (!id.success) {
     return { message: "not a source id", ok: false };
   }
-  const started = await scoped(async (tx, scope) => {
+  const found = await scoped(async (tx) => {
     const [row] = await tx
       .select({
         durationMs: source.durationMs,
-        projectId: source.projectId,
         status: source.status,
+        transcriptAttempts: transcript.attempts,
+        transcriptRevision: transcript.currentRevision,
+        transcriptRunId: transcript.runId,
         transcriptStatus: transcript.status,
+        // Preserve Postgres microseconds: a JS Date would truncate them and
+        // make an unchanged Python-written row fail the comparison below.
+        transcriptUpdatedAt: sql<string | null>`${transcript.updatedAt}::text`,
       })
       .from(source)
       .leftJoin(transcript, eq(transcript.sourceId, source.id))
       .where(eq(source.id, id.data))
       .limit(1);
-    if (row?.status !== "ready" || row.durationMs === null) {
-      return null;
-    }
-    if (row.transcriptStatus === "processing") {
-      return null;
-    }
-    if (row.transcriptStatus) {
-      await tx
-        .update(transcript)
-        .set({
-          errorMessage: null,
-          percent: null,
-          stage: null,
-          status: "pending",
-        })
-        .where(eq(transcript.sourceId, id.data));
-    }
-    const prefix = sourcePrefix(scope.organizationId, id.data);
-    return {
-      input: {
-        artifactPrefix: prefix,
-        audioKey: `${prefix}audio/audio.m4a`,
-        durationMs: row.durationMs,
-        scope,
-        sourceId: id.data,
-      },
-      projectId: row.projectId,
-    };
+    return row;
   });
-  if (!started) {
+  if (found?.status !== "ready" || found.durationMs === null) {
     return {
       message: "this transcript cannot be retried right now",
       ok: false,
     };
   }
-  const client = await getTemporalClient();
-  await client.workflow.start(WORKFLOWS.transcribe, {
-    args: [started.input],
-    taskQueue: TASK_QUEUES.pipeline,
-    workflowExecutionTimeout: "6 hours",
-    // USE_EXISTING attaches to a run already going rather than failing; the
-    // reuse policy is what lets a completed or failed run start again under
-    // the same id, which is how a retry keeps one workflow per source.
-    workflowId: `transcribe-${id.data}`,
-    workflowIdConflictPolicy: "USE_EXISTING",
-    workflowIdReusePolicy: "ALLOW_DUPLICATE",
+  const execution = await transcriptionExecution(id.data);
+  if (execution !== "closed") {
+    return {
+      message:
+        execution === "running"
+          ? STILL_RUNNING_MESSAGE
+          : STATUS_UNKNOWN_MESSAGE,
+      ok: false,
+    };
+  }
+  const { durationMs } = found;
+  const dispatchToken = `dispatch:${randomUUID()}`;
+  const started = await scoped(async (tx, scope) => {
+    const reserved = {
+      errorMessage: null,
+      heartbeatAt: null,
+      percent: null,
+      runId: dispatchToken,
+      stage: null,
+      status: "pending" as const,
+    };
+    const rows = found.transcriptStatus
+      ? await tx
+          .update(transcript)
+          .set(reserved)
+          .where(
+            and(
+              eq(transcript.sourceId, id.data),
+              eq(transcript.status, found.transcriptStatus),
+              eq(transcript.attempts, found.transcriptAttempts ?? 0),
+              found.transcriptRunId === null
+                ? isNull(transcript.runId)
+                : eq(transcript.runId, found.transcriptRunId),
+              found.transcriptRevision === null
+                ? isNull(transcript.currentRevision)
+                : eq(transcript.currentRevision, found.transcriptRevision),
+              sql`${transcript.updatedAt}::text = ${found.transcriptUpdatedAt}`
+            )
+          )
+          .returning({ id: transcript.id })
+      : await tx
+          .insert(transcript)
+          .values({
+            ...reserved,
+            organizationId: scope.organizationId,
+            sourceId: id.data,
+          })
+          .onConflictDoNothing({ target: transcript.sourceId })
+          .returning({ id: transcript.id });
+    if (rows.length === 0) {
+      return null;
+    }
+    const prefix = sourcePrefix(scope.organizationId, id.data);
+    return {
+      artifactPrefix: prefix,
+      audioKey: `${prefix}audio/audio.m4a`,
+      durationMs,
+      scope,
+      sourceId: id.data,
+    };
   });
+  if (!started) {
+    revalidatePath(`/sources/${id.data}`);
+    return { message: ROW_CHANGED_MESSAGE, ok: false };
+  }
+  try {
+    const client = await getTemporalClient();
+    await client.workflow.start(WORKFLOWS.transcribe, {
+      args: [started],
+      taskQueue: TASK_QUEUES.pipeline,
+      workflowExecutionTimeout: "6 hours",
+      workflowId: `transcribe-${id.data}`,
+      workflowIdConflictPolicy: "USE_EXISTING",
+      workflowIdReusePolicy: "ALLOW_DUPLICATE",
+    });
+  } catch (error) {
+    // A lost start acknowledgement may still have launched a real workflow.
+    // Preserve the reservation unless Temporal confirms no execution is live.
+    const afterStart = await transcriptionExecution(id.data);
+    if (afterStart !== "closed") {
+      revalidatePath(`/sources/${id.data}`);
+      return afterStart === "running"
+        ? { ok: true }
+        : { message: START_UNKNOWN_MESSAGE, ok: false };
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    await scoped(async (tx) => {
+      await tx
+        .update(transcript)
+        .set({
+          errorMessage: `DispatchError: ${reason}`.slice(0, 2000),
+          status: "failed",
+        })
+        .where(
+          and(
+            eq(transcript.sourceId, id.data),
+            eq(transcript.status, "pending"),
+            eq(transcript.runId, dispatchToken)
+          )
+        );
+    });
+    revalidatePath(`/sources/${id.data}`);
+    return { message: NOT_QUEUED_MESSAGE, ok: false };
+  }
   revalidatePath(`/sources/${id.data}`);
   return { ok: true };
 }
@@ -230,7 +343,15 @@ export async function correctTranscript(
   }
 
   const next = base.data + 1;
-  const key = transcriptRevisionKey(loaded.prefix, next);
+  // One object per attempt. Two tabs saving against the same revision both
+  // upload; the compare-and-swap below publishes one of them and the other's
+  // object is discarded, so the accepted pointer never serves the loser's
+  // bytes (S2 review, I03).
+  const key = transcriptCorrectionKey(
+    loaded.prefix,
+    next,
+    randomUUID().slice(0, 8)
+  );
   const sizeBytes = await writeRevision(key, content);
 
   const saved = await scoped(async (tx, scope) => {
@@ -301,6 +422,7 @@ export async function correctTranscript(
     return true;
   });
   if (!saved) {
+    await discardRevision(key);
     return { message: STALE_REVISION_MESSAGE, ok: false, stale: true };
   }
   revalidatePath(`/sources/${id.data}`);

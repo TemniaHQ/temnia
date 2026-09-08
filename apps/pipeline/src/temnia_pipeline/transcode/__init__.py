@@ -15,7 +15,9 @@ image it runs in carries none of those.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -28,24 +30,27 @@ from temnia_pipeline.media import hls
 # undefined until some caller happens to have it in scope (AGENTS.md, Python
 # pipeline). `media.facts` is exactly the record and none of the decoder.
 from temnia_pipeline.media.facts import VideoFacts  # noqa: TC001
-from temnia_pipeline.storage import key_exists, read_text
+from temnia_pipeline.media.hls_inventory import (
+    MAX_OBJECTS,
+    MAX_PLAYLIST_BYTES,
+    playlist_duration,
+    validate_inventory,
+)
+from temnia_pipeline.modal_protocol import CONTRACT_VERSION as CONTRACT_VERSION
+from temnia_pipeline.storage import list_objects, read_text
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
 
-# Bumped whenever any job or result the deployed app exchanges changes shape.
-# The worker refuses to boot against a Modal app that answers with a different
-# one, so a half deployed pair is a failed deploy and never a run that quietly
-# does the wrong thing. It covers the whole app, not just the ladder: S2 added
-# `transcribe` beside `ladder`, and the two must be deployed together.
-#
-# "1" was the ladder alone (S2, PR A). "2" adds transcription. "3" adds the
-# pixel format to `VideoFacts`: it is half of what the function reads to decide
-# whether it may decode on the GPU, and a container deployed before this one
-# would send every source down the CPU path without saying so.
-CONTRACT_VERSION = "3"
-
+# The version lives beside the remote result frame. 1 was the ladder alone,
+# 2 added transcription, 3 added the pixel format, and 4 adds explicit remote
+# outcomes/build identity and named HLS inventory. The boot check detects a
+# new worker paired with an incompatible app; existing workers/call handles
+# must be drained before a protocol-changing deployment.
 HLS_SUBDIR = "hls/"
+INVENTORY_TIMEOUT_SECONDS = 300
+INVENTORY_HEARTBEAT_SECONDS = 10
+PLAYLIST_DURATION_EPSILON = 0.001
 
 _WIRE = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
@@ -110,6 +115,50 @@ class LadderResult(BaseModel):
     call_id: str | None = None
 
 
+async def ladder_inventory_matches(  # noqa: PLR0911
+    store: S3Store,
+    job: LadderJob,
+    manifest: hls.LadderManifest,
+    *,
+    objects: dict[str, int] | None = None,
+) -> bool:
+    """Check exact names/sizes and the hash and references of each playlist.
+
+    Extra objects from interrupted older attempts do not invalidate a current
+    ladder. The caller accounts for them in retained storage bytes.
+    """
+    if manifest.artifacts is None or manifest.playlist_sha256 is None:
+        return False
+    if objects is None:
+        objects = dict(await list_objects(store, job.hls_prefix, max_objects=MAX_OBJECTS))
+    relative = {key.removeprefix(job.hls_prefix): size for key, size in objects.items()}
+    if any(relative.get(name) != size for name, size in manifest.artifacts.items()):
+        return False
+    if sum(manifest.artifacts.values()) != manifest.total_bytes:
+        return False
+    playlists: dict[str, str] = {}
+    try:
+        for name in manifest.playlist_sha256:
+            if name not in manifest.artifacts or not name.endswith(".m3u8"):
+                return False
+            text = await read_text(store, job.hls_prefix + name, max_bytes=MAX_PLAYLIST_BYTES)
+            if text is None:
+                return False
+            playlists[name] = text
+        referenced = validate_inventory(
+            manifest.artifacts, playlists, set(manifest.renditions), manifest.playlist_sha256
+        )
+        if any(
+            abs(playlist_duration(playlists[f"{name}/index.m3u8"]) - seconds)
+            > PLAYLIST_DURATION_EPSILON
+            for name, seconds in manifest.renditions.items()
+        ):
+            return False
+    except ValueError:
+        return False
+    return referenced == set(manifest.artifacts)
+
+
 class LadderProgress(BaseModel):
     """How far the ladder has got, in the two stages the UI already shows."""
 
@@ -133,30 +182,68 @@ class Transcoder(Protocol):
         """Ladder and publish. `resume` is a backend handle from an earlier attempt."""
         ...
 
-    async def reuse(self, job: LadderJob) -> LadderResult | None:
+    async def reuse(
+        self,
+        job: LadderJob,
+        *,
+        on_progress: ProgressCallback | None = None,
+        resume: str | None = None,
+    ) -> LadderResult | None:
         """The result of a ladder already complete in storage, or None."""
         ...
 
 
-async def stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
-    """Read back a published ladder and return its result when it is whole.
+async def stored_ladder(
+    store: S3Store,
+    job: LadderJob,
+    *,
+    on_progress: ProgressCallback | None = None,
+    resume: str | None = None,
+) -> LadderResult | None:
+    """Verify reuse within five minutes, heartbeating a saved handle during slow reads.
 
-    Whole means all three: the manifest is there, it covers the source the
-    probe measured, and the master playlist a player asks for first is a real
-    key. A prefix left half written by a killed upload fails the third check
-    even though the second passed, because the manifest goes up last.
+    Old manifests without named inventory are readable but never reusable.
+    All retained prefix bytes, including the marker and stale unreferenced
+    output from earlier attempts, are returned for storage accounting.
     """
-    text = await read_text(store, job.manifest_key)
-    if text is None:
+    task = asyncio.create_task(_stored_ladder(store, job))
+    try:
+        async with asyncio.timeout(INVENTORY_TIMEOUT_SECONDS):
+            while not task.done():
+                done, _ = await asyncio.wait({task}, timeout=INVENTORY_HEARTBEAT_SECONDS)
+                if not done and on_progress is not None:
+                    await on_progress(LadderProgress(stage="publish", percent=0), resume)
+            return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+async def _stored_ladder(store: S3Store, job: LadderJob) -> LadderResult | None:
+    try:
+        text = await read_text(store, job.manifest_key, max_bytes=32 * 1024 * 1024)
+        if text is None:
+            return None
+        manifest = hls.read_manifest(text)
+    except ValueError:
         return None
-    manifest = hls.read_manifest(text)
-    if not hls.manifest_covers(manifest, job.expected_seconds):
+    expected: set[str] = {rung.name for rung in hls.plan_rungs(job.video)} if job.video else set()
+    if job.has_audio:
+        expected.add("audio")
+    if job.video is not None:
+        expected.add(hls.IFRAMES_RENDITION)
+    if set(manifest.renditions) != expected or not hls.manifest_covers(
+        manifest, job.expected_seconds
+    ):
         return None
-    if not await key_exists(store, job.master_playlist_key):
+    objects = dict(await list_objects(store, job.hls_prefix, max_objects=MAX_OBJECTS))
+    if not await ladder_inventory_matches(store, job, manifest, objects=objects):
         return None
     return LadderResult(
         renditions=manifest.renditions,
-        total_bytes=manifest.total_bytes,
+        total_bytes=sum(objects.values()),
         manifest_key=job.manifest_key,
         encoder=manifest.encoder,
         decoder=manifest.decoder,

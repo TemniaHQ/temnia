@@ -49,6 +49,7 @@ EXPECTED: dict[str, dict[str, str]] = {
         "source_id": "uuid",
         "workflow_id": "text",
         "detail": "jsonb",
+        "idempotency_key": "text",
     },
     "upload": {
         "id": "uuid",
@@ -72,6 +73,7 @@ EXPECTED: dict[str, dict[str, str]] = {
         "speaker_labels": "jsonb",
         "heartbeat_at": "timestamp with time zone",
         "workflow_id": "text",
+        "run_id": "text",
         "stage": "text",
         "percent": "integer",
         "ready_at": "timestamp with time zone",

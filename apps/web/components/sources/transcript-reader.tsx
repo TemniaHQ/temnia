@@ -19,11 +19,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
+  useRef,
   useState,
   useTransition,
 } from "react";
 import {
   correctTranscript,
+  type TranscriptActionResult,
   updateSpeakerLabels,
 } from "@/app/actions/transcript";
 import { TranscriptParagraph } from "@/components/sources/transcript-paragraph";
@@ -43,6 +46,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toggle } from "@/components/ui/toggle";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { fetchRevision } from "@/lib/transcript/content";
+import {
+  EMPTY_DRAFTS,
+  type WordDrafts,
+  wordDrafts,
+} from "@/lib/transcript/drafts";
 import { STALE_REVISION_MESSAGE } from "@/lib/transcript/edits";
 import {
   buildParagraphs,
@@ -51,8 +59,13 @@ import {
   wordAt,
 } from "@/lib/transcript/paragraphs";
 
+interface LoadedRevision {
+  content: TranscriptV1;
+  revision: number;
+}
+
 interface TranscriptReaderProps {
-  /** The revision every edit on this screen is made against. */
+  /** The revision at revisionUrl; edits use it only after those bytes load. */
   baseRevision: number;
   labels: Readonly<Record<string, string>>;
   revisionUrl: string;
@@ -63,6 +76,10 @@ interface TranscriptReaderProps {
 
 /** A row is about four lines; the virtualiser measures the real one on mount. */
 const ESTIMATED_ROW_PX = 92;
+
+/** A save that threw rather than answered: the network, the store, the database. */
+const SAVE_FAILED_MESSAGE =
+  "Could not save. Check your connection and try again.";
 
 function exportName(title: string, format: string): string {
   const cleaned = title
@@ -100,23 +117,40 @@ export function TranscriptReader({
   const seek = time?.seek;
   const [pending, startTransition] = useTransition();
 
-  const [content, setContent] = useState<TranscriptV1 | null>(null);
+  const [loaded, setLoaded] = useState<LoadedRevision | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Counted up by Try again. The fetch effect depends on it, so a retry is a
+  // new request; a router refresh alone re-rendered the same client component
+  // with the same URL and fetched nothing (S2 review, I20).
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const [viewport, setViewport] = useState<HTMLElement | null>(null);
   const [follow, setFollow] = useState(true);
   const [editMode, setEditMode] = useState(false);
-  const [edit, setEdit] = useState<WordEdit | null>(null);
+  const [draftState, dispatchDraft] = useReducer(wordDrafts, EMPTY_DRAFTS);
+  const nextDraftId = useRef(0);
+  const { content, currentRevision, currentWord, edit } = readerContext(
+    loaded,
+    draftState
+  );
   const [query, setQuery] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
   const [stale, setStale] = useState(false);
   const [speakersOpen, setSpeakersOpen] = useState(false);
   const [speakersError, setSpeakersError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `loadAttempt` is the retry; a new value is a new request
   useEffect(() => {
     const controller = new AbortController();
     setLoadError(null);
     fetchRevision(revisionUrl, controller.signal)
-      .then((loaded) => setContent(loaded))
+      .then((next) => {
+        if (!controller.signal.aborted) {
+          // A router refresh changes the URL/number before the JSON arrives.
+          // Keep the previous pair intact until both can move together.
+          setLoaded({ content: next, revision: baseRevision });
+        }
+      })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           setLoadError(
@@ -127,7 +161,7 @@ export function TranscriptReader({
         }
       });
     return () => controller.abort();
-  }, [revisionUrl]);
+  }, [baseRevision, revisionUrl, loadAttempt]);
 
   const words = content?.words;
   const paragraphs = useMemo(
@@ -173,11 +207,13 @@ export function TranscriptReader({
     };
   }, [viewport]);
 
+  // Paused while a word is open for correction: following playback would
+  // scroll the editor out of the retained rows mid-word.
   useEffect(() => {
-    if (follow && activeParagraph >= 0) {
+    if (follow && activeParagraph >= 0 && edit === null) {
       virtualizer.scrollToIndex(activeParagraph, { align: "center" });
     }
-  }, [activeParagraph, follow, virtualizer]);
+  }, [activeParagraph, edit, follow, virtualizer]);
 
   useEffect(() => {
     if (focusedParagraph >= 0) {
@@ -198,48 +234,81 @@ export function TranscriptReader({
 
   const saveWord = useCallback(
     (index: number, text: string) => {
-      setEdit({ error: null, index, pending: true });
+      if (!edit || edit.index !== index || edit.pending) {
+        return;
+      }
+      const owner = edit;
+      dispatchDraft({ id: owner.id, text, type: "save" });
       startTransition(async () => {
-        const result = await correctTranscript(sourceId, baseRevision, [
-          { index, text },
-        ]);
+        let result: TranscriptActionResult;
+        try {
+          result = await correctTranscript(sourceId, owner.baseRevision, [
+            { index, text },
+          ]);
+        } catch {
+          dispatchDraft({
+            error: SAVE_FAILED_MESSAGE,
+            id: owner.id,
+            type: "settle",
+          });
+          return;
+        }
+        dispatchDraft({
+          error: result.ok ? null : result.message,
+          id: owner.id,
+          type: "settle",
+        });
         if (result.ok) {
-          setEdit(null);
           router.refresh();
-          return;
+        } else {
+          refused(result);
         }
-        if (refused(result)) {
-          setEdit(null);
-          return;
-        }
-        setEdit({ error: result.message, index, pending: false });
       });
     },
-    [baseRevision, refused, router, sourceId]
+    [edit, refused, router, sourceId]
   );
 
   const assignSpeaker = useCallback(
     (utteranceIndex: number, speaker: string) => {
+      if (!loaded) {
+        return;
+      }
+      const { revision } = loaded;
+      setAssignError(null);
       startTransition(async () => {
-        const result = await correctTranscript(sourceId, baseRevision, {
-          speaker,
-          utteranceIndex,
-        });
+        let result: TranscriptActionResult;
+        try {
+          result = await correctTranscript(sourceId, revision, {
+            speaker,
+            utteranceIndex,
+          });
+        } catch {
+          setAssignError(SAVE_FAILED_MESSAGE);
+          return;
+        }
         if (result.ok) {
           router.refresh();
           return;
         }
-        refused(result);
+        if (!refused(result)) {
+          setAssignError(result.message);
+        }
       });
     },
-    [baseRevision, refused, router, sourceId]
+    [loaded, refused, router, sourceId]
   );
 
   const saveSpeakers = useCallback(
     (next: Record<string, string>) => {
       setSpeakersError(null);
       startTransition(async () => {
-        const result = await updateSpeakerLabels(sourceId, next);
+        let result: TranscriptActionResult;
+        try {
+          result = await updateSpeakerLabels(sourceId, next);
+        } catch {
+          setSpeakersError(SAVE_FAILED_MESSAGE);
+          return;
+        }
         if (result.ok) {
           setSpeakersOpen(false);
           router.refresh();
@@ -252,7 +321,11 @@ export function TranscriptReader({
   );
 
   const openRename = useCallback(() => setSpeakersOpen(true), []);
-  const cancelEdit = useCallback(() => setEdit(null), []);
+  const cancelEdit = useCallback(() => dispatchDraft({ type: "cancel" }), []);
+  const draftWord = useCallback(
+    (text: string) => dispatchDraft({ text, type: "change" }),
+    []
+  );
 
   // One listener for every word on screen, on the scrolling element itself.
   // Each word is a real button and carries its index in a data attribute; a
@@ -270,11 +343,30 @@ export function TranscriptReader({
       if (!Number.isInteger(index)) {
         return;
       }
-      if (editMode) {
-        setEdit({ error: null, index, pending: false });
+      const word = content?.words[index];
+      if (editMode && loaded && word) {
+        const existing = draftState.drafts.find(
+          (draft) => draft.index === index
+        );
+        if (existing) {
+          dispatchDraft({ id: existing.id, type: "activate" });
+        } else {
+          nextDraftId.current += 1;
+          dispatchDraft({
+            edit: {
+              baseRevision: loaded.revision,
+              draft: word.text,
+              error: null,
+              id: nextDraftId.current,
+              index,
+              original: word.text,
+              pending: false,
+            },
+            type: "open",
+          });
+        }
         return;
       }
-      const word = content?.words[index];
       if (word && seek) {
         // The promise resolves at the seeked position and nothing here waits
         // for it; a seek that cannot happen is the player's to report.
@@ -283,7 +375,7 @@ export function TranscriptReader({
     };
     viewport.addEventListener("click", onWordClick);
     return () => viewport.removeEventListener("click", onWordClick);
-  }, [content, editMode, seek, viewport]);
+  }, [content, draftState.drafts, editMode, loaded, seek, viewport]);
 
   const step = (delta: number) => {
     if (matches.length > 0) {
@@ -304,23 +396,38 @@ export function TranscriptReader({
     }
   };
 
-  if (loadError) {
-    return (
-      <Alert data-testid="transcript-load-error" variant="destructive">
-        <AlertDescription>{loadError}</AlertDescription>
-        <AlertAction>
-          <Button onClick={() => router.refresh()} size="sm" variant="outline">
-            Try again
-          </Button>
-        </AlertAction>
-      </Alert>
-    );
+  const loadNotice = loadError ? (
+    <Alert data-testid="transcript-load-error" variant="destructive">
+      <AlertDescription>{loadError}</AlertDescription>
+      <AlertAction>
+        <Button
+          data-testid="transcript-try-again"
+          onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+          size="sm"
+          variant="outline"
+        >
+          Try again
+        </Button>
+      </AlertAction>
+    </Alert>
+  ) : null;
+  if (loadError && !content) {
+    return loadNotice;
   }
+
+  const reviewDraft = (draft: WordEdit) => {
+    dispatchDraft({ id: draft.id, type: "activate" });
+    setEditMode(true);
+    const paragraph = paragraphAt(paragraphs, draft.index);
+    if (paragraph >= 0) {
+      virtualizer.scrollToIndex(paragraph, { align: "center" });
+    }
+  };
 
   const items = virtualizer.getVirtualItems();
   return (
     <TooltipProvider>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3" data-revision={currentRevision}>
         <div className="flex flex-wrap items-center gap-2">
           <InputGroup className="w-56">
             <InputGroupAddon>
@@ -393,7 +500,7 @@ export function TranscriptReader({
             data-testid="transcript-edit-mode"
             onPressedChange={(next) => {
               setEditMode(next);
-              setEdit(null);
+              dispatchDraft({ type: "close" });
             }}
             pressed={editMode}
             size="sm"
@@ -452,6 +559,41 @@ export function TranscriptReader({
           </Alert>
         ) : null}
 
+        {loadNotice}
+
+        <DraftNotices
+          currentRevision={currentRevision}
+          currentWord={currentWord}
+          edit={edit}
+          onKeep={() => {
+            if (edit && loaded) {
+              dispatchDraft({
+                id: edit.id,
+                original: content?.words[edit.index]?.text ?? edit.original,
+                revision: loaded.revision,
+                type: "review",
+              });
+            }
+          }}
+          onReview={reviewDraft}
+          state={draftState}
+        />
+
+        {assignError ? (
+          <Alert data-testid="transcript-assign-error" variant="destructive">
+            <AlertDescription>{assignError}</AlertDescription>
+            <AlertAction>
+              <Button
+                onClick={() => setAssignError(null)}
+                size="sm"
+                variant="outline"
+              >
+                Dismiss
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : null}
+
         {content ? null : (
           <div className="flex flex-col gap-3" data-testid="transcript-loading">
             <Skeleton className="h-16 w-full" />
@@ -493,6 +635,7 @@ export function TranscriptReader({
                           labels={labels}
                           onAssign={assignSpeaker}
                           onCancelEdit={cancelEdit}
+                          onDraft={draftWord}
                           onRenameSpeakers={openRename}
                           onSaveEdit={saveWord}
                           paragraph={paragraph}
@@ -530,4 +673,79 @@ export function TranscriptReader({
       />
     </TooltipProvider>
   );
+}
+
+function DraftNotices({
+  currentRevision,
+  currentWord,
+  edit,
+  onKeep,
+  onReview,
+  state,
+}: {
+  currentRevision: number | null;
+  currentWord: string | undefined;
+  edit: WordEdit | null;
+  onKeep: () => void;
+  onReview: (draft: WordEdit) => void;
+  state: WordDrafts;
+}) {
+  return (
+    <>
+      {state.drafts
+        .filter((draft) => draft.id !== state.activeId)
+        .map((draft) => (
+          <Alert data-testid="transcript-saved-draft" key={draft.id}>
+            <AlertDescription>
+              {draft.pending ? "Saving" : "Unsaved correction"}: “
+              {draft.draft ?? draft.original}”
+              {draft.error ? ` · ${draft.error}` : null}
+            </AlertDescription>
+            <AlertAction>
+              <Button
+                onClick={() => onReview(draft)}
+                size="sm"
+                variant="outline"
+              >
+                Review draft
+              </Button>
+            </AlertAction>
+          </Alert>
+        ))}
+
+      {edit &&
+      currentRevision !== null &&
+      edit.baseRevision !== currentRevision ? (
+        <Alert data-testid="transcript-draft-review">
+          <AlertDescription>
+            Your draft for “{edit.original}” is still here. The current word is
+            “{currentWord ?? "no longer available"}”. Review it before saving.
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              data-testid="transcript-review-current-word"
+              disabled={edit.pending || !currentWord}
+              onClick={onKeep}
+              size="sm"
+              variant="outline"
+            >
+              Keep draft on this word
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
+    </>
+  );
+}
+
+function readerContext(loaded: LoadedRevision | null, state: WordDrafts) {
+  const content = loaded?.content ?? null;
+  const edit =
+    state.drafts.find((draft) => draft.id === state.activeId) ?? null;
+  return {
+    content,
+    currentRevision: loaded?.revision ?? null,
+    currentWord: content?.words[edit?.index ?? -1]?.text,
+    edit,
+  };
 }

@@ -19,6 +19,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
+from temnia_pipeline.modal_errors import transport_errors
+from temnia_pipeline.modal_protocol import RemoteFailure, read_outcome
 from temnia_pipeline.transcription import (
     Done,
     Failed,
@@ -26,6 +30,7 @@ from temnia_pipeline.transcription import (
     TranscribeRaw,
     TranscriptionProgress,
     Unknown,
+    Unreachable,
 )
 
 if TYPE_CHECKING:
@@ -97,7 +102,7 @@ class ModalWhisperXProvider:
         )
         return str(call.object_id)
 
-    async def status(self, handle: str) -> RunStatus:
+    async def status(self, handle: str) -> RunStatus:  # noqa: PLR0911
         """Poll with a zero timeout: still running is a TimeoutError, not an error."""
         from modal.exception import NotFoundError, OutputExpiredError  # noqa: PLC0415
 
@@ -107,6 +112,10 @@ class ModalWhisperXProvider:
             return Running()
         except (NotFoundError, OutputExpiredError):
             return Unknown()
+        except transport_errors() as error:
+            # We could not ask. The run may be fine; only a caller that knows
+            # the difference can avoid starting it again (S2 review, I05).
+            return Unreachable(f"{type(error).__name__}: {error}")
         except Exception as error:  # noqa: BLE001
             # Anything the function raised arrives here, including the
             # deterministic language failure the caller has to tell apart from
@@ -115,7 +124,16 @@ class ModalWhisperXProvider:
             # the two it is; `str(error)` alone leaves the caller guessing from
             # wording.
             return Failed(f"{type(error).__name__}: {error}")
-        return Done(TranscribeRaw.model_validate(payload))
+        try:
+            outcome = read_outcome(payload)
+            if isinstance(outcome, RemoteFailure):
+                return Failed(outcome.description)
+            return Done(TranscribeRaw.model_validate(outcome.payload))
+        except ValidationError:
+            return Failed(
+                "RemoteProtocolError: invalid or incompatible Modal result; "
+                "redeploy app and worker together"
+            )
 
     async def progress(self, handle: str) -> TranscriptionProgress | None:
         """The function's own progress note; a missing one is not a fault.

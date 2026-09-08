@@ -85,6 +85,11 @@ class Context:
         )
 
 
+def run_id() -> str:
+    """The run's identity, which keys the ledger entry a retry could repeat."""
+    return activity.info().workflow_run_id or "unknown"
+
+
 def workflow_id() -> str:
     """The running workflow's id, for the rows it writes."""
     return activity.info().workflow_id or "unknown"
@@ -202,7 +207,9 @@ class Ingest:
 
         await self._progress(request, "hls", 0)
         try:
-            result = await self.ctx.transcoder.reuse(job)
+            result = await self.ctx.transcoder.reuse(
+                job, on_progress=on_progress, resume=resume_call_id()
+            )
             if result is None:
                 result = await self.ctx.transcoder.run(
                     job, on_progress=on_progress, resume=resume_call_id()
@@ -403,6 +410,7 @@ class Ingest:
                 scope=request.scope,
                 source_id=request.sourceId,
                 workflow_id=workflow_id(),
+                run_id=run_id(),
                 artifacts=artifacts,
                 duration_ms=probed.durationMs,
                 processing_seconds=processing_seconds,

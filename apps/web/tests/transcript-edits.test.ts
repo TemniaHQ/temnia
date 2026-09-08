@@ -112,6 +112,42 @@ describe("a speaker reassignment", () => {
     ]);
   });
 
+  it("keeps two speakers apart when their first words start on the same millisecond", () => {
+    // Overlapping speech: grouping by time gave the first turn no words and
+    // the second both, and a reassignment rewrote somebody else's word (S2
+    // review, I10). Membership follows the speaker runs the turns came from.
+    const words: TranscriptV1["words"] = [
+      {
+        confidence: 1,
+        endMs: 1400,
+        speaker: "0",
+        startMs: 1000,
+        text: "one",
+        timing: "aligned",
+      },
+      {
+        confidence: 1,
+        endMs: 1500,
+        speaker: "1",
+        startMs: 1000,
+        text: "two",
+        timing: "aligned",
+      },
+      {
+        confidence: 1,
+        endMs: 1900,
+        speaker: "1",
+        startMs: 1500,
+        text: "three",
+        timing: "aligned",
+      },
+    ];
+    expect(wordsByUtterance(words, deriveUtterances(words))).toEqual([
+      [0],
+      [1, 2],
+    ]);
+  });
+
   it("refuses a turn the revision does not have", () => {
     expect(applyEdits(content, { speaker: "0", utteranceIndex: 99 })).toContain(
       "no longer in this transcript"

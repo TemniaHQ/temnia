@@ -236,3 +236,25 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 | 2026-09-07 | Uploader is **Uppy 6.0.0** (Dashboard, `@uppy/aws-s3` `signRequest`) over the app's own control calls; the in-house client is removed | Rajesh's call once the R2 claim fell. The app still creates the multipart, adopts by fingerprint, signs parts and part listings only, and completes and aborts through its own routes handed to Uppy as the URL; the browser injects the plugin's resume state. No Golden Retriever (10 MiB blob cap). Parts capped at 1000 for Uppy's single ListParts page. AGENTS.md decision 3 |
 | 2026-09-06 (S1) | Garage CORS: **one rule per origin**, applied by a compose one-shot on `amazon/aws-cli` | Garage echoes a rule's whole origin list; browsers reject the comma-joined header |
 | 2026-09-06 (S0) | Staging VPS reinstalled: Ubuntu 26.04 LTS, Docker 29.8 from Docker's repository, Dokploy 0.30.5; the box is built by `infra/vps/build.sh` and publishes no port but SSH | Rajesh chose a clean OS so the box is reproducible; Dokploy's installer pins a Docker version the 26.04 channel lacks, so Docker is installed first |
+
+
+### S2 follow-up, 2026-09-08
+
+The runtime and provider choices remain those above. The second review tightened the boundaries:
+Modal protocol 4 carries explicit remote outcomes; its deployed smoke verifies app/environment and
+source/config identity. Rollout requires draining version-3 work (staging runbook §2c).
+
+Substrate setup fetches immutable commit snapshots, including SaT's separate XLM-R tokenizer.
+Both setup and runtime use the effective `HF_HOME` (falling back to `TEMNIA_MODELS_DIR`), and
+runtime loads absolute local paths. The loaded instance carries its revision into provenance.
+This replaces unversioned library constructors and checking `refs/main` afterward, which could
+validate a different cache or report a revision other than the weights actually loaded. An audition
+using another model must prefetch and select `repo@<full commit>`; the defaults' fetch script is
+deliberately filtered to the files their CPU loaders use. The implementation comparison used the
+installed SaT/SentenceTransformer/Hub APIs: passing a revision only to SaT's weight loader leaves
+its tokenizer and adapter downloads mutable, whereas local paths cover all three.
+
+HLS readiness checks each named artifact and playlist reference. It meters all retained prefix
+bytes, including old unreferenced objects, without a concurrent cleanup deleting another attempt's
+output. This verifies presence, size, and referential consistency, not same-size media corruption;
+cryptographic object verification and old-generation garbage collection remain separate improvements.

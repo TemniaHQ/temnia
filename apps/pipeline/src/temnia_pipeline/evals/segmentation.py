@@ -25,9 +25,10 @@ the words are the one grid every segmenter in a comparison shares, so the
 numbers in a table mean the same thing in every row.
 
 **The window-tolerant matching** pairs each reference boundary with at most one
-hypothesis boundary within the tolerance, greedily by distance and then by
-index, which is deterministic and, for boundaries on a line, optimal in the
-number matched.
+hypothesis boundary within the tolerance, and pairs as many as the tolerance
+allows: every reference is an interval on the line and every hypothesis a
+point, and the earliest-deadline greedy over intervals is optimal in the
+number matched. Nearest-first was not (S2 review, I13).
 
 **Segments, not boundaries.** `score_segments` is the VidChapters convention:
 F1 over temporal IoU thresholds 0.5 to 0.95 in steps of 0.05, averaged, plus
@@ -39,6 +40,7 @@ points do. A chapter cut is judged on both.
 from __future__ import annotations
 
 import bisect
+import heapq
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -122,20 +124,20 @@ def boundary_string(unit_starts_ms: Sequence[int], boundaries_ms: Sequence[int])
 
 
 def window_size(reference: str) -> int:
-    """The nltk default window, defined for a reference with no boundaries too.
+    """Half the mean segment length of the reference: the Pk paper's window.
 
-    Half the average true segment length, which is what the Pk paper specifies.
-    nltk computes the same thing and divides by the boundary count, so a
-    reference with none raises; this falls back to half the episode, which is
-    the widest window that means anything.
+    The string marks internal cuts only (`boundary_string` drops the media's
+    edges), so a reference with k marks has k + 1 segments. nltk's default
+    divides by the mark count because its strings carry a terminal mark;
+    applied to these strings it doubled the window of a one-cut reference and
+    inflated every sparse chapter score (S2 review, I12). A reference with no
+    marks is one segment, and the window is half the episode.
     """
     units = len(reference)
     if units == 0:
         return 1
-    count = reference.count(BOUNDARY)
-    if count == 0:
-        return max(1, min(units, units // 2))
-    return max(1, min(units, round(units / (count * 2))))
+    segments = reference.count(BOUNDARY) + 1
+    return max(1, min(units, round(units / (2 * segments))))
 
 
 def match_boundaries(
@@ -143,27 +145,35 @@ def match_boundaries(
 ) -> tuple[tuple[int, int], ...]:
     """Pair each reference boundary with at most one hypothesis boundary.
 
-    Greedy by distance, then by reference index, then by hypothesis index: one
-    deterministic answer, and on a line the greedy pairing matches as many as
-    any other.
+    As many pairs as the tolerance allows. Every reference is an interval on
+    the line (its time plus or minus the tolerance) and every hypothesis a
+    point; walking the hypotheses in time order and giving each to the open
+    interval that closes soonest is the greedy that is optimal for intervals
+    on a line. Nearest pairs first is not: with references at 10 and 20
+    seconds, hypotheses at 19 and 29, and a ten-second tolerance it paired 20
+    with 19 and left both others alone, one match where two exist (S2 review,
+    I13). Ties break by reference index and then hypothesis index, so the
+    answer is deterministic.
     """
-    pairs = sorted(
-        (
-            (abs(reference - hypothesis), reference_index, hypothesis_index)
-            for reference_index, reference in enumerate(reference_ms)
-            for hypothesis_index, hypothesis in enumerate(hypothesis_ms)
-            if abs(reference - hypothesis) <= tolerance_ms
-        )
-    )
-    used_reference: set[int] = set()
-    used_hypothesis: set[int] = set()
+    references = sorted((time, index) for index, time in enumerate(reference_ms))
+    hypotheses = sorted((time, index) for index, time in enumerate(hypothesis_ms))
+    # Intervals open and not yet used: (the time they close, reference index).
+    opening: list[tuple[int, int]] = []
     matched: list[tuple[int, int]] = []
-    for _, reference_index, hypothesis_index in pairs:
-        if reference_index in used_reference or hypothesis_index in used_hypothesis:
-            continue
-        used_reference.add(reference_index)
-        used_hypothesis.add(hypothesis_index)
-        matched.append((reference_index, hypothesis_index))
+    next_reference = 0
+    for time, hypothesis_index in hypotheses:
+        while (
+            next_reference < len(references)
+            and references[next_reference][0] - tolerance_ms <= time
+        ):
+            reference_time, reference_index = references[next_reference]
+            heapq.heappush(opening, (reference_time + tolerance_ms, reference_index))
+            next_reference += 1
+        while opening and opening[0][0] < time:
+            heapq.heappop(opening)
+        if opening:
+            _, reference_index = heapq.heappop(opening)
+            matched.append((reference_index, hypothesis_index))
     return tuple(sorted(matched))
 
 

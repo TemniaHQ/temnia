@@ -137,13 +137,18 @@ class SaTSegmenter:
         self.threshold = threshold
         self.paragraphs = paragraphs
         self._sat: SaTModel | None = None
+        self._revision: str | None = None
+        self._tokenizer_revision: str | None = None
 
     def _load(self) -> SaTModel:
         """Load once per instance; a two-hour episode is one `split` call."""
         if self._sat is None:
-            self._sat = load_sat(
+            loaded = load_sat(
                 self.model, style_or_domain=self.style_or_domain, language=self.language
             )
+            self._sat = loaded.value
+            self._revision = loaded.revision
+            self._tokenizer_revision = loaded.tokenizer_revision
         return self._sat
 
     def _provenance(self, *, paragraph_source: str, shots: int) -> Provenance:
@@ -165,6 +170,12 @@ class SaTSegmenter:
                 "torch": library_version("torch"),
                 "transformers": library_version("transformers"),
                 "wtpsplit": library_version("wtpsplit"),
+                **(
+                    {"sat_tokenizer_revision": self._tokenizer_revision}
+                    if self._tokenizer_revision is not None
+                    else {}
+                ),
+                **({"sat_revision": self._revision} if self._revision is not None else {}),
             },
         )
 
@@ -215,11 +226,15 @@ class SaTSegmenter:
             first, last = group[0], group[-1]
             span = words[first : last + 1]
             sentence_text = " ".join(word.text for word in span)
+            # The latest end among the words, not the last word's end: with
+            # overlapping speech a sentence's last word can end before an
+            # earlier one does, and a span that ends there leaves speech
+            # outside every sentence (S2 review, I11).
             sentences.append(
                 Sentence(
                     id=len(sentences),
                     start_ms=words[first].startMs,
-                    end_ms=words[last].endMs,
+                    end_ms=max(word.endMs for word in span),
                     word_start=first,
                     word_end=last,
                     speaker=_majority_speaker(span),
@@ -230,7 +245,7 @@ class SaTSegmenter:
             paragraph_of.append(paragraph_index)
 
         if not self.paragraphs:
-            packed = pack_paragraphs(sentences)
+            packed = pack_paragraphs(sentences, whole_extent=True)
             return Layers(
                 words=words,
                 sentences=tuple(sentences),
@@ -273,7 +288,7 @@ def _paragraphs_from_sat(
             Paragraph(
                 id=len(paragraphs),
                 start_ms=sentences[start].start_ms,
-                end_ms=sentences[index - 1].end_ms,
+                end_ms=max(sentence.end_ms for sentence in sentences[start:index]),
                 sentence_start=start,
                 sentence_end=index - 1,
                 speaker=sentences[start].speaker,

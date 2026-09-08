@@ -193,6 +193,23 @@ export function transcriptRevisionKey(
   return `${artifactPrefix}${TRANSCRIPT_SUBDIR}rev-${revision}.json`;
 }
 
+/**
+ * Where a correction is written before it is published.
+ *
+ * Two tabs saving against the same revision both compute the same next number
+ * and, with one key per number, the loser's bytes could sit behind the
+ * winner's pointer (S2 review, I03). Each attempt therefore writes its own
+ * object, and the compare-and-swap on the transcript row publishes exactly one
+ * of them; readers take the key from the revision row, never from the number.
+ */
+export function transcriptCorrectionKey(
+  artifactPrefix: string,
+  revision: number,
+  attempt: string
+): string {
+  return `${artifactPrefix}${TRANSCRIPT_SUBDIR}rev-${revision}-${attempt}.json`;
+}
+
 /** The provider's untouched response, kept for fixtures and S12 calibration. */
 export function transcriptRawKey(
   artifactPrefix: string,

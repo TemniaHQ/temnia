@@ -9,6 +9,12 @@ Deploy from `apps/pipeline`:
 
     uv run modal run --env staging -m temnia_pipeline.modal_app::probe        # the throwaway check
     uv run modal deploy --env staging -m temnia_pipeline.modal_app
+    uv run python -m temnia_pipeline.modal_smoke --app temnia-media --environment staging
+
+The smoke runs the deployed speech path on a nine-second real sample and is
+the release step the worker's boot probe cannot be: the probe checks a version
+constant on a CPU, and a green probe was once compatible with an image that
+could not build and a diarization call that could not run (S2 review, I29).
 
 The image is a CUDA runtime with BtbN's glibc ffmpeg, because Temnia's worker
 ffmpeg (`mwader/static-ffmpeg:8.1.2`) is a static musl build carrying neither
@@ -27,26 +33,41 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import time
+import uuid
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import modal
 
+from temnia_pipeline.contracts import TranscriptProvider, WordTiming
 from temnia_pipeline.media import hls
 from temnia_pipeline.media.ffmpeg import FfmpegError
+from temnia_pipeline.media.hls_inventory import local_inventory
+from temnia_pipeline.modal_build import BUILD_ENV, source_build_id
+from temnia_pipeline.modal_protocol import RemoteFailure, capture_outcome, read_outcome
 from temnia_pipeline.settings import (
     DEFAULT_MODAL_APP,
     DEFAULT_PROGRESS_DICT,
     DEFAULT_TRANSCRIPT_DICT,
     StorageSettings,
 )
-from temnia_pipeline.storage import download, make_store, upload_file, upload_tree
-from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, LadderResult
+from temnia_pipeline.storage import (
+    delete_prefix,
+    download,
+    make_store,
+    upload_bytes,
+    upload_file,
+    upload_tree,
+)
+from temnia_pipeline.transcode import CONTRACT_VERSION, LadderJob, stored_ladder
 from temnia_pipeline.transcode.local import verify_ladder
 from temnia_pipeline.transcription import TranscribeJob, TranscribeRaw, assert_alignable
+from temnia_pipeline.transcription.normalize import normalize_whisperx
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -74,6 +95,7 @@ LADDER_TIMEOUT_SECONDS = 3 * 60 * 60
 # is the measurement.
 TRANSCRIBE_TIMEOUT_SECONDS = 4 * 60 * 60
 PROBE_TIMEOUT_SECONDS = 600
+SMOKE_TIMEOUT_SECONDS = 30 * 60
 LADDER_CPUS = 16
 LADDER_MEMORY_MB = 16384
 TRANSCRIBE_CPUS = 4
@@ -131,6 +153,8 @@ FFMPEG_INSTALL = (
     f"rm -rf /tmp/ffmpeg.tar.xz /tmp/{FFMPEG_DIR}",
 )
 
+BUILD_ID = source_build_id() if modal.is_local() else os.environ[BUILD_ENV]
+
 # The SDK's `from_registry` and `App.function` are typed with `Unknown`
 # parameters, which pyright strict reports; the ignores are about the stubs,
 # not about these arguments.
@@ -146,7 +170,7 @@ image = (
     # Every model cache the three stages use, on one Volume: HF_HOME covers the
     # alignment and diarization models, and whisperx reads the Whisper weights
     # from the same tree.
-    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR})
+    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR, BUILD_ENV: BUILD_ID})
     .add_local_python_source("temnia_pipeline")
 )
 
@@ -154,6 +178,37 @@ app = modal.App(DEFAULT_MODAL_APP, image=image)
 models = modal.Volume.from_name(MODEL_VOLUME, create_if_missing=True)
 
 WORK_DIR = Path("/tmp/ladder")  # noqa: S108  # Modal's ephemeral disk, gone with the container
+
+# Headroom past what a job is known to need, checked before the download
+# rather than discovered as ENOSPC deep inside an encode on a billing GPU.
+DISK_HEADROOM_BYTES = 1 << 30
+
+# The release smoke's sample and what it must hear, beside the pipeline's other
+# fixtures. Read by the local entrypoint only; the container never sees it.
+SMOKE_FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "speech" / "smoke.m4a"
+SMOKE_META = SMOKE_FIXTURE.with_suffix(".json")
+
+
+def scratch_dir(label: str) -> Path:
+    """A fresh directory under the work root for one call; the caller removes it in `finally`.
+
+    Per call, not per source: a warm container serves many calls, and a
+    per-source directory nothing removed accumulated every master and ladder
+    the container had seen (S2 review, I27).
+    """
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{label}-", dir=WORK_DIR))
+
+
+def assert_disk_headroom(path: Path, needed_bytes: int) -> None:
+    """Refuse before the download when the disk cannot hold the job, with the numbers."""
+    free = shutil.disk_usage(path).free
+    if free < needed_bytes:
+        msg = (
+            f"{free / 1e9:.1f} GB free under {path} and {needed_bytes / 1e9:.1f} GB needed; "
+            "the container's disk cannot hold this job"
+        )
+        raise RuntimeError(msg)
 
 
 async def _write_note(dict_name: str, stage: str, percent: int) -> None:
@@ -266,6 +321,7 @@ async def run_ladder(
     timeout=LADDER_TIMEOUT_SECONDS,
     secrets=[modal.Secret.from_name(R2_SECRET)],
 )
+@capture_outcome
 async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     """Build the HLS ladder on the GPU and publish it under the job's prefix.
 
@@ -283,54 +339,59 @@ async def ladder(job: dict[str, Any]) -> dict[str, Any]:
     settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
     request = LadderJob.model_validate(job)
     store = make_store(settings)
-    out_dir = WORK_DIR / request.scratch_name / "hls"
-    master = WORK_DIR / request.scratch_name / ("master" + Path(request.master_key).suffix)
+    scratch = scratch_dir("ladder")
+    try:
+        # The master and a ladder that can be larger than it, plus headroom.
+        assert_disk_headroom(scratch, 2 * request.size_bytes + DISK_HEADROOM_BYTES)
+        out_dir = scratch / "hls"
+        master = scratch / ("master" + Path(request.master_key).suffix)
 
-    await _write_progress("hls", 0)
-    await download(store, request.master_key, master, expected_size=request.size_bytes)
+        await _write_progress("hls", 0)
+        await download(store, request.master_key, master, expected_size=request.size_bytes)
 
-    encode = _throttled("hls")
+        encode = _throttled("hls")
 
-    async def on_encode(seconds: float) -> None:
-        await encode(seconds, request.expected_seconds)
+        async def on_encode(seconds: float) -> None:
+            await encode(seconds, request.expected_seconds)
 
-    rungs, decoder = await run_ladder(request, master, out_dir, on_encode)
-    renditions = verify_ladder(out_dir, rungs, request)
+        rungs, decoder = await run_ladder(request, master, out_dir, on_encode)
+        renditions = verify_ladder(out_dir, rungs, request)
 
-    publish = _throttled("publish")
+        publish = _throttled("publish")
 
-    async def on_publish(done: int, total_bytes: int) -> None:
-        await publish(done, total_bytes)
+        async def on_publish(done: int, total_bytes: int) -> None:
+            await publish(done, total_bytes)
 
-    await _write_progress("publish", 0)
-    total = await upload_tree(
-        store,
-        request.hls_prefix,
-        out_dir,
-        on_progress=on_publish,
-        concurrency=UPLOAD_CONCURRENCY,
-    )
-    manifest = hls.LadderManifest(
-        renditions=renditions,
-        iframes=request.video is not None,
-        segment_seconds=hls.SEGMENT_SECONDS,
-        total_bytes=total,
-        encoder=ENCODER,
-        produced_by="modal",
-        decoder=decoder,
-        call_id=modal.current_function_call_id(),
-    )
-    await upload_file(store, request.manifest_key, hls.write_manifest(out_dir, manifest))
-    await _write_progress("publish", 100)
-    result = LadderResult(
-        renditions=renditions,
-        total_bytes=total,
-        manifest_key=request.manifest_key,
-        encoder=ENCODER,
-        decoder=decoder,
-        call_id=modal.current_function_call_id(),
-    )
-    return result.model_dump(mode="json", by_alias=True)
+        await _write_progress("publish", 0)
+        artifacts, playlist_hashes = local_inventory(out_dir, set(renditions))
+        await upload_tree(
+            store,
+            request.hls_prefix,
+            out_dir,
+            on_progress=on_publish,
+            concurrency=UPLOAD_CONCURRENCY,
+        )
+        manifest = hls.LadderManifest(
+            renditions=renditions,
+            iframes=request.video is not None,
+            segment_seconds=hls.SEGMENT_SECONDS,
+            total_bytes=sum(artifacts.values()),
+            artifacts=artifacts,
+            playlist_sha256=playlist_hashes,
+            encoder=ENCODER,
+            produced_by="modal",
+            decoder=decoder,
+            call_id=modal.current_function_call_id(),
+        )
+        await upload_file(store, request.manifest_key, hls.write_manifest(out_dir, manifest))
+        await _write_progress("publish", 100)
+        result = await stored_ladder(store, request)
+        if result is None:
+            msg = "published HLS ladder failed inventory verification"
+            raise hls.TruncatedOutputError(msg)
+        return result.model_dump(mode="json", by_alias=True)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 # whisperx is installed into the Modal image and nowhere else: it is not a
@@ -365,6 +426,7 @@ def alignable_languages() -> set[str]:
     secrets=[modal.Secret.from_name(R2_SECRET), modal.Secret.from_name(HF_SECRET)],
     volumes={MODEL_DIR: models},
 )
+@capture_outcome
 async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
     """Transcribe, align, and diarize one audio extract on the GPU.
 
@@ -392,9 +454,28 @@ async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
     request = TranscribeJob.model_validate(job)
     store = make_store(settings)
     started = time.monotonic()
+    scratch = scratch_dir("transcribe")
+    try:
+        return await _transcribe(
+            engine, request, store, token=token, started=started, scratch=scratch
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
+
+async def _transcribe(  # noqa: PLR0913
+    engine: Any,  # noqa: ANN401
+    request: TranscribeJob,
+    store: Any,  # noqa: ANN401
+    *,
+    token: str,
+    started: float,
+    scratch: Path,
+) -> dict[str, Any]:
+    """The speech path proper, inside the scratch directory the caller removes."""
+    assert_disk_headroom(scratch, DISK_HEADROOM_BYTES)
     await _write_transcript_progress("download", 0)
-    audio_file = WORK_DIR / "audio" / Path(request.audio_key).name
+    audio_file = scratch / "audio" / Path(request.audio_key).name
     await download(store, request.audio_key, audio_file, expected_size=None)
 
     await _write_transcript_progress("model", 0)
@@ -427,7 +508,7 @@ async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
     result["language"] = language
 
     await _write_transcript_progress("write", 0)
-    raw_file = WORK_DIR / "raw.json"
+    raw_file = scratch / "raw.json"
     raw_file.parent.mkdir(parents=True, exist_ok=True)
     # Python's json writes the bare NaN a whisperx alignment score can be. It is
     # kept, not cleaned: this object is the record of what the engine said, and
@@ -449,6 +530,75 @@ async def transcribe(job: dict[str, Any]) -> dict[str, Any]:
 def version() -> str:
     """The contract this deployment speaks; the worker refuses to boot on a mismatch."""
     return CONTRACT_VERSION
+
+
+@app.function()  # pyright: ignore[reportUnknownMemberType]
+def deployment_identity() -> dict[str, str]:
+    """The input fingerprint sealed into this deployed image, plus its protocol."""
+    return {"protocol": CONTRACT_VERSION, "build": BUILD_ID}
+
+
+@app.function(  # pyright: ignore[reportUnknownMemberType]
+    secrets=[modal.Secret.from_name(R2_SECRET)], timeout=SMOKE_TIMEOUT_SECONDS
+)
+async def smoke_transcribe(
+    sample: bytes, duration_ms: int, expected: list[str], identity: dict[str, str]
+) -> dict[str, Any]:
+    """The release smoke: the deployed speech path on a real sample, end to end.
+
+    Uploads the sample under a throwaway prefix, runs `transcribe` exactly as
+    the worker would, normalises the response with the worker's own
+    normaliser, checks for the words it expects, and removes what it wrote.
+    One short GPU call; it proves the image, the secrets, the gated model, the
+    speech path, and the store together.
+    """
+    current = {"protocol": CONTRACT_VERSION, "build": BUILD_ID}
+    if identity != current:
+        msg = f"smoke reached a different deployment: expected {identity!r}, got {current!r}"
+        raise RuntimeError(msg)
+    settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
+    store = make_store(settings)
+    prefix = f"smoke/{uuid.uuid4()}/"
+    job = TranscribeJob(
+        audio_key=prefix + "audio/audio.m4a",
+        artifact_prefix=prefix,
+        attempt=1,
+        duration_ms=duration_ms,
+    )
+    started = time.monotonic()
+    try:
+        await upload_bytes(store, job.audio_key, sample, "audio/mp4")
+        payload = await cast("Any", transcribe).remote.aio(
+            job.model_dump(mode="json", by_alias=True)
+        )
+        outcome = read_outcome(payload)
+        if outcome.build != BUILD_ID:
+            msg = f"speech GPU build mismatch: expected {BUILD_ID}, got {outcome.build}"
+            raise RuntimeError(msg)
+        if isinstance(outcome, RemoteFailure):
+            raise RuntimeError(outcome.description)  # noqa: TRY004
+        raw = TranscribeRaw.model_validate(outcome.payload)
+        transcript = normalize_whisperx(
+            raw.raw,
+            duration_ms,
+            TranscriptProvider(name="whisperx", model=WHISPER_MODEL, version=WHISPERX_VERSION),
+        )
+    finally:
+        await delete_prefix(store, prefix)
+    text = " ".join(word.text for word in transcript.words)
+    lowered = text.lower()
+    return {
+        "identity": current,
+        "gpuBuild": outcome.build,
+        "words": len(transcript.words),
+        "language": transcript.language,
+        "speakers": transcript.speakers,
+        "interpolated": sum(word.timing == WordTiming.interpolated for word in transcript.words),
+        "gpuSeconds": raw.gpu_seconds,
+        "wallSeconds": round(time.monotonic() - started, 1),
+        "missing": [word for word in expected if word.lower() not in lowered],
+        "text": text,
+    }
 
 
 @app.function(gpu=GPU, timeout=PROBE_TIMEOUT_SECONDS)  # pyright: ignore[reportUnknownMemberType]

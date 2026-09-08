@@ -5,8 +5,8 @@ import type { TranscriptV1 } from "@temnia/contracts";
  *
  * A revision is fetched from the org-scoped media proxy, which answers with an
  * ETag and honours `if-none-match`; the browser's own cache does the
- * revalidation, and a correction changes the key (`rev-{N}.json`) rather than
- * the contents, so a stale body is not a state that can happen.
+ * revalidation, and a correction writes a new key rather than new contents
+ * under the old one, so a stale body is not a state that can happen.
  *
  * The body is not re-parsed through Zod here. It was validated against the
  * contract when it was written and again when the server read it back

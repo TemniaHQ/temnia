@@ -12,6 +12,8 @@ It never skips silently.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 import os
 import uuid
@@ -21,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from temporalio.client import WorkflowFailureError
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.testing import WorkflowEnvironment
+from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
@@ -465,9 +467,19 @@ async def test_a_retryable_failure_parks_the_stage_at_retrying_and_a_terminal_on
         durationMs=DURATION_MS,
     )
     async with db.scoped(url, SEEDED) as conn:
-        assert await db.claim_transcription(conn, source_id, SEEDED.organizationId, "wf-retrying")
+        assert await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "wf-retrying", "run-retrying"
+        )
 
-    await transcribe.mark_retrying(request, provider_failure("the container was preempted"))
+    # Under an activity context carrying the run that claimed the row: the
+    # progress write is fenced on it, like every write a run makes.
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(
+        env.info, workflow_id="wf-retrying", workflow_run_id="run-retrying"
+    )
+    await env.run(
+        transcribe.mark_retrying, request, provider_failure("the container was preempted")
+    )
     async with db.scoped(url, SEEDED) as conn:
         row = await transcript_row(conn, source_id)
     assert (row["status"], row["stage"]) == ("processing", "retrying")
@@ -476,8 +488,10 @@ async def test_a_retryable_failure_parks_the_stage_at_retrying_and_a_terminal_on
         await conn.execute(
             "UPDATE transcript SET stage = 'align' WHERE source_id = %s", (source_id,)
         )
-    await transcribe.mark_retrying(
-        request, transcription_failure("this recording is in a language we cannot align yet")
+    await env.run(
+        transcribe.mark_retrying,
+        request,
+        transcription_failure("this recording is in a language we cannot align yet"),
     )
     async with db.scoped(url, SEEDED) as conn:
         row = await transcript_row(conn, source_id)
@@ -485,3 +499,281 @@ async def test_a_retryable_failure_parks_the_stage_at_retrying_and_a_terminal_on
     # and a row that said "being retried" when nothing was coming would lie.
     assert row["stage"] == "align"
     await db.close_pool()
+
+
+# --- The database rules the review found wanting, checked on the migrated schema ---
+
+
+@pytest.mark.timeout(60)
+async def test_a_claim_is_idempotent_per_run_and_refused_to_another(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """A lost acknowledgement re-claims and gets the same attempt back (S2 review, I04)."""
+    _prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        first = await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "transcribe-x", "run-1"
+        )
+        again = await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "transcribe-x", "run-1"
+        )
+        other = await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "transcribe-x", "run-2"
+        )
+        row = await transcript_row(conn, source_id)
+    assert (first, again, other) == (1, 1, 0)
+    assert row["attempts"] == 1
+    assert row["run_id"] == "run-1"
+    assert row["status"] == "processing"
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
+async def test_writes_from_a_run_that_lost_the_row_change_nothing(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """Every write of a run is fenced on its id; a later run owns the row."""
+    _prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        assert (
+            await db.claim_transcription(
+                conn, source_id, SEEDED.organizationId, "transcribe-x", "run-1"
+            )
+            == 1
+        )
+        # The web's Retry, then a second run claims.
+        await conn.execute(
+            "UPDATE transcript SET status = 'pending' WHERE source_id = %s", (source_id,)
+        )
+        assert (
+            await db.claim_transcription(
+                conn, source_id, SEEDED.organizationId, "transcribe-x", "run-2"
+            )
+            == 2
+        )
+
+        await db.report_transcription_progress(conn, source_id, "align", 50, "run-1")
+        await db.fail_transcription(conn, source_id, "Whatever: too late", "run-1")
+        row = await transcript_row(conn, source_id)
+        assert row["status"] == "processing"
+        assert row["stage"] == "download"
+        assert row["run_id"] == "run-2"
+        with pytest.raises(db.StaleRunError):
+            await db.next_transcript_revision(conn, source_id, 1, "run-1")
+
+        await db.report_transcription_progress(conn, source_id, "align", 50, "run-2")
+        assert (await transcript_row(conn, source_id))["stage"] == "align"
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
+async def test_the_transcription_entry_is_metered_once_per_attempt(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """The review metered one 60-second run as 120 by finalising twice (I06)."""
+    _prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        for attempt in (1, 1, 2):
+            await db.finalize_transcription(
+                conn,
+                organization_id=SEEDED.organizationId,
+                source_id=source_id,
+                workflow_id="transcribe-x",
+                duration_ms=60_000,
+                revision=1,
+                attempt=attempt,
+                detail={"category": "transcription", "attempt": attempt},
+            )
+        rows = await (
+            await conn.execute(
+                "SELECT quantity, detail FROM usage_ledger"
+                " WHERE source_id = %s AND kind = 'transcription_seconds'"
+                " ORDER BY recorded_at",
+                (source_id,),
+            )
+        ).fetchall()
+    assert [row["quantity"] for row in rows] == [60, 60]
+    assert [row["detail"]["attempt"] for row in rows] == [1, 2]
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
+async def test_a_correction_that_lands_first_pushes_the_machine_revision_after_it(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """The machine write used to upsert over a correction's row (S2 review, I03)."""
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        assert (
+            await db.claim_transcription(
+                conn, source_id, SEEDED.organizationId, "transcribe-x", "run-1"
+            )
+            == 1
+        )
+        row = await transcript_row(conn, source_id)
+        await conn.execute(
+            """
+            INSERT INTO transcript_revision
+                (organization_id, transcript_id, revision, storage_key, size_bytes, kind,
+                 base_revision, word_count, metadata)
+            VALUES (%s, %s, 1, %s, 10, 'correction', NULL, 3, '{}'::jsonb)
+            """,
+            (SEEDED.organizationId, row["id"], f"{prefix}transcript/rev-1-abcdef12.json"),
+        )
+        transcript_id, revision, already = await db.next_transcript_revision(
+            conn, source_id, 1, "run-1"
+        )
+        assert (transcript_id, revision, already) == (row["id"], 2, False)
+        await db.record_transcript_revision(
+            conn,
+            organization_id=SEEDED.organizationId,
+            transcript_id=transcript_id,
+            revision=revision,
+            attempt=1,
+            storage_key=f"{prefix}transcript/rev-2.json",
+            size_bytes=20,
+            word_count=93,
+            language="en",
+            provider="recorded",
+            model="fixture",
+            metadata={},
+            run_id="run-1",
+        )
+        revisions = await (
+            await conn.execute(
+                "SELECT revision, kind, storage_key FROM transcript_revision"
+                " WHERE transcript_id = %s ORDER BY revision",
+                (row["id"],),
+            )
+        ).fetchall()
+        row = await transcript_row(conn, source_id)
+    assert [(r["revision"], r["kind"]) for r in revisions] == [(1, "correction"), (2, "machine")]
+    assert revisions[0]["storage_key"].endswith("rev-1-abcdef12.json")
+    assert row["current_revision"] == 2
+    assert row["status"] == "ready"
+    await db.close_pool()
+
+
+async def _publish_correction_for_accounting(
+    conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID
+) -> None:
+    # The web's revision CAS takes the transcript row lock before inserting a
+    # revision and reconciling storage. Exercise that transaction on real rows.
+    row = await (
+        await conn.execute(
+            "UPDATE transcript SET current_revision = 2"
+            " WHERE source_id = %s AND current_revision = 1 RETURNING id",
+            (source_id,),
+        )
+    ).fetchone()
+    assert row is not None
+    await conn.execute(
+        "INSERT INTO transcript_revision"
+        " (organization_id, transcript_id, revision, storage_key, size_bytes, kind,"
+        " base_revision, word_count, metadata)"
+        " VALUES (%s, %s, 2, 'org/test/correction.json', 110, 'correction', 1, 1, '{}')",
+        (SEEDED.organizationId, row["id"]),
+    )
+    await conn.execute(
+        "INSERT INTO usage_ledger (organization_id, kind, quantity, source_id, detail)"
+        " SELECT %s, 'storage_bytes',"
+        " (SELECT SUM(size_bytes) FROM transcript_revision WHERE transcript_id = %s)"
+        ' - COALESCE(SUM(quantity), 0), %s, \'{"category":"transcript"}\'::jsonb'
+        " FROM usage_ledger WHERE source_id = %s AND kind = 'storage_bytes'"
+        " AND detail->>'category' = 'transcript'",
+        (SEEDED.organizationId, row["id"], source_id, source_id),
+    )
+
+
+async def _finalize_for_accounting(
+    conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID
+) -> None:
+    await db.finalize_transcription(
+        conn,
+        organization_id=SEEDED.organizationId,
+        source_id=source_id,
+        workflow_id="accounting-race",
+        duration_ms=60_000,
+        revision=1,
+        attempt=1,
+        detail={"category": "transcription", "attempt": 1},
+    )
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("machine_first", [True, False])
+async def test_correction_and_finalizer_serialize_storage_accounting(
+    source: tuple[str, uuid.UUID, uuid.UUID], *, machine_first: bool
+) -> None:
+    """Two real connections must block on the same row in either arrival order."""
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "accounting-race", "run-accounting"
+        )
+        row = await transcript_row(conn, source_id)
+        await db.record_transcript_revision(
+            conn,
+            organization_id=SEEDED.organizationId,
+            transcript_id=row["id"],
+            revision=1,
+            attempt=1,
+            storage_key=f"{prefix}transcript/rev-1.json",
+            size_bytes=100,
+            word_count=1,
+            language="en",
+            provider="recorded",
+            model="fixture",
+            metadata={},
+            run_id="run-accounting",
+        )
+    first = _finalize_for_accounting if machine_first else _publish_correction_for_accounting
+    second = _publish_correction_for_accounting if machine_first else _finalize_for_accounting
+    started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+    async def competing_transaction() -> None:
+        async with db.scoped(url, SEEDED) as other:
+            started.set_result(other.info.backend_pid)
+            await second(other, source_id)
+
+    task: asyncio.Task[None] | None = None
+    try:
+        async with db.scoped(url, SEEDED) as conn:
+            await first(conn, source_id)
+            task = asyncio.create_task(competing_transaction())
+            other_pid = await asyncio.wait_for(started, timeout=5)
+            # Inspect PostgreSQL's actual blocker graph; a timing-only sleep
+            # could pass even when the second transaction does not take a lock.
+            async with asyncio.timeout(5):
+                while True:
+                    blockers = await (
+                        await conn.execute("SELECT pg_blocking_pids(%s) AS pids", (other_pid,))
+                    ).fetchone()
+                    assert blockers is not None
+                    if conn.info.backend_pid in blockers["pids"]:
+                        break
+                    assert not task.done(), "accounting bypassed the transcript lock"
+                    await asyncio.sleep(0.01)
+    finally:
+        if task is not None:
+            await asyncio.wait_for(task, timeout=5)
+
+    async with db.scoped(url, SEEDED) as conn:
+        # Lost acknowledgement: rerunning finalization still adds no usage.
+        await _finalize_for_accounting(conn, source_id)
+        totals = await (
+            await conn.execute(
+                "SELECT kind, SUM(quantity)::bigint AS total FROM usage_ledger"
+                " WHERE source_id = %s GROUP BY kind",
+                (source_id,),
+            )
+        ).fetchall()
+    assert {entry["kind"]: entry["total"] for entry in totals} == {
+        "storage_bytes": 210,
+        "transcription_seconds": 60,
+    }

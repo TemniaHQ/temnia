@@ -40,10 +40,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from temnia_pipeline.substrate.backends import (
+    MAX_CHANGE_POINT_UNITS,
     KernelSegmentation,
     encode_sentences,
     library_version,
     load_encoder,
+    positive_integer,
+    truncated_count,
 )
 from temnia_pipeline.substrate.model import BoundaryCandidate, Layers, Provenance
 
@@ -166,32 +169,49 @@ class EmbeddingChangePointSegmenter:
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         target_per_hour: float = DEFAULT_TARGET_PER_HOUR,
         min_sentences: int = 4,
-        jump: int = 1,
     ) -> None:
+        min_sentences = positive_integer(min_sentences, name="min_sentences")
         self.sentences_from = sentences_from
         self.embedding_model = embedding_model
         self.target_per_hour = target_per_hour
         self.min_sentences = min_sentences
-        self.jump = jump
         self._encoder = None
+        self._embedding_revision: str | None = None
 
-    def _provenance(self, base: Provenance, target: int) -> Provenance:
+    def _provenance(
+        self, base: Provenance, target: int, truncated: int | None = None
+    ) -> Provenance:
+        params: dict[str, object] = {
+            "min_sentences": self.min_sentences,
+            "sentences_from": base.segmenter,
+            "target": target,
+            "target_per_hour": self.target_per_hour,
+            **{f"{base.segmenter}.{key}": value for key, value in base.params.items()},
+        }
+        if truncated is not None:
+            params["truncated_sentences"] = truncated
+        versions = {
+            **base.versions,
+            "ruptures": library_version("ruptures"),
+            "sentence_transformers": library_version("sentence-transformers"),
+        }
+        if self._embedding_revision is not None:
+            versions["embedding_revision"] = self._embedding_revision
         return Provenance(
             segmenter=self.name,
             models={**base.models, "embedding": self.embedding_model},
-            params={
-                "jump": self.jump,
-                "min_sentences": self.min_sentences,
-                "sentences_from": base.segmenter,
-                "target": target,
-                "target_per_hour": self.target_per_hour,
-                **{f"{base.segmenter}.{key}": value for key, value in base.params.items()},
-            },
-            versions={
-                **base.versions,
-                "ruptures": library_version("ruptures"),
-                "sentence_transformers": library_version("sentence-transformers"),
-            },
+            params=params,
+            versions=versions,
+        )
+
+    @staticmethod
+    def _with_provenance(base: Layers, provenance: Provenance) -> Layers:
+        return Layers(
+            words=base.words,
+            sentences=base.sentences,
+            paragraphs=base.paragraphs,
+            candidates=base.candidates,
+            provenance=provenance,
         )
 
     def analyse(
@@ -200,20 +220,33 @@ class EmbeddingChangePointSegmenter:
         """Embed and fit once; ask the result for as many granularities as wanted."""
         base = self.sentences_from.segment(words, shot_times_ms=shot_times_ms)
         target = target_count(base.sentences, self.target_per_hour)
-        base = Layers(
-            words=base.words,
-            sentences=base.sentences,
-            paragraphs=base.paragraphs,
-            candidates=base.candidates,
-            provenance=self._provenance(base.provenance, target),
-        )
+        # Refused before a single embedding is computed: the kernel matrix is
+        # what has the ceiling, but the minute of CPU that precedes it was
+        # spent before the refusal (S2 review, I18).
+        if len(base.sentences) > MAX_CHANGE_POINT_UNITS:
+            msg = (
+                f"kernel change-point detection is quadratic in the number of sentences and "
+                f"this transcript has {len(base.sentences)}, over the {MAX_CHANGE_POINT_UNITS} "
+                "ceiling; segment the episode in parts, or use a hierarchical segmenter"
+            )
+            raise ValueError(msg)
         if len(base.sentences) < 2 * self.min_sentences:
-            return ChangePointAnalysis(base=base, target=target, fitted=None)
+            provenance = self._provenance(base.provenance, target)
+            return ChangePointAnalysis(
+                base=self._with_provenance(base, provenance), target=target, fitted=None
+            )
         if self._encoder is None:
-            self._encoder = load_encoder(self.embedding_model)
-        matrix = encode_sentences(self._encoder, [sentence.text for sentence in base.sentences])
-        fitted = KernelSegmentation(matrix, min_size=self.min_sentences, jump=self.jump)
-        return ChangePointAnalysis(base=base, target=target, fitted=fitted)
+            loaded = load_encoder(self.embedding_model)
+            self._encoder = loaded.value
+            self._embedding_revision = loaded.revision
+        texts = [sentence.text for sentence in base.sentences]
+        truncated = truncated_count(self._encoder, texts)
+        matrix = encode_sentences(self._encoder, texts)
+        fitted = KernelSegmentation(matrix, min_size=self.min_sentences)
+        provenance = self._provenance(base.provenance, target, truncated)
+        return ChangePointAnalysis(
+            base=self._with_provenance(base, provenance), target=target, fitted=fitted
+        )
 
     def segment(self, words: Sequence[GridWord], *, shot_times_ms: Sequence[int] = ()) -> Layers:
         """The target number of ranked topic candidates over the base's sentences."""

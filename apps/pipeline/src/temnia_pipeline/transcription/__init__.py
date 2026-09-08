@@ -137,11 +137,23 @@ class Failed:
 
 
 @dataclass(frozen=True, slots=True)
+class Unreachable:
+    """The provider could not be asked; nothing is known about the run.
+
+    A connection that dropped, a token the API refused, a stream that ended:
+    the run may be healthy on its GPU. Never a `Failed`, because a runner that
+    treated it as one started a second run beside the first (S2 review, I05).
+    """
+
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class Unknown:
     """The provider has never heard of this handle, or its result has expired."""
 
 
-RunStatus = Running | Done | Failed | Unknown
+RunStatus = Running | Done | Failed | Unknown | Unreachable
 
 
 class TranscriptionProvider(Protocol):

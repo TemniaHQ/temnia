@@ -12,6 +12,11 @@ export function getTemporalClient(): Promise<Client> {
     const namespace = process.env.TEMPORAL_NAMESPACE ?? "default";
     const connection = await Connection.connect({ address });
     return new Client({ connection, namespace });
-  })();
+  })().catch((error: unknown) => {
+    // A failed connection is retryable; retaining its rejected promise made
+    // every later Retry fail until the web server restarted.
+    clientPromise = undefined;
+    throw error;
+  });
   return clientPromise;
 }

@@ -16,7 +16,14 @@ from typing import TYPE_CHECKING
 
 from temporalio.exceptions import ApplicationError
 
-from temnia_pipeline.transcription import Done, Failed, Running, TranscriptionProgress, Unknown
+from temnia_pipeline.transcription import (
+    Done,
+    Failed,
+    Running,
+    TranscriptionProgress,
+    Unknown,
+    Unreachable,
+)
 
 if TYPE_CHECKING:
     from temnia_pipeline.transcription import (
@@ -44,12 +51,20 @@ TERMINAL_TYPES = (
     "TranscriptContractError",
     "InvalidMediaError",
     "ValidationError",
+    "RemoteProtocolError",
 )
 _TERMINAL_PREFIXES = tuple(f"{name}:" for name in TERMINAL_TYPES)
 
 # The handle rides in the activity's heartbeat under this key, which is where
 # a retried attempt reads it from.
 CALL_ID = "call_id"
+
+# How many consecutive ticks the provider may be unreachable before the attempt
+# gives up and lets Temporal retry it. Three minutes at the ten-second tick,
+# well inside the five-minute heartbeat timeout, because every tick still
+# heartbeats the handle: the retry reattaches to the same run, it never starts
+# another.
+UNREACHABLE_TICKS = 18
 
 ProgressCallback = Callable[[TranscriptionProgress, str | None], Awaitable[None]]
 
@@ -87,25 +102,44 @@ class TranscriptionRunner:
         self, job: TranscribeJob, *, on_progress: ProgressCallback, resume: str | None = None
     ) -> TranscribeRaw:
         """Produce the engine's response for this job."""
-        handle = await self._attach(job, resume)
+        handle = await self._attach(job, on_progress, resume)
         return await self._poll(handle, on_progress)
 
-    async def _attach(self, job: TranscribeJob, resume: str | None) -> str:
-        """Keep an earlier attempt's run when it is still alive, otherwise start one."""
+    async def _attach(
+        self, job: TranscribeJob, on_progress: ProgressCallback, resume: str | None
+    ) -> str:
+        """Keep an earlier attempt's run when it may still be alive, otherwise start one.
+
+        The handle is heartbeated before the provider is asked anything, so an
+        attempt that fails on the very first status read still hands the
+        handle to the attempt after it. Only the provider's own word that the
+        run is gone (`Unknown`) or over (`Failed`) starts another; not being
+        able to ask is a retry, never a second GPU job.
+        """
         if resume is None:
             return await self._start(job)
+        await on_progress(TranscriptionProgress(stage="model", percent=0), resume)
         try:
             status = await self.provider.status(resume)
-        except Exception as error:  # noqa: BLE001
-            log.warning("could not poll %s (%s); starting again", resume, error)
-            return await self._start(job)
-        if isinstance(status, Running | Done):
-            log.info("reattaching to transcription %s", resume)
-            return resume
-        log.info(
-            "transcription %s is %s; starting a new run", resume, type(status).__name__.lower()
-        )
-        return await self._start(job)
+        except Exception as error:
+            msg = f"could not check transcription {resume}: {type(error).__name__}: {error}"
+            raise provider_failure(msg) from error
+        match status:
+            case Running() | Done():
+                log.info("reattaching to transcription %s", resume)
+                return resume
+            case Failed(message=message) if classify(message).non_retryable:
+                raise classify(message)
+            case Unreachable(message=message):
+                msg = f"could not reach the provider to check transcription {resume}: {message}"
+                raise provider_failure(msg)
+            case _:
+                log.info(
+                    "transcription %s is %s; starting a new run",
+                    resume,
+                    type(status).__name__.lower(),
+                )
+                return await self._start(job)
 
     async def _start(self, job: TranscribeJob) -> str:
         try:
@@ -125,6 +159,7 @@ class TranscriptionRunner:
         # would time the activity out and hand the retry no handle, which is
         # the second GPU job this design exists to avoid.
         latest = TranscriptionProgress(stage="model", percent=0)
+        unreachable = 0
         while True:
             note = await self.provider.progress(handle)
             if note is not None:
@@ -139,5 +174,16 @@ class TranscriptionRunner:
                 case Unknown():
                     msg = f"the provider has no record of transcription {handle}"
                     raise provider_failure(msg)
+                case Unreachable(message=message):
+                    unreachable += 1
+                    if unreachable >= UNREACHABLE_TICKS:
+                        msg = (
+                            f"the provider was unreachable for {unreachable} polls of "
+                            f"transcription {handle}: {message}"
+                        )
+                        raise provider_failure(msg)
+                    log.warning("transcription %s unreachable (%s); polling on", handle, message)
+                    await asyncio.sleep(self.poll_seconds)
                 case Running():
+                    unreachable = 0
                     await asyncio.sleep(self.poll_seconds)

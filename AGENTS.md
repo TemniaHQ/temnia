@@ -279,6 +279,63 @@ rewritten; tech-stack rows for framework, optimisation, gateway, roster, evals, 
 legacy's Director/Reconciler/Cutter/Publisher/Verifier/Reviewer names retire. What would change it:
 a measured win for a persona-style loop on the three fresh sources at equal cost.
 
+**2026-09-08 — The S3 harness adopts the review's evidence layer and edit compiler; five typed
+artefacts, not five calls (Rajesh, after the 2026-09-07 review).** The review in
+`docs/design/harness-review-and-architecture-2026-09-07.md` (32 findings on the S2 code, 19
+independently rechecked, none overturned) proposed an architecture that is the 2026-09-07 design
+with two things made explicit: a versioned source-evidence record under everything (words in
+lexical order with their timing and its uncertainty, overlapping speaker intervals, speech and
+non-speech regions, shots), and a deterministic edit compiler that chooses neighbouring boundaries
+jointly from addressable candidates, the model proposing semantic spans and code picking the cut.
+Both are adopted: the compiler is the generalisation of the legacy's cutting room and answers the
+wrong-boundaries failure that sank M1. The one conflict, "drop the fixed five stages", is resolved
+by keeping the five typed artefacts as the contract (evidence, plan, edit specification, checks,
+review) and letting the number of model calls a stage makes be an implementation choice measured per
+lane; a stage may be one call, several, or none. Deferred, each with its reason: Remotion and the
+TypeScript composition worker (no lane before S9 needs them, and the licence is a cost);
+OpenTimelineIO interchange (nobody has asked for it); budget reservations beyond the pre-call check
+(there is no parallel dispatch yet); the twelve-lane edit specification (version one carries what
+chapters and moments need). Pulled forward: the annotated corpus, acceptable boundary windows on the
+three recordings, is the S4 entry gate, because the compiler's objective cannot be calibrated
+without it and the legacy's cutting room was never proven on a fresh source. Speech engines are
+re-auditioned only after slice D gives a measured WhisperX baseline. The spec is
+`docs/plans/s3-harness-spec.md`; the batch that fixed the review's defects is
+`docs/plans/s2-hardening-360-view.md`. Two rules that batch added to the pipeline: **a write a
+retry can repeat carries the identity of the run that made it and is fenced on it** (`run_id` on the
+transcript row, an idempotency key on the ledger, a per-attempt object key on a correction), and
+**a transport failure is never reported as a failed computation** (`Unreachable` is its own status
+in both Modal adapters, and no runner spawns on it). The PRD's "a retry re-pays zero tokens" (§1.5 principle 6,
+§8 chassis, §23 fair billing) is qualified in the same PR to committed results, with unresolved spend
+bounded and reported, because the crash window between a provider's answer and Temnia's commit cannot
+be closed by a checkpoint.
+
+**2026-09-08 — S2 follow-up: outcomes carry their origin, models their loaded identity.**
+The second review's fourteen remaining defects are tracked in
+`docs/plans/s2-hardening-followup-360-view.md`. Modal media protocol **4** returns an explicit
+success/failure envelope: a remote `OSError` or `TimeoutError` is a computation failure, while
+transport uncertainty retains the call handle. The old exception-class heuristic could not
+distinguish them because Modal rethrows serialized remote exceptions as their original classes.
+This is an incompatible paired rollout: drain version-3 work before replacing the Modal app and
+workers; the staging runbook gives the sequence. A separate smoke CLI resolves the deployed app
+and environment and checks its source/config fingerprint; importing a local Modal entry point
+does not prove the deployed app works. Fingerprints identify build inputs, not immutable upstream
+wheel or GPU model bytes.
+
+SaT weights, its separately loaded XLM-R tokenizer, and MiniLM now load explicit local commit
+snapshots. Setup fetches those exact revisions and verifies their required files; runtime does
+not resolve `main`. `HF_HOME` takes precedence over `TEMNIA_MODELS_DIR` in both setup and runtime,
+and all loaders receive absolute paths from that one root. Provenance is captured with the loaded
+model, not read later from a mutable cache reference. Other audition models require a prefetched
+`repo@<full commit>` snapshot; the default fetch script intentionally downloads only the pinned
+default files. The gate performs this setup explicitly before its offline model tests.
+
+Transcript edits retain the revision of their loaded bytes, and asynchronous saves retain their
+own draft identity. A retry reserves only the observed row using a temporary `dispatch:<uuid>`
+run id; the worker replaces it when claiming. Unknown Temporal status never authorizes resetting
+the row. Corrections and machine finalization take the same transcript row lock before reconciling
+storage usage. HLS reuse verifies named objects, sizes, and playlist references; retained extra
+objects are included in recorded storage usage rather than removed during a possibly concurrent retry.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

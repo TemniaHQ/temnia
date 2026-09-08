@@ -6,7 +6,11 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import (
+    ActivityError,
+    ApplicationError,
+    WorkflowAlreadyStartedError,
+)
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -43,7 +47,7 @@ TRANSCRIBE_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=30),
     backoff_coefficient=2.0,
     maximum_attempts=4,
-    non_retryable_error_types=["TranscriptionFailure", "NotClaimable"],
+    non_retryable_error_types=["TranscriptionFailure", "NotClaimable", "StaleRun"],
 )
 
 # The audio extract ingest makes, relative to the source prefix. Matches
@@ -160,32 +164,57 @@ class IngestWorkflow:
 
         Abandoned, so this workflow completes now and the transcription outlives
         it: a source is ready when its playback is ready, and transcription can
-        take another half hour. Started only when the probe found audio, and a
-        failure to start is logged rather than raised, because a source that has
-        laddered and published must not be failed by a transcription that could
-        not be queued. The web's Retry starts the same workflow id.
+        take another half hour. A source with no audio, and a start that
+        failed, each write a typed failure on the transcript row so the tab can
+        say so instead of "Queued" for ever (S2 review, I19); neither fails the
+        source, which has laddered and published. The web's Retry starts the
+        same workflow id.
         """
+        transcribe = TranscribeInput(
+            scope=request.scope,
+            sourceId=request.sourceId,
+            artifactPrefix=request.artifactPrefix,
+            audioKey=request.artifactPrefix + AUDIO_PATH,
+            durationMs=probed.durationMs,
+        )
         if not probed.audioChannels:
+            await IngestWorkflow._mark_unavailable(
+                transcribe, "NoAudioError: the recording has no audio track"
+            )
             return
         try:
             await workflow.start_child_workflow(
                 "TranscribeWorkflow",
-                TranscribeInput(
-                    scope=request.scope,
-                    sourceId=request.sourceId,
-                    artifactPrefix=request.artifactPrefix,
-                    audioKey=request.artifactPrefix + AUDIO_PATH,
-                    durationMs=probed.durationMs,
-                ),
+                transcribe,
                 id=f"transcribe-{request.sourceId}",
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
-        # Deliberately blind: whatever went wrong queueing a transcription, a
-        # source that has laddered and published is ready and must not be
-        # failed by it. The user's Retry starts the same workflow id.
+        except WorkflowAlreadyStartedError:
+            # The web's Retry got there first under the same id; a run exists.
+            return
         except Exception:  # noqa: BLE001
             workflow.logger.warning(
                 "could not start transcription for source %s", request.sourceId, exc_info=True
+            )
+            await IngestWorkflow._mark_unavailable(
+                transcribe, "DispatchError: transcription could not be queued"
+            )
+
+    @staticmethod
+    async def _mark_unavailable(request: TranscribeInput, message: str) -> None:
+        """Best effort, and never a reason to fail a source that is ready."""
+        try:
+            await workflow.execute_activity(
+                "mark_transcript_unavailable",
+                args=[request, message],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except Exception:  # noqa: BLE001
+            workflow.logger.warning(
+                "could not record the transcript state for source %s",
+                request.sourceId,
+                exc_info=True,
             )
 
 

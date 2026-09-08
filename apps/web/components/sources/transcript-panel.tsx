@@ -32,6 +32,7 @@ const HEADINGS: Record<string, string> = {
   empty: "Nothing to transcribe",
   failed: "Transcription failed",
   language: "Not this language yet",
+  noAudio: "No audio",
   notReady: "Not yet",
   pending: "Queued",
   processing: "Transcribing",
@@ -94,9 +95,19 @@ export function TranscriptPanel({
 
   const retry = () => {
     startTransition(async () => {
-      const result = await retryTranscription(sourceId);
-      setMessage(result.ok ? null : result.message);
-      router.refresh();
+      setMessage(null);
+      try {
+        const result = await retryTranscription(sourceId);
+        setMessage(result.ok ? null : result.message);
+      } catch {
+        setMessage(
+          "Could not confirm whether transcription started. Check your connection and try again."
+        );
+      } finally {
+        // The request may have reached the server even when its answer was
+        // lost. Refresh the row; a later Retry checks Temporal before writing.
+        router.refresh();
+      }
     });
   };
 
@@ -105,6 +116,7 @@ export function TranscriptPanel({
       <div data-state="ready" data-testid="transcript-tab">
         <TranscriptReader
           baseRevision={row.currentRevision}
+          key={sourceId}
           labels={labels}
           revisionUrl={revisionUrl}
           sourceId={sourceId}

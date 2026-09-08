@@ -2,7 +2,10 @@
 
 import { Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import type { WordEdit } from "@/lib/transcript/drafts";
+
+export type { WordEdit } from "@/lib/transcript/drafts";
+
 import { FieldError } from "@/components/ui/field";
 import {
   InputGroup,
@@ -11,17 +14,11 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 
-export interface WordEdit {
-  /** Why the last save was refused, when the edit itself was the problem. */
-  error: string | null;
-  index: number;
-  pending: boolean;
-}
-
 interface TranscriptWordEditorProps {
   edit: WordEdit;
   initial: string;
   onCancel: () => void;
+  onDraft: (text: string) => void;
   onSave: (index: number, text: string) => void;
 }
 
@@ -38,9 +35,10 @@ export function TranscriptWordEditor({
   edit,
   initial,
   onCancel,
+  onDraft,
   onSave,
 }: TranscriptWordEditorProps) {
-  const [text, setText] = useState(initial);
+  const text = edit.draft ?? initial;
   const save = () => {
     if (text.trim()) {
       onSave(edit.index, text.trim());
@@ -54,7 +52,7 @@ export function TranscriptWordEditor({
           autoFocus
           data-testid="transcript-word-input"
           disabled={edit.pending}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();

@@ -1,4 +1,8 @@
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { type TranscriptV1, TranscriptV1Schema } from "@temnia/contracts";
 import { source, transcript, transcriptRevision } from "@temnia/db";
 import { and, eq } from "drizzle-orm";
@@ -85,4 +89,22 @@ export async function writeRevision(
     })
   );
   return Buffer.byteLength(body);
+}
+
+/**
+ * Remove a revision object nothing points at: the loser of a concurrent
+ * save. Best effort; an orphan that survives is harmless and is collected
+ * later, and the save's answer must not depend on this succeeding.
+ */
+export async function discardRevision(storageKey: string): Promise<void> {
+  try {
+    await storage().send(
+      new DeleteObjectCommand({
+        Bucket: storageSettings().bucket,
+        Key: storageKey,
+      })
+    );
+  } catch {
+    // Left for the collector.
+  }
 }

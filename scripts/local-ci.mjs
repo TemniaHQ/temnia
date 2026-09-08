@@ -23,6 +23,7 @@ import {
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sweepStaleGateRuns } from "./local-ci-cleanup.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RECEIPT_VERSION = 1;
@@ -46,11 +47,13 @@ const GATE_RECORDINGS_DIR = "/var/lib/temnia/recordings";
 const GATE_MODELS_DIR = resolve(ROOT, ".cache/temnia-models");
 const STAGES = [
   "pnpm install --frozen-lockfile",
+  "node scripts regression tests",
   "pnpm check",
   "uv sync --frozen (pipeline)",
   "contracts: schemas:check + pipeline contracts:check",
   "pnpm services (compose up --wait on the long-running services)",
   "db:migrate against a disposable database",
+  "fetch immutable substrate model snapshots before offline loading tests",
   "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
   "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
@@ -220,26 +223,6 @@ function dockerLogsTail(name) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
-/** Remove containers and images left by gate runs that never reached their cleanup. */
-function sweepStaleGateRuns() {
-  const list = (args) =>
-    (spawnSync("docker", args, { encoding: "utf8" }).stdout ?? "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-  const containers = list(["ps", "-aq", "--filter", "name=temnia-gate-"]);
-  if (containers.length > 0) {
-    spawnSync("docker", ["rm", "-f", ...containers], { stdio: "ignore" });
-  }
-  const images = [
-    ...list(["images", "-q", "--filter", "reference=temnia-web:gate-*"]),
-    ...list(["images", "-q", "--filter", "reference=temnia-pipeline:gate-*"]),
-  ];
-  if (images.length > 0) {
-    spawnSync("docker", ["image", "rm", "-f", ...images], { stdio: "ignore" });
-  }
-}
-
 async function runFullGate(sha) {
   const startedAt = new Date().toISOString();
   const stamp = `${Date.now().toString(36)}_${process.pid}`;
@@ -265,6 +248,7 @@ async function runFullGate(sha) {
   try {
     run("pnpm", ["install", "--frozen-lockfile"]);
     run("pnpm", ["check"]);
+    run("pnpm", ["test:scripts"]);
     run("pnpm", ["--filter", "@temnia/pipeline", "sync"]);
     run("pnpm", ["--filter", "@temnia/contracts", "schemas:check"]);
     run("pnpm", ["--filter", "@temnia/pipeline", "contracts:check"]);
@@ -281,6 +265,7 @@ async function runFullGate(sha) {
     const env = {
       ...process.env,
       CI: "1",
+      HF_HOME: GATE_MODELS_DIR,
       LOCAL_CI: "1",
       MIGRATE_DATABASE_URL: ownerUrl,
       TEMNIA_MODEL_TESTS: "1",
@@ -320,6 +305,12 @@ async function runFullGate(sha) {
       "--retention",
       "24h",
     ]);
+    // Runtime loaders are offline and never resolve mutable model names. Set
+    // up the exact snapshots explicitly so a clean machine exercises them too.
+    run("uv", ["run", "--frozen", "python", "scripts/fetch_models.py"], {
+      cwd: resolve(ROOT, "apps/pipeline"),
+      env,
+    });
     run("pnpm", ["turbo", "run", "build", "lint", "typecheck", "test"], {
       env,
     });

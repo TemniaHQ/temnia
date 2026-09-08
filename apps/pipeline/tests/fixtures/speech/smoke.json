@@ -1,0 +1,5 @@
+{
+  "_note": "A real-speech sample for the release smoke (modal_app.py::smoke): macOS `say`, voice Samantha, encoded as mono 16 kHz AAC. Nine seconds, two speakers' worth of nothing: one voice. `durationMs` is ffprobe's measurement; `expect` are words the deployed engine must hear.",
+  "durationMs": 8824,
+  "expect": ["chapters", "smoke"]
+}

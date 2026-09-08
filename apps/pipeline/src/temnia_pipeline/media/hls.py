@@ -32,6 +32,7 @@ attempt failed.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from temnia_pipeline.media.ffmpeg import run_ffmpeg
+from temnia_pipeline.media.hls_inventory import local_inventory
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -509,6 +511,10 @@ def ladder_is_complete(
             assert_covers(playlist, expected_seconds, floor_seconds=floor)
     except (OSError, TruncatedOutputError):
         return False
+    try:
+        local_inventory(out_dir, {playlist.parent.name for playlist in playlists})
+    except (OSError, ValueError):
+        return False
     return True
 
 
@@ -570,6 +576,9 @@ class LadderManifest(BaseModel):
     # raising a validation error inside a reuse check.
     decoder: Decoder = "cpu"
     call_id: str | None = None
+    # Optional only to parse older markers; reuse requires both fields.
+    artifacts: dict[str, int] | None = None
+    playlist_sha256: dict[str, str] | None = None
 
 
 def write_manifest(out_dir: Path, manifest: LadderManifest) -> Path:
@@ -589,7 +598,11 @@ def manifest_covers(manifest: LadderManifest, expected_seconds: float) -> bool:
     tolerance = duration_tolerance(expected_seconds)
     for name, seconds in manifest.renditions.items():
         floor = KEYFRAME_SECONDS if name == IFRAMES_RENDITION else 0.0
-        if seconds < expected_seconds - tolerance - floor:
+        if (
+            not math.isfinite(seconds)
+            or seconds <= 0
+            or seconds < expected_seconds - tolerance - floor
+        ):
             return False
     return bool(manifest.renditions)
 

@@ -13,7 +13,8 @@
     "push:verified": "node scripts/verified-pr.mjs push",
     "services": "docker compose up -d --wait --wait-timeout 300 postgres garage temporal temporal-ui && docker compose up -d garage-cors",
     "substrate:dump": "pnpm --filter @temnia/legacy-reference dump",
-    "test": "turbo run test",
+    "test": "pnpm test:scripts && turbo run test",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

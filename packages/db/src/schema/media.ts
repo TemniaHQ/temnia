@@ -204,6 +204,12 @@ export const usageLedger = pgTable(
       .notNull()
       .default({}),
     id: id(),
+    /**
+     * Set by writers a retry can repeat (the pipeline's metering activities), so
+     * an attempt whose acknowledgement was lost inserts once; the partial unique
+     * index below is the guarantee. Web writes that are deltas need none.
+     */
+    idempotencyKey: text("idempotency_key"),
     kind: usageKind("kind").notNull(),
     organizationId: organizationId(),
     quantity: bigint("quantity", { mode: "number" }).notNull(),
@@ -219,6 +225,9 @@ export const usageLedger = pgTable(
       table.kind,
       table.recordedAt
     ),
+    uniqueIndex("usage_ledger_idempotency_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
     organizationPolicy("usage_ledger", table.organizationId),
   ]
 ).enableRLS();
@@ -261,6 +270,13 @@ export const transcript = pgTable(
     percent: integer("percent"),
     provider: text("provider"),
     readyAt: timestamptz("ready_at"),
+    /**
+     * The Temporal run that owns the row. The claim is idempotent per run (a
+     * lost acknowledgement re-claims and gets the same attempt back) and every
+     * later write the run makes is fenced on it, so a run that lost the row to
+     * a later one can no longer change it.
+     */
+    runId: text("run_id"),
     sourceId: uuid("source_id")
       .notNull()
       .references(() => source.id, { onDelete: "cascade" }),

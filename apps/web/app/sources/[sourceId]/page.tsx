@@ -1,8 +1,4 @@
-import {
-  ARTIFACT_PATHS,
-  sourcePrefix,
-  transcriptRevisionKey,
-} from "@temnia/contracts";
+import { ARTIFACT_PATHS, sourcePrefix } from "@temnia/contracts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SourceWorkspace } from "@/components/sources/source-workspace";
@@ -38,9 +34,10 @@ export default async function SourcePage({
   const row = transcript?.row;
   // The words are fetched by the browser from the media proxy, not serialised
   // into the page: a 2.5-hour episode is about two megabytes and it would ride
-  // in the RSC payload on every poll.
-  const transcriptUrl = row?.currentRevision
-    ? `${prefix}${transcriptRevisionKey("", row.currentRevision)}`
+  // in the RSC payload on every poll. The key is the revision row's own, never
+  // rebuilt from the number: a correction's key carries its attempt.
+  const transcriptUrl = transcript?.current
+    ? `/api/media/${transcript.current.storageKey}`
     : null;
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-8">
@@ -103,6 +100,7 @@ export default async function SourcePage({
                 percent: row.percent,
                 stage: row.stage,
                 status: row.status,
+                updatedAt: row.updatedAt.toISOString(),
                 wordCount: transcript?.current?.wordCount ?? null,
               }
             : null

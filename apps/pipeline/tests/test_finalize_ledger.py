@@ -45,6 +45,17 @@ async def ledger_sum(conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID
     return int(row["total"]) if row else 0
 
 
+async def processing_rows(conn: AsyncConnection[dict[str, Any]], source_id: uuid.UUID) -> int:
+    row = await (
+        await conn.execute(
+            "SELECT count(*) AS n FROM usage_ledger"
+            " WHERE source_id = %s AND kind = 'processing_seconds'",
+            (source_id,),
+        )
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def artifact(kind: ArtifactKind, prefix: str, size: int) -> ArtifactRecord:
     return ArtifactRecord(
         kind=kind,
@@ -96,6 +107,7 @@ async def test_artifact_delta_never_nets_against_the_master() -> None:
             scope=SEEDED,
             source_id=source_id,
             workflow_id="wf-1",
+            run_id="run-1",
             artifacts=[
                 artifact(ArtifactKind.hls, prefix, 600),
                 artifact(ArtifactKind.peaks, prefix, 50),
@@ -106,6 +118,25 @@ async def test_artifact_delta_never_nets_against_the_master() -> None:
         assert total == 650
         assert await ledger_sum(conn, source_id) == 1000 + 650
 
+        # The same run finalising again (a lost acknowledgement) meters nothing
+        # more: neither storage (a delta) nor processing (keyed by the run).
+        total = await db.finalize_source(
+            conn,
+            scope=SEEDED,
+            source_id=source_id,
+            workflow_id="wf-1",
+            run_id="run-1",
+            artifacts=[
+                artifact(ArtifactKind.hls, prefix, 600),
+                artifact(ArtifactKind.peaks, prefix, 50),
+            ],
+            duration_ms=120_000,
+            processing_seconds=7,
+        )
+        assert total == 650
+        assert await ledger_sum(conn, source_id) == 1000 + 650
+        assert await processing_rows(conn, source_id) == 1
+
         # A re-ingest overwrites in place: only net-new artifact bytes are metered.
         assert await db.claim_source(conn, source_id, "wf-2")
         total = await db.finalize_source(
@@ -113,6 +144,7 @@ async def test_artifact_delta_never_nets_against_the_master() -> None:
             scope=SEEDED,
             source_id=source_id,
             workflow_id="wf-2",
+            run_id="run-2",
             artifacts=[
                 artifact(ArtifactKind.hls, prefix, 700),
                 artifact(ArtifactKind.peaks, prefix, 50),
@@ -122,6 +154,8 @@ async def test_artifact_delta_never_nets_against_the_master() -> None:
         )
         assert total == 750
         assert await ledger_sum(conn, source_id) == 1000 + 750
+        # A new run was paid for again, so it is metered again.
+        assert await processing_rows(conn, source_id) == 2
 
         status = await (
             await conn.execute("SELECT status FROM source WHERE id = %s", (source_id,))

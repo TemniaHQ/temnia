@@ -10,18 +10,20 @@ The model-loading tests carry `@pytest.mark.models`; the target arithmetic and
 the empty cases are pure and run always.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pytest
 
 from conftest import SubstrateFixture
+from temnia_pipeline.substrate.backends import MAX_CHANGE_POINT_UNITS, PINNED_REVISIONS, LoadedModel
 from temnia_pipeline.substrate.changepoint import (
     EmbeddingChangePointSegmenter,
     target_count,
 )
 from temnia_pipeline.substrate.factory import make_segmenter
+from temnia_pipeline.substrate.grid import GridWord
 from temnia_pipeline.substrate.legacy_rules import LegacyRulesSegmenter
-from temnia_pipeline.substrate.model import Sentence
+from temnia_pipeline.substrate.model import Layers, Provenance, Sentence
 
 GOLD_SENTENCE_TOLERANCE = 2
 
@@ -69,6 +71,53 @@ def test_the_factory_refuses_a_typo_and_a_self_reference() -> None:
         make_segmenter("kmeans")
     with pytest.raises(TypeError, match="target_per_hour must be a number"):
         make_segmenter("changepoint", target_per_hour="six")
+
+
+def test_the_factory_refuses_a_target_that_is_not_positive_and_the_dead_jump_knob() -> None:
+    """An explicit zero used to become six and be recorded as six (S2 review, I14)."""
+    with pytest.raises(ValueError, match="target_per_hour must be a positive number"):
+        make_segmenter("changepoint", target_per_hour=0)
+    with pytest.raises(ValueError, match="target_per_hour must be a positive number"):
+        make_segmenter("changepoint", target_per_hour=-3)
+    # KernelCPD ignores `jump`; a knob that is recorded and not applied is refused.
+    with pytest.raises(ValueError, match="takes no parameter jump"):
+        make_segmenter("changepoint", jump=2)
+
+
+class _ManySentences:
+    """A base segmenter answering with more sentences than the kernel can take."""
+
+    name = "many"
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    def segment(self, words: Sequence[GridWord], *, shot_times_ms: Sequence[int] = ()) -> Layers:
+        _ = shot_times_ms
+        sentences = tuple(_sentence(i, i * 1000, i * 1000 + 900) for i in range(self.count))
+        return Layers(
+            words=words,
+            sentences=sentences,
+            paragraphs=(),
+            candidates=(),
+            provenance=Provenance(segmenter=self.name),
+        )
+
+
+def test_the_sentence_ceiling_is_checked_before_any_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refused before the minute of CPU the embeddings would cost (S2 review, I18)."""
+
+    def never(*args: object, **kwargs: object) -> object:
+        _ = (args, kwargs)
+        msg = "an encoder was loaded for a transcript over the ceiling"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("temnia_pipeline.substrate.changepoint.load_encoder", never)
+    segmenter = EmbeddingChangePointSegmenter(_ManySentences(MAX_CHANGE_POINT_UNITS + 1))
+    with pytest.raises(ValueError, match=f"over the {MAX_CHANGE_POINT_UNITS} ceiling"):
+        segmenter.analyse([])
 
 
 @pytest.mark.models
@@ -140,3 +189,61 @@ def test_the_base_segmenters_own_candidates_are_replaced_not_merged(
     assert {candidate.kind for candidate in layers.candidates} == {"topic"}
     assert layers.sentences == base.sentences
     assert layers.paragraphs == base.paragraphs
+
+
+@pytest.mark.parametrize("minimum", [0, -1, 1.5, True, float("nan"), float("inf")])
+def test_invalid_minimum_is_refused_before_loading_or_embedding(
+    minimum: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(*args: object, **kwargs: object) -> object:
+        _ = (args, kwargs)
+        pytest.fail("invalid parameters reached model loading")
+
+    monkeypatch.setattr("temnia_pipeline.substrate.changepoint.load_encoder", never)
+    with pytest.raises((TypeError, ValueError), match="min_sentences must be"):
+        make_segmenter("changepoint", sentences_from="legacy", min_sentences=minimum)
+
+
+@pytest.mark.parametrize("minimum", [0, -1])
+def test_direct_segmenter_construction_also_refuses_nonpositive_minimum(minimum: int) -> None:
+    with pytest.raises(ValueError, match="min_sentences must be a positive whole number"):
+        EmbeddingChangePointSegmenter(LegacyRulesSegmenter(), min_sentences=minimum)
+
+
+def test_a_positive_minimum_is_applied() -> None:
+    segmenter = make_segmenter("changepoint", sentences_from="legacy", min_sentences=2)
+    assert isinstance(segmenter, EmbeddingChangePointSegmenter)
+    assert segmenter.min_sentences == 2
+
+
+def test_embedding_provenance_keeps_the_loaded_instance_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Encoder:
+        def encode(
+            self,
+            sentences: list[str],
+            *,
+            normalize_embeddings: bool = False,
+            batch_size: int = 32,
+        ) -> object:
+            _ = (normalize_embeddings, batch_size)
+            return [[float(i % 2), float(1 - i % 2)] for i in range(len(sentences))]
+
+    loads = 0
+
+    def load(*args: object, **kwargs: object) -> LoadedModel[Encoder]:
+        nonlocal loads
+        _ = (args, kwargs)
+        loads += 1
+        return LoadedModel(Encoder(), "a" * 40)
+
+    monkeypatch.setattr("temnia_pipeline.substrate.changepoint.load_encoder", load)
+    segmenter = EmbeddingChangePointSegmenter(_ManySentences(8))
+    first = segmenter.segment([])
+    monkeypatch.setitem(PINNED_REVISIONS, segmenter.embedding_model, "b" * 40)
+    second = segmenter.segment([])
+    assert loads == 1
+    assert first.provenance.versions["embedding_revision"] == "a" * 40
+    assert second.provenance.versions["embedding_revision"] == "a" * 40
