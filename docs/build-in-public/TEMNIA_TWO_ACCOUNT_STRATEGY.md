@@ -1,6 +1,6 @@
 # Temnia: founder and product account strategy
 
-**Version:** 2.0 · **Reviewed:** 2026-09-08
+**Version:** 2.1 · **Reviewed:** 2026-09-08
 
 This revises the supplied two-account strategy. Account separation is a sensible editorial choice: people can follow Rajesh's decisions or Temnia's editing workflow for different reasons. It is not evidence that two accounts will grow faster than one. The [daily playbook](TEMNIA_BUILD_IN_PUBLIC_GUIDE.md) owns cadence, evidence and review; the [research review](RESEARCH_REVIEW_2026-09-08.md) explains the assessment.
 
@@ -26,6 +26,8 @@ LinkedIn remains on Rajesh's personal profile for this experiment. Its posts can
 |---|---|
 | @RajeshBuilds | Personal X identity supplied in the attached guides; not independently authenticated in this review. |
 | @TemniaHQ | Product X identity in both the attachments and repository reservation record. |
+| Founder X subscription | Rajesh reconfirmed Premium+ on 2026-09-08. Founder drafts may exceed 280 characters while remaining concise; this is user-confirmed account context, not a live subscription audit. |
+| Product X subscription | Unconfirmed. Keep standard-length drafts until longer-post access is established for @TemniaHQ. |
 | Personal LinkedIn | Rajesh's profile is the intended destination; no exact profile URL is assumed here. |
 | Temnia LinkedIn company page | `/company/temnia` reservation is recorded on 2026-09-03. The attachment's claim that no page was established omitted this evidence. No company-page posting cadence is added. |
 | Product domain | `temnia.com` is recorded as the canonical registered domain; that does not prove a working interest page, beta or live product. |
@@ -37,6 +39,8 @@ See [the strategy entry point's identity record](../build-in-public.md#11-name-a
 Start with **one founder X daily, three product X weekly and five personal LinkedIn weekly**. Product days initially fall on Monday, Wednesday and Friday. On those days the baseline has two original X posts across the two identities; other days have one. The [playbook's trial](TEMNIA_BUILD_IN_PUBLIC_GUIDE.md#3-cadence-a-practical-trial) defines time limits and review points.
 
 A second founder post is optional when it adds another useful takeaway. A code refactor with no demonstrated user consequence can support a founder post while the product account uses a genuine workflow question or an unused prior lesson.
+
+Length is separate from cadence. Rajesh's Premium+ founder posts can use modest extra space for the explanation; the [playbook's format guidance](TEMNIA_BUILD_IN_PUBLIC_GUIDE.md#8-format-library) starts around 50–100 words when useful, with shorter posts welcome. Do not split one thought merely to meet 280 characters or expand the number of stories because the account supports longer text.
 
 The attachment's three-X daily allocation, two founder plus one product, is an expansion mode. It becomes useful when there is enough independent material and capacity to review/respond. The combined count must remain explicit; “three X posts” must not silently become three posts on each account.
 

@@ -355,6 +355,14 @@ scaffolding is implied by the guides. This also replaces the September 3 daily-L
 and the earlier per-session draft obligation; every session still records its work.
 `docs/build-in-public.md` remains the navigation entry point.
 
+**2026-09-08 — Founder X length follows Rajesh's Premium+ preference.** Rajesh reconfirmed that
+@RajeshBuilds has Premium+ and welcomes modestly longer posts when the explanation benefits,
+without long, tedious copy. Do not impose a 280-character cap on founder drafts. Roughly 50–100
+words is a flexible editorial starting range, not a quota or a claim about engagement; shorter
+posts remain valid. Keep one clear takeaway and use extra space for evidence or explanation.
+@TemniaHQ's entitlement remains unknown, so standard-length product drafts remain the fallback.
+This changes length guidance, not the account cadence. Guide §8 records the current preference.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

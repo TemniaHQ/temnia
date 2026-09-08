@@ -1,6 +1,6 @@
 # Temnia: the build-in-public playbook
 
-**Version:** 2.0 · **Reviewed:** 2026-09-08 · **Timezone:** Asia/Kolkata
+**Version:** 2.1 · **Reviewed:** 2026-09-08 · **Timezone:** Asia/Kolkata
 
 This revises the supplied `TEMNIA_BUILD_IN_PUBLIC_GUIDE_v1_1.md` after reviewing its sources and Temnia's repository. Rajesh explicitly asked to reassess the earlier, unresearched posting habits. This is the current editorial guide; the [research review](RESEARCH_REVIEW_2026-09-08.md) records the reasoning and limits.
 
@@ -197,7 +197,11 @@ Choose a shape that fits the evidence. These are writing prompts, not claimed gr
 | Weekly synthesis | What several tests taught us, rather than an exhaustive changelog. |
 | Access invitation | Intended user, available workflow, eligibility, next step and honest limitations. |
 
-For LinkedIn, start around 100–200 words and use more only when the explanation earns it. For X, prefer a standard-length post; use a longer post or thread when the argument needs it and the account supports it. Neither length is an engagement optimum.
+For LinkedIn, start around 100–200 words and use more only when the explanation earns it.
+
+**Founder X:** Rajesh reconfirmed Premium+ on 2026-09-08 and prefers a little more explanation when useful, while keeping posts quick to read. Do not enforce a 280-character drafting cap on @RajeshBuilds. For an explanatory post, roughly 50–100 words is a flexible starting range: a concrete hook, the relevant change or evidence, and one useful lesson. Shorter is fine; add another paragraph only when it earns its place. Do not pad a complete thought, split it solely to fit 280 characters, or turn each post into a long recap. This range is an editorial choice, not a minimum, hard cap or measured engagement optimum.
+
+**Product X:** @TemniaHQ's entitlement remains unknown. Keep its drafts within the standard limit until longer-post access is confirmed for that account. Longer founder access does not establish product-account access. Threads remain an option when a sequence benefits the reader.
 
 ### Short examples
 
@@ -336,7 +340,7 @@ No reviewed source proves that a specific cadence, opener, asset or two-account 
 - Is any invitation backed by a functioning, appropriate destination?
 - Has Rajesh reviewed this account, copy and media version?
 
-X's standard limit uses weighted counting; normal string length is not enough for all Unicode, emoji and links. Use an existing compatible counter or validate in the composer. LinkedIn's standard feed limit is 3,000 characters. Rajesh's Premium+ access is recorded in the earlier strategy, but the product account's entitlement is unknown; check the selected composer before relying on long-post support. The [source review](RESEARCH_REVIEW_2026-09-08.md#platform-reference-checks) links the official references.
+X's standard limit uses weighted counting; normal string length is not enough for all Unicode, emoji and links. Use an existing compatible counter or validate in the composer. Apply that standard cap to accounts without confirmed longer-post access, not to Rajesh's Premium+ founder drafts. His September 8 confirmation is sufficient for drafting; validate the final text in the selected composer when publishing. The product account's entitlement remains unknown. LinkedIn's standard feed limit is 3,000 characters. The [source review](RESEARCH_REVIEW_2026-09-08.md#platform-reference-checks) links the official references.
 
 An unchecked count should be labelled unchecked, not fabricated. Do not add application dependencies merely to count social copy.
 
