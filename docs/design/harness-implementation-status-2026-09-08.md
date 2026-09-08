@@ -29,7 +29,7 @@ database isolation suite passed 41. These counts are not a combined final-suite 
 the [360-degree plan](../plans/chapter-workflow-followup-360-view.md) records the remaining work.
 
 The corrected Python preflight passed **624 tests, with 11 skips**; a separate explicit model-loading
-run then passed **all 11 model tests**. Shared contracts passed **27 tests**. The four browser
+run then passed **all 11 model tests**. The later shared-contract suite passed **28 tests**, including standalone reference integrity. The four browser
 journeys passed together in **2.1 minutes** against the development server and a frozen worker
 copy. These results do not replace the exact-commit production-image gate.
 

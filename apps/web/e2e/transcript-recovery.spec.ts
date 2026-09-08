@@ -1,10 +1,5 @@
 import { resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import {
-  TranscriptRevisionAnnotationsSchema,
-  TranscriptV1Schema,
-} from "@temnia/contracts";
-import { wordsByUtterance } from "@/lib/transcript/utterances";
 import speech from "../tests/fixtures/speech-40s.transcript.json" with {
   type: "json",
 };
@@ -14,6 +9,7 @@ const REVISION_URL =
   /transcript\/rev-\d+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{16})?\.json(?:\?|$)/;
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INGEST_TIMEOUT_MS = 180_000;
 
 async function source(page: Page, filename = "speech-40s.mp4") {
@@ -45,13 +41,30 @@ async function ready(page: Page) {
   });
 }
 
-async function annotations(page: Page, sourceId: string, revision: number) {
+async function machineIdentity(page: Page, sourceId: string, revision: number) {
   const response = await page.request.get(
     `/api/sources/${sourceId}/transcript-annotations?revision=${revision}`
   );
   expect(response.ok()).toBe(true);
-  const value = (await response.json()) as { annotations: unknown };
-  return TranscriptRevisionAnnotationsSchema.parse(value.annotations);
+  const value = (await response.json()) as {
+    annotations: unknown;
+    machineRevision: unknown;
+    transcriptId: unknown;
+  };
+  expect(value.annotations).toBeNull();
+  expect(value.machineRevision).toBe(revision);
+  expect(value.transcriptId).toEqual(expect.stringMatching(UUID));
+  if (
+    value.machineRevision !== revision ||
+    typeof value.transcriptId !== "string" ||
+    !UUID.test(value.transcriptId)
+  ) {
+    throw new Error("unexpected machine transcript identity metadata");
+  }
+  return {
+    machineRevision: value.machineRevision,
+    transcriptId: value.transcriptId,
+  };
 }
 
 test("a delayed revision fetch cannot reassign a different speaker turn", async ({
@@ -60,17 +73,20 @@ test("a delayed revision fetch cannot reassign a different speaker turn", async 
   test.setTimeout(INGEST_TIMEOUT_MS + 90_000);
   const sourceId = await source(page);
   await ready(page);
-  const originalAnnotations = await annotations(page, sourceId, 1);
-  const original = TranscriptV1Schema.parse(speech);
-  const [, , , originalTurn] = wordsByUtterance(
-    original.words,
-    original.utterances
+  const identity = await machineIdentity(page, sourceId, 1);
+  const originalTurnIndices = await page
+    .locator("[data-paragraph]")
+    .nth(3)
+    .locator("[data-word]")
+    .evaluateAll((words) =>
+      words.map((word) => Number((word as HTMLElement).dataset.word))
+    );
+  expect(originalTurnIndices.length).toBeGreaterThan(0);
+  expect(originalTurnIndices.every(Number.isInteger)).toBe(true);
+  const originalTurnIds = originalTurnIndices.map(
+    (index) =>
+      `${identity.transcriptId}:${identity.machineRevision}:word:${index}`
   );
-  expect(originalTurn).toBeTruthy();
-  const originalTurnIds = (originalTurn ?? []).map(
-    (index) => originalAnnotations.wordIdentities[index]?.id
-  );
-  expect(originalTurnIds.every((id) => typeof id === "string")).toBe(true);
   const fetchGate = Promise.withResolvers<void>();
   let waiting = false;
   let interceptedRevisionUrl = "";
