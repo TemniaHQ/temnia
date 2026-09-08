@@ -1,4 +1,7 @@
-import { WorkflowNotFoundError } from "@temporalio/client";
+import {
+  type WorkflowExecutionStatusName,
+  WorkflowNotFoundError,
+} from "@temporalio/client";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -112,7 +115,29 @@ beforeEach(() => {
 });
 
 describe("retryTranscription ownership", () => {
-  it.each(["UNKNOWN", "CONTINUED_AS_NEW"])(
+  it.each([
+    "COMPLETED",
+    "FAILED",
+    "CANCELLED",
+    "TERMINATED",
+    "TIMED_OUT",
+  ] satisfies WorkflowExecutionStatusName[])(
+    "retries a verified closed Temporal execution with status %s",
+    async (name) => {
+      mocks.describe.mockResolvedValue({ status: { name } });
+      expect(await retryTranscription(SOURCE)).toEqual({ ok: true });
+      expect(mutations).toHaveLength(1);
+      expect(mutations[0]?.values.status).toBe("pending");
+      expect(mocks.start).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each([
+    "UNKNOWN",
+    "CONTINUED_AS_NEW",
+    "UNSPECIFIED",
+    "PAUSED",
+  ] satisfies WorkflowExecutionStatusName[])(
     "does not treat Temporal status %s as a closed execution",
     async (name) => {
       mocks.describe.mockResolvedValue({ status: { name } });

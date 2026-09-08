@@ -13,7 +13,10 @@ import {
   transcriptRevision,
   usageLedger,
 } from "@temnia/db";
-import { WorkflowNotFoundError } from "@temporalio/client";
+import {
+  type WorkflowExecutionStatusName,
+  WorkflowNotFoundError,
+} from "@temporalio/client";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -54,10 +57,10 @@ export type TranscriptActionResult =
   | { ok: true }
   | { invalid?: true; message: string; ok: false; stale?: true };
 
-const CLOSED_EXECUTIONS = new Set([
+const CLOSED_EXECUTIONS = new Set<WorkflowExecutionStatusName>([
   "COMPLETED",
   "FAILED",
-  "CANCELED",
+  "CANCELLED",
   "TERMINATED",
   "TIMED_OUT",
 ]);

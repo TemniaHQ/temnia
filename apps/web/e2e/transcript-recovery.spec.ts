@@ -257,7 +257,9 @@ test("a refused or lost retry response stays actionable", async ({ page }) => {
       }
     });
     await page.getByTestId("transcript-retry").click();
-    await expect(page.getByRole("alert")).toContainText(
+    await expect(
+      page.getByTestId("transcript-tab").getByRole("alert")
+    ).toContainText(
       outcome === "refused"
         ? "not a source id"
         : "Could not confirm whether transcription started"
