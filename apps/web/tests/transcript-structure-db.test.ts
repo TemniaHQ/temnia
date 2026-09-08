@@ -15,6 +15,9 @@ import {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const ownerUrl = process.env.TEST_DATABASE_URL;
+if (process.env.LOCAL_CI === "1" && !ownerUrl) {
+  throw new Error("LOCAL_CI requires TEST_DATABASE_URL for web database tests");
+}
 const suite = ownerUrl ? describe : describe.skip;
 const CREDENTIALS = /\/\/[^@]+@/;
 const owner = ownerUrl ? new pg.Client({ connectionString: ownerUrl }) : null;
