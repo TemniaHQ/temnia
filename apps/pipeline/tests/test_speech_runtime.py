@@ -4,6 +4,7 @@
 
 import hashlib
 import io
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from temnia_pipeline.settings import (
     TranscriptionSettings,
 )
 from temnia_pipeline.speech import assets
+from temnia_pipeline.speech import telemetry as telemetry_module
 from temnia_pipeline.speech.activities import _estimated_cost
 from temnia_pipeline.speech.client import (
     SpeechDeploymentError,
@@ -27,6 +29,7 @@ from temnia_pipeline.speech.client import (
     _progress,
     assert_checkpointed_deployment,
 )
+from temnia_pipeline.speech.progress_transport import SynchronousProgressPublisher
 from temnia_pipeline.speech.telemetry import TelemetryRecorder
 from temnia_pipeline.transcription.checkpointed import TranscriptionPlan
 
@@ -68,6 +71,96 @@ def test_partial_telemetry_distinguishes_failed_from_completed_inference() -> No
     with completed.phase("inference"):
         pass
     assert completed.inference_completed
+
+
+def test_progress_is_forwarded_raw_but_recorded_without_regression_or_false_completion() -> None:
+    forwarded: list[float] = []
+    recorder = TelemetryRecorder()
+    recorder.set_progress_callback(forwarded.append)
+    callback = recorder.progress_callback
+    callback(60)
+    callback(20)
+    callback(100)
+    callback(float("nan"))
+    partial = recorder.finish(complete=False)
+    assert forwarded[:3] == [60, 20, 100]
+    assert len(forwarded) == 4
+    assert partial.progress.percent == 99
+    assert partial.progress.source == "whisperx_callback"
+    assert not partial.complete
+    assert "invalid_progress_callback" in partial.metrics_unavailable
+
+
+def test_progress_callback_never_propagates_transport_failure() -> None:
+    def broken_transport(_value: float) -> None:
+        message = "transport details"
+        raise RuntimeError(message)
+
+    recorder = TelemetryRecorder(on_progress=broken_transport)
+    recorder.progress_callback(30)
+    telemetry = recorder.finish(complete=False)
+    assert telemetry.progress.percent == 30
+    assert "progress_transport_callback" in telemetry.metrics_unavailable
+
+
+def test_publisher_diagnostics_attach_as_typed_wire_telemetry() -> None:
+    publisher = SynchronousProgressPublisher(lambda _percent: None)
+    publisher.start()
+    publisher.callback(35)
+    diagnostics = publisher.close()
+    recorder = TelemetryRecorder()
+    recorder.attach_progress_diagnostics(diagnostics)
+    telemetry = recorder.finish(complete=True)
+    assert telemetry.progress_transport is not None
+    assert telemetry.progress_transport.callback_count == 1
+    assert telemetry.progress_transport.last_published_percent == 35
+    assert (
+        telemetry.model_dump(mode="json", by_alias=True)["progressTransport"]["publishSuccessCount"]
+        == 1
+    )
+
+
+def test_process_and_cgroup_cpu_deltas_are_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cpu_stat = tmp_path / "cpu.stat"
+    cpu_stat.write_text("usage_usec 1000\nnr_throttled 2\nthrottled_usec 500\n")
+    monkeypatch.setattr(telemetry_module, "_CGROUP_CPU_STAT", cpu_stat)
+    recorder = TelemetryRecorder()
+    cpu_stat.write_text("usage_usec 4000\nnr_throttled 4\nthrottled_usec 1500\n")
+    telemetry = recorder.finish(complete=True)
+    assert telemetry.process_cpu_seconds is not None
+    assert telemetry.process_cpu_seconds >= 0
+    assert telemetry.cgroup_cpu_usage_seconds == pytest.approx(0.003)
+    assert telemetry.cgroup_cpu_throttled_seconds == pytest.approx(0.001)
+    assert telemetry.cgroup_cpu_throttled_count == 2
+    assert "cgroup_cpu" not in telemetry.metrics_unavailable
+
+
+def test_gpu_utilization_is_sampled_with_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        if "--query-gpu=memory.used,memory.total,utilization.gpu,name" in command:
+            return SimpleNamespace(stdout="1024, 24576, 71, NVIDIA L4\n")
+        return SimpleNamespace(stdout=f"{os.getpid()}, 512\n")
+
+    class Cuda:
+        @staticmethod
+        def max_memory_allocated() -> int:
+            return 256
+
+        @staticmethod
+        def max_memory_reserved() -> int:
+            return 512
+
+    monkeypatch.setattr(telemetry_module.subprocess, "run", run)
+    recorder = TelemetryRecorder()
+    recorder._sample_once(SimpleNamespace(cuda=Cuda()))  # noqa: SLF001
+    telemetry = recorder.finish(complete=True)
+    assert telemetry.gpu_utilization_peak_percent == 71
+    assert telemetry.gpu_used_peak_bytes == 1024 * 1024 * 1024
+    assert telemetry.gpu_total_bytes == 24_576 * 1024 * 1024
 
 
 def test_asset_install_is_verified_and_atomic(

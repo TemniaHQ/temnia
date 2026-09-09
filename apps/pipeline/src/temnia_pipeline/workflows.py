@@ -35,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.transcription.checkpointed import (
         CheckpointedTranscription,
         CoverageRecord,
+        ParallelCheckpointedTranscription,
         TranscriptionPlan,
     )
 
@@ -273,6 +274,9 @@ class TranscribeWorkflow:
                 )
                 if plan.backend == "modal-checkpointed":
                     checkpointed_run = True
+                    use_speech_v2 = plan.protocol == "temnia-speech/2" and workflow.patched(
+                        "checkpointed-speech-v2"
+                    )
                     coverage_handle = workflow.start_activity(
                         "speech_coverage",
                         args=[request, plan],
@@ -283,9 +287,15 @@ class TranscribeWorkflow:
                         cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                     )
                     stage_handle = workflow.start_activity(
-                        "checkpointed_transcribe",
+                        "checkpointed_transcribe_v2"
+                        if use_speech_v2
+                        else "checkpointed_transcribe",
                         args=[request, plan],
-                        result_type=CheckpointedTranscription,
+                        result_type=(
+                            ParallelCheckpointedTranscription
+                            if use_speech_v2
+                            else CheckpointedTranscription
+                        ),
                         start_to_close_timeout=timedelta(hours=4),
                         heartbeat_timeout=timedelta(seconds=10),
                         retry_policy=TRANSCRIBE_RETRY,
@@ -300,7 +310,9 @@ class TranscribeWorkflow:
                     )
                     coverage = await coverage_handle
                     record = await workflow.execute_activity(
-                        "assemble_checkpointed_transcript",
+                        "assemble_checkpointed_transcript_v2"
+                        if use_speech_v2
+                        else "assemble_checkpointed_transcript",
                         args=[request, attempt, plan, stages, coverage],
                         result_type=TranscribeRecord,
                         start_to_close_timeout=timedelta(minutes=15),

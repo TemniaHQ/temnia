@@ -29,6 +29,7 @@ from temnia_pipeline.harness.models import (
     configure_model_runtime,
 )
 from temnia_pipeline.harness.routes import RouteEligibility, RouteEntry, RoutePrices
+from temnia_pipeline.speech_benchmark import database_experiment_lease
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -140,6 +141,26 @@ async def reserve(
     )
 
 
+def batch_request(
+    operation_id: uuid.UUID,
+    owner: str,
+    estimate: int,
+    *,
+    dispatch_limit: int = 5,
+) -> ledger.AttemptReservationRequest:
+    return ledger.AttemptReservationRequest(
+        operation_id=operation_id,
+        owner_token=owner,
+        provider="recorded",
+        model="fixture",
+        family="fixture",
+        route={"route": "fixture"},
+        request_hash=HASH,
+        estimated_cost_micros=estimate,
+        dispatch_limit=dispatch_limit,
+    )
+
+
 async def result_artifact(url: str, case: Case) -> uuid.UUID:
     async with db.scoped(url, SEEDED) as conn:
         row = await (
@@ -185,6 +206,307 @@ async def test_simultaneous_reservations_cannot_overspend() -> None:
                 )
             ).fetchone()
             assert row == {"spent_micros": 0, "reserved_micros": 60}
+    finally:
+        await db.close_pool()
+
+
+async def test_attempt_batch_reserves_all_members_and_preserves_request_order() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=200)
+    try:
+        first = await operation(url, case, "batch-first")
+        second = await operation(url, case, "batch-second")
+        attempts = await ledger.reserve_attempt_batch(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            requests=(
+                batch_request(second.id, "owner-second", 70),
+                batch_request(first.id, "owner-first", 60),
+            ),
+        )
+        assert [attempt.operation_id for attempt in attempts] == [second.id, first.id]
+        assert [attempt.attempt_number for attempt in attempts] == [1, 1]
+        retried = await ledger.reserve_attempt_batch(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            requests=(
+                batch_request(second.id, "replacement-second", 70),
+                batch_request(first.id, "replacement-first", 60),
+            ),
+        )
+        assert [attempt.id for attempt in retried] == [attempt.id for attempt in attempts]
+        assert [attempt.owner_token for attempt in retried] == [
+            "replacement-second",
+            "replacement-first",
+        ]
+        async with db.scoped(url, SEEDED) as conn:
+            aggregate = await (
+                await conn.execute(
+                    """
+                    SELECT reserved_micros, dispatch_count FROM harness_run WHERE id = %s
+                    """,
+                    (case.run_id,),
+                )
+            ).fetchone()
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT count(*)::int AS attempts,
+                           count(r.id)::int AS reservations
+                      FROM harness_attempt a
+                      LEFT JOIN harness_reservation r ON r.attempt_id = a.id
+                     WHERE a.run_id = %s
+                    """,
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert aggregate == {"reserved_micros": 130, "dispatch_count": 0}
+        assert rows == {"attempts": 2, "reservations": 2}
+    finally:
+        await db.close_pool()
+
+
+async def test_attempt_batch_insufficient_combined_budget_creates_nothing() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=100)
+    try:
+        first = await operation(url, case, "batch-budget-first")
+        second = await operation(url, case, "batch-budget-second")
+        with pytest.raises(ledger.BudgetExceeded, match="combined provider exposure"):
+            await ledger.reserve_attempt_batch(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                requests=(
+                    batch_request(first.id, "owner-first", 60),
+                    batch_request(second.id, "owner-second", 60),
+                ),
+            )
+        async with db.scoped(url, SEEDED) as conn:
+            aggregate = await (
+                await conn.execute(
+                    """
+                    SELECT reserved_micros, dispatch_count FROM harness_run WHERE id = %s
+                    """,
+                    (case.run_id,),
+                )
+            ).fetchone()
+            rows = await (
+                await conn.execute(
+                    "SELECT count(*)::int AS count FROM harness_attempt WHERE run_id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert aggregate == {"reserved_micros": 0, "dispatch_count": 0}
+        assert rows == {"count": 0}
+    finally:
+        await db.close_pool()
+
+
+async def test_attempt_batch_reuses_succeeded_attempt_and_reserves_only_missing() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=200)
+    try:
+        completed_operation = await operation(url, case, "batch-completed")
+        missing_operation = await operation(url, case, "batch-missing")
+        completed_attempt = await reserve(url, case, completed_operation.id, ORIGINAL_OWNER, 40)
+        assert await ledger.mark_dispatched(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            operation_id=completed_operation.id,
+            attempt_id=completed_attempt.id,
+            owner_token=ORIGINAL_OWNER,
+            dispatch_limit=5,
+        )
+        artifact_id = await result_artifact(url, case)
+        await ledger.complete_attempt(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            operation_id=completed_operation.id,
+            attempt_id=completed_attempt.id,
+            owner_token=ORIGINAL_OWNER,
+            result_artifact_id=artifact_id,
+            usage={},
+            actual_cost_micros=30,
+        )
+        attempts = await ledger.reserve_attempt_batch(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            requests=(
+                batch_request(completed_operation.id, "new-owner", 40),
+                batch_request(missing_operation.id, "missing-owner", 50),
+            ),
+        )
+        assert attempts[0].id == completed_attempt.id
+        assert attempts[0].owner_token == ORIGINAL_OWNER
+        assert attempts[0].state == "succeeded"
+        assert attempts[1].operation_id == missing_operation.id
+        assert attempts[1].state == "reserved"
+        async with db.scoped(url, SEEDED) as conn:
+            aggregate = await (
+                await conn.execute(
+                    "SELECT spent_micros, reserved_micros FROM harness_run WHERE id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert aggregate == {"spent_micros": 30, "reserved_micros": 50}
+    finally:
+        await db.close_pool()
+
+
+async def test_concurrent_attempt_batches_cannot_overbook_dispatch_ceiling() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=1_000)
+    try:
+        operations = await asyncio.gather(
+            *(operation(url, case, f"batch-limit-{index}") for index in range(4))
+        )
+
+        async def reserve_pair(offset: int) -> tuple[ledger.Attempt, ...]:
+            return await ledger.reserve_attempt_batch(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                requests=tuple(
+                    batch_request(
+                        operations[index].id,
+                        f"batch-owner-{index}",
+                        10,
+                        dispatch_limit=2,
+                    )
+                    for index in range(offset, offset + 2)
+                ),
+            )
+
+        outcomes = await asyncio.gather(reserve_pair(0), reserve_pair(2), return_exceptions=True)
+        assert sum(isinstance(result, tuple) for result in outcomes) == 1
+        assert sum(isinstance(result, ledger.DispatchLimitExceeded) for result in outcomes) == 1
+        async with db.scoped(url, SEEDED) as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT count(*)::int AS count FROM harness_attempt WHERE run_id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+            aggregate = await (
+                await conn.execute(
+                    "SELECT reserved_micros FROM harness_run WHERE id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert rows == {"count": 2}
+        assert aggregate == {"reserved_micros": 20}
+    finally:
+        await db.close_pool()
+
+
+async def test_attempt_batch_identity_refusal_rolls_back_reserved_owner_transfer() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=200)
+    try:
+        reserved_operation = await operation(url, case, "batch-reclaim")
+        conflicting_operation = await operation(url, case, "batch-conflict")
+        original = await reserve(url, case, reserved_operation.id, ORIGINAL_OWNER, 20)
+        conflicting = await reserve(url, case, conflicting_operation.id, "conflict-owner", 30)
+        conflict_request = batch_request(conflicting_operation.id, "replacement-conflict-owner", 31)
+        with pytest.raises(ledger.IdentityConflict, match="exact request identity"):
+            await ledger.reserve_attempt_batch(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                requests=(
+                    batch_request(reserved_operation.id, REPLACEMENT_OWNER, 20),
+                    conflict_request,
+                ),
+            )
+        async with db.scoped(url, SEEDED) as conn:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT id, owner_token FROM harness_attempt
+                     WHERE id = ANY(%s) ORDER BY id
+                    """,
+                    ([original.id, conflicting.id],),
+                )
+            ).fetchall()
+        assert {row["id"]: row["owner_token"] for row in rows} == {
+            original.id: ORIGINAL_OWNER,
+            conflicting.id: "conflict-owner",
+        }
+    finally:
+        await db.close_pool()
+
+
+async def test_attempt_batch_unknown_member_fences_every_missing_member() -> None:
+    url = pipeline_url()
+    case = await make_case(url, budget=200)
+    try:
+        unknown_operation = await operation(url, case, "batch-unknown")
+        missing_operation = await operation(url, case, "batch-after-unknown")
+        unknown = await reserve(url, case, unknown_operation.id, OWNER, 20)
+        assert await ledger.mark_dispatched(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            operation_id=unknown_operation.id,
+            attempt_id=unknown.id,
+            owner_token=OWNER,
+            dispatch_limit=5,
+        )
+        await ledger.fail_attempt(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            run_id=case.run_id,
+            operation_id=unknown_operation.id,
+            attempt_id=unknown.id,
+            owner_token=OWNER,
+            outcome_known=False,
+            actual_cost_micros=None,
+            usage={},
+            error_code="reply-lost",
+            error_message="provider outcome is unknown",
+        )
+        with pytest.raises(ledger.OutcomeUnknown, match="reconciled"):
+            await ledger.reserve_attempt_batch(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                requests=(
+                    batch_request(unknown_operation.id, OWNER, 20),
+                    batch_request(missing_operation.id, "missing-owner", 30),
+                ),
+            )
+        async with db.scoped(url, SEEDED) as conn:
+            attempts = await (
+                await conn.execute(
+                    "SELECT count(*)::int AS count FROM harness_attempt WHERE run_id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+            run = await (
+                await conn.execute(
+                    "SELECT reserved_micros, status FROM harness_run WHERE id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert attempts == {"count": 1}
+        assert run == {"reserved_micros": 20, "status": "outcome_unknown"}
     finally:
         await db.close_pool()
 
@@ -1217,5 +1539,48 @@ async def test_scope_blind_dependency_cannot_cross_sources() -> None:
                 metadata={},
                 dependency_ids=[foreign.id],
             )
+    finally:
+        await db.close_pool()
+
+
+async def test_benchmark_database_lease_refuses_concurrency_and_prior_run() -> None:
+    """A second output directory cannot reset one experiment's durable dispatch cap."""
+    url = pipeline_url()
+    case = await make_case(url)
+    experiment_id = f"lease-{uuid.uuid4().hex[:12]}"
+    try:
+        async with database_experiment_lease(
+            url,
+            organization_id=SEEDED.organizationId,
+            experiment_id=experiment_id,
+        ):
+            with pytest.raises(RuntimeError, match="already running"):
+                async with database_experiment_lease(
+                    url,
+                    organization_id=SEEDED.organizationId,
+                    experiment_id=experiment_id,
+                ):
+                    pytest.fail("concurrent database lease unexpectedly opened")
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                INSERT INTO transcript
+                    (organization_id, source_id, status, workflow_id)
+                VALUES (%s, %s, 'pending', %s)
+                """,
+                (
+                    SEEDED.organizationId,
+                    case.source_id,
+                    f"speech-benchmark-{experiment_id}-preflight-a",
+                ),
+            )
+        with pytest.raises(ValueError, match="already contains"):
+            async with database_experiment_lease(
+                url,
+                organization_id=SEEDED.organizationId,
+                experiment_id=experiment_id,
+            ):
+                pytest.fail("prior admitted workflow did not fence the experiment")
     finally:
         await db.close_pool()

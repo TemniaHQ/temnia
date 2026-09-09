@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast, get_args
 
+from temnia_pipeline.speech.resources import SpeechModelManifest, SpeechResourceProfile
+
 TranscodeBackend = Literal["local", "modal"]
 TranscriptionProviderName = Literal["recorded", "modal", "modal-checkpointed"]
 DEFAULT_MODAL_APP = "temnia-media"
@@ -166,10 +168,13 @@ class TranscriptionSettings:
     speech_stage_timeout_seconds: int = DEFAULT_SPEECH_STAGE_TIMEOUT_SECONDS
     speech_startup_timeout_seconds: int = DEFAULT_SPEECH_STARTUP_TIMEOUT_SECONDS
     speech_dispatch_limit: int = DEFAULT_SPEECH_DISPATCH_LIMIT
+    speech_resource_profile: SpeechResourceProfile | None = None
+    speech_model_manifest: SpeechModelManifest | None = None
+    speech_execution_topology: Literal["serial", "parallel"] = "parallel"
     speech_vad_model_path: Path = Path(DEFAULT_MODELS_DIR).expanduser() / "silero_vad_16k_op15.onnx"
 
     @classmethod
-    def from_env(cls) -> TranscriptionSettings:
+    def from_env(cls) -> TranscriptionSettings:  # noqa: C901
         """Read `TRANSCRIPTION_PROVIDER`, `TRANSCRIPTION_RECORDING(S_DIR)`, and the Modal names."""
         provider = os.environ.get("TRANSCRIPTION_PROVIDER", "recorded")
         if provider not in get_args(TranscriptionProviderName):
@@ -177,6 +182,31 @@ class TranscriptionSettings:
             msg = f"TRANSCRIPTION_PROVIDER is {provider!r}; it must be one of {options}"
             raise ValueError(msg)
         recording = os.environ.get("TRANSCRIPTION_RECORDING") or None
+        protocol = os.environ.get("MODAL_SPEECH_PROTOCOL", DEFAULT_SPEECH_PROTOCOL)
+        if protocol not in {DEFAULT_SPEECH_PROTOCOL, "temnia-speech/2"}:
+            msg = "MODAL_SPEECH_PROTOCOL must be temnia-speech/1 or temnia-speech/2"
+            raise ValueError(msg)
+        profile_json = os.environ.get("MODAL_SPEECH_RESOURCE_PROFILE")
+        manifest_json = os.environ.get("MODAL_SPEECH_MODEL_MANIFEST")
+        profile = SpeechResourceProfile.model_validate_json(profile_json) if profile_json else None
+        manifest = SpeechModelManifest.model_validate_json(manifest_json) if manifest_json else None
+        topology = os.environ.get("SPEECH_EXECUTION_TOPOLOGY", "parallel")
+        if topology not in {"serial", "parallel"}:
+            msg = "SPEECH_EXECUTION_TOPOLOGY must be serial or parallel"
+            raise ValueError(msg)
+        if provider == "modal-checkpointed" and protocol == "temnia-speech/2":
+            if profile is None or manifest is None or not os.environ.get("MODAL_SPEECH_APP"):
+                msg = "speech/2 requires explicit app, resource profile and offline model manifest"
+                raise ValueError(msg)
+            if not os.environ.get("SPEECH_EXECUTION_TOPOLOGY"):
+                msg = "speech/2 requires an explicitly qualified SPEECH_EXECUTION_TOPOLOGY"
+                raise ValueError(msg)
+            if (
+                profile.progress_mode != "coalesced"
+                or profile.stage_timeout_seconds != DEFAULT_SPEECH_STAGE_TIMEOUT_SECONDS
+            ):
+                msg = "benchmark speech profiles are only accepted by the isolated benchmark driver"
+                raise ValueError(msg)
         budget = int(os.environ.get("SPEECH_RUN_BUDGET_MICROS", DEFAULT_SPEECH_BUDGET_MICROS))
         rate = int(
             os.environ.get("SPEECH_RATE_MICROS_PER_HOUR", DEFAULT_SPEECH_RATE_MICROS_PER_HOUR)
@@ -200,6 +230,14 @@ class TranscriptionSettings:
                 f"L4+4CPU+16GiB floor is {MIN_SPEECH_RATE_MICROS_PER_HOUR}"
             )
             raise ValueError(msg)
+        if profile is not None:
+            profile.reservation_micros(rate)
+            if (
+                timeout != profile.stage_timeout_seconds
+                or startup_timeout != profile.startup_timeout_seconds
+            ):
+                msg = "speech timeouts must match the frozen resource profile"
+                raise ValueError(msg)
         return cls(
             provider=cast("TranscriptionProviderName", provider),
             modal_app=os.environ.get("MODAL_APP", DEFAULT_MODAL_APP),
@@ -210,13 +248,16 @@ class TranscriptionSettings:
             ),
             recording=Path(recording) if recording else None,
             speech_modal_app=os.environ.get("MODAL_SPEECH_APP", DEFAULT_SPEECH_MODAL_APP),
-            speech_protocol=DEFAULT_SPEECH_PROTOCOL,
+            speech_protocol=protocol,
             speech_expected_build=os.environ.get("MODAL_SPEECH_BUILD") or None,
             speech_budget_micros=budget,
             speech_rate_micros_per_hour=rate,
             speech_stage_timeout_seconds=timeout,
             speech_startup_timeout_seconds=startup_timeout,
             speech_dispatch_limit=dispatch_limit,
+            speech_resource_profile=profile,
+            speech_model_manifest=manifest,
+            speech_execution_topology=cast("Literal['serial', 'parallel']", topology),
             speech_vad_model_path=(
                 Path(os.environ.get("TEMNIA_MODELS_DIR") or DEFAULT_MODELS_DIR).expanduser()
                 / "silero_vad_16k_op15.onnx"

@@ -52,6 +52,12 @@ from temnia_pipeline.speech.contracts import (
     StageTelemetry,
     canonical_json,
 )
+from temnia_pipeline.speech.contracts_v2 import (
+    RecognizeConfigV2,
+    SpeakerTurnsConfig,
+    SpeechStageResultV2,
+    StageV2,
+)
 from temnia_pipeline.speech.coverage import assess_coverage
 from temnia_pipeline.speech.progress import report_speech_progress
 from temnia_pipeline.speech.silero import (
@@ -79,11 +85,28 @@ POLL_SECONDS = 5.0
 CANCEL_CONFIRM_SECONDS = 30.0
 SPEECH_ARTIFACT_KIND = "speech_checkpoint"
 SPEECH_RUN_NAMESPACE = uuid5(NAMESPACE_URL, "temnia:speech-run:v1")
+_V2_PLAN_FIELDS = {
+    "resource_profile",
+    "model_manifest",
+    "execution_topology",
+    "recognize_v2",
+    "speaker_turns",
+    "allow_oom_recovery",
+}
 
 
 def workflow_run_id() -> str:
     """The Temporal run identity used for the frozen harness run."""
     return activity.info().workflow_run_id or "unknown"
+
+
+def _frozen_plan_config(plan: TranscriptionPlan) -> dict[str, object]:
+    """Keep persisted v1 config byte semantics unchanged as v2 fields arrive."""
+    excluded: set[str] = _V2_PLAN_FIELDS if plan.protocol != "temnia-speech/2" else set()
+    return cast(
+        "dict[str, object]",
+        plan.model_dump(mode="json", by_alias=True, exclude=excluded),
+    )
 
 
 def _validate_request_paths(request: TranscribeInput) -> None:
@@ -159,9 +182,10 @@ def _file_identity(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def _recognition_spans(
+def recognition_spans(
     raw: dict[str, object], duration_ms: int
 ) -> tuple[list[tuple[int, int]], list[str]]:
+    """Extract bounded recognition intervals for independent coverage comparison."""
     segments = raw.get("segments")
     if not isinstance(segments, list):
         return [], ["raw transcript has no segment list for coverage comparison"]
@@ -264,7 +288,7 @@ async def ensure_speech_run(
     """Create/reuse the exact budget/config snapshot under the source deletion lock."""
     _validate_request_paths(request)
     run_id = uuid5(SPEECH_RUN_NAMESPACE, temporal_run_id)
-    config = plan.model_dump(mode="json", by_alias=True)
+    config = _frozen_plan_config(plan)
     route = {
         "app": plan.app,
         "build": plan.build,
@@ -398,20 +422,26 @@ async def settle_speech_run(
         if int(attempts["nonterminal"]) > 0:
             raise ledger.IdentityConflict("speech run still has a nonterminal physical attempt")
         if outcome == "ready":
+            run_protocol = str(cast("dict[str, object]", run["config"]).get("protocol"))
+            required_stages = (
+                {"recognize", "align", "speaker_turns", "assign_speakers"}
+                if run_protocol == "temnia-speech/2"
+                else {"recognize", "align", "diarize"}
+            )
             stages = await (
                 await conn.execute(
                     """
                     SELECT DISTINCT stage FROM harness_operation
                      WHERE run_id = %s AND status = 'succeeded'
                        AND result_artifact_id IS NOT NULL
-                       AND stage IN ('recognize', 'align', 'diarize')
+                       AND stage = ANY(%s)
                     """,
-                    (run_id,),
+                    (run_id, list(required_stages)),
                 )
             ).fetchall()
-            if {str(row["stage"]) for row in stages} != {"recognize", "align", "diarize"}:
+            if {str(row["stage"]) for row in stages} != required_stages:
                 raise ledger.IdentityConflict(
-                    "speech run cannot complete without three accepted stage operations"
+                    "speech run cannot complete without every accepted stage operation"
                 )
         updated = await (
             await conn.execute(
@@ -479,7 +509,7 @@ class AttemptLease:
     attempt_id: UUID
     owner: str
     usage_base: dict[str, object]
-    stage: Stage
+    stage: Stage | StageV2
 
 
 class SpeechActivities:
@@ -555,6 +585,18 @@ class SpeechActivities:
             detector=SILERO_DETECTOR,
             detector_revision=SILERO_REVISION,
             detector_sha256=SILERO_SHA256,
+            resource_profile=(
+                settings.speech_resource_profile if protocol == "temnia-speech/2" else None
+            ),
+            model_manifest=(
+                settings.speech_model_manifest if protocol == "temnia-speech/2" else None
+            ),
+            execution_topology=(
+                settings.speech_execution_topology if protocol == "temnia-speech/2" else None
+            ),
+            recognize_v2=(RecognizeConfigV2() if protocol == "temnia-speech/2" else None),
+            speaker_turns=(SpeakerTurnsConfig() if protocol == "temnia-speech/2" else None),
+            allow_oom_recovery=(True if protocol == "temnia-speech/2" else None),
         )
 
     @activity.defn(name="mark_speech_coverage_progress")
@@ -731,7 +773,7 @@ class SpeechActivities:
         handle: str,
         *,
         return_finished: bool,
-    ) -> SpeechStageResult:
+    ) -> SpeechStageResult | SpeechStageResultV2:
         await ledger.request_cancellation(
             self.ctx.settings.database_url,
             scope=lease.request.scope,
@@ -810,7 +852,9 @@ class SpeechActivities:
         lease: AttemptLease,
         handle: str,
         timeout_seconds: float,
-    ) -> SpeechStageResult:
+        *,
+        visible_progress: bool = True,
+    ) -> SpeechStageResult | SpeechStageResultV2:
         try:
             async with asyncio.timeout(timeout_seconds):
                 while True:
@@ -840,12 +884,14 @@ class SpeechActivities:
                             "recognize": "transcribe",
                             "align": "align",
                             "diarize": "diarize",
+                            "speaker_turns": "diarize",
                         }[lease.stage]
                     )
                     await report_speech_progress(
                         self.ctx.settings.database_url,
                         lease.request,
                         stage,
+                        update_visible_stage=visible_progress,
                     )
                     activity.heartbeat(
                         {
@@ -1201,6 +1247,13 @@ class SpeechActivities:
             if remaining > 0
             else await self._cancel_and_wait(client, lease, handle, return_finished=True)
         )
+        if not isinstance(result, SpeechStageResult):
+            await self._mark_unknown(lease, "speech/1 received a speech/2 result envelope")
+            raise ApplicationError(
+                "speech result identity is incompatible",
+                non_retryable=True,
+                type="ProviderOutcomeUnknown",
+            )
         usage = dict(usage_base)
         usage["telemetry"] = result.telemetry.model_dump(mode="json", by_alias=True)
         if not result_identity_matches(
@@ -1527,7 +1580,7 @@ class SpeechActivities:
                 type="SpeechCheckpointFailure",
             )
         raw = cast("dict[str, object]", raw_value)
-        recognition, recognition_warnings = _recognition_spans(raw, request.durationMs)
+        recognition, recognition_warnings = recognition_spans(raw, request.durationMs)
         detected: list[tuple[int, int]] | None = None
         detector_error = coverage.error
         if coverage.artifact_id is not None:

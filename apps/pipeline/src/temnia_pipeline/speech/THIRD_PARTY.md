@@ -27,3 +27,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+# WhisperX speaker assignment attribution
+
+`assignment.py` adapts the interval overlap, dominant-speaker, nearest-turn,
+and stable tie semantics of `assign_word_speakers` from WhisperX v3.8.6,
+specifically `whisperx/diarize.py`. Upstream:
+<https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/diarize.py>.
+
+WhisperX is copyright Max Bain and contributors and licensed under the
+BSD 2-Clause License. The complete license is included in the pipeline's
+third-party notices.

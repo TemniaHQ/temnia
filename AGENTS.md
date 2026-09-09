@@ -448,6 +448,20 @@ Missing, oversized, truncated or ambiguous history and other terminal outcomes r
 Allowing every failed workflow was rejected because a lost remote acknowledgement can leave a
 writer running. The existing resumed-upload deletion assertion remains the acceptance test.
 
+**2026-09-09 — Speech performance changes preserve physical-attempt recovery.** The first
+151-minute checkpointed run was slower than the old combined GPU run; neither observation proves
+a GPU or billing disadvantage. Protocol `temnia-speech/2` adds an independently admitted raw
+speaker-turn stage alongside recognition → alignment, followed by a deterministic CPU assignment
+artifact with both input dependencies. Protocol 1 retains its original interpretation and app
+until drained. Progress callbacks perform local coalescing; a separate bounded publisher owns
+network writes. Resource profiles and exact offline model identities travel with deployment,
+plan, admission and artifacts. Four versus eight capped CPU cores and serial versus parallel
+scheduling are measured on one frozen source/model set before selecting a default. Single-use
+containers and create-only admission remain; co-location and snapshots are later candidates.
+Atomic batch reservation precedes fan-out, cancellation drains siblings, and unknown outcomes or
+charges retain their exposure. Faster wall time alone is not a cost win. The comparison plan and
+limits are `docs/plans/speech-optimization-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

@@ -268,3 +268,29 @@ HLS readiness checks each named artifact and playlist reference. It meters all r
 bytes, including old unreferenced objects, without a concurrent cleanup deleting another attempt's
 output. This verifies presence, size, and referential consistency, not same-size media corruption;
 cryptographic object verification and old-generation garbage collection remain separate improvements.
+
+### Speech execution follow-up, 2026-09-09
+
+WhisperX on Modal remains the selected transcription engine. The new `temnia-speech/2` protocol
+compares execution arrangements without changing model settings: coalesced off-thread progress,
+hard-capped four/eight CPU profiles, and independent raw speaker turns running beside recognition
+and alignment. The final word/speaker join is CPU-only with two immutable artifact dependencies.
+This follows the separation in the [WhisperX 3.8.6 diarization implementation](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/diarize.py).
+The existing protocol and checkpoint interpretation remain supported.
+
+Single-use GPU containers and create-only inference admission remain the recovery boundary.
+Same-container cleanup and snapshots were considered and deferred; they change memory/restart
+behavior in addition to setup cost. A controlled comparison first isolates the smaller changes.
+The old 635.220-second combined run and the 1,021.261-second isolated run both used GPUs, but
+their CPU limits, asset identities and instrumentation were not comparable enough to assign a
+cause. Scalar CPU requests permit bursting; an explicit `(request, limit)` tuple caps it.
+[Modal resources](https://modal.com/docs/guide/resources).
+
+Resource, topology, source-build and exact model-file identities are frozen into every v2 plan
+and validated against the live deployment before dispatch. The read-only model snapshot includes
+Torch and HF caches; the image separately seals bundled VAD and offline tokenizer assets.
+The [experiment plan](plans/speech-optimization-360-view.md) defines paired runs, retained unknown
+cost exposure and stopping conditions. The [architecture](pipeline-architecture.md#versioned-execution-and-performance-qualification)
+and [runbook](runbooks/chapter-harness.md#opt-into-the-versioned-parallel-speech-path) define the
+implementation and opt-in rollout. A candidate is not a production performance winner until the
+qualification record supplies measurements and output comparisons.

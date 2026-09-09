@@ -28,7 +28,7 @@ from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunW
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
-from temnia_pipeline.speech.activities import SpeechActivities
+from temnia_pipeline.speech.activities_v2 import SpeechActivitiesV2
 from temnia_pipeline.speech.assets import SIZE_BYTES, verify_asset
 from temnia_pipeline.speech.client import SpeechModalClient, assert_checkpointed_deployment
 from temnia_pipeline.transcription.activities import Transcribe
@@ -136,7 +136,7 @@ async def run_worker(settings: TemporalSettings) -> None:
     ingest = Ingest(ctx)
     reaper = Reaper(ctx)
     transcribe = Transcribe(ctx)
-    speech = SpeechActivities(ctx)
+    speech = SpeechActivitiesV2(ctx)
     harness = HarnessActivities(ctx, harness_settings, snapshot)
     worker = Worker(
         client,

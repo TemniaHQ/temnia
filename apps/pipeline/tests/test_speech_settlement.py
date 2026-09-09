@@ -126,3 +126,98 @@ async def test_speech_run_settles_only_after_three_accepted_stages() -> None:
             )
     finally:
         await db.close_pool()
+
+
+async def test_v2_speech_run_requires_three_gpu_stages_and_cpu_assignment() -> None:
+    url = pipeline_url()
+    scope = resolve_scope()
+    source_id = uuid.uuid4()
+    temporal_run_id = f"speech-v2-settlement-{uuid.uuid4()}"
+    run_id = uuid.uuid5(SPEECH_RUN_NAMESPACE, temporal_run_id)
+    prefix = f"org/{scope.organizationId}/source/{source_id}/"
+    request = TranscribeInput(
+        scope=scope,
+        sourceId=source_id,
+        artifactPrefix=prefix,
+        audioKey=f"{prefix}audio/audio.m4a",
+        durationMs=1000,
+    )
+    async with db.scoped(url, scope) as conn:
+        project = await (
+            await conn.execute(
+                "INSERT INTO project (organization_id, name) VALUES (%s, %s) RETURNING id",
+                (scope.organizationId, temporal_run_id),
+            )
+        ).fetchone()
+        assert project is not None
+        await conn.execute(
+            """
+            INSERT INTO source
+                (id, organization_id, project_id, title, original_filename, content_type,
+                 size_bytes, master_key, status)
+            VALUES (%s, %s, %s, 'speech-v2', 'speech.m4a', 'audio/mp4', 1, %s, 'ready')
+            """,
+            (source_id, scope.organizationId, project["id"], f"{prefix}master/speech.m4a"),
+        )
+        await conn.execute(
+            """
+            INSERT INTO harness_run
+                (id, organization_id, source_id, request_key, lane, budget_micros,
+                 config, workflow_id, workflow_run_id)
+            VALUES (%s, %s, %s, %s, 'transcription', 6500000,
+                    '{"protocol":"temnia-speech/2"}'::jsonb, %s, %s)
+            """,
+            (run_id, scope.organizationId, source_id, temporal_run_id, "workflow", temporal_run_id),
+        )
+        for index, (kind, stage) in enumerate(
+            (
+                ("recognize", "recognize"),
+                ("align", "align"),
+                ("diarize", "speaker_turns"),
+                ("diarize", "assign_speakers"),
+            ),
+            start=1,
+        ):
+            digest = hashlib.sha256(f"{temporal_run_id}:{stage}".encode()).hexdigest()
+            artifact = await (
+                await conn.execute(
+                    """
+                    INSERT INTO harness_artifact
+                        (organization_id, source_id, kind, fingerprint, storage_key,
+                         sha256, size_bytes)
+                    VALUES (%s, %s, 'speech_checkpoint', %s, %s, %s, 2)
+                    RETURNING id
+                    """,
+                    (scope.organizationId, source_id, digest, f"checkpoint/{stage}", digest),
+                )
+            ).fetchone()
+            assert artifact is not None
+            await conn.execute(
+                """
+                INSERT INTO harness_operation
+                    (organization_id, source_id, run_id, semantic_key, kind, stage,
+                     input_hash, config_hash, status, result_artifact_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'succeeded', %s)
+                """,
+                (
+                    scope.organizationId,
+                    source_id,
+                    run_id,
+                    hashlib.sha256(f"semantic:{digest}".encode()).hexdigest(),
+                    kind,
+                    stage,
+                    hashlib.sha256(f"input:{index}".encode()).hexdigest(),
+                    hashlib.sha256(f"config:{index}".encode()).hexdigest(),
+                    artifact["id"],
+                ),
+            )
+
+    try:
+        assert await settle_speech_run(
+            url,
+            request=request,
+            temporal_run_id=temporal_run_id,
+            outcome="ready",
+        )
+    finally:
+        await db.close_pool()

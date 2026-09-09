@@ -63,6 +63,14 @@ The shortest honest path from an empty monorepo to a measured chapter-cut accept
 | **S4 — The chapter lane** | The coverage lane runs end to end with reviewable evidence | Calibration gate (2026-09-08): acceptable boundary windows annotated on the three recordings exist before the cut objective is tuned; building the review tooling and untuned compiler does not wait for those labels. From a recorded source, brief → propose (an exact cover in sentence ids, validated in code) → cut (per boundary, with the substrate's backstops) → verify (code validators, then a different-family judge, one bounded repair) → explain → the plan persisted → render → file sensors produce chapter files and `chapters.json` that pass the full battery, under budget, with window-tolerant boundary F1 and tIoU-F1 at or above the legacy baseline as the C2 runner reports them, the per-seat audition recorded (open-weight models first-class, cost per correct the decider), and dollars per source-hour recorded on the run. Deliverable: the clip-cut architecture document for this repository | 9 (segments), 5 (program cuts), 12 (file sensors) |
 | **S5 — The cutting room** | A human decides every cut in tooling built for the review, and the decisions feed the flywheel | In the studio on staging, a reviewer plays rendered chapters through the media proxy, accepts, rejects with a reason, nudges a shared boundary (both neighbours move, both re-check), restores a drop, and merges adjacent keeps. Every decision starts an idempotent finite review workflow, creates an immutable audit outcome and revision where applicable, and can supply an explicit evaluation fixture. The metrics readout prints acceptance rate and boundary-adjustment magnitude. Playwright opens every interactive surface. **→ M1** measured on three fresh sources | 9 (review), 8 (fixture flywheel), 11 (spec v0 for the cut) |
 
+S2 execution follow-up (2026-09-09, PR #24): the original combined Modal application remains
+available while existing work drains. Checkpointed speech uses a separate opt-in deployment;
+protocol 2 adds independently scheduled speaker turns and a CPU join, with immutable resource
+and model identities. The [controlled comparison](plans/speech-optimization-360-view.md) evaluates
+progress reporting, four/eight CPU limits and serial/parallel scheduling before recommending a
+runtime configuration. Completing a long recording does not close transcript accuracy, actual
+billing reconciliation, live OOM qualification or the three-source editorial acceptance gate.
+
 ### Phase 1 — The editing core (S6–S20)
 
 Every editing feature in the PRD, each lane with its review surface, before any SaaS surface. The lane order follows the rule in §6.

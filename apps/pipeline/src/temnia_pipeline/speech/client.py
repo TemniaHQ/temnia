@@ -10,9 +10,14 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from temnia_pipeline.modal_errors import transport_errors
 from temnia_pipeline.settings import DEFAULT_SPEECH_PROGRESS_DICT
 from temnia_pipeline.speech.contracts import PROTOCOL, SpeechStageJob, SpeechStageResult, Stage
+from temnia_pipeline.speech.resources import (  # noqa: TC001
+    SpeechModelManifest,
+    SpeechResourceProfile,
+)
 
 if TYPE_CHECKING:
     from temnia_pipeline.settings import TranscriptionSettings
+    from temnia_pipeline.speech.contracts_v2 import SpeechStageJobV2, SpeechStageResultV2, StageV2
 
 
 class SpeechDeploymentIdentity(BaseModel):
@@ -22,6 +27,8 @@ class SpeechDeploymentIdentity(BaseModel):
 
     protocol: str
     build: str
+    resource_profile: SpeechResourceProfile | None = None
+    model_manifest: SpeechModelManifest | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +40,7 @@ class CallRunning:
 class CallFinished:
     """The app returned a validated success or application-failure envelope."""
 
-    result: SpeechStageResult
+    result: SpeechStageResult | SpeechStageResultV2
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +83,9 @@ def _progress(settings: TranscriptionSettings) -> Any:  # noqa: ANN401
     import modal  # noqa: PLC0415
 
     return modal.Dict.from_name(
-        DEFAULT_SPEECH_PROGRESS_DICT,
+        "temnia-speech-v2-progress"
+        if settings.speech_protocol == "temnia-speech/2"
+        else DEFAULT_SPEECH_PROGRESS_DICT,
         create_if_missing=True,
         environment_name=settings.modal_environment,
     )
@@ -98,9 +107,12 @@ class SpeechModalClient:
         payload = await _function("deployment_identity", self.settings).remote.aio()
         return SpeechDeploymentIdentity.model_validate(payload, strict=True)
 
-    async def spawn(self, stage: Stage, job: SpeechStageJob) -> str:
+    async def spawn(self, stage: Stage | StageV2, job: SpeechStageJob | SpeechStageJobV2) -> str:
         """Dispatch one stage once and return its durable handle."""
-        call = await _function(stage, self.settings).spawn.aio(
+        function_name = (
+            f"{stage}_v2" if self.settings.speech_protocol == "temnia-speech/2" else stage
+        )
+        call = await _function(function_name, self.settings).spawn.aio(
             job.model_dump(mode="json", by_alias=True)
         )
         return str(call.object_id)
@@ -126,6 +138,10 @@ class SpeechModalClient:
         except Exception as error:  # noqa: BLE001
             return CallUnreachable(f"{type(error).__name__}: {error}")
         try:
+            if self.settings.speech_protocol == "temnia-speech/2":
+                from temnia_pipeline.speech.contracts_v2 import SpeechStageResultV2  # noqa: PLC0415
+
+                return CallFinished(SpeechStageResultV2.model_validate(payload))
             return CallFinished(SpeechStageResult.model_validate(payload))
         except ValidationError as error:
             return CallUnreachable(f"RemoteProtocolError: {error}")
@@ -173,15 +189,44 @@ async def assert_checkpointed_deployment(
             f"worker requires {settings.speech_expected_build!r}"
         )
         raise SpeechDeploymentError(message)
+    if identity.protocol == "temnia-speech/2":
+        _assert_profile_identity(
+            identity,
+            resource_profile=settings.speech_resource_profile,
+            model_manifest=settings.speech_model_manifest,
+        )
+        if settings.speech_resource_profile is not None:
+            settings.speech_resource_profile.reservation_micros(
+                settings.speech_rate_micros_per_hour
+            )
     return identity
 
 
-async def assert_frozen_deployment(
+def _assert_profile_identity(
+    identity: SpeechDeploymentIdentity,
+    *,
+    resource_profile: SpeechResourceProfile | None,
+    model_manifest: SpeechModelManifest | None,
+) -> None:
+    if (
+        resource_profile is None
+        or model_manifest is None
+        or model_manifest.image_assets_sha256 is None
+        or identity.resource_profile != resource_profile
+        or identity.model_manifest != model_manifest
+    ):
+        message = "speech/2 deployment resource profile or offline model manifest does not match"
+        raise SpeechDeploymentError(message)
+
+
+async def assert_frozen_deployment(  # noqa: PLR0913
     client: SpeechModalClient,
     *,
     app: str,
     protocol: str,
     build: str,
+    resource_profile: SpeechResourceProfile | None = None,
+    model_manifest: SpeechModelManifest | None = None,
 ) -> SpeechDeploymentIdentity:
     """Refuse a mutable named app that no longer matches the workflow snapshot."""
     try:
@@ -195,4 +240,8 @@ async def assert_frozen_deployment(
             f"expected {protocol}/{build}, got {identity.protocol}/{identity.build}"
         )
         raise SpeechDeploymentError(message)
+    if protocol == "temnia-speech/2":
+        _assert_profile_identity(
+            identity, resource_profile=resource_profile, model_manifest=model_manifest
+        )
     return identity

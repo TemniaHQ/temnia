@@ -283,6 +283,55 @@ audio, raw response, transcript and detector hashes. The new GPU checkpoint path
 [live qualification record](design/checkpointed-speech-qualification-2026-09-09.md), including the
 initial known failure, corrected recovery proof, all attempts and unavailable billing evidence.
 
+### Versioned execution and performance qualification
+
+Protocol `temnia-speech/2` retains the separate, single-use GPU processes while exposing the
+independence already present in WhisperX: speaker-turn detection needs audio; assigning those
+turns to aligned words is a separate CPU operation. In parallel mode the graph is:
+
+```mermaid
+flowchart LR
+  S[Verified audio] --> R[GPU recognition]
+  R --> A[GPU alignment]
+  S --> T[GPU speaker turns]
+  A --> J[CPU speaker assignment]
+  T --> J
+  J --> N[Normalized transcript]
+```
+
+The CPU join persists both dependency IDs and hashes. It implements greatest summed overlap
+with deterministic nearest-turn fallback and is checked against the tagged upstream assignment
+behavior. Reusing the recognition or speaker branch does not rerun it. Concurrent first-stage
+admission locks the source, run and operations in a stable order and books their combined
+exposure atomically. Any failure drains the sibling; repeated cancellation cannot detach an
+owned remote finalizer. Unknown outcomes retain their physical-attempt reservation. Production
+can use the existing bounded known-OOM ladder; the fixed benchmark explicitly disables it.
+The logical stages use the existing ledger kinds, so this topology adds no DDL owner or migration.
+
+Progress callbacks hand a latest value to a dedicated publisher with one pending value and one
+RPC. Five-second coalescing, a two-second RPC timeout and a five-second shutdown bound keep
+network stalls out of native inference. Diagnostics record dropped/regressing values, publication
+failures and blocking time. Committed stage results establish completion; percentages do not.
+The v1 app also receives this transport fix while retaining its protocol and checkpoint schemas.
+
+Every v2 request freezes its CPU/GPU/memory/deadline profile, topology, source build and complete
+model-cache identity. The model volume is read-only, links are materialized before freezing, and
+runtime verifies exact files. Image identity separately covers WhisperX's bundled VAD, the baked
+Punkt tokenizer and library versions. Offline HF settings and a Torch checkpoint precheck prevent
+a missing file from silently fetching different weights. Compare the actual deployed identities
+before admitting work. Existing v1 runs serialize their original configuration shape and replay
+through their original activity selection.
+
+The [controlled experiment plan](plans/speech-optimization-360-view.md) compares synchronous and
+coalesced progress, hard-capped four and eight CPUs, and serial versus parallel scheduling on the
+same L4/16-GiB profile and frozen assets. Two reversed long-source blocks follow four short
+recovery preflights. A durable one-time experiment journal and database lease prevent overlapping
+launches from resetting the 36-call admission limit or reusing its exposure budget. Record phase
+time, workflow time, CPU utilization/throttling, GPU utilization, output differences and unresolved
+costs. A faster wall clock alone does not establish lower cost or greater transcript accuracy.
+Same-container model cleanup and snapshots remain deferred until these measurements justify
+another comparison. See the [v2 rollout procedure](runbooks/chapter-harness.md#opt-into-the-versioned-parallel-speech-path).
+
 ## Rendering, review and qualification
 
 The verified source cache belongs to a run and uses a stable advisory-lock file outside its

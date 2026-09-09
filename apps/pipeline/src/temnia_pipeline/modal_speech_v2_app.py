@@ -1,9 +1,7 @@
-"""Additive checkpointed WhisperX stages deployed as the `temnia-speech` Modal app.
+"""Versioned offline-model speech execution with frozen resource profiles.
 
-This module deliberately does not import the protocol-4 `modal_app`: existing
-calls keep their deployed code and contract while the new provider is qualified.
-It also imports no Temporal or database module; storage keys are authorized by
-the worker before they reach this scope-blind compute app.
+Deploy this additive application under its own name. Existing v1/media apps
+retain their exact deployment and interpretation until their work is drained.
 """
 
 from __future__ import annotations
@@ -27,19 +25,43 @@ from temnia_pipeline.speech.checkpoints import (
     AdmissionOutcomeUnknownError,
     CheckpointCollisionError,
     ObstoreCheckpointStore,
-    prepare_execution,
 )
-from temnia_pipeline.speech.contracts import (
-    PROTOCOL,
-    RecognizeConfig,
-    SpeechStageJob,
-    SpeechStageResult,
-    Stage,
-    StageError,
+from temnia_pipeline.speech.checkpoints_v2 import prepare_execution_v2 as prepare_execution
+from temnia_pipeline.speech.contracts import StageError
+from temnia_pipeline.speech.contracts_v2 import (
+    PROTOCOL_V2 as PROTOCOL,
+)
+from temnia_pipeline.speech.contracts_v2 import (
+    RecognizeConfigV2 as RecognizeConfig,
+)
+from temnia_pipeline.speech.contracts_v2 import (
+    SpeechStageJobV2 as SpeechStageJob,
+)
+from temnia_pipeline.speech.contracts_v2 import (
+    SpeechStageResultV2 as SpeechStageResult,
+)
+from temnia_pipeline.speech.contracts_v2 import (
+    StageV2 as Stage,
+)
+from temnia_pipeline.speech.image_models import (
+    NLTK_DATA_DIR,
+    image_assets_sha256,
+    prepare_image_models,
+    read_image_model_manifest,
 )
 from temnia_pipeline.speech.modal_progress import progress_publisher
+from temnia_pipeline.speech.model_files import verify_model_files
 from temnia_pipeline.speech.oom import is_resource_oom
-from temnia_pipeline.speech.stages import run_align, run_diarize, run_recognize
+from temnia_pipeline.speech.resources import SpeechModelManifest, SpeechResourceProfile
+from temnia_pipeline.speech.stages_v2 import (
+    run_align_v2 as run_align,
+)
+from temnia_pipeline.speech.stages_v2 import (
+    run_recognize_v2 as run_recognize,
+)
+from temnia_pipeline.speech.stages_v2 import (
+    run_speaker_turns_v2 as run_diarize,
+)
 from temnia_pipeline.speech.telemetry import TelemetryRecorder
 from temnia_pipeline.storage import download, make_store
 
@@ -49,16 +71,40 @@ if TYPE_CHECKING:
         SynchronousProgressPublisher,
     )
 
-APP_NAME = "temnia-speech"
-GPU = "L4"
-CPUS = 4
-MEMORY_MB = 16_384
-TIMEOUT_SECONDS = 60 * 60
+if __package__ != "temnia_pipeline":
+    message = "Deploy speech/2 with: modal deploy -m temnia_pipeline.modal_speech_v2_app"
+    raise ValueError(message)
+
+APP_NAME = os.environ.get("MODAL_SPEECH_V2_APP", "")
+if not APP_NAME or APP_NAME in {"temnia-speech", "temnia-media"}:
+    message = "speech/2 requires a distinct MODAL_SPEECH_V2_APP"
+    raise ValueError(message)
+RESOURCE_PROFILE = SpeechResourceProfile.model_validate_json(
+    os.environ["MODAL_SPEECH_RESOURCE_PROFILE"]
+)
+
+
+def _frozen_manifest() -> SpeechModelManifest:
+    configured = SpeechModelManifest.model_validate_json(os.environ["MODAL_SPEECH_MODEL_MANIFEST"])
+    if modal.is_local():
+        return configured
+    image_sha = image_assets_sha256()
+    return configured.model_copy(update={"image_assets_sha256": image_sha})
+
+
+MODEL_MANIFEST = _frozen_manifest()
+MODEL_VOLUME = os.environ["MODAL_SPEECH_MODEL_VOLUME"]
+if MODEL_VOLUME == "temnia-models":
+    message = "speech/2 requires a separately frozen model volume"
+    raise ValueError(message)
+GPU = RESOURCE_PROFILE.gpu
+CPUS = RESOURCE_PROFILE.cpu_cores
+MEMORY_MB = RESOURCE_PROFILE.memory_mib
+TIMEOUT_SECONDS = RESOURCE_PROFILE.stage_timeout_seconds
 R2_SECRET = "temnia-r2"  # noqa: S105
 HF_SECRET = "temnia-hf"  # noqa: S105
-MODEL_VOLUME = "temnia-models"
-MODEL_DIR = "/models"
-PROGRESS_DICT = "temnia-speech-progress"
+MODEL_DIR = MODEL_MANIFEST.model_root
+PROGRESS_DICT = "temnia-speech-v2-progress"
 PIPELINE_ROOT = Path(__file__).resolve().parents[2]
 SPEECH_DOCKERFILE = PIPELINE_ROOT / "Dockerfile.speech"
 
@@ -75,7 +121,21 @@ image = (
         index_url="https://download.pytorch.org/whl/cu126",
     )
     .pip_install("whisperx==3.8.6")
-    .env({"HF_HOME": MODEL_DIR, "TORCH_HOME": MODEL_DIR, BUILD_ENV: BUILD_ID})
+    .run_function(prepare_image_models)
+    .env(
+        {
+            "HF_HOME": MODEL_DIR,
+            "TORCH_HOME": MODEL_DIR,
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "NLTK_DATA": NLTK_DATA_DIR,
+            BUILD_ENV: BUILD_ID,
+            "MODAL_SPEECH_V2_APP": APP_NAME,
+            "MODAL_SPEECH_RESOURCE_PROFILE": RESOURCE_PROFILE.model_dump_json(by_alias=True),
+            "MODAL_SPEECH_MODEL_MANIFEST": MODEL_MANIFEST.model_dump_json(by_alias=True),
+            "MODAL_SPEECH_MODEL_VOLUME": MODEL_VOLUME,
+        }
+    )
     .add_local_file(
         PIPELINE_ROOT / "LICENSES" / "NLTK-3.10.3.txt",
         "/licenses/NLTK-3.10.3.txt",
@@ -89,7 +149,7 @@ image = (
     .add_local_python_source("temnia_pipeline")
 )
 app = modal.App(APP_NAME, image=image)
-models = modal.Volume.from_name(MODEL_VOLUME, create_if_missing=True)
+models = modal.Volume.from_name(MODEL_VOLUME)
 
 
 def _ids() -> tuple[str | None, str | None]:
@@ -117,7 +177,7 @@ def _retry_class(error: Exception) -> str:
 def _load_whisperx(stage: Stage) -> Any:  # noqa: ANN401
     """Load the explicit diarization submodule omitted by WhisperX 3.8.6's root."""
     engine = cast("Any", import_module("whisperx"))
-    if stage == "diarize":
+    if stage == "speaker_turns":
         engine.diarize = import_module("whisperx.diarize")
     return engine
 
@@ -134,6 +194,13 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
     scratch: Path | None = None
     try:
         job = SpeechStageJob.model_validate(raw_job)
+        if (
+            job.build != BUILD_ID
+            or job.resource_profile != RESOURCE_PROFILE
+            or job.model_manifest != MODEL_MANIFEST
+        ):
+            message = "speech request does not match deployment build, resources and model files"
+            raise ValueError(message)  # noqa: TRY301
         if job.stage != expected_stage:
             message = f"{expected_stage} function received {job.stage} job"
             raise ValueError(message)  # noqa: TRY301
@@ -163,12 +230,17 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
             telemetry = recorder.finish(complete=False)
             return SpeechStageResult(
                 build=BUILD_ID,
+                resource_profile=RESOURCE_PROFILE,
+                model_manifest=MODEL_MANIFEST,
+                execution_topology=job.execution_topology,
                 status="ok",
                 operation_id=job.operation_id,
                 attempt_id=job.attempt_id,
                 stage=job.stage,
                 modal_call_id=call_id,
                 modal_task_id=task_id,
+                checkpoint_reused=True,
+                execution_identity=execution,
                 checkpoint=reused,
                 telemetry=telemetry,
             ).model_dump(mode="json", by_alias=True)
@@ -183,7 +255,7 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
             attempt_id=str(job.attempt_id),
             call_id=call_id,
             task_id=task_id,
-            mode="coalesced",
+            mode=RESOURCE_PROFILE.progress_mode,
         )
         publisher.start()
         recorder.set_progress_callback(publisher.callback)
@@ -199,6 +271,11 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
             )
             if _sha256_file(audio_file) != job.audio_sha256:
                 message = f"audio bytes do not match frozen source identity at {job.audio_key}"
+                raise ValueError(message)  # noqa: TRY301
+        with recorder.phase("modelVerify"):
+            verify_model_files(MODEL_MANIFEST)
+            if image_assets_sha256(verify_files=True) != MODEL_MANIFEST.image_assets_sha256:
+                message = "speech image model identity changed before inference"
                 raise ValueError(message)  # noqa: TRY301
         engine = _load_whisperx(job.stage)
         torch_module = cast("Any", import_module("torch"))
@@ -242,12 +319,16 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
         telemetry = recorder.finish(complete=True)
         return SpeechStageResult(
             build=BUILD_ID,
+            resource_profile=RESOURCE_PROFILE,
+            model_manifest=MODEL_MANIFEST,
+            execution_topology=job.execution_topology if job else "parallel",
             status="ok",
             operation_id=job.operation_id,
             attempt_id=job.attempt_id,
             stage=job.stage,
             modal_call_id=call_id,
             modal_task_id=task_id,
+            execution_identity=execution,
             checkpoint=checkpoint,
             telemetry=telemetry,
         ).model_dump(mode="json", by_alias=True)
@@ -260,6 +341,9 @@ async def _execute(  # noqa: C901, PLR0912, PLR0915
         telemetry = recorder.finish(complete=retry_class != "outcome_unknown")
         return SpeechStageResult(
             build=BUILD_ID,
+            resource_profile=RESOURCE_PROFILE,
+            model_manifest=MODEL_MANIFEST,
+            execution_topology=job.execution_topology if job else "parallel",
             status=("outcome_unknown" if retry_class == "outcome_unknown" else "failed"),
             operation_id=job.operation_id if job else None,
             attempt_id=job.attempt_id if job else None,
@@ -289,31 +373,31 @@ _FUNCTION = {
     "gpu": GPU,
     "cpu": (CPUS, CPUS),
     "memory": (MEMORY_MB, MEMORY_MB),
-    "startup_timeout": 120,
+    "startup_timeout": RESOURCE_PROFILE.startup_timeout_seconds,
     "timeout": TIMEOUT_SECONDS,
     "retries": 0,
     "single_use_containers": True,
     "secrets": [modal.Secret.from_name(R2_SECRET), modal.Secret.from_name(HF_SECRET)],
-    "volumes": {MODEL_DIR: models},
+    "volumes": {"/models": models.with_mount_options(read_only=True)},
 }
 
 
 @app.function(**_FUNCTION)  # type: ignore[arg-type]  # pyright: ignore[reportUnknownMemberType]
-async def recognize(job: dict[str, Any]) -> dict[str, Any]:
+async def recognize_v2(job: dict[str, Any]) -> dict[str, Any]:
     """Recognition in its own process lifetime and immutable artifact."""
     return await _execute(job, "recognize")
 
 
 @app.function(**_FUNCTION)  # type: ignore[arg-type]  # pyright: ignore[reportUnknownMemberType]
-async def align(job: dict[str, Any]) -> dict[str, Any]:
+async def align_v2(job: dict[str, Any]) -> dict[str, Any]:
     """Alignment in its own process lifetime and immutable artifact."""
     return await _execute(job, "align")
 
 
 @app.function(**_FUNCTION)  # type: ignore[arg-type]  # pyright: ignore[reportUnknownMemberType]
-async def diarize(job: dict[str, Any]) -> dict[str, Any]:
+async def speaker_turns_v2(job: dict[str, Any]) -> dict[str, Any]:
     """Diarization in its own process lifetime and immutable artifact."""
-    return await _execute(job, "diarize")
+    return await _execute(job, "speaker_turns")
 
 
 @app.function()  # pyright: ignore[reportUnknownMemberType]
@@ -323,6 +407,17 @@ def version() -> str:
 
 
 @app.function()  # pyright: ignore[reportUnknownMemberType]
-def deployment_identity() -> dict[str, str]:
+def deployment_identity() -> dict[str, object]:
     """The protocol and source fingerprint sealed into this image."""
-    return {"protocol": PROTOCOL, "build": BUILD_ID}
+    return {
+        "protocol": PROTOCOL,
+        "build": BUILD_ID,
+        "resource_profile": RESOURCE_PROFILE.model_dump(mode="json", by_alias=True),
+        "model_manifest": MODEL_MANIFEST.model_dump(mode="json", by_alias=True),
+    }
+
+
+@app.function()  # pyright: ignore[reportUnknownMemberType]
+def image_model_manifest() -> dict[str, object]:
+    """Return auxiliary model file/version evidence for an offline comparison."""
+    return read_image_model_manifest()

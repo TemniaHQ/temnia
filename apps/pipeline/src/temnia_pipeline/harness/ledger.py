@@ -139,6 +139,21 @@ class Attempt:
     finished_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class AttemptReservationRequest:
+    """Immutable provider identity and exposure requested for one operation."""
+
+    operation_id: UUID
+    owner_token: str
+    provider: str
+    model: str | None
+    family: str | None
+    route: JsonObject
+    request_hash: str
+    estimated_cost_micros: int
+    dispatch_limit: int
+
+
 def _canonical_hash(value: object) -> str:
     try:
         body = json.dumps(
@@ -565,6 +580,288 @@ async def reserve_attempt(  # noqa: C901, PLR0912, PLR0913
             (estimated_cost_micros, run_id),
         )
         return _attempt(attempt)
+
+
+async def reserve_attempt_batch(  # noqa: C901, PLR0912, PLR0915
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    run_id: UUID,
+    requests: tuple[AttemptReservationRequest, ...],
+) -> tuple[Attempt, ...]:
+    """Atomically reserve a set of physical provider attempts.
+
+    The batch locks operations in stable UUID order and returns attempts in the
+    caller's order. No provider dispatch may begin until this transaction has
+    committed and each returned reserved attempt separately wins
+    :func:`mark_dispatched`.
+    """
+    if not requests:
+        raise ValueError("attempt reservation batch must not be empty")
+    operation_ids = [request.operation_id for request in requests]
+    if len(set(operation_ids)) != len(operation_ids):
+        raise ValueError("attempt reservation batch contains a duplicate operation")
+    route_values: dict[UUID, dict[str, Any]] = {}
+    route_bodies: dict[UUID, str] = {}
+    for request in requests:
+        if request.estimated_cost_micros < 0:
+            raise ValueError("estimated cost must be nonnegative")
+        if request.dispatch_limit <= 0:
+            raise ValueError("dispatch limit must be positive")
+        route_value = dict(request.route)
+        try:
+            route_body = json.dumps(route_value, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError("attempt route must be finite JSON") from error
+        route_values[request.operation_id] = route_value
+        route_bodies[request.operation_id] = route_body
+
+    request_by_operation = {request.operation_id: request for request in requests}
+    ordered_ids = sorted(operation_ids, key=str)
+    async with db.scoped(database_url, scope) as conn:
+        await _lock_source(conn, source_id)
+        run = await (
+            await conn.execute(
+                "SELECT * FROM harness_run WHERE id = %s AND source_id = %s FOR UPDATE",
+                (run_id, source_id),
+            )
+        ).fetchone()
+        if run is None:
+            raise IdentityConflict("run is absent from the source scope")
+
+        operations: dict[UUID, Mapping[str, Any]] = {}
+        for operation_id in ordered_ids:
+            operation = await _lock_operation(conn, source_id, operation_id)
+            if operation["run_id"] != run_id:
+                raise IdentityConflict("operation does not belong to the supplied run")
+            operations[operation_id] = operation
+
+        attempts: dict[UUID, Mapping[str, Any]] = {}
+        missing: list[UUID] = []
+        reserved: list[UUID] = []
+        for operation_id in ordered_ids:
+            request = request_by_operation[operation_id]
+            operation = operations[operation_id]
+            active = await (
+                await conn.execute(
+                    """
+                    SELECT * FROM harness_attempt
+                     WHERE operation_id = %s
+                       AND state IN ('reserved', 'dispatching', 'running',
+                                     'outcome_unknown', 'cancel_requested')
+                     ORDER BY attempt_number DESC LIMIT 1
+                     FOR UPDATE
+                    """,
+                    (operation_id,),
+                )
+            ).fetchone()
+            if active is not None:
+                if active["run_id"] != run_id:
+                    raise IdentityConflict(
+                        "operation and active attempt do not belong to the same run"
+                    )
+                if operation["status"] == "succeeded":
+                    raise IdentityConflict("successful operation has an active attempt")
+                immutable = (
+                    active["provider"],
+                    active["model"],
+                    active["family"],
+                    active["request_hash"],
+                    int(active["estimated_cost_micros"]),
+                    active["route"],
+                )
+                expected = (
+                    request.provider,
+                    request.model,
+                    request.family,
+                    request.request_hash,
+                    request.estimated_cost_micros,
+                    route_values[operation_id],
+                )
+                if immutable != expected:
+                    raise IdentityConflict("active attempt differs from the exact request identity")
+                if active["state"] in {"outcome_unknown", "cancel_requested"}:
+                    raise OutcomeUnknown("the current attempt must be reconciled before retry")
+                if active["state"] == "reserved":
+                    reserved.append(operation_id)
+                elif active["owner_token"] != request.owner_token:
+                    raise LostOwnership("an active attempt belongs to another activity execution")
+                attempts[operation_id] = active
+                continue
+
+            if operation["status"] == "succeeded":
+                succeeded = await (
+                    await conn.execute(
+                        """
+                        SELECT * FROM harness_attempt
+                         WHERE operation_id = %s AND state = 'succeeded'
+                         ORDER BY attempt_number DESC LIMIT 1
+                         FOR UPDATE
+                        """,
+                        (operation_id,),
+                    )
+                ).fetchone()
+                if succeeded is None:
+                    raise IdentityConflict(
+                        "cache-completed operation must be omitted from attempt batch"
+                    )
+                if succeeded["run_id"] != run_id:
+                    raise IdentityConflict(
+                        "operation and successful attempt do not belong to the same run"
+                    )
+                immutable = (
+                    succeeded["provider"],
+                    succeeded["model"],
+                    succeeded["family"],
+                    succeeded["request_hash"],
+                    int(succeeded["estimated_cost_micros"]),
+                    succeeded["route"],
+                )
+                expected = (
+                    request.provider,
+                    request.model,
+                    request.family,
+                    request.request_hash,
+                    request.estimated_cost_micros,
+                    route_values[operation_id],
+                )
+                if immutable != expected:
+                    raise IdentityConflict(
+                        "successful attempt differs from the exact request identity"
+                    )
+                attempts[operation_id] = succeeded
+                continue
+            if operation["status"] == "outcome_unknown":
+                raise OutcomeUnknown("operation has an unreconciled physical outcome")
+            missing.append(operation_id)
+
+        admission_ids = [*reserved, *missing]
+        if admission_ids:
+            if run["status"] in {"cancelled", "failed", "ready"}:
+                raise IdentityConflict(f"run in terminal state {run['status']} cannot dispatch")
+            if run["status"] == "outcome_unknown":
+                raise OutcomeUnknown("run has unresolved provider exposure")
+            new_exposure = sum(
+                request_by_operation[operation_id].estimated_cost_micros for operation_id in missing
+            )
+            exposure = int(run["spent_micros"]) + int(run["reserved_micros"])
+            if exposure + new_exposure > int(run["budget_micros"]):
+                raise BudgetExceeded("run budget cannot cover the combined provider exposure")
+            reserved_count = await (
+                await conn.execute(
+                    """
+                    SELECT count(*)::int AS count FROM harness_attempt
+                     WHERE run_id = %s AND state = 'reserved'
+                    """,
+                    (run_id,),
+                )
+            ).fetchone()
+            projected_dispatches = (
+                int(run["dispatch_count"])
+                + (int(reserved_count["count"]) if reserved_count is not None else 0)
+                + len(missing)
+            )
+            if any(
+                projected_dispatches > request_by_operation[operation_id].dispatch_limit
+                for operation_id in admission_ids
+            ):
+                raise DispatchLimitExceeded(
+                    "run dispatch ceiling cannot cover the combined attempt batch"
+                )
+
+        for operation_id in reserved:
+            request = request_by_operation[operation_id]
+            active = attempts[operation_id]
+            if active["owner_token"] == request.owner_token:
+                continue
+            reclaimed = await (
+                await conn.execute(
+                    """
+                    UPDATE harness_attempt
+                       SET owner_token = %s, heartbeat_at = now()
+                     WHERE id = %s AND state = 'reserved'
+                     RETURNING *
+                    """,
+                    (request.owner_token, active["id"]),
+                )
+            ).fetchone()
+            if reclaimed is None:
+                raise LostOwnership("reserved attempt changed while ownership was reclaimed")
+            attempts[operation_id] = reclaimed
+
+        for operation_id in missing:
+            request = request_by_operation[operation_id]
+            previous = await (
+                await conn.execute(
+                    """
+                    SELECT COALESCE(MAX(attempt_number), 0)::int AS number
+                      FROM harness_attempt WHERE operation_id = %s
+                    """,
+                    (operation_id,),
+                )
+            ).fetchone()
+            number = int(previous["number"]) + 1 if previous else 1
+            attempt = await (
+                await conn.execute(
+                    """
+                    INSERT INTO harness_attempt
+                        (organization_id, source_id, operation_id, run_id, attempt_number,
+                         owner_token, provider, model, family, route, request_hash,
+                         estimated_cost_micros, cost_status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s,
+                            'estimated')
+                    RETURNING *
+                    """,
+                    (
+                        scope.organizationId,
+                        source_id,
+                        operation_id,
+                        run_id,
+                        number,
+                        request.owner_token,
+                        request.provider,
+                        request.model,
+                        request.family,
+                        route_bodies[operation_id],
+                        request.request_hash,
+                        request.estimated_cost_micros,
+                    ),
+                )
+            ).fetchone()
+            if attempt is None:
+                raise RuntimeError("attempt insert did not return a row")
+            await conn.execute(
+                """
+                INSERT INTO harness_reservation
+                    (organization_id, source_id, run_id, attempt_id, amount_micros)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    scope.organizationId,
+                    source_id,
+                    run_id,
+                    attempt["id"],
+                    request.estimated_cost_micros,
+                ),
+            )
+            attempts[operation_id] = attempt
+        if missing:
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET reserved_micros = reserved_micros + %s, updated_at = now()
+                 WHERE id = %s
+                """,
+                (
+                    sum(
+                        request_by_operation[operation_id].estimated_cost_micros
+                        for operation_id in missing
+                    ),
+                    run_id,
+                ),
+            )
+        return tuple(_attempt(attempts[request.operation_id]) for request in requests)
 
 
 async def find_recoverable_attempt(  # noqa: PLR0913

@@ -61,6 +61,56 @@ hour for the declared L4/four-CPU/16-GiB container. These bound configured expos
 unobserved startup/restart costs remain unknown. Do not raise limits merely to hide an unresolved
 attempt. See [the pipeline environment example](../../apps/pipeline/.env.example).
 
+### Opt into the versioned parallel speech path
+
+Protocol `temnia-speech/2` adds independent recognition/alignment and raw speaker-turn
+branches. A CPU operation joins the two immutable inputs; it makes no fourth GPU call.
+The v1 activities, checkpoints and workflow history remain supported. Select v2 only after
+the exact deployment has passed qualification; the worker does not silently upgrade a saved run.
+
+Prepare a dedicated model volume and record every file's size and SHA-256. The benchmark
+preparation script copies the existing cache through a read-only mount, strips cache locks,
+tokens and transfer logs, dereferences links, and writes a content-addressed frozen directory.
+The runtime mounts that volume read-only and verifies its complete manifest before loading a
+model. The image also bakes the Punkt tokenizer and identifies WhisperX's bundled VAD weights
+and library versions. A configured image digest that differs from the deployed identity refuses
+startup; no runtime download repairs a missing model. Preserve both inventories with the run.
+
+Deploy with `MODAL_SPEECH_V2_APP`, `MODAL_SPEECH_RESOURCE_PROFILE`,
+`MODAL_SPEECH_MODEL_MANIFEST` and `MODAL_SPEECH_MODEL_VOLUME` set from those records:
+
+```bash
+uv run --frozen modal deploy --env staging -m temnia_pipeline.modal_speech_v2_app
+```
+
+The module form is required. Deploying the file path changes the remote import layout and is
+rejected. Use a separate application name and frozen volume; do not replace `temnia-media`,
+`temnia-speech` or the shared mutable `temnia-models` volume during qualification.
+
+For the worker, set `MODAL_SPEECH_PROTOCOL=temnia-speech/2`, `MODAL_SPEECH_APP` to that
+application, the recorded `MODAL_SPEECH_BUILD`, and the same resource/model JSON. Set
+`SPEECH_EXECUTION_TOPOLOGY` explicitly to the qualified `serial` or `parallel` arrangement.
+Production requires coalesced progress and 3,600-second stages plus 120-second startup; the
+rate must cover the declared four- or eight-core L4/16-GiB profile. The 900-second deadline
+and synchronous progress control are accepted only by the finite benchmark driver. Progress
+uses `temnia-speech-v2-progress` on both sides and is diagnostic, never proof of completion.
+
+For a controlled comparison, run `scripts/benchmark_checkpointed_speech.py --help` from
+`apps/pipeline`. The driver requires an exact deployment manifest, the two frozen source
+files, a dedicated migrated database and Temporal namespace, an experiment ID, queue prefix
+and private output directory. `--dry-run` validates a separate plan without remote mutations.
+Live admission is one-time per experiment ID, with a process-held local lock and database
+advisory lock. The journal reserves each case before source creation; failed and unknown
+cases halt the sequence and never return spending capacity. Do not delete its lock/journal
+to restart an experiment.
+
+Save every case report, normalized transcript, stage checkpoint, CPU assignment, coverage
+artifact and physical-attempt record before deleting anything. Cancel through Temporal and
+keep the worker alive until owned remote cleanup completes. If completion cannot be confirmed,
+retain the calls, object prefixes and reservations for reconciliation. Only after all owned calls
+are terminal may the exact qualification prefixes, applications, frozen volumes, database and
+namespace be removed. A duration-based resource estimate is not an actual provider invoice.
+
 ## Enable chapter planning
 
 Supply a qualified, immutable route JSON file to the worker and validate its canonical snapshot ID:

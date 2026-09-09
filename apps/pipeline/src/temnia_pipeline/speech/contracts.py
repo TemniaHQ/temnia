@@ -289,6 +289,36 @@ class ProgressValue(BaseModel):
     source: Literal["whisperx_callback", "none"] = "none"
 
 
+class ProgressTransportTelemetry(BaseModel):
+    """Sanitized callback and best-effort progress publication observations."""
+
+    model_config = _WIRE
+
+    callback_count: int = Field(ge=0)
+    accepted_callback_count: int = Field(ge=0)
+    regressed_callback_count: int = Field(ge=0)
+    invalid_callback_count: int = Field(ge=0)
+    callback_after_close_count: int = Field(ge=0)
+    callback_elapsed_seconds: float = Field(ge=0)
+    publish_attempt_count: int = Field(ge=0)
+    publish_success_count: int = Field(ge=0)
+    publish_timeout_count: int = Field(ge=0)
+    publish_error_count: int = Field(ge=0)
+    publish_elapsed_seconds: float = Field(ge=0)
+    elapsed_seconds: float = Field(ge=0)
+    last_callback_seconds: float | None = Field(default=None, ge=0)
+    last_publish_seconds: float | None = Field(default=None, ge=0)
+    last_published_percent: int | None = Field(default=None, ge=0, le=99)
+    pending_percent: int | None = Field(default=None, ge=0, le=99)
+    last_error: str | None = Field(
+        default=None,
+        max_length=80,
+        pattern=r"^[a-z_]+(?::[A-Za-z0-9_]{1,48})?$",
+    )
+    final_flush_completed: bool
+    shutdown_timed_out: bool
+
+
 class StageTelemetry(BaseModel):
     """Per-attempt timing and resource observations, including partial failures."""
 
@@ -303,8 +333,13 @@ class StageTelemetry(BaseModel):
     progress: ProgressValue = Field(default_factory=ProgressValue)
     process_rss_bytes: int | None = None
     process_peak_rss_bytes: int | None = None
+    process_cpu_seconds: float | None = Field(default=None, ge=0)
+    cgroup_cpu_usage_seconds: float | None = Field(default=None, ge=0)
+    cgroup_cpu_throttled_seconds: float | None = Field(default=None, ge=0)
+    cgroup_cpu_throttled_count: int | None = Field(default=None, ge=0)
     gpu_used_peak_bytes: int | None = None
     gpu_total_bytes: int | None = None
+    gpu_utilization_peak_percent: int | None = Field(default=None, ge=0, le=100)
     pid_gpu_used_peak_bytes: int | None = None
     torch_allocated_peak_bytes: int | None = None
     torch_reserved_peak_bytes: int | None = None
@@ -312,6 +347,7 @@ class StageTelemetry(BaseModel):
     sample_interval_seconds: float = Field(default=1.0, gt=0)
     sample_count: int = Field(default=0, ge=0)
     metrics_unavailable: list[str] = Field(default_factory=list)
+    progress_transport: ProgressTransportTelemetry | None = None
     complete: bool = False
 
 
