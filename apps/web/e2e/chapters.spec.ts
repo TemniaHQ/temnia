@@ -402,6 +402,61 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   } finally {
     await page.unroute(groundingPattern, groundingHandler);
   }
+  const outcomeUnknownHandler = async (route: Route) => {
+    const response = await route.fetch();
+    const next = (await response.json()) as ChapterView;
+    next.acceptedEdit = null;
+    next.currentEdit = null;
+    if (next.run) {
+      next.run.acceptedRevision = null;
+      next.run.currentRevision = 0;
+      next.run.dispatchCount = 27;
+      next.run.reservedMicros = 109_644;
+      next.run.spentMicros = 20_236;
+      next.run.status = "outcome_unknown";
+    }
+    await route.fulfill({ json: next, response });
+  };
+  await page.route(groundingPattern, outcomeUnknownHandler);
+  try {
+    await expect(
+      page.getByTestId("chapter-outcome-unknown-explanation")
+    ).toContainText(
+      "The provider result is unconfirmed, so its possible charge stays reserved."
+    );
+    await expect(
+      page.getByTestId("chapter-outcome-unknown-explanation")
+    ).toContainText("Retry, Cancel, and Raise budget cannot resolve this run.");
+    await expect(
+      page.getByText(
+        "Reported charges $0.0202 · unresolved exposure $0.1096 · budget $1.00 · 27 dispatches",
+        { exact: true }
+      )
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { exact: true, name: "Retry" })
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { exact: true, name: "Cancel" })
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { exact: true, name: "Raise budget" })
+    ).toBeDisabled();
+    await page.getByRole("button", { exact: true, name: "New run" }).click();
+    await expect(
+      page.getByTestId("chapter-new-run-exposure-warning")
+    ).toHaveText(
+      "A new run sends new paid requests under a separate budget. The unresolved possible charge from the previous run remains."
+    );
+    await expect(
+      page.getByLabel("Maximum budget in dollars", { exact: true })
+    ).toHaveValue("1.00");
+    await page
+      .getByRole("button", { exact: true, name: "Cancel new run" })
+      .click();
+  } finally {
+    await page.unroute(groundingPattern, outcomeUnknownHandler);
+  }
   const initialHashes = await renderHashes(page, state.view);
   await page.reload();
   await page.getByRole("tab", { exact: true, name: "Chapters" }).click();

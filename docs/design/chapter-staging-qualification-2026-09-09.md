@@ -1,11 +1,11 @@
 # Chapter staging qualification — 2026-09-09
 
-**Status:** PR #27 is merged and deployed. One retry of the original run reused all seven accepted
-responses and completed 25 summary windows, then failed on quote ownership before any chapter
-proposal. The ledger is **$0.015614 spent, zero reserved**, with 25 total physical dispatches and
-no model repair. The source, run and all raw responses are retained. Render, review and export
-qualification remain pending; the follow-up adds immediate grounding validation and explicit
-source-excerpt fallback for eligible citation errors.
+**Status:** PR #28 is merged and deployed. The same run has passed summary grounding using its
+25 saved responses, with six explicit source-excerpt fallbacks for ten misplaced quote anchors.
+The global proposal exhausted its output-token limit with incomplete JSON; the one repair then
+hit the 300-second request timeout. The run is fenced as `outcome_unknown`, with $0.020236 reported
+and $0.109644 still reserved. Render, review and export remain unqualified. The source, run and
+original raw responses are retained; model quality is still unmeasured.
 
 ## Deployment and route evidence
 
@@ -237,3 +237,57 @@ four differ in non-output serialization. Per-window summary/violation facts and 
 seven operation, attempt, artifact and dependency hashes match the retained capture. This offline
 result is not a claim that all response envelopes are byte-identical, or that the live run has
 completed.
+
+## PR #28 deployment and live grounding recovery
+
+PR #28's exact commit `ed6e6b6` passed the release gate at 15:51:04 UTC: 819 Python, 221 web,
+41 database, 28 contract and three legacy tests (1,112 total), both deployment images and all
+18 production-image browser tests. The required GitHub check passed. Rajesh merged it as
+`ef2a6fd` at 16:03:07 UTC.
+
+The new web container started at 16:03:49 UTC and the new worker at 16:06:32 UTC. Both deployment
+records identify the merge and report done. All nine changed pipeline files match the merge
+byte-for-byte; web's deployed bundles contain the new UI copy. Startup, migration/seed and web
+health checks passed with zero container restarts. Both services retain the admitted route
+snapshot, $3 ceiling, 32 dispatches, one repair, 8,192 output-token limit, 80-sentence windows and
+render concurrency two. The gateway key remains worker-only. The private deployment receipt
+SHA-256 is `364a63fb9d334184c49dc97d5325dedff3beb527452fd38c37f62c99671ab930`.
+
+At 16:59:03 UTC, the scoped pre-retry capture confirmed the original failed run at revision zero,
+25 dispatches, $0.015614 spent, zero reserved and zero repairs. All 25 operation, attempt,
+response-artifact and dependency tuples were retained for exact comparison. No active run
+conflicted with the retry. The private baseline receipt SHA-256 is
+`2de158ca3e6e7d2627d9cec951a46a4455f64b55008adb7ca2256e9a38b525be`.
+
+One browser Retry resumed that same run at 17:00:05 UTC. The UI confirmed its durable result,
+cleared the old failure text and showed the run's actual $3 maximum. The source cache contains
+the complete 1,911,080,861-byte master and its identity sidecar. The worker has 356,533,506,048
+free bytes, exceeding the 6,806,984,407-byte conservative all-keep render preflight.
+
+The resumed workflow reached `validate_chapter_summary` on activity attempt one. All 25 windows
+passed the new grounding path without another summary dispatch or model repair. The live UI
+reports the same six fallback passages and ten misplaced references found offline and exposes
+their immutable reports. At 17:03:46 UTC, dispatch 26 started `proposal:global`, reserving 15,086
+microdollars for its complete serialized request. That reservation is exposure, not a reported
+charge. This checkpoint establishes summary recovery only; later stages need their own evidence.
+
+The DeepSeek proposal returned at 17:07:07 UTC with a reported $0.004622 charge and a durable
+response artifact. Its text is 26,780 bytes and the provider finish reason is `length`: exactly
+8,192 output tokens left an incomplete JSON document. Strict local parsing refused that output.
+The workflow's generic schema-error branch consumed its one repair and sent the same prompt and
+output cap to Qwen, without communicating the truncation or other validation feedback.
+
+The Qwen repair ran from 17:07:07.886578 to 17:12:07.929161 UTC, then failed through
+`ReadTimeout → APITimeoutError → ModelAPIError → OutcomeUnknown`. It has neither a durable
+response artifact nor a provider generation handle. The final scoped capture records 27
+dispatches, one repair, revision zero, $0.020236 reported and $0.109644 unresolved exposure.
+A timeout does not establish whether the provider processed or charged the request. The reservation
+remains in place; no further Retry, cancellation, budget change or provider call followed it.
+
+The 361-event execution history and portable evaluation bundle are retained privately. All 25
+original summary operation, attempt, response-artifact and dependency tuples match their baseline
+hashes exactly. The bundle verifies 25 grounding reports: 195 first-pass reference-valid units and
+six extractive fallbacks, across five reports, for ten rejected anchors. It reports incomplete cost
+and no model winner. There is no chapter edit, render, verifier, accepted revision or export, and
+no human listening or editorial labeling was performed. The private combined-capture SHA-256 is
+`5d45ff0da1742aa437a6094199d426d919125599cec5b0db503a88d3883b6309`.

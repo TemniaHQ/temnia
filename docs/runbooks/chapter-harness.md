@@ -210,6 +210,14 @@ validation and waits at most a bounded interval for read-only cost ingestion. An
 unreconciled charge or account rejection halts rather than repeating inference. A successful report
 proves only the tested request shapes, not editorial quality or maximum context capacity.
 
+For the compact proposal path, add `--proposal-wire compact` and use fresh journal, receipt and
+report paths. The choice is frozen for the session and the report names the tested proposal
+schema. The default `canonical` preserves the earlier qualifier behavior and historical request
+identities. A canonical receipt does not qualify compact native output. Compact qualification
+still runs the same summary, proposal and verifier stages for each candidate; it does not add a
+provider call or automatically continue the unresolved chapter run. Budget the entire batch,
+including prior unresolved exposure, before dispatch.
+
 For a journal with a saved generation handle and unresolved cost, use a separate report path and
 the SHA-256 of the exact retained journal bytes:
 
@@ -253,10 +261,23 @@ backend. It proves mechanics and never establishes live model quality or price.
 | --- | --- |
 | `budget_paused` | Inspect spent and unresolved exposure, then raise the budget to resume the same run. Accepted operations are reused. |
 | `failed` | Inspect the recorded error and fix its cause, then Retry. A terminal error must not leave a permanently active row. |
-| `outcome_unknown` | Retain the attempt, handle and reservation. Reconcile provider execution before allowing another dispatch. A charge alone does not prove an execution result. |
+| `outcome_unknown` | Retain the attempt, any known handle and reservation. Reconcile execution before dispatching that operation again; a charge alone is insufficient. New run creates separately budgeted work and leaves this exposure unresolved. |
 | `cancelled` | Keep historical revisions and accepted exports. In-flight provider expense may still need reconciliation. Start a new run for new editing work. |
 | `needs_review` | Listen around cuts, correct boundaries, and accept every keep/drop with required reasons. Human review resolves editorial concerns; technical failures still block export. |
 | `ready` | Export the accepted revision. Later content corrections create a new revision while the prior export remains available. |
+
+An unknown request with neither a generation handle nor a complete local response cannot be
+recovered by the cost CLI. Retry, cancellation and budget changes do not remove that fence.
+Preserve the evidence before investigating the provider outcome. A new run sends new model
+requests; model-operation reuse is scoped to its original run. Include earlier reported charges
+and unresolved reservations when setting a session's remaining spending allowance. The UI shows
+per-run accounting, not an aggregate session ceiling.
+
+Global proposals use a compact internal schema with bounded text and representative anchors;
+this limits output volume without imposing a chapter quota. A truncated or invalid response is
+retained with its diagnostic before an independent-family repair. The repair carries that feedback
+and its artifact identities. No partial JSON is accepted or completed in code, and the configured
+output limit and repair count remain in force.
 
 The worker saves a known model response before looking up its charge. It allows up to twenty
 seconds total for that lookup and polling of explicitly pending receipts. A missing receipt or

@@ -93,3 +93,15 @@ export function chapterPlanningStoppedMessage(
     ? "Planning stopped before an edit was produced. Review the reason and start a new run to try again."
     : null;
 }
+
+export function chapterOutcomeUnknownMessage(status: string): string | null {
+  return status === "outcome_unknown"
+    ? "The provider result is unconfirmed, so its possible charge stays reserved. Retry, Cancel, and Raise budget cannot resolve this run."
+    : null;
+}
+
+export function newRunExposureMessage(status: string): string | null {
+  return status === "outcome_unknown"
+    ? "A new run sends new paid requests under a separate budget. The unresolved possible charge from the previous run remains."
+    : null;
+}

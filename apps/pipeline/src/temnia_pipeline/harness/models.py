@@ -39,7 +39,13 @@ from pydantic_ai.usage import RequestUsage
 from temporalio import activity
 from temporalio.common import RetryPolicy
 
-from temnia_pipeline.contracts import ChapterProposal, Scope
+from temnia_pipeline.contracts import (
+    ChapterProposal,
+    ChapterProposalSection,
+    Kind,
+    QuoteWordId,
+    Scope,
+)
 from temnia_pipeline.harness import artifacts, ledger
 from temnia_pipeline.harness.cassettes import (
     MODEL_RESPONSE_ADAPTER,
@@ -70,6 +76,7 @@ HTTP_CLIENT_ERROR_MAX = 500
 HTTP_REQUEST_TIMEOUT = 408
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
+COMPACT_PROPOSAL_SCHEMA_VERSION = "chapter-proposal-compact/1"
 
 
 class ModelPersistenceError(RuntimeError):
@@ -105,6 +112,83 @@ class HierarchicalSummaryV1(BaseModel):
         if len({unit.id for unit in self.units}) != len(self.units):
             raise ValueError("summary unit IDs must be unique")
         return self
+
+
+class CompactChapterProposalSection(BaseModel):
+    """One bounded model-authored decision without an internal section label."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    firstSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    lastSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    kind: Kind
+    title: Annotated[str, Field(max_length=160)]
+    reason: Annotated[str, Field(max_length=320)]
+    quoteWordIds: Annotated[list[QuoteWordId], Field(max_length=2)]
+
+
+class CompactChapterProposal(BaseModel):
+    """Private native-output shape converted explicitly to the canonical proposal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: Literal[1]
+    sections: Annotated[list[CompactChapterProposalSection], Field(min_length=1)]
+    summary: Annotated[str, Field(max_length=1024)]
+
+
+def _proposal_section_id(index: int, first_sentence_id: str, last_sentence_id: str) -> str:
+    identity = json.dumps(
+        [index, first_sentence_id, last_sentence_id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    return f"section-{index:04d}-{hashlib.sha256(identity).hexdigest()}"
+
+
+def canonical_chapter_proposal(compact: CompactChapterProposal) -> ChapterProposal:
+    """Derive stable unique labels after the compact wire object is fully valid."""
+    return ChapterProposal(
+        version=compact.version,
+        summary=compact.summary,
+        sections=[
+            ChapterProposalSection(
+                id=_proposal_section_id(index, section.firstSentenceId, section.lastSentenceId),
+                firstSentenceId=section.firstSentenceId,
+                lastSentenceId=section.lastSentenceId,
+                kind=section.kind,
+                title=section.title,
+                reason=section.reason,
+                quoteWordIds=section.quoteWordIds,
+            )
+            for index, section in enumerate(compact.sections)
+        ],
+    )
+
+
+def compact_synthetic_proposal(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Adapt the explicit recorded v1 fixture to the private compact native schema."""
+    if payload is None:
+        return None
+    output = payload.get("output")
+    if not isinstance(output, dict):
+        return payload
+    output_value = cast("dict[str, Any]", output)
+    sections = output_value.get("sections")
+    if not isinstance(sections, list):
+        return payload
+    section_values = cast("list[object]", sections)
+    if not all(isinstance(item, dict) for item in section_values):
+        return payload
+    compact_output: dict[str, Any] = dict(output_value)
+    compact_output["sections"] = [
+        {key: value for key, value in section.items() if key != "id"}
+        for section in cast("list[dict[str, Any]]", section_values)
+    ]
+    CompactChapterProposal.model_validate_json(
+        json.dumps(compact_output, allow_nan=False, ensure_ascii=False), strict=True
+    )
+    return {**payload, "output": compact_output}
 
 
 class EditorialVerdictV1(BaseModel):
@@ -775,6 +859,7 @@ class BudgetedModel(WrapperModel):
                 request_hash=request_hash,
                 response_fingerprint=response_fingerprint,
                 response=response,
+                max_output_tokens=requested_max,
             )
             return _normalize_summary_response(self.deps, accepted)
         except asyncio.CancelledError:
@@ -808,6 +893,7 @@ class BudgetedModel(WrapperModel):
         request_hash: str,
         response_fingerprint: str,
         response: ModelResponse,
+        max_output_tokens: int | None,
     ) -> ModelResponse:
         """Persist the paid response before optional recording and settlement."""
         if response.provider_response_id is not None:
@@ -844,6 +930,11 @@ class BudgetedModel(WrapperModel):
                 "runId": str(self.deps.run_id),
                 "schemaVersion": self.deps.schema_version,
                 "synthetic": self.deps.synthetic_payload is not None,
+                **(
+                    {"maxOutputTokens": max_output_tokens}
+                    if self.deps.schema_version == COMPACT_PROPOSAL_SCHEMA_VERSION
+                    else {}
+                ),
             },
             dependency_ids=self.deps.input_artifact_ids,
         )
@@ -937,10 +1028,12 @@ def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
 
 
 chapter_propose_v1 = _agent("chapter_propose_v1", ChapterProposal)
+chapter_propose_v2 = _agent("chapter_propose_v2", CompactChapterProposal)
 chapter_verify_v1 = _agent("chapter_verify_v1", EditorialVerdictV1)
 chapter_summarize_v1 = _agent("chapter_summarize_v1", HierarchicalSummaryV1)
 HARNESS_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     chapter_propose_v1,
+    chapter_propose_v2,
     chapter_verify_v1,
     chapter_summarize_v1,
 )

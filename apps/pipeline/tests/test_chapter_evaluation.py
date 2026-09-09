@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import pytest
 from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai.usage import RequestUsage
 
 from temnia_pipeline.contracts import (
     ChapterChecks,
@@ -28,6 +30,7 @@ from temnia_pipeline.evals.chapters import (
     EvaluationBundle,
     HumanLabels,
     ImmutableArtifactFact,
+    ProposalDiagnosticArtifact,
     SummaryGroundingArtifact,
     content_sha256,
     required_check_names,
@@ -36,7 +39,7 @@ from temnia_pipeline.evals.chapters import (
 )
 from temnia_pipeline.harness import bundle_export as bundle_export_module
 from temnia_pipeline.harness import cli
-from temnia_pipeline.harness.artifacts import fingerprint_for
+from temnia_pipeline.harness.artifacts import canonical_json, fingerprint_for
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.gateway import CostObservation, GenerationIdentityError
 from temnia_pipeline.harness.models import HierarchicalSummaryV1
@@ -45,6 +48,11 @@ from temnia_pipeline.harness.prompts import (
     PromptWindow,
     render_summary_prompt,
     render_summary_reduction_prompt,
+)
+from temnia_pipeline.harness.proposal_diagnostics import (
+    ProposalDiagnosticReport,
+    ProposalUsageCounts,
+    diagnostic_artifact_fingerprint,
 )
 from temnia_pipeline.harness.summary_grounding import (
     SummaryFallback,
@@ -63,6 +71,9 @@ ATTEMPT = UUID("30000000-0000-0000-0000-000000000003")
 OPERATION = UUID("40000000-0000-0000-0000-000000000004")
 RESULT = UUID("50000000-0000-0000-0000-000000000005")
 EVIDENCE_ARTIFACT = UUID("60000000-0000-0000-0000-000000000006")
+PRIOR_RESPONSE = UUID("51000000-0000-0000-0000-000000000005")
+PRIOR_ATTEMPT = UUID("31000000-0000-0000-0000-000000000003")
+PRIOR_OPERATION = UUID("41000000-0000-0000-0000-000000000004")
 NOW = datetime(2026, 9, 8, tzinfo=UTC)
 
 
@@ -368,7 +379,7 @@ def _bundle_with_grounding() -> EvaluationBundle:
         kind=HarnessArtifactKind.evidence,
         sha256=bundle.evidence_sha256,
         sizeBytes=100,
-        storageKey="private/evidence.json",
+        storageKey=f"org/test/source/{SOURCE}/harness/evidence.json",
     )
     response_ref = HarnessArtifactRef(
         fingerprint="7" * 64,
@@ -487,6 +498,113 @@ def _bundle_with_grounding() -> EvaluationBundle:
     return bundle.model_copy(update={"summary_grounding": (grounding,)})
 
 
+def _bundle_with_proposal_diagnostic() -> EvaluationBundle:
+    bundle = _bundle()
+    assert bundle.evidence_sha256 is not None
+    evidence_ref = HarnessArtifactRef(
+        fingerprint="6" * 64,
+        id=EVIDENCE_ARTIFACT,
+        kind=HarnessArtifactKind.evidence,
+        sha256=bundle.evidence_sha256,
+        sizeBytes=100,
+        storageKey=f"org/test/source/{SOURCE}/harness/evidence.json",
+    )
+    response_ref = HarnessArtifactRef(
+        fingerprint="7" * 64,
+        id=RESULT,
+        kind=HarnessArtifactKind.model_response,
+        sha256="8" * 64,
+        sizeBytes=200,
+        storageKey=f"org/test/source/{SOURCE}/harness/proposal-response.json",
+    )
+    prior_response_ref = HarnessArtifactRef(
+        fingerprint="9" * 64,
+        id=PRIOR_RESPONSE,
+        kind=HarnessArtifactKind.model_response,
+        sha256="a" * 64,
+        sizeBytes=180,
+        storageKey=f"org/test/source/{SOURCE}/harness/prior-proposal-response.json",
+    )
+    attempt = next(item for item in bundle.attempts if item.result_artifact_id == RESULT)
+    prior_attempt = attempt.model_copy(
+        update={
+            "id": PRIOR_ATTEMPT,
+            "operation_id": PRIOR_OPERATION,
+            "result_artifact_id": PRIOR_RESPONSE,
+        }
+    )
+    body = ProposalDiagnosticReport(
+        runId=RUN,
+        modelStage="proposal:global",
+        evidence=evidence_ref,
+        response=response_ref,
+        inputArtifacts=(prior_response_ref,),
+        operationId=attempt.operation_id,
+        attemptId=attempt.id,
+        providerResponseId=attempt.remote_handle,
+        routeId=cast("str", attempt.route_id),
+        promptVersion="chapter-propose-compact-v1",
+        schemaVersion="chapter-proposal-compact/1",
+        maxOutputTokens=8192,
+        finishReason="length",
+        responsePartCount=1,
+        textPartCount=1,
+        usage=ProposalUsageCounts(inputTokens=100, outputTokens=8192),
+        code="output_limit",
+        message=(
+            "Return one complete proposal within the output limit; shorten titles, reasons, and "
+            "quotes."
+        ),
+    )
+    diagnostic = ProposalDiagnosticArtifact(
+        artifact=ImmutableArtifactFact(
+            id=UUID("91000000-0000-0000-0000-000000000009"),
+            source_id=SOURCE,
+            kind="checks",
+            fingerprint=diagnostic_artifact_fingerprint(body),
+            sha256=content_sha256(body),
+            size_bytes=len(canonical_json(body.model_dump(mode="json"))),
+            storage_key=f"org/test/source/{SOURCE}/harness/proposal-diagnostic.json",
+        ),
+        body=body,
+        dependencies=(
+            ImmutableArtifactFact(
+                id=evidence_ref.id,
+                source_id=SOURCE,
+                kind="evidence",
+                fingerprint=evidence_ref.fingerprint,
+                sha256=evidence_ref.sha256,
+                size_bytes=evidence_ref.sizeBytes,
+                storage_key=evidence_ref.storageKey,
+            ),
+            ImmutableArtifactFact(
+                id=response_ref.id,
+                source_id=SOURCE,
+                kind="model_response",
+                fingerprint=response_ref.fingerprint,
+                sha256=response_ref.sha256,
+                size_bytes=response_ref.sizeBytes,
+                storage_key=response_ref.storageKey,
+            ),
+            ImmutableArtifactFact(
+                id=prior_response_ref.id,
+                source_id=SOURCE,
+                kind="model_response",
+                fingerprint=prior_response_ref.fingerprint,
+                sha256=prior_response_ref.sha256,
+                size_bytes=prior_response_ref.sizeBytes,
+                storage_key=prior_response_ref.storageKey,
+            ),
+        ),
+    )
+    return bundle.model_copy(
+        update={
+            "attempts": (*bundle.attempts, prior_attempt),
+            "proposal_diagnostics": (diagnostic,),
+        }
+    )
+
+
 def test_bundle_rejects_corruption_mixed_source_and_invalid_cover() -> None:
     bundle = _bundle()
     validate_bundle(bundle)
@@ -506,9 +624,135 @@ def test_bundle_rejects_corruption_mixed_source_and_invalid_cover() -> None:
 def test_old_bundle_defaults_to_no_summary_grounding() -> None:
     raw = _bundle().model_dump(mode="json", by_alias=True)
     raw.pop("summaryGrounding")
+    raw.pop("proposalDiagnostics")
     bundle = EvaluationBundle.model_validate_json(json.dumps(raw), strict=True)
     assert bundle.summary_grounding == ()
+    assert bundle.proposal_diagnostics == ()
     assert build_report(bundle).summary_grounding is None
+
+
+def test_proposal_diagnostic_is_portable_and_bound_to_accepted_response() -> None:
+    bundle = _bundle_with_proposal_diagnostic()
+    validate_bundle(bundle)
+    item = bundle.proposal_diagnostics[0]
+    assert item.artifact.size_bytes is not None
+
+    without_prior_attempt = bundle.model_copy(
+        update={
+            "attempts": tuple(attempt for attempt in bundle.attempts if attempt.id != PRIOR_ATTEMPT)
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="input response is not an accepted"):
+        validate_bundle(without_prior_attempt)
+
+    changed_body = item.body.model_copy(update={"message": f"X{item.body.message[1:]}"})
+    with pytest.raises(HarnessValidationError, match="body hash"):
+        validate_bundle(
+            bundle.model_copy(
+                update={"proposal_diagnostics": (item.model_copy(update={"body": changed_body}),)}
+            )
+        )
+
+    response_dependency = item.dependencies[1]
+    changed_dependency = response_dependency.model_copy(
+        update={"storage_key": f"org/test/source/{SOURCE}/harness/changed-response.json"}
+    )
+    with pytest.raises(HarnessValidationError, match="dependency identity"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "proposal_diagnostics": (
+                        item.model_copy(
+                            update={
+                                "dependencies": (
+                                    item.dependencies[0],
+                                    changed_dependency,
+                                    item.dependencies[2],
+                                )
+                            }
+                        ),
+                    )
+                }
+            )
+        )
+
+    for artifact, match in (
+        (item.artifact.model_copy(update={"size_bytes": item.artifact.size_bytes + 1}), "size"),
+        (item.artifact.model_copy(update={"storage_key": "../diagnostic.json"}), "storage path"),
+        (item.artifact.model_copy(update={"source_id": UUID(int=99)}), "crosses source"),
+    ):
+        with pytest.raises(HarnessValidationError, match=match):
+            validate_bundle(
+                bundle.model_copy(
+                    update={
+                        "proposal_diagnostics": (item.model_copy(update={"artifact": artifact}),)
+                    }
+                )
+            )
+
+    unsupported_body = item.body.model_copy(update={"schemaVersion": "unknown-schema/1"})
+    unsupported_artifact = item.artifact.model_copy(
+        update={
+            "fingerprint": diagnostic_artifact_fingerprint(unsupported_body),
+            "sha256": content_sha256(unsupported_body),
+            "size_bytes": len(canonical_json(unsupported_body.model_dump(mode="json"))),
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="schema is unsupported"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "proposal_diagnostics": (
+                        item.model_copy(
+                            update={"artifact": unsupported_artifact, "body": unsupported_body}
+                        ),
+                    )
+                }
+            )
+        )
+
+    wrong_attempt_body = item.body.model_copy(update={"attemptId": UUID(int=98)})
+    wrong_attempt_artifact = item.artifact.model_copy(
+        update={
+            "sha256": content_sha256(wrong_attempt_body),
+            "size_bytes": len(canonical_json(wrong_attempt_body.model_dump(mode="json"))),
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="accepted run attempt"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "proposal_diagnostics": (
+                        item.model_copy(
+                            update={
+                                "artifact": wrong_attempt_artifact,
+                                "body": wrong_attempt_body,
+                            }
+                        ),
+                    )
+                }
+            )
+        )
+
+    foreign_body = item.body.model_copy(update={"runId": UUID(int=99)})
+    foreign_artifact = item.artifact.model_copy(
+        update={
+            "fingerprint": diagnostic_artifact_fingerprint(foreign_body),
+            "sha256": content_sha256(foreign_body),
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="different run"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "proposal_diagnostics": (
+                        item.model_copy(
+                            update={"artifact": foreign_artifact, "body": foreign_body}
+                        ),
+                    )
+                }
+            )
+        )
 
 
 def test_summary_grounding_is_portable_and_reports_reference_outcomes() -> None:
@@ -840,6 +1084,7 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
         descriptor_id=None,
         verification_id=None,
         grounding_ids=(grounding_id,),
+        diagnostic_ids=(),
         rows=rows,
         dependencies={grounding_id: (evidence_ref.id, response_ref.id)},
         attempts=(
@@ -905,6 +1150,205 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
         mode="json",
     )
     with pytest.raises(ValueError, match="source summary hash"):
+        await bundle_export_module.export_evaluation_bundle(
+            "postgresql://unused",
+            scope=resolve_scope(),
+            store=cast("Any", object()),
+            run_id=RUN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_exporter_includes_revision_zero_proposal_diagnostic_with_raw_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _bundle_with_proposal_diagnostic()
+    diagnostic = fixture.proposal_diagnostics[0]
+    assert fixture.evidence is not None
+    evidence_ref = diagnostic.body.evidence
+    response_ref = diagnostic.body.response
+    prior_response_ref = diagnostic.body.inputArtifacts[0]
+    response = ModelResponse(
+        parts=[TextPart('{"sections":[{"title":"private')],
+        usage=RequestUsage(input_tokens=100, output_tokens=8192),
+        finish_reason="length",
+        model_name="fixture",
+        provider_name="recorded",
+    )
+    response_body = MODEL_RESPONSE_ADAPTER.dump_python(response, mode="json")
+    rows: dict[UUID, dict[str, Any]] = {
+        evidence_ref.id: {
+            "id": evidence_ref.id,
+            "source_id": SOURCE,
+            "kind": "evidence",
+            "fingerprint": evidence_ref.fingerprint,
+            "sha256": evidence_ref.sha256,
+            "size_bytes": evidence_ref.sizeBytes,
+            "storage_key": evidence_ref.storageKey,
+            "metadata": {"format": "harness-evidence/1"},
+        },
+        response_ref.id: {
+            "id": response_ref.id,
+            "source_id": SOURCE,
+            "kind": "model_response",
+            "fingerprint": response_ref.fingerprint,
+            "sha256": response_ref.sha256,
+            "size_bytes": response_ref.sizeBytes,
+            "storage_key": response_ref.storageKey,
+            "metadata": {
+                "attemptId": str(diagnostic.body.attemptId),
+                "operationId": str(diagnostic.body.operationId),
+                "runId": str(RUN),
+                "routeId": diagnostic.body.routeId,
+                "promptVersion": diagnostic.body.promptVersion,
+                "schemaVersion": diagnostic.body.schemaVersion,
+                "maxOutputTokens": diagnostic.body.maxOutputTokens,
+                "synthetic": True,
+            },
+        },
+        prior_response_ref.id: {
+            "id": prior_response_ref.id,
+            "source_id": SOURCE,
+            "kind": "model_response",
+            "fingerprint": prior_response_ref.fingerprint,
+            "sha256": prior_response_ref.sha256,
+            "size_bytes": prior_response_ref.sizeBytes,
+            "storage_key": prior_response_ref.storageKey,
+            "metadata": {
+                "runId": str(RUN),
+                "synthetic": True,
+            },
+        },
+        diagnostic.artifact.id: {
+            "id": diagnostic.artifact.id,
+            "source_id": SOURCE,
+            "kind": "checks",
+            "fingerprint": diagnostic.artifact.fingerprint,
+            "sha256": diagnostic.artifact.sha256,
+            "size_bytes": diagnostic.artifact.size_bytes,
+            "storage_key": diagnostic.artifact.storage_key,
+            "metadata": {
+                "attemptId": str(diagnostic.body.attemptId),
+                "code": diagnostic.body.code,
+                "evidenceArtifactId": str(evidence_ref.id),
+                "format": diagnostic.body.format,
+                "maxOutputTokens": diagnostic.body.maxOutputTokens,
+                "modelStage": diagnostic.body.modelStage,
+                "operationId": str(diagnostic.body.operationId),
+                "promptVersion": diagnostic.body.promptVersion,
+                "responseArtifactId": str(response_ref.id),
+                "routeId": diagnostic.body.routeId,
+                "runId": str(RUN),
+                "schemaVersion": diagnostic.body.schemaVersion,
+            },
+        },
+    }
+    snapshot_type = vars(bundle_export_module)["_Snapshot"]
+    snapshot = snapshot_type(
+        run={
+            "id": RUN,
+            "source_id": SOURCE,
+            "evidence_artifact_id": EVIDENCE_ARTIFACT,
+            "status": "failed",
+            "current_revision": 0,
+            "accepted_revision": None,
+            "config": {"routeSnapshotId": "route-snapshot"},
+        },
+        source={"id": SOURCE, "duration_ms": 10000},
+        observed_at=NOW,
+        revision=None,
+        descriptor_id=None,
+        verification_id=None,
+        grounding_ids=(),
+        diagnostic_ids=(diagnostic.artifact.id,),
+        rows=rows,
+        dependencies={
+            diagnostic.artifact.id: (
+                evidence_ref.id,
+                response_ref.id,
+                prior_response_ref.id,
+            )
+        },
+        attempts=(
+            {
+                "id": diagnostic.body.attemptId,
+                "operation_id": diagnostic.body.operationId,
+                "attempt_number": 1,
+                "state": "succeeded",
+                "provider": "recorded",
+                "model": "fixture",
+                "family": "fixture",
+                "route": {"id": diagnostic.body.routeId},
+                "estimated_cost_micros": 0,
+                "actual_cost_micros": 0,
+                "cost_status": "reported",
+                "reservation_state": None,
+                "result_artifact_id": response_ref.id,
+                "remote_handle": None,
+                "usage": {"inputTokens": 100, "outputTokens": 8192},
+                "dispatched_at": NOW,
+                "finished_at": NOW + timedelta(seconds=1),
+            },
+            {
+                "id": PRIOR_ATTEMPT,
+                "operation_id": PRIOR_OPERATION,
+                "attempt_number": 1,
+                "state": "succeeded",
+                "provider": "recorded",
+                "model": "fixture",
+                "family": "fixture",
+                "route": {"id": "fixture"},
+                "estimated_cost_micros": 0,
+                "actual_cost_micros": 0,
+                "cost_status": "reported",
+                "reservation_state": None,
+                "result_artifact_id": prior_response_ref.id,
+                "remote_handle": None,
+                "usage": {"inputTokens": 50, "outputTokens": 10},
+                "dispatched_at": NOW,
+                "finished_at": NOW + timedelta(seconds=1),
+            },
+        ),
+        events=(),
+    )
+    bodies = {
+        evidence_ref.id: fixture.evidence.model_dump(mode="json"),
+        response_ref.id: response_body,
+        prior_response_ref.id: MODEL_RESPONSE_ADAPTER.dump_python(
+            ModelResponse(
+                parts=[TextPart('{"sections":[]}')],
+                usage=RequestUsage(input_tokens=50, output_tokens=10),
+                finish_reason="stop",
+                model_name="fixture",
+                provider_name="recorded",
+            ),
+            mode="json",
+        ),
+        diagnostic.artifact.id: diagnostic.body.model_dump(mode="json"),
+    }
+
+    async def read_snapshot(*_args: object, **_kwargs: object) -> object:
+        return snapshot
+
+    async def read_artifact_json(*_args: object, **kwargs: object) -> object:
+        return bodies[cast("UUID", kwargs["artifact_id"])]
+
+    monkeypatch.setattr(bundle_export_module, "_read_snapshot", read_snapshot)
+    monkeypatch.setattr(bundle_export_module.artifacts, "read_artifact_json", read_artifact_json)
+    exported = await bundle_export_module.export_evaluation_bundle(
+        "postgresql://unused",
+        scope=resolve_scope(),
+        store=cast("Any", object()),
+        run_id=RUN,
+    )
+    assert exported.current_revision == 0
+    assert exported.status == "failed"
+    assert exported.proposal_diagnostics == (diagnostic,)
+
+    bodies[response_ref.id] = MODEL_RESPONSE_ADAPTER.dump_python(
+        replace(response, finish_reason="stop"), mode="json"
+    )
+    with pytest.raises(ValueError, match="differs from its retained response"):
         await bundle_export_module.export_evaluation_bundle(
             "postgresql://unused",
             scope=resolve_scope(),

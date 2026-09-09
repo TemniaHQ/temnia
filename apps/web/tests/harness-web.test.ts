@@ -6,9 +6,11 @@ import {
   appliedBudgetMatchesDraft,
   budgetInputFromMicros,
   type ChapterPanelMessage,
+  chapterOutcomeUnknownMessage,
   chapterPlanningStoppedMessage,
   chapterWaitingMessage,
   clearMatchedStartMessage,
+  newRunExposureMessage,
   summaryGroundingMessage,
 } from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
@@ -368,6 +370,17 @@ describe("chapter panel status copy", () => {
     );
     expect(chapterPlanningStoppedMessage("needs_review", 1)).toBeNull();
     expect(chapterPlanningStoppedMessage("running", 0)).toBeNull();
+  });
+
+  it("explains unresolved provider exposure and a separately paid new run", () => {
+    expect(chapterOutcomeUnknownMessage("outcome_unknown")).toBe(
+      "The provider result is unconfirmed, so its possible charge stays reserved. Retry, Cancel, and Raise budget cannot resolve this run."
+    );
+    expect(chapterOutcomeUnknownMessage("failed")).toBeNull();
+    expect(newRunExposureMessage("outcome_unknown")).toBe(
+      "A new run sends new paid requests under a separate budget. The unresolved possible charge from the previous run remains."
+    );
+    expect(newRunExposureMessage("ready")).toBeNull();
   });
 });
 

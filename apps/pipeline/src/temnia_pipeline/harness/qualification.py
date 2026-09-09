@@ -38,13 +38,21 @@ from temnia_pipeline.harness.gateway import (
     lookup_generation,
     observe_generation_cost,
 )
-from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
+from temnia_pipeline.harness.models import (
+    COMPACT_PROPOSAL_SCHEMA_VERSION,
+    CompactChapterProposal,
+    EditorialVerdictV1,
+    HierarchicalSummaryV1,
+    canonical_chapter_proposal,
+)
 from temnia_pipeline.harness.prompts.chapter import (
+    COMPACT_PROPOSE_PROMPT_VERSION,
     PROPOSE_PROMPT_VERSION,
     SUMMARIZE_PROMPT_VERSION,
     VERIFY_PROMPT_VERSION,
     PromptSentence,
     PromptWindow,
+    render_compact_proposal_prompt,
     render_proposal_prompt,
     render_summary_prompt,
     render_verifier_prompt,
@@ -161,6 +169,7 @@ class QualificationLimits(BaseModel):
     max_exposure_micros: Annotated[int, Field(gt=0, le=MAX_EXPOSURE_MICROS)]
     max_dispatches: Annotated[int, Field(gt=0, le=MAX_DISPATCHES)]
     max_output_tokens: Annotated[int, Field(ge=256, le=MAX_OUTPUT_TOKENS)]
+    proposal_wire: Literal["canonical", "compact"] = "canonical"
     request_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 300
     lookup_timeout_seconds: Annotated[float, Field(gt=0, le=10)] = 10
     lookup_wait_seconds: Annotated[float, Field(ge=0, le=MAX_LOOKUP_WAIT_SECONDS)] = 30
@@ -330,13 +339,32 @@ class _QualificationJournal:
             for candidate in catalogue.candidates
             for stage in _STAGES
         ]
+        if limits.proposal_wire == "compact":
+            prompts = qualification_prompts("compact")
+            for call in calls:
+                stage = call["stage"]
+                call.update(
+                    {
+                        "proposalWire": "compact",
+                        "promptVersion": prompts[stage][2],
+                        "schemaVersion": (
+                            COMPACT_PROPOSAL_SCHEMA_VERSION
+                            if stage == "proposal"
+                            else f"qualification-{stage}/1"
+                        ),
+                    }
+                )
+        serialized_limits = limits.model_dump(mode="json")
+        if limits.proposal_wire == "canonical":
+            # Missing proposal-wire fields are the historical canonical identity.
+            serialized_limits.pop("proposal_wire")
         value: dict[str, Any] = {
             "format": "temnia-gateway-qualification/1",
             "createdAt": _now(),
             "status": "prepared",
             "catalogueFileSha256": catalogue_file_sha256,
             "catalogue": catalogue.model_dump(mode="json", by_alias=True),
-            "limits": limits.model_dump(mode="json"),
+            "limits": serialized_limits,
             "dispatchCount": 0,
             "admittedExposureMicros": 0,
             "reportedCostMicros": 0,
@@ -348,6 +376,8 @@ class _QualificationJournal:
                 "candidate metadata is not a production route snapshot",
             ],
         }
+        if limits.proposal_wire == "compact":
+            value["proposalWire"] = "compact"
         forbidden = api_key.encode()
         if forbidden in canonical_json(value):
             raise QualificationRefusal("qualification input contains the gateway credential")
@@ -375,6 +405,8 @@ class _QualificationJournal:
         request_hash: str,
         payload_bytes: int,
         estimated_cost_micros: int,
+        prompt_version: str | None = None,
+        schema_version: str | None = None,
     ) -> None:
         call = self._call(candidate_id, stage)
         if call["state"] != "planned":
@@ -395,6 +427,14 @@ class _QualificationJournal:
                 "estimatedCostMicros": estimated_cost_micros,
             }
         )
+        if prompt_version is not None and schema_version is not None:
+            call.update(
+                {
+                    "proposalWire": "compact",
+                    "promptVersion": prompt_version,
+                    "schemaVersion": schema_version,
+                }
+            )
         self.value["dispatchCount"] = dispatches + 1
         self.value["admittedExposureMicros"] = exposure + estimated_cost_micros
         self.value["status"] = "running"
@@ -435,11 +475,19 @@ class _QualificationJournal:
             )
             raise
         digest = hashlib.sha256(raw).hexdigest()
+        response_ref = {"path": str(path), "sha256": digest, "sizeBytes": len(raw)}
+        if call.get("proposalWire") == "compact":
+            response_ref.update(
+                {
+                    "promptVersion": call["promptVersion"],
+                    "schemaVersion": call["schemaVersion"],
+                }
+            )
         call.update(
             {
                 "state": "response_saved",
                 "responseSavedAt": _now(),
-                "response": {"path": str(path), "sha256": digest, "sizeBytes": len(raw)},
+                "response": response_ref,
                 "generationId": response.provider_response_id,
                 "responseModel": response.model_name,
                 "responseProvider": response.provider_name,
@@ -583,24 +631,32 @@ def _fixed_proposal() -> dict[str, Any]:
     }
 
 
-def qualification_prompts() -> dict[str, tuple[str, type[Any], str]]:
+def qualification_prompts(
+    proposal_wire: Literal["canonical", "compact"] = "canonical",
+) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the three seats."""
     window = qualification_window()
+    canonical_proposal_prompt = render_proposal_prompt(
+        window,
+        brief="Keep the complete product explanation.",
+        detected_language="en",
+    )
+    proposal = (
+        (
+            render_compact_proposal_prompt(canonical_proposal_prompt),
+            CompactChapterProposal,
+            COMPACT_PROPOSE_PROMPT_VERSION,
+        )
+        if proposal_wire == "compact"
+        else (canonical_proposal_prompt, ChapterProposal, PROPOSE_PROMPT_VERSION)
+    )
     return {
         "summary": (
             render_summary_prompt(window, detected_language="en"),
             HierarchicalSummaryV1,
             SUMMARIZE_PROMPT_VERSION,
         ),
-        "proposal": (
-            render_proposal_prompt(
-                window,
-                brief="Keep the complete product explanation.",
-                detected_language="en",
-            ),
-            ChapterProposal,
-            PROPOSE_PROMPT_VERSION,
-        ),
+        "proposal": proposal,
         "verify": (
             render_verifier_prompt(
                 window,
@@ -613,7 +669,11 @@ def qualification_prompts() -> dict[str, tuple[str, type[Any], str]]:
     }
 
 
-def _validate_grounding(stage: str, output: object) -> None:
+def _validate_grounding(
+    stage: str,
+    output: object,
+    proposal_wire: Literal["canonical", "compact"] = "canonical",
+) -> None:
     window = qualification_window()
     sentence_ids = tuple(sentence.id for sentence in window.sentences)
     anchors = {
@@ -640,7 +700,11 @@ def _validate_grounding(stage: str, output: object) -> None:
         if cursor != len(sentence_ids):
             raise ValueError("summary does not cover the authored evidence endpoint")
     elif stage == "proposal":
-        value = cast("ChapterProposal", output)
+        value = (
+            canonical_chapter_proposal(cast("CompactChapterProposal", output))
+            if proposal_wire == "compact"
+            else cast("ChapterProposal", output)
+        )
         positions = {sentence: index for index, sentence in enumerate(sentence_ids)}
         cursor = 0
         for section in value.sections:
@@ -749,11 +813,17 @@ class _QualificationModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        prompts = qualification_prompts(self.limits.proposal_wire)
+        schema_version = (
+            COMPACT_PROPOSAL_SCHEMA_VERSION
+            if self.stage == "proposal" and self.limits.proposal_wire == "compact"
+            else f"qualification-{self.stage}/1"
+        )
         metadata = CassetteMetadata(
             route_id=self.route.id,
             stage=f"qualification:{self.stage}",
-            schema_version=f"qualification-{self.stage}/1",
-            prompt_version=qualification_prompts()[self.stage][2],
+            schema_version=schema_version,
+            prompt_version=prompts[self.stage][2],
             program_version="gateway-qualification/1",
             synthetic=False,
         )
@@ -770,6 +840,12 @@ class _QualificationModel(WrapperModel):
             request_hash=request_hash,
             payload_bytes=payload_bytes,
             estimated_cost_micros=estimate.amount_micros,
+            prompt_version=(
+                metadata.prompt_version if self.limits.proposal_wire == "compact" else None
+            ),
+            schema_version=(
+                metadata.schema_version if self.limits.proposal_wire == "compact" else None
+            ),
         )
         try:
             response = await super().request(messages, model_settings, model_request_parameters)
@@ -927,7 +1003,7 @@ async def run_qualification(
         request_timeout_seconds=limits.request_timeout_seconds,
         lookup_timeout_seconds=limits.lookup_timeout_seconds,
     )
-    prompts = qualification_prompts()
+    prompts = qualification_prompts(limits.proposal_wire)
     catalogue = candidates.catalogue
     try:
         async with (
@@ -981,7 +1057,7 @@ async def run_qualification(
                             candidate_failed = True
                         else:
                             try:
-                                _validate_grounding(stage, result.output)
+                                _validate_grounding(stage, result.output, limits.proposal_wire)
                             except ValueError:
                                 journal.validation(
                                     candidate.id,
@@ -1099,6 +1175,9 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
         )
     except (KeyError, ValueError) as error:
         raise QualificationRefusal("qualification journal metadata is invalid") from error
+    stored_wire = value.get("proposalWire", "canonical")
+    if stored_wire not in {"canonical", "compact"} or stored_wire != limits.proposal_wire:
+        raise QualificationRefusal("qualification journal proposal wire is inconsistent")
     calls_value = value.get("calls")
     if not isinstance(calls_value, list):
         raise QualificationRefusal("qualification journal call list is invalid")
@@ -1106,6 +1185,7 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
     if len(calls) > MAX_DISPATCHES:
         raise QualificationRefusal("qualification journal call list is invalid")
     expected = {(candidate.id, stage) for candidate in catalogue.candidates for stage in _STAGES}
+    compact_prompts = qualification_prompts("compact") if limits.proposal_wire == "compact" else {}
     observed: set[tuple[str, str]] = set()
     dispatched = 0
     allowed_states = {
@@ -1130,6 +1210,18 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
         state = str(call.get("state"))
         if identity not in expected or identity in observed or state not in allowed_states:
             raise QualificationRefusal("qualification journal call identity or state is invalid")
+        if limits.proposal_wire == "compact":
+            expected_schema = (
+                COMPACT_PROPOSAL_SCHEMA_VERSION
+                if identity[1] == "proposal"
+                else f"qualification-{identity[1]}/1"
+            )
+            if (
+                call.get("proposalWire") != "compact"
+                or call.get("promptVersion") != compact_prompts[identity[1]][2]
+                or call.get("schemaVersion") != expected_schema
+            ):
+                raise QualificationRefusal("qualification journal compact call metadata is invalid")
         observed.add(identity)
         if state not in {"planned", "skipped"}:
             dispatched += 1

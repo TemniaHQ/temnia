@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -15,6 +17,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from temporalio import activity
 from temporalio.client import WorkflowFailureError, WorkflowHistory
 from temporalio.contrib.pydantic import pydantic_data_converter
+from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
@@ -30,11 +33,12 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import activities as activities_module
 from temnia_pipeline.harness import workflows as workflows_module
 from temnia_pipeline.harness.activities import HarnessActivities
-from temnia_pipeline.harness.models import HierarchicalSummaryV1
+from temnia_pipeline.harness.models import CompactChapterProposal, HierarchicalSummaryV1
 from temnia_pipeline.harness.queues import control_task_queue
-from temnia_pipeline.harness.routes import RouteSnapshot, select_route
+from temnia_pipeline.harness.routes import ContextWindowExceeded, RouteSnapshot, select_route
 from temnia_pipeline.harness.runtime_types import (
     BuildEvidenceRequest,
+    ClaimRepairRequest,
     CompileProposalRequest,
     CompileProposalResult,
     EvidenceResult,
@@ -43,6 +47,9 @@ from temnia_pipeline.harness.runtime_types import (
     PinnedTranscript,
     PlanningWindow,
     PreparePlanningRequest,
+    ProposalDiagnostic,
+    ProposalDiagnosticIssue,
+    ProposalDiagnosticRequest,
     ProposalPlan,
     RunRef,
     RunSnapshot,
@@ -248,35 +255,44 @@ class FakeProposalAgent:
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.deps: list[Any] = []
+        self.unexpected_count = 0
+        self.raised_error: Exception | None = None
 
     async def run(self, prompt: str, **kwargs: object) -> SimpleNamespace:
         self.prompts.append(prompt)
         self.deps.append(kwargs["deps"])
-        output = ChapterProposal.model_validate(
-            {
-                "sections": [
-                    {
-                        "firstSentenceId": "s000000",
-                        "id": "section-a",
-                        "kind": "keep",
-                        "lastSentenceId": "s000001",
-                        "quoteWordIds": ["w000000"],
-                        "reason": "First grounded range.",
-                        "title": "First",
-                    },
-                    {
-                        "firstSentenceId": "s000002",
-                        "id": "section-b",
-                        "kind": "keep",
-                        "lastSentenceId": "s000003",
-                        "quoteWordIds": ["w000003"],
-                        "reason": "Second grounded range.",
-                        "title": "Second",
-                    },
-                ],
-                "summary": "Complete original-ID partition.",
-                "version": 1,
-            }
+        if self.raised_error is not None:
+            raise self.raised_error
+        if self.unexpected_count > 0:
+            self.unexpected_count -= 1
+            message = "fixture strict output failure"
+            raise UnexpectedModelBehavior(message)
+        output = CompactChapterProposal.model_validate_json(
+            json.dumps(
+                {
+                    "sections": [
+                        {
+                            "firstSentenceId": "s000000",
+                            "kind": "keep",
+                            "lastSentenceId": "s000001",
+                            "quoteWordIds": ["w000000"],
+                            "reason": "First grounded range.",
+                            "title": "First",
+                        },
+                        {
+                            "firstSentenceId": "s000002",
+                            "kind": "keep",
+                            "lastSentenceId": "s000003",
+                            "quoteWordIds": ["w000003"],
+                            "reason": "Second grounded range.",
+                            "title": "Second",
+                        },
+                    ],
+                    "summary": "Complete original-ID partition.",
+                    "version": 1,
+                }
+            ),
+            strict=True,
         )
         return SimpleNamespace(output=output)
 
@@ -288,19 +304,33 @@ class HierarchyActivities:
         self.routes = routes
         self.settings = settings
         self.start_count = 0
+        self.repair_count = 0
         self.compiled: list[ChapterProposal] = []
         self.failures: list[MarkRunFailedRequest] = []
         self.summary_validations: list[ValidateSummaryRequest] = []
         self.summary_validation_refusal: str | None = None
         self.summary_events: list[str] = []
+        self.diagnostics: list[ProposalDiagnosticRequest] = []
 
     @activity.defn(name="start_chapter_run")
     async def start(self, request: StartRunRequest) -> StartRunResult:
         self.start_count += 1
         return StartRunResult(
             created=self.start_count == 1,
-            run=_snapshot(request, self.routes),
+            run=_snapshot(request, self.routes).model_copy(
+                update={"repair_count": self.repair_count}
+            ),
         )
+
+    @activity.defn(name="claim_chapter_repair")
+    async def claim_repair(self, request: ClaimRepairRequest) -> RunSnapshot:
+        assert request.expected_repair_count == self.repair_count
+        self.repair_count += 1
+        start = StartRunRequest(
+            request=_request(),
+            workflow=request.workflow,
+        )
+        return _snapshot(start, self.routes).model_copy(update={"repair_count": self.repair_count})
 
     @activity.defn(name="build_chapter_evidence")
     async def build(self, _request: BuildEvidenceRequest) -> EvidenceResult:
@@ -339,6 +369,38 @@ class HierarchyActivities:
     async def compile(self, request: CompileProposalRequest) -> CompileProposalResult:
         self.compiled.append(request.proposal)
         return CompileProposalResult(refusal="Captured the grounded global proposal.")
+
+    @activity.defn(name="diagnose_chapter_proposal")
+    async def diagnose(self, request: ProposalDiagnosticRequest) -> ProposalDiagnostic:
+        self.diagnostics.append(request)
+        suffix = request.model_stage.replace(":", "-")
+        compiler_failure = request.compiler_refusal is not None
+        return ProposalDiagnostic(
+            artifact=HarnessArtifactRef(
+                fingerprint="4" * 64,
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"diagnostic:{suffix}"),
+                kind=HarnessArtifactKind.checks,
+                sha256="5" * 64,
+                sizeBytes=1,
+                storageKey=f"diagnostics/{suffix}.json",
+            ),
+            response=HarnessArtifactRef(
+                fingerprint="6" * 64,
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"response:{suffix}"),
+                kind=HarnessArtifactKind.model_response,
+                sha256="7" * 64,
+                sizeBytes=1,
+                storageKey=f"responses/{suffix}.json",
+            ),
+            code="compiler_refusal" if compiler_failure else "invalid_schema",
+            message=(
+                "The proposal does not exactly cover the source."
+                if compiler_failure
+                else "The proposal response has invalid fields."
+            ),
+            issues=(ProposalDiagnosticIssue(path="sections", code="incomplete_source_cover"),),
+            compiler_code="incomplete_source_cover" if compiler_failure else None,
+        )
 
     @activity.defn(name="validate_chapter_summary")
     async def validate_summary(self, request: ValidateSummaryRequest) -> ValidatedSummary:
@@ -383,11 +445,12 @@ class HierarchyActivities:
             self.validate_summary,
             hierarchy.prepare_global_chapter_proposal,
             self.compile,
+            self.diagnose,
             self.cleanup_source_cache,
         )
 
     def control(self) -> Sequence[Any]:
-        return (self.start, self.update, self.mark_failed)
+        return (self.start, self.claim_repair, self.update, self.mark_failed)
 
 
 def _request() -> ChapterRunInput:
@@ -507,7 +570,7 @@ def hierarchy_runtime(
 
     monkeypatch.setattr(hierarchy, "_grounding_report", fake_grounding_report)
     monkeypatch.setattr(workflows_module, "chapter_summarize_v1", summary)
-    monkeypatch.setattr(workflows_module, "chapter_propose_v1", proposal)
+    monkeypatch.setattr(workflows_module, "chapter_propose_v2", proposal)
     return shell, hierarchy, summary, proposal
 
 
@@ -561,7 +624,7 @@ async def test_temporal_multi_window_hierarchy_reaches_original_id_proposal(
         for event in cast("Any", history).events
         if event.HasField("marker_recorded_event_attributes")
     ]
-    assert marker_names == ["core_patch"]
+    assert marker_names == ["core_patch", "core_patch"]
     assert activity_names.count("validate_chapter_summary") == 2
     assert shell.summary_events == [
         "model:summary:window-0",
@@ -611,6 +674,202 @@ async def test_temporal_summary_refusal_stops_before_the_next_model_call(
     assert summary.stages == ["summary:window-0"]
     assert len(shell.summary_validations) == 1
     assert proposal.prompts == []
+
+
+async def test_temporal_proposal_repair_uses_diagnostic_and_stops_after_bound(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+) -> None:
+    shell, hierarchy, _, proposal = hierarchy_runtime
+    request = _request()
+    request = request.model_copy(
+        update={"config": request.config.model_copy(update={"maxRepairs": 1})}
+    )
+    queue = f"chapter-proposal-repair-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        result = cast("Any", await _run(environment, queue, request))
+
+    assert result.status == HarnessRunStatus.needs_review
+    assert result.errorMessage == "The proposal does not exactly cover the source."
+    assert shell.repair_count == 1
+    assert len(shell.compiled) == 2
+    assert len(shell.diagnostics) == 2
+    assert [item.model_stage for item in shell.diagnostics] == [
+        "proposal:v2:global",
+        "proposal:v2:repair:1",
+    ]
+    assert [deps.stage for deps in proposal.deps] == [
+        "proposal:v2:global",
+        "proposal:v2:repair:1",
+    ]
+    assert proposal.deps[0].route.family != proposal.deps[1].route.family
+    assert "REPAIR_FEEDBACK_JSON" not in proposal.prompts[0]
+    assert "REPAIR_FEEDBACK_JSON" in proposal.prompts[1]
+    assert "incomplete_source_cover" in proposal.prompts[1]
+    assert len(proposal.deps[1].operation_inputs["repairArtifacts"]) == 2
+    assert len(proposal.deps[1].input_artifact_ids) == 5
+
+
+async def test_temporal_strict_proposal_failure_is_diagnosed_at_repair_limit(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+) -> None:
+    shell, hierarchy, _, proposal = hierarchy_runtime
+    proposal.unexpected_count = 1
+    queue = f"chapter-proposal-strict-diagnostic-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        result = cast("Any", await _run(environment, queue, _request()))
+
+    assert result.status == HarnessRunStatus.needs_review
+    assert result.errorMessage == "The proposal response has invalid fields."
+    assert len(shell.diagnostics) == 1
+    assert shell.diagnostics[0].compiler_refusal is None
+    assert shell.diagnostics[0].model_stage == "proposal:v2:global"
+    assert shell.compiled == []
+    assert shell.repair_count == 0
+
+
+async def test_temporal_repair_context_refuses_before_claim(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shell, hierarchy, _, proposal = hierarchy_runtime
+    request = _request()
+    request = request.model_copy(
+        update={"config": request.config.model_copy(update={"maxRepairs": 1})}
+    )
+
+    def refuse_repair(*_args: object, **_kwargs: object) -> str:
+        message = "fixture bounded context"
+        raise ContextWindowExceeded(message)
+
+    monkeypatch.setattr(workflows_module, "render_proposal_repair_prompt", refuse_repair)
+    queue = f"chapter-proposal-repair-context-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        result = cast("Any", await _run(environment, queue, request))
+
+    assert result.status == HarnessRunStatus.needs_review
+    assert result.errorMessage == "The diagnosed proposal repair exceeds the bounded model context."
+    assert len(shell.diagnostics) == 1
+    assert len(proposal.prompts) == 1
+    assert shell.repair_count == 0
+
+
+async def test_temporal_unknown_proposal_outcome_never_diagnoses_or_repairs(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+) -> None:
+    shell, hierarchy, _, proposal = hierarchy_runtime
+    unknown = ApplicationError(
+        "fixture provider outcome is unknown",
+        type="OutcomeUnknown",
+        non_retryable=True,
+    )
+    activity_error = ActivityError(
+        "model activity outcome is unknown",
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="fixture-worker",
+        activity_type="run_agent",
+        activity_id="fixture-activity",
+        retry_state=None,
+    )
+    activity_error.__cause__ = unknown
+    proposal.raised_error = activity_error
+    request = _request()
+    request = request.model_copy(
+        update={"config": request.config.model_copy(update={"maxRepairs": 1})}
+    )
+    queue = f"chapter-proposal-unknown-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        with pytest.raises(WorkflowFailureError):
+            await asyncio.wait_for(_run(environment, queue, request), timeout=10)
+
+    assert len(proposal.prompts) == 1
+    assert shell.diagnostics == []
+    assert shell.compiled == []
+    assert shell.repair_count == 0
 
 
 async def test_temporal_malformed_summary_refuses_without_another_model_call(

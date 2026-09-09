@@ -27,6 +27,11 @@ from temnia_pipeline.harness.prompts import (
     render_summary_prompt,
     render_summary_reduction_prompt,
 )
+from temnia_pipeline.harness.proposal_diagnostics import (
+    SUPPORTED_PROPOSAL_SCHEMAS,
+    ProposalDiagnosticReport,
+    diagnostic_artifact_fingerprint,
+)
 from temnia_pipeline.harness.summary_grounding import (
     SummaryGroundingReport,
     grounding_artifact_fingerprint,
@@ -40,6 +45,7 @@ from temnia_pipeline.harness.validators import (
 )
 
 SHA256 = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+MAX_STORAGE_KEY_LENGTH = 2048
 type JSONValue = str | int | float | bool | list[JSONValue] | dict[str, JSONValue] | None
 TOKEN_USAGE_FIELDS = frozenset(
     {
@@ -145,6 +151,14 @@ class SummaryGroundingArtifact(EvaluationModel):
 
     artifact: ImmutableArtifactFact
     body: SummaryGroundingReport
+    dependencies: tuple[ImmutableArtifactFact, ...]
+
+
+class ProposalDiagnosticArtifact(EvaluationModel):
+    """One content-free proposal refusal with its immutable dependency closure."""
+
+    artifact: ImmutableArtifactFact
+    body: ProposalDiagnosticReport
     dependencies: tuple[ImmutableArtifactFact, ...]
 
 
@@ -265,6 +279,7 @@ class EvaluationBundle(EvaluationModel):
     checks: tuple[CheckArtifact, ...] = ()
     editorial_verification: EditorialVerificationArtifact | None = None
     summary_grounding: tuple[SummaryGroundingArtifact, ...] = ()
+    proposal_diagnostics: tuple[ProposalDiagnosticArtifact, ...] = ()
     review_events: tuple[ReviewEvent, ...] = ()
     attempts: tuple[AttemptFact, ...] = ()
     provenance: Provenance
@@ -403,6 +418,17 @@ def _summary_ref_matches_fact(ref: object, fact: ImmutableArtifactFact) -> bool:
     )
 
 
+def _source_scoped_storage_key(value: str | None, source_id: UUID) -> bool:
+    if value is None or len(value) > MAX_STORAGE_KEY_LENGTH or value.startswith("/"):
+        return False
+    parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return False
+    return any(
+        parts[index : index + 2] == ["source", str(source_id)] for index in range(len(parts) - 1)
+    )
+
+
 def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
     reports = bundle.summary_grounding
     if not reports:
@@ -422,12 +448,15 @@ def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0
     if len(artifact_ids) != len(set(artifact_ids)):
         raise HarnessValidationError("summary grounding contains duplicate artifacts")
     reports_by_id = {item.artifact.id: item for item in reports}
+    attempts_by_id = {attempt.id: attempt for attempt in bundle.attempts}
+    if len(attempts_by_id) != len(bundle.attempts):
+        raise HarnessValidationError("summary grounding has ambiguous attempt identities")
     response_ids = {
         attempt.result_artifact_id
-        for attempt in bundle.attempts
+        for attempt in attempts_by_id.values()
         if attempt.state == "succeeded"
-        and attempt.result_artifact_id is not None
         and attempt.response_present
+        and attempt.result_artifact_id is not None
     }
     evidence_ids: set[UUID] = set()
     identities: set[tuple[int, str, str]] = set()
@@ -644,6 +673,103 @@ def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0
         raise HarnessValidationError("summary grounding mixes evidence artifacts")
 
 
+def _validate_proposal_diagnostics(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
+    diagnostics = bundle.proposal_diagnostics
+    if not diagnostics:
+        return
+    if bundle.evidence is None or bundle.evidence_sha256 is None:
+        raise HarnessValidationError("proposal diagnostics require accepted evidence")
+    attempts_by_id = {attempt.id: attempt for attempt in bundle.attempts}
+    if len(attempts_by_id) != len(bundle.attempts):
+        raise HarnessValidationError("proposal diagnostics have ambiguous attempt identities")
+    artifact_ids = [item.artifact.id for item in diagnostics]
+    if len(artifact_ids) != len(set(artifact_ids)):
+        raise HarnessValidationError("proposal diagnostics contain duplicate artifacts")
+    diagnostics_by_id = {item.artifact.id: item for item in diagnostics}
+    grounding_by_id = {item.artifact.id: item for item in bundle.summary_grounding}
+    accepted_response_ids = {
+        attempt.result_artifact_id
+        for attempt in attempts_by_id.values()
+        if attempt.state == "succeeded"
+        and attempt.response_present
+        and attempt.result_artifact_id is not None
+    }
+    identities: set[tuple[str, UUID]] = set()
+    for item in diagnostics:
+        body = item.body
+        if item.artifact.source_id != bundle.source_id or item.artifact.kind != "checks":
+            raise HarnessValidationError("proposal diagnostic artifact crosses source scope")
+        body_bytes = canonical_json(body.model_dump(mode="json", by_alias=True))
+        if item.artifact.size_bytes != len(body_bytes):
+            raise HarnessValidationError("proposal diagnostic artifact size is invalid")
+        if not _source_scoped_storage_key(item.artifact.storage_key, bundle.source_id):
+            raise HarnessValidationError("proposal diagnostic artifact storage path is invalid")
+        if content_sha256(body) != item.artifact.sha256:
+            raise HarnessValidationError("proposal diagnostic body hash is invalid")
+        if diagnostic_artifact_fingerprint(body) != item.artifact.fingerprint:
+            raise HarnessValidationError("proposal diagnostic fingerprint is invalid")
+        if body.runId != bundle.run_id:
+            raise HarnessValidationError("proposal diagnostic belongs to a different run")
+        if body.schemaVersion not in SUPPORTED_PROPOSAL_SCHEMAS:
+            raise HarnessValidationError("proposal diagnostic schema is unsupported")
+        identity = (body.modelStage, body.response.id)
+        if identity in identities:
+            raise HarnessValidationError("proposal diagnostics contain a duplicate response stage")
+        identities.add(identity)
+        refs = (body.evidence, body.response, *body.inputArtifacts)
+        if any(not _source_scoped_storage_key(ref.storageKey, bundle.source_id) for ref in refs):
+            raise HarnessValidationError("proposal diagnostic dependency storage path is invalid")
+        ref_ids = [ref.id for ref in refs]
+        facts = item.dependencies
+        fact_ids = [fact.id for fact in facts]
+        if (
+            len(ref_ids) != len(set(ref_ids))
+            or len(fact_ids) != len(set(fact_ids))
+            or set(fact_ids) != set(ref_ids)
+        ):
+            raise HarnessValidationError("proposal diagnostic dependency closure is invalid")
+        facts_by_id = {fact.id: fact for fact in facts}
+        for ref in refs:
+            fact = facts_by_id.get(ref.id)
+            if (
+                fact is None
+                or fact.source_id != bundle.source_id
+                or not _summary_ref_matches_fact(ref, fact)
+            ):
+                raise HarnessValidationError("proposal diagnostic dependency identity is invalid")
+        evidence_fact = facts_by_id[body.evidence.id]
+        if evidence_fact.kind != "evidence" or body.evidence.sha256 != bundle.evidence_sha256:
+            raise HarnessValidationError("proposal diagnostic names different evidence")
+        response_fact = facts_by_id[body.response.id]
+        attempt = attempts_by_id.get(body.attemptId)
+        if (
+            response_fact.kind != "model_response"
+            or attempt is None
+            or attempt.state != "succeeded"
+            or not attempt.response_present
+            or attempt.operation_id != body.operationId
+            or attempt.result_artifact_id != body.response.id
+            or attempt.route_id != body.routeId
+            or attempt.remote_handle != body.providerResponseId
+        ):
+            raise HarnessValidationError(
+                "proposal diagnostic response is not an accepted run attempt"
+            )
+        for ref in body.inputArtifacts:
+            fact = facts_by_id[ref.id]
+            if fact.kind == "model_response":
+                if ref.id not in accepted_response_ids:
+                    raise HarnessValidationError(
+                        "proposal diagnostic input response is not an accepted run attempt"
+                    )
+                continue
+            if fact.kind != "checks" or ref.id == item.artifact.id:
+                raise HarnessValidationError("proposal diagnostic input lineage is invalid")
+            prior = grounding_by_id.get(ref.id) or diagnostics_by_id.get(ref.id)
+            if prior is None or not _summary_ref_matches_fact(ref, prior.artifact):
+                raise HarnessValidationError("proposal diagnostic input lineage is incomplete")
+
+
 def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
     """Refuse corrupt, mixed-source, stale-revision, or ungrounded inputs."""
     for attempt in bundle.attempts:
@@ -672,6 +798,7 @@ def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
         if bundle.accepted_revision is not None:
             raise HarnessValidationError("an incomplete run cannot name an accepted revision")
     _validate_summary_grounding(bundle)
+    _validate_proposal_diagnostics(bundle)
     if bundle.edit is None:
         if bundle.current_revision != 0 or bundle.accepted_revision is not None:
             raise HarnessValidationError("a current or accepted revision requires an edit body")
