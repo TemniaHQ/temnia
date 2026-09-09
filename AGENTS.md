@@ -424,6 +424,33 @@ is not qualified by this decision. Fresh sources: Python 3.13's
 [Linux flock manual](https://man7.org/linux/man-pages/man2/flock.2.html), inspected September 8;
 the implementation must prove contention and cleanup behavior with real file locks.
 
+**2026-09-08 — Build-in-public strategy is revised from research, with cadence treated as a trial
+(Rajesh's clarification: the earlier posting habits were unresearched).** The operating playbook is
+`docs/build-in-public/TEMNIA_BUILD_IN_PUBLIC_GUIDE.md`; its companion owns founder/product account
+roles, and `RESEARCH_REVIEW_2026-09-08.md` records primary-platform checks and the limits/inconsistency
+in the observational frequency evidence. Initial target: one founder X daily, three product X
+weekly and five personal LinkedIn weekly; an extra founder X needs an independent supported
+takeaway. Begin with a 30-minute daily editorial/community budget, review workload after 14 days
+and response after 28; these are trial choices, not proven growth optima. The supplied 2+1 X daily
+allocation is a possible expansion, not a mandatory quota. This supersedes the September 6–7
+mandatory Day N opener, single-post cap, combined daily recap, fixed point formatting and ban on
+customer framing: lead with a useful hook; Day N is optional; one original post has one takeaway.
+Coverage/chapters still lead the product story, with moments drawn from that structure. Preserve
+`docs/log/YYYY-MM-DD.md` as the facts/drafts/publication history; every session logs its work, while
+social drafts follow cadence and evidence rather than creating another pack per session. Coding
+agents assist; Rajesh edits and posts. No scheduler, account change, publication or content-system
+scaffolding is implied by the guides. This also replaces the September 3 daily-LinkedIn cadence
+and the earlier per-session draft obligation; every session still records its work.
+`docs/build-in-public.md` remains the navigation entry point.
+
+**2026-09-08 — Founder X length follows Rajesh's Premium+ preference.** Rajesh reconfirmed that
+@RajeshBuilds has Premium+ and welcomes modestly longer posts when the explanation benefits,
+without long, tedious copy. Do not impose a 280-character cap on founder drafts. Roughly 50–100
+words is a flexible editorial starting range, not a quota or a claim about engagement; shorter
+posts remain valid. Keep one clear takeaway and use extra space for evidence or explanation.
+@TemniaHQ's entitlement remains unknown, so standard-length product drafts remain the fallback.
+This changes length guidance, not the account cadence. Guide §8 records the current preference.
+
 **2026-09-09 — Evidence identity is source-scoped; runs own references to it.** The complete
 chapter browser journey exposed a second-run collision: identical source/transcript/config evidence
 had the same producer fingerprint but different consumer `runId` metadata. New evidence omits that
@@ -479,6 +506,7 @@ original complete GPU telemetry remains usable. A narrowly validated completed-c
 retains the failed-validation record and exposure without rerunning that source. Remaining fixed
 cases use the corrected worker build and unchanged GPU/model builds; block-one comparisons requiring
 the excluded A wall time remain unavailable. No additional repetition or budget is inferred.
+
 
 ## Working rules (S0, 2026-09-06)
 

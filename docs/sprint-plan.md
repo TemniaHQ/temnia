@@ -44,7 +44,7 @@ The legacy repository is the only measured record of building this product, and 
 3. **Every table carries organization scoping and forced RLS in the migration that creates it, and a probe in the isolation suite.** The suite runs in the PR gate from S0 against two seeded organizations. The organization id always comes from the scope resolver, never from input; until S24 the resolver returns the seeded Temnia organization.
 4. **Every sprint ends with a recorded demo run on staging against a real long-form source.** Not a toy fixture — the silent-truncation bug in the legacy only appeared at two hours.
 5. **Every harness lane ships backend and review surface together.** An unverifiable harness is an unfinished harness (§7).
-6. **Every session ends with the build-in-public log and two post drafts** ([build-in-public.md](build-in-public.md)); every sprint ends with a recap post carrying the sprint's real numbers.
+6. **Every session ends with the build-in-public log** ([build-in-public.md](build-in-public.md)); social drafts follow the current playbook's cadence and evidence, preserving one shared daily record. A sprint recap uses actual results and numbers; sprint completion does not authorize publication or another duplicate daily pack (revised 2026-09-08).
 7. **Legacy is reference only.** Each sprint's build list is researched against today's options; a legacy incident is cited as evidence, never a legacy choice as the answer (AGENTS.md, 2026-09-05).
 8. **Do not widen until the bet holds.** If a gate fails, the following sprint is an editorial or engineering round against that gate, not the next feature. The legacy widened for twenty days before measuring.
 
