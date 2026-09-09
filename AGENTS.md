@@ -577,6 +577,13 @@ liveness with separate finite stall deadlines and poll known generation receipts
 period. Unknown charges retain reservations. Plan: `docs/plans/chapter-live-failures-360-view.md`;
 measured outcome: `docs/design/chapter-staging-qualification-2026-09-09.md`.
 
+**2026-09-09 — Web image dependency downloads have bounded network settings.** Two unchanged
+release gates passed application tests then failed fetching large npm tarballs in the cold Docker
+install stage. That stage uses eight concurrent requests and a 180-second fetch deadline, keeping
+the frozen lockfile, integrity checks and default two retries. Offline install cannot populate
+an empty store; a persistent cache mount is a separate optimization. This is a build-only override,
+not a global pnpm setting. Evidence and comparison: `docs/plans/chapter-live-failures-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

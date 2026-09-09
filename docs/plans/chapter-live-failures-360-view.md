@@ -72,3 +72,21 @@ source correction, re-ingest or paid retry is part of implementing the fixes. Re
 run and its reconciled charges. Update the qualification record and daily log with measured
 facts, run focused regressions and the exact-commit release gate, and leave the PR for Rajesh
 to merge. Staging recovery after deployment must reuse that run and its committed responses.
+
+## Release download recovery
+
+Two unchanged exact-commit gates passed application tests, then failed while downloading large
+npm tarballs in the web Docker dependency stage (about 260 and 254 seconds). Apply a scoped
+install override: eight concurrent requests and a 180-second fetch deadline, retaining the
+frozen lockfile, TLS/integrity checks and pnpm's two retries. This reduces contention on a cold
+builder without changing dependency resolution or introducing an unbounded retry loop. A cache
+mount is a broader optimization and offline install cannot populate an empty store; neither is
+needed for this correction. The settings apply only to this Docker dependency stage, not to
+runtime requests or the developer's global environment. Verify the actual cold dependency
+stage, both final images and the unchanged full release gate before marking PR #27 ready.
+
+The installed pnpm 12.3.4 CLI accepts both flags. Its current
+[network settings](https://pnpm.io/settings/network) document automatic concurrency up to 64
+and a default 60-second fetch timeout; the [install reference](https://pnpm.io/cli/install)
+confirms frozen-lockfile and offline behavior. The repeated real build failure is the reason
+for this bounded override, not a claim that npm is unavailable or that it needs a mirror.
