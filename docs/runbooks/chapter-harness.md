@@ -8,6 +8,12 @@ the isolated qualification. Use the [staging runbook](staging.md) for services a
 For a local product pass with recorded responses, use the
 [manual-testing walkthrough](chapter-harness-manual-testing.md).
 
+The [2026-09-09 staging admission record](../design/chapter-staging-qualification-2026-09-09.md)
+records the enabled live configuration and the long-recording preflight. A qualified transport
+route is eligible for this bounded staging experiment; its position in the experiment does not
+declare an editorial audition winner. Runtime-only settings can use the verified
+[Dokploy reload procedure](staging.md#4b-apply-runtime-configuration-without-a-code-change).
+
 ## Deploy the schema and worker together
 
 Use a clean, verified commit. Migration `0003_harness_foundation.sql` adds the scoped harness
@@ -252,7 +258,15 @@ backend. It proves mechanics and never establishes live model quality or price.
 | `needs_review` | Listen around cuts, correct boundaries, and accept every keep/drop with required reasons. Human review resolves editorial concerns; technical failures still block export. |
 | `ready` | Export the accepted revision. Later content corrections create a new revision while the prior export remains available. |
 
-Gateway cost lookup is read-only unless `--apply` is supplied:
+The worker saves a known model response before looking up its charge. It allows up to twenty
+seconds total for that lookup and polling of explicitly pending receipts. A missing receipt or
+lookup error leaves the cost unresolved and its reservation active; it does not repeat inference.
+Error observations retain a sanitized error class. Qualification uses its separately bounded
+lookup window. A zero reported amount beside unresolved exposure is not evidence of a free call.
+
+Before reconciliation, export the stopped run and preserve the attempt facts and original usage
+observations privately. Settlement replaces the row's latest usage with the verified charge
+components. Gateway cost lookup is read-only unless `--apply` is supplied:
 
 ```bash
 uv run --frozen temnia-harness reconcile-cost --run-id RUN_UUID

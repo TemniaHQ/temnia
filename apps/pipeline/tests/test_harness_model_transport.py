@@ -1,5 +1,7 @@
 """Pure model routing, cassette, and gateway accounting regressions."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import hashlib
@@ -7,16 +9,20 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import httpx
 import httpx2
 import pytest
 from pydantic import BaseModel, ConfigDict
-from pydantic_ai import Agent, ModelResponse, NativeOutput, TextPart
+from pydantic_ai import Agent, ModelResponse, NativeOutput, TextPart, ThinkingPart
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import RequestUsage
 
+from temnia_pipeline.contracts import Scope
+from temnia_pipeline.harness import models as harness_models
 from temnia_pipeline.harness.cassettes import (
     CassetteError,
     CassetteMetadata,
@@ -31,6 +37,7 @@ from temnia_pipeline.harness.gateway import (
     GenerationIdentityError,
     lookup_generation,
 )
+from temnia_pipeline.harness.models import HarnessModelDeps, HierarchicalSummaryV1
 from temnia_pipeline.harness.routes import (
     ContextWindowExceeded,
     RouteEligibility,
@@ -167,6 +174,178 @@ def test_request_fingerprint_ignores_incidental_message_timestamp() -> None:
     second.metadata = {"evidence": {"timestamp": "2027-01-01T00:00:00Z"}}
     assert request_fingerprint([first], None, parameters, cassette_metadata()) != (
         request_fingerprint([second], None, parameters, cassette_metadata())
+    )
+
+
+def _summary_deps(*, schema_version: str = "hierarchical-summary/1") -> HarnessModelDeps:
+    return HarnessModelDeps(
+        scope=Scope(
+            organizationId=UUID("0192e8a0-0000-7000-8000-000000000001"),
+            userId=UUID("0192e8a0-0000-7000-8000-000000000002"),
+        ),
+        source_id=UUID("0192e8a0-0000-7000-8000-000000000111"),
+        run_id=UUID("0192e8a0-0000-7000-8000-000000000222"),
+        stage="summary:window-0000",
+        program_version="chapter-workflow/1",
+        prompt_version="chapter-summarize-v3",
+        schema_version=schema_version,
+        route=route("summary", "family-a", "provider-one"),
+        operation_inputs={},
+        operation_config={},
+        dispatch_limit=8,
+    )
+
+
+def _summary_response(units: list[dict[str, Any]]) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ThinkingPart("retained reasoning", id="thinking-1"),
+            TextPart(
+                json.dumps({"units": units, "version": 1}, separators=(",", ":")),
+                id="answer-1",
+                provider_details={"retained": True},
+            ),
+        ],
+        usage=RequestUsage(input_tokens=7, output_tokens=11),
+        model_name="model/family-a",
+        provider_name="provider-one",
+        provider_response_id="generation-one",
+        metadata={"retained": "metadata"},
+    )
+
+
+def test_summary_response_derives_only_invalid_cosmetic_labels() -> None:
+    units = [
+        {
+            "firstSentenceId": "s0",
+            "id": "",
+            "lastSentenceId": "s0",
+            "quoteWordIds": ["w0"],
+            "text": "First source sentence.",
+        },
+        {
+            "firstSentenceId": "s1",
+            "lastSentenceId": "s1",
+            "quoteWordIds": ["w1"],
+            "text": "Second source sentence.",
+        },
+        {
+            "firstSentenceId": "s2",
+            "id": "duplicate",
+            "lastSentenceId": "s2",
+            "quoteWordIds": ["w2"],
+            "text": "Third source sentence.",
+        },
+        {
+            "firstSentenceId": "s3",
+            "id": "duplicate",
+            "lastSentenceId": "s3",
+            "quoteWordIds": ["w3"],
+            "text": "Fourth source sentence.",
+        },
+        {
+            "firstSentenceId": "s4",
+            "id": 7,
+            "lastSentenceId": "s4",
+            "quoteWordIds": ["w4"],
+            "text": "Fifth source sentence.",
+        },
+        {
+            "firstSentenceId": "s5",
+            "id": "provider-label",
+            "lastSentenceId": "s5",
+            "quoteWordIds": ["w5"],
+            "text": "Sixth source sentence.",
+        },
+    ]
+    response = _summary_response(units)
+
+    normalized = harness_models._normalize_summary_response(  # noqa: SLF001
+        _summary_deps(), response
+    )
+    repeated = harness_models._normalize_summary_response(  # noqa: SLF001
+        _summary_deps(), response
+    )
+
+    assert normalized is not response
+    assert normalized.parts[0] is response.parts[0]
+    assert normalized.usage is response.usage
+    assert normalized.provider_response_id == response.provider_response_id
+    assert normalized.metadata is response.metadata
+    assert isinstance(normalized.parts[1], TextPart)
+    assert isinstance(repeated.parts[1], TextPart)
+    parsed = json.loads(normalized.parts[1].content)
+    repeated_parsed = json.loads(repeated.parts[1].content)
+    labels = [unit["id"] for unit in parsed["units"]]
+    assert labels[-1] == "provider-label"
+    assert len(labels) == len(set(labels))
+    assert parsed == repeated_parsed
+    for original, actual in zip(units, parsed["units"], strict=True):
+        assert {key: value for key, value in actual.items() if key != "id"} == {
+            key: value for key, value in original.items() if key != "id"
+        }
+    HierarchicalSummaryV1.model_validate(parsed)
+    collision = _summary_response(
+        [
+            {**units[0], "id": ""},
+            {**units[1], "id": labels[0]},
+        ]
+    )
+    collision_result = harness_models._normalize_summary_response(  # noqa: SLF001
+        _summary_deps(), collision
+    )
+    assert isinstance(collision_result.parts[1], TextPart)
+    collision_units = json.loads(collision_result.parts[1].content)["units"]
+    assert collision_units[1]["id"] == labels[0]
+    assert collision_units[0]["id"] != labels[0]
+
+
+def test_summary_response_preserves_valid_and_unrelated_bytes_and_strict_failures() -> None:
+    valid = _summary_response(
+        [
+            {
+                "firstSentenceId": "s0",
+                "id": "provider-label",
+                "lastSentenceId": "s0",
+                "quoteWordIds": ["w0"],
+                "text": "Source sentence.",
+            }
+        ]
+    )
+    assert (
+        harness_models._normalize_summary_response(_summary_deps(), valid)  # noqa: SLF001
+        is valid
+    )
+    unrelated = _summary_response(
+        [
+            {
+                "firstSentenceId": "s0",
+                "id": "",
+                "lastSentenceId": "s0",
+                "quoteWordIds": ["w0"],
+                "text": "Source sentence.",
+            }
+        ]
+    )
+    assert (
+        harness_models._normalize_summary_response(  # noqa: SLF001
+            _summary_deps(schema_version="chapter-proposal/1"), unrelated
+        )
+        is unrelated
+    )
+    malformed = ModelResponse(parts=[TextPart("not-json")])
+    wrong_units = ModelResponse(parts=[TextPart('{"units":[null],"version":1}')])
+    assert (
+        harness_models._normalize_summary_response(  # noqa: SLF001
+            _summary_deps(), malformed
+        )
+        is malformed
+    )
+    assert (
+        harness_models._normalize_summary_response(  # noqa: SLF001
+            _summary_deps(), wrong_units
+        )
+        is wrong_units
     )
 
 

@@ -127,9 +127,11 @@ from temnia_pipeline.media.chapters import (
     inspect_timeline,
     render_chapter,
 )
+from temnia_pipeline.speech.liveness import run_with_activity_heartbeat
 from temnia_pipeline.substrate.factory import make_segmenter
 
 CANCELLATION_POLL_SECONDS = 5
+SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS = 3 * 60
 SHA256_HEX_LENGTH = 64
 MAX_SOURCE_SUFFIX_LENGTH = 12
 MIN_RUNTIME_DISK_FREE_BYTES = 512 * 1024 * 1024
@@ -290,7 +292,10 @@ class HarnessActivities:
         )
         try:
             async with self._source_cache_lease(run.id):
-                return await self._build_chapter_evidence_locked(request, run, scope)
+                return await run_with_activity_heartbeat(
+                    lambda: self._build_chapter_evidence_locked(request, run, scope),
+                    details={"stage": "build-chapter-evidence"},
+                )
         finally:
             self._arm_source_cache_expiry(run.id)
 
@@ -317,7 +322,11 @@ class HarnessActivities:
     ) -> EvidenceResult:
         """Build immutable evidence while this worker owns the source cache lease."""
         ref = request.run
-        master = await obs.head_async(self.ctx.store, run.source.storage_key)
+        try:
+            async with asyncio.timeout(SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS):
+                master = await obs.head_async(self.ctx.store, run.source.storage_key)
+        except TimeoutError as error:
+            raise TimeoutError("source metadata read timed out") from error
         if int(master["size"]) != run.source.size_bytes:  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
             raise RuntimeError("source master size changed after run creation")
         observed = self._object_identity(master)
@@ -334,15 +343,9 @@ class HarnessActivities:
         transcript = TranscriptV1.model_validate_json(body)
         if abs(timeline.duration * 1000 - transcript.durationMs) > 1:
             raise RuntimeError("source timeline duration differs from its pinned transcript")
-        pulse = asyncio.create_task(self._cpu_heartbeat("segmenting"))
-        try:
-            layers = await asyncio.to_thread(
-                make_segmenter(request.segmenter).segment, transcript.words
-            )
-        finally:
-            pulse.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pulse
+        layers = await asyncio.to_thread(
+            make_segmenter(request.segmenter).segment, transcript.words
+        )
         source_fingerprint = self._source_fingerprint(
             scope, run, timeline, source_sha=source_sha, observed=observed
         )
@@ -2111,14 +2114,26 @@ class HarnessActivities:
         digest = hashlib.sha256()
         size = 0
         try:
-            result = await obs.get_async(self.ctx.store, run.source.storage_key)
+            try:
+                async with asyncio.timeout(SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS):
+                    result = await obs.get_async(self.ctx.store, run.source.storage_key)
+            except TimeoutError as error:
+                raise TimeoutError("source download header timed out") from error
             if int(result.meta["size"]) != run.source.size_bytes:
                 raise RuntimeError("source master changed before its verified download")
             downloaded_identity = self._object_identity(result.meta)
             if stable_identity and downloaded_identity != observed:
                 raise RuntimeError("source master changed during its verified download")
+            chunks = result.stream(min_chunk_size=8 * 1024 * 1024).__aiter__()
             with partial.open("wb") as handle:
-                async for chunk in result.stream(min_chunk_size=8 * 1024 * 1024):
+                while True:
+                    try:
+                        async with asyncio.timeout(SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS):
+                            chunk = await anext(chunks)
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError as error:
+                        raise TimeoutError("source download chunk timed out") from error
                     handle.write(chunk)
                     digest.update(chunk)
                     size += len(chunk)
@@ -2174,12 +2189,6 @@ class HarnessActivities:
             },
             config={"version": "source-master/1"},
         )
-
-    @staticmethod
-    async def _cpu_heartbeat(stage: str) -> None:
-        while True:
-            activity.heartbeat({"stage": stage})
-            await asyncio.sleep(10)
 
     @staticmethod
     def _positive_rational(value: Fraction | None) -> PositiveRational | None:

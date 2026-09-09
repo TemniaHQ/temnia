@@ -26,7 +26,8 @@ COPY --from=pruner /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=pruner /app/out/pnpm-workspace.yaml ./pnpm-workspace.yaml
 # Root lifecycle scripts must exist before install or `prepare` fails the build.
 COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
-RUN pnpm install --frozen-lockfile
+# Bound cold-builder download contention without weakening dependency verification.
+RUN pnpm install --frozen-lockfile --network-concurrency=8 --fetch-timeout=180000
 COPY --from=pruner /app/out/full/ .
 # turbo prune copies workspace packages and the lockfile, not root config files;
 # every package's tsconfig extends this one.

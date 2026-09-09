@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import tempfile
-import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -37,6 +36,7 @@ from temnia_pipeline.harness.gateway import (
     GatewayError,
     GenerationIdentityError,
     lookup_generation,
+    observe_generation_cost,
 )
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
 from temnia_pipeline.harness.prompts.chapter import (
@@ -874,14 +874,14 @@ async def _poll_cost(
     wait_seconds: float,
     sleep: Callable[[float], Awaitable[None]],
 ) -> CostObservation:
-    deadline = time.monotonic() + wait_seconds
-    while True:
-        observation = await lookup_generation(
-            client, config=config, route=route, generation_id=generation_id
-        )
-        if observation.status != "pending" or time.monotonic() >= deadline:
-            return observation
-        await sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+    return await observe_generation_cost(
+        client,
+        config=config,
+        route=route,
+        generation_id=generation_id,
+        wait_seconds=wait_seconds,
+        sleep=sleep,
+    )
 
 
 async def run_qualification(

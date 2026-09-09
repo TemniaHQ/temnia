@@ -552,6 +552,38 @@ rejection and Kimi/Wafer's schema failure exclude those exact pairings, not thei
 No editorial winner is selected from transport success. Record:
 `docs/design/gateway-staging-qualification-2026-09-09.md`.
 
+**2026-09-09 — Dokploy environment-only changes can use its supported reload.** The earlier
+image-changing-only claim was too broad. The installed v0.30.5 implementation was inspected and
+then probed on idle staging services: `application.reload` creates a new Swarm task with the saved
+environment and mounts while retaining the image. Both the pipeline and web booted with the new
+harness settings; actual container environments, file identity, worker readiness and web health
+were checked. A build captures configuration when processing starts, so saving a new value during that build
+does not update its eventual task. Use a Git deployment for code changes and a verified reload for
+configuration-only changes; preserve the previous configuration and check work in flight first.
+The standard mount API has no read-only flag in this version. The nonsecret route snapshot uses a
+content-addressed, root-owned `0444` file; the UID-10001 worker's write attempt is refused. This is
+file permission enforcement, not a Docker read-only mount. Procedure: `docs/runbooks/staging.md`.
+
+**2026-09-09 — Internal summary labels belong to code; source anchors remain model constraints.**
+The first 151-minute live chapter run stopped after seven summaries because the seventh returned
+five empty unit labels. These labels identify summary units, not source evidence. Derive them
+deterministically inside the model activity after preserving the raw response, for both fresh
+and reused results. Keep the request schema/fingerprint and immutable receipt unchanged, so
+recovery does not purchase the same seven results again. Do not normalize sentence endpoints,
+quote anchors or editorial content. Compared with another paid repair or a wider source schema,
+this removes a model responsibility that has no editorial value. The same run exposed missing
+heartbeats during a quiet source download and delayed generation accounting; supervise I/O
+liveness with separate finite stall deadlines and poll known generation receipts for a bounded
+period. Unknown charges retain reservations. Plan: `docs/plans/chapter-live-failures-360-view.md`;
+measured outcome: `docs/design/chapter-staging-qualification-2026-09-09.md`.
+
+**2026-09-09 — Web image dependency downloads have bounded network settings.** Two unchanged
+release gates passed application tests then failed fetching large npm tarballs in the cold Docker
+install stage. That stage uses eight concurrent requests and a 180-second fetch deadline, keeping
+the frozen lockfile, integrity checks and default two retries. Offline install cannot populate
+an empty store; a persistent cache mount is a separate optimization. This is a build-only override,
+not a global pnpm setting. Evidence and comparison: `docs/plans/chapter-live-failures-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
@@ -646,10 +678,12 @@ limit that survives into a decision record is worse than no research.
   Cloudflare Tunnel and Access setup, and the deploy verification steps are in
   `docs/runbooks/staging.md`. Staging is reachable only through Cloudflare Access; the origin
   publishes no ports.
-- Runtime env is set in Dokploy and reaches a container only through an image-changing deploy;
-  a container that then exits non-zero is rolled back with its old env. Verify against the running
-  service (`docker service inspect … ContainerSpec.Env`), never the API response. Read the dead
-  container's log before anything else.
+- Runtime env is set in Dokploy and applied by a code deployment or an explicit configuration
+  reload. Saving alone does not change a running task; a build retains the configuration it
+  captured at its start. Verify the actual running service and container environments, image,
+  and boot health, never only the API response. Read a failed task's log before anything else;
+  do not assume automatic rollback. Restore and reload the backed-up configuration explicitly
+  when recovery requires it.
 - The VPS SSH port is rate-limited to six new connections per thirty seconds. Never poll over SSH.
 - No infra hostname, panel, or console appears in a post or screenshot (`docs/build-in-public.md` §8).
 

@@ -970,7 +970,18 @@ async def test_budgeted_model_persists_then_reuses_response_without_second_call(
             lookup_calls += 1
             if lookup_calls == 1:
                 raise asyncio.CancelledError
-            return httpx.Response(404)
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "fixture-generation",
+                        "model": "fixture/model",
+                        "provider_name": "fixture-provider",
+                        "is_byok": False,
+                        "total_cost": "0.000001",
+                    }
+                },
+            )
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lookup_handler)

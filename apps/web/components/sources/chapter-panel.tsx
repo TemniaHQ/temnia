@@ -35,6 +35,11 @@ import {
 } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { verifiedArtifactJson } from "@/lib/harness/artifact";
+import {
+  type ChapterPanelMessage,
+  chapterWaitingMessage,
+  clearMatchedStartMessage,
+} from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
 import {
   clearSessionIntent,
@@ -163,7 +168,7 @@ export function ChapterPanel({
     typeof ChapterEditSpecSchema.parse
   > | null>(null);
   const [artifactError, setArtifactError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<ChapterPanelMessage | null>(null);
   const [brief, setBrief] = useState("");
   const [budget, setBudget] = useState("1.00");
   const [reason, setReason] = useState("");
@@ -380,6 +385,7 @@ export function ChapterPanel({
         setView(next);
         if (run && next.run?.id === run) {
           setSelectedRunId(run);
+          setMessage((current) => clearMatchedStartMessage(current, run));
           setPendingRunId(null);
           setPendingStart(null);
           setPendingResolution((current) =>
@@ -404,7 +410,11 @@ export function ChapterPanel({
             return;
           }
           setPendingResolution({ ...status, kind: "start" });
-          setMessage(status.message);
+          setMessage({
+            kind: "start",
+            runId: pendingStart.runId,
+            text: status.message,
+          });
         }
         if (
           pendingCommand &&
@@ -435,7 +445,7 @@ export function ChapterPanel({
             return;
           }
           setPendingResolution({ ...status, kind: "command" });
-          setMessage(status.message);
+          setMessage({ kind: "command", text: status.message });
         }
       }
     },
@@ -486,7 +496,10 @@ export function ChapterPanel({
   useEffect(() => {
     const timer = window.setInterval(() => {
       refresh().catch(() =>
-        setMessage("Chapter status could not be refreshed.")
+        setMessage({
+          kind: "refresh",
+          text: "Chapter status could not be refreshed.",
+        })
       );
     }, 2500);
     return () => window.clearInterval(timer);
@@ -721,9 +734,13 @@ export function ChapterPanel({
     startTransition(async () => {
       try {
         const result = await startChapterRun(intent);
-        setMessage(result.ok ? "Chapter editing queued." : result.message);
+        const runId = result.runId || intent.runId;
+        setMessage({
+          kind: "start",
+          runId,
+          text: result.ok ? "Chapter editing queued." : result.message,
+        });
         if (result.ok || result.pending) {
-          const runId = result.runId || intent.runId;
           setPendingStart(intent);
           setPendingRunId(runId);
           setSelectedRunId(runId);
@@ -735,9 +752,11 @@ export function ChapterPanel({
           setCreatingNew(true);
         }
       } catch {
-        setMessage(
-          "The browser lost the start response. The exact request is retained; retry it or wait for its status."
-        );
+        setMessage({
+          kind: "start",
+          runId: intent.runId,
+          text: "The browser lost the start response. The exact request is retained; retry it or wait for its status.",
+        });
         setPendingStart(intent);
         setPendingRunId(intent.runId);
         setSelectedRunId(intent.runId);
@@ -766,20 +785,22 @@ export function ChapterPanel({
     startTransition(async () => {
       try {
         const result = await reviewChapterCommand(intent);
-        setMessage(
-          result.ok
+        setMessage({
+          kind: "command",
+          text: result.ok
             ? "Command confirmed by its durable result."
-            : result.message
-        );
+            : result.message,
+        });
         if (!(result.pending || result.ok)) {
           clearSessionIntent(pendingCommandKey(intent.runId));
           setPendingCommand(null);
         }
         await refresh();
       } catch {
-        setMessage(
-          "The browser lost the review response. The exact command is retained; retry it or wait for its status."
-        );
+        setMessage({
+          kind: "command",
+          text: "The browser lost the review response. The exact command is retained; retry it or wait for its status.",
+        });
         setPendingCommand(intent);
       }
     });
@@ -898,7 +919,7 @@ export function ChapterPanel({
             Cancel new run
           </Button>
         ) : null}
-        {message ? <p role="status">{message}</p> : null}
+        {message ? <p role="status">{message.text}</p> : null}
       </div>
     );
   }
@@ -908,6 +929,11 @@ export function ChapterPanel({
   const contentBusy =
     commandBusy ||
     ["cancelled", "failed", "outcome_unknown"].includes(run.status);
+  const waitingMessage = chapterWaitingMessage({
+    checkState,
+    descriptorCheckState,
+    hasSelectedEdit: selectedArtifact !== null,
+  });
   return (
     <div className="space-y-4" data-testid="chapters-panel">
       <div className="flex flex-wrap items-center gap-2">
@@ -936,7 +962,10 @@ export function ChapterPanel({
           setCreatingNew(false);
           setSelectedRunId(runId);
           refresh(runId).catch(() =>
-            setMessage("That chapter run could not be loaded.")
+            setMessage({
+              kind: "refresh",
+              text: "That chapter run could not be loaded.",
+            })
           );
         }}
         value={selectedRunId ?? run.id}
@@ -969,11 +998,8 @@ export function ChapterPanel({
           editing.
         </p>
       ) : null}
-      {checkState === "loading" ? (
-        <p className="text-muted-foreground text-sm">
-          Technical checks are still being verified. Acceptance and export are
-          waiting.
-        </p>
+      {waitingMessage ? (
+        <p className="text-muted-foreground text-sm">{waitingMessage}</p>
       ) : null}
       {checkState === "blocked" ? (
         <p className="text-destructive text-sm">
@@ -1022,7 +1048,7 @@ export function ChapterPanel({
           ) : null}
         </div>
       ) : null}
-      {message ? <p role="status">{message}</p> : null}
+      {message ? <p role="status">{message.text}</p> : null}
       {artifactError ? (
         <p className="text-destructive text-sm" role="alert">
           {artifactError}

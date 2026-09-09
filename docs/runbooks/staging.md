@@ -360,6 +360,51 @@ rebuilds only the targets whose files changed.
 docker logs $(docker ps -a --filter name=<service> --format '{{.ID}} {{.Status}}' | grep -i exited | head -1 | cut -d' ' -f1)
 ```
 
+## 4b. Apply runtime configuration without a code change
+
+Verified on the installed Dokploy v0.30.5 on 2026-09-09. Saving environment variables alone does
+not update a running container. For code changes, use the normal Git deployment. For configuration
+changes against an already verified image, Dokploy's `application.reload` applies the saved
+environment and mounts and replaces the task without rebuilding the image. The pipeline and web
+both passed this path during harness enablement. The earlier image-changing-only guidance was
+incorrect.
+
+Before changing either service, check active work and retain its previous Dokploy configuration
+privately. Keep the gateway key only on the pipeline. For harness enablement, apply and verify the
+worker first, then apply the matching nonsecret web settings. Do not reload a worker underneath an
+active qualification run.
+
+The authenticated API uses these routes and request shapes:
+
+- `GET application.one?applicationId=...` reads the current configuration. Its result contains
+  secrets: do not print it or copy it into a report.
+- `POST application.saveEnvironment` requires `applicationId`, `env`, `buildArgs`, `buildSecrets`
+  and `createEnvFile`. Preserve the latter three values and every unrelated environment entry.
+- `POST application.reload` requires `applicationId` and `appName`. It applies configuration
+  only; it does not pull new code.
+- `POST application.deploy` accepts `applicationId` and optional `title` and `description`. It
+  fetches the configured Git source and builds it. `redeploy` instead rebuilds the existing server
+  checkout. A build keeps the configuration captured at its start, even if Environment is
+  saved again while the build is running.
+
+API success can have an empty response body. A JSON parse error after successful submission does
+not mean the deployment failed. Inspect the existing deployment/task before submitting again.
+For a Git deployment, wait for the exact deployment record. For a reload, verify a new running
+task, the expected environment in both its service specification and container, the image
+identity, and successful boot. Check web migrations/seed and `/api/health`, and the worker's
+Temporal connection. A reload is expected to retain the image. Read a failed task's logs before
+diagnosing rollback; the prior task may be running with its prior environment.
+
+For the harness route file, the public API namespace is **`mounts`**, plural:
+`mounts.listByServiceId`, `mounts.create`, and `mounts.remove`. A bind creation uses `serviceId`,
+`serviceType: "application"`, `type: "bind"`, `hostPath` and `mountPath`. Preserve existing mounts.
+This version has no `readOnly` field; do not append `:ro` to a target path. The staging snapshot is
+a nonsecret, content-addressed, root-owned `0444` file inside a root-owned directory, bound at
+`/etc/temnia/harness-routes.json`. Verify that the nonroot worker can load it and that opening it
+for writing raises `PermissionError`. Docker still reports a writable bind; the protection is the
+file's ownership and permissions, not protection against container root. Retain the hash-addressed
+file and create a new one for every route change.
+
 ## 5. Rules that follow from this setup
 
 - The Hostinger panel's Reboot is a hard reset: no shutdown sequence in the guest, about a minute of
