@@ -57,6 +57,7 @@ from temnia_pipeline.transcription.checkpointed import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
 
@@ -93,6 +94,15 @@ def pipeline_url() -> str:
     if not url:
         pytest.fail("TEST_DATABASE_URL is required: liveness persistence cannot skip")
     return url
+
+
+@pytest.fixture(autouse=True)
+async def close_database_pool() -> AsyncIterator[None]:
+    """Close this test's process-global pool before its event loop is torn down."""
+    try:
+        yield
+    finally:
+        await db.close_pool()
 
 
 def profile() -> SpeechResourceProfile:

@@ -143,6 +143,16 @@ The driver repair passed on `214f4ee6c58889c496056911c7a0a6c51b9aab24` at 04:06:
 all 18 production browser tests. The subsequent heartbeat repair requires a new exact-commit gate
 before further paid work.
 
+That first heartbeat gate (`4ad53ae755e860e528aa2840710a8ea8fd3f5151`) failed after
+729 Python tests passed: the new Temporal tests omitted PostgreSQL pool teardown before their
+function-scoped event loops closed. A later persistence test then raised cancellation while closing
+the inherited pool, followed by thirteen closed-pool fixture errors. Both heartbeat regressions
+themselves passed. A local async fixture now closes their pool in `finally` on the owning loop;
+the production pool, worker fingerprint and frozen GPU applications are unchanged. The same
+ordered modules reproduced one failure and thirteen errors in 33.90 seconds before the fix,
+then passed all sixteen tests in 35.81 seconds afterward. Ruff and Pyright passed; the disposable
+database was dropped and its absence verified. The full release gate must pass again.
+
 The heartbeat repair passes two real Temporal/PostgreSQL regressions with simulated provider
 responses, the production two-second heartbeat interval/ten-second timeout, and twelve-second
 post-GPU delays. Success retains one activity attempt and three successful provider ledger rows;
