@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "ChapterReviewAction": {
+      "$id": "#/$defs/ChapterReviewAction",
+      "type": "string",
+      "enum": [
+        "accept",
+        "reject",
+        "nudge",
+        "restore",
+        "merge",
+        "undo",
+        "retry",
+        "cancel",
+        "raise_budget"
+      ],
+      "title": "ChapterReviewAction"
+    },
+    "ChapterReviewInput": {
+      "$id": "#/$defs/ChapterReviewInput",
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ChapterReviewAction"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "boundaryId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "budgetMicros": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "otherSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "targetRevision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "targetTimeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "action",
+        "baseRevision",
+        "boundaryId",
+        "budgetMicros",
+        "mutationKey",
+        "otherSectionId",
+        "reason",
+        "runId",
+        "scope",
+        "sectionId",
+        "sourceId",
+        "targetRevision",
+        "targetTimeMs"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterReviewInput"
+    },
+    "Scope": {
+      "$id": "#/$defs/Scope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The organization every row is scoped to."
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The acting user inside that organization."
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "Scope"
+    }
+  },
+  "$id": "ChapterReviewInput.json",
+  "$ref": "#/$defs/ChapterReviewInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -160,14 +160,68 @@ describe("findMatches", () => {
   it("matches case-insensitively and counts every hit", () => {
     const hits = findMatches(TRANSCRIPT.words, "THE");
     expect(hits.length).toBeGreaterThan(1);
-    for (const index of hits) {
-      expect(TRANSCRIPT.words[index]?.text.toLowerCase()).toContain("the");
+    for (const hit of hits) {
+      expect(TRANSCRIPT.words[hit.firstWord]?.text.toLowerCase()).toContain(
+        "the"
+      );
+      expect(hit.lastWord).toBe(hit.firstWord);
     }
   });
 
-  it("matches inside a word, punctuation and all", () => {
-    expect(findMatches([word("show.", 0, 1)], "how")).toEqual([0]);
-    expect(findMatches([word("show.", 0, 1)], "show.")).toEqual([0]);
+  it("preserves substring and punctuation matching inside one word", () => {
+    expect(findMatches([word("show.", 0, 1)], "how")).toEqual([
+      { firstWord: 0, lastWord: 0 },
+    ]);
+    expect(findMatches([word("show.", 0, 1)], "show.")).toEqual([
+      { firstWord: 0, lastWord: 0 },
+    ]);
+  });
+
+  it("finds every phrase span across word and punctuation boundaries", () => {
+    const words = [
+      word("One,", 0, 1),
+      word("small", 1, 2),
+      word("step.", 2, 3),
+      word("One", 3, 4),
+      word("small", 4, 5),
+      word("choice", 5, 6),
+    ];
+    expect(findMatches(words, "ONE — small")).toEqual([
+      { firstWord: 0, lastWord: 1 },
+      { firstWord: 3, lastWord: 4 },
+    ]);
+  });
+
+  it("lets punctuation-separated terms match within one word or several", () => {
+    const words = [
+      word("well-being", 0, 1),
+      word("and", 1, 2),
+      word("well", 2, 3),
+      word("being", 3, 4),
+    ];
+    expect(findMatches(words, "well being")).toEqual([
+      { firstWord: 0, lastWord: 0 },
+      { firstWord: 2, lastWord: 3 },
+    ]);
+  });
+
+  it("normalizes Unicode composition, width, case and apostrophes", () => {
+    expect(findMatches([word("CAFÉ", 0, 1)], "cafe\u0301")).toEqual([
+      { firstWord: 0, lastWord: 0 },
+    ]);
+    expect(findMatches([word("Ｌ’Amour", 0, 1)], "l'amour")).toEqual([
+      { firstWord: 0, lastWord: 0 },
+    ]);
+  });
+
+  it("finds overlapping matches in a long repeated phrase", () => {
+    const repeated = Array.from({ length: 20_000 }, (_, index) =>
+      word(index % 2 === 0 ? "one" : "one,", index, index + 1)
+    );
+    const matches = findMatches(repeated, "one one one one one");
+    expect(matches).toHaveLength(19_996);
+    expect(matches[0]).toEqual({ firstWord: 0, lastWord: 4 });
+    expect(matches.at(-1)).toEqual({ firstWord: 19_995, lastWord: 19_999 });
   });
 
   it("is empty for an empty query", () => {

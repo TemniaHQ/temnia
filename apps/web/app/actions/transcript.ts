@@ -1,9 +1,13 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   sourcePrefix,
   TASK_QUEUES,
+  type TranscriptCorrectionCommand,
+  TranscriptCorrectionCommandSchema,
+  TranscriptCorrectionMetadataSchema,
+  TranscriptRevisionAnnotationsSchema,
   transcriptCorrectionKey,
   WORKFLOWS,
 } from "@temnia/contracts";
@@ -17,30 +21,23 @@ import {
   type WorkflowExecutionStatusName,
   WorkflowNotFoundError,
 } from "@temporalio/client";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
 import { getTemporalClient } from "@/lib/temporal/client";
-import {
-  applyEdits,
-  EditsSchema,
-  STALE_REVISION_MESSAGE,
-  type TranscriptEdits,
-} from "@/lib/transcript/edits";
+import { STALE_REVISION_MESSAGE } from "@/lib/transcript/edits";
 import {
   discardRevision,
   readRevision,
-  writeRevision,
+  writeRevisionArtifact,
 } from "@/lib/transcript/queries";
+import {
+  applyStructuralCorrection,
+  legacyAnnotations,
+} from "@/lib/transcript/structure";
 
 const IdSchema = z.uuid();
-
-/** Names a person typed. Bounded so a label cannot become a payload. */
-const LabelsSchema = z.record(
-  z.string().min(1).max(16),
-  z.string().trim().min(1).max(80)
-);
 
 /**
  * Two refusals a correction has to keep apart.
@@ -110,6 +107,7 @@ export async function retryTranscription(
   const found = await scoped(async (tx) => {
     const [row] = await tx
       .select({
+        deletionRequestedAt: source.deletionRequestedAt,
         durationMs: source.durationMs,
         status: source.status,
         transcriptAttempts: transcript.attempts,
@@ -126,7 +124,11 @@ export async function retryTranscription(
       .limit(1);
     return row;
   });
-  if (found?.status !== "ready" || found.durationMs === null) {
+  if (
+    found?.status !== "ready" ||
+    found.durationMs === null ||
+    found.deletionRequestedAt
+  ) {
     return {
       message: "this transcript cannot be retried right now",
       ok: false,
@@ -145,6 +147,17 @@ export async function retryTranscription(
   const { durationMs } = found;
   const dispatchToken = `dispatch:${randomUUID()}`;
   const started = await scoped(async (tx, scope) => {
+    await tx.execute(
+      sql`SELECT 1 FROM ${source} WHERE ${source.id} = ${id.data} FOR UPDATE`
+    );
+    const [currentSource] = await tx
+      .select({ deletionRequestedAt: source.deletionRequestedAt })
+      .from(source)
+      .where(eq(source.id, id.data))
+      .limit(1);
+    if (!currentSource || currentSource.deletionRequestedAt) {
+      return null;
+    }
     const reserved = {
       errorMessage: null,
       heartbeatAt: null,
@@ -240,151 +253,261 @@ export async function retryTranscription(
   return { ok: true };
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sameCommand(
+  left: TranscriptCorrectionCommand,
+  right: TranscriptCorrectionCommand
+): boolean {
+  return canonicalJson(left) === canonicalJson(right);
+}
+
 /**
- * Rename the speakers.
- *
- * Names live on the transcript row, not in the revisions, so a rename is one
- * update and costs no storage. Giving two ids the same name merges them on
- * screen and in every export, which is the manual merge over-segmented
- * diarization needs; nothing auto-merges.
+ * Apply an identity-addressed structural correction as one immutable revision.
+ * Object I/O happens outside both locking transactions; source then transcript
+ * locks make deletion and concurrent saves resolve in one deterministic order.
  */
-export async function updateSpeakerLabels(
+export async function correctTranscriptStructure(
   sourceId: string,
-  labels: Record<string, string>
+  input: unknown
 ): Promise<TranscriptActionResult> {
   const id = IdSchema.safeParse(sourceId);
-  const parsed = LabelsSchema.safeParse(labels);
+  const parsed = TranscriptCorrectionCommandSchema.safeParse(input);
   if (!id.success) {
     return { message: "not a source id", ok: false };
   }
   if (!parsed.success) {
     return {
       invalid: true,
-      message: "those speaker names cannot be saved",
+      message: "that structural correction cannot be saved",
       ok: false,
     };
   }
-  const updated = await scoped(async (tx) => {
-    const rows = await tx
-      .update(transcript)
-      .set({ speakerLabels: parsed.data })
-      .where(eq(transcript.sourceId, id.data))
-      .returning({ id: transcript.id });
-    return rows.length > 0;
-  });
-  if (!updated) {
-    return { message: "there is no transcript for this source", ok: false };
-  }
-  revalidatePath(`/sources/${id.data}`);
-  return { ok: true };
-}
-
-/**
- * Save a correction as a new revision.
- *
- * Revisions are new objects, never overwrites, so the revision a reader has
- * open stays readable while someone else saves. `baseRevision` is checked
- * inside the transaction that writes the next one: two tabs editing the same
- * revision means the second save is refused with words the user can act on,
- * not a silent last-write-wins.
- */
-export async function correctTranscript(
-  sourceId: string,
-  baseRevision: number,
-  edits: TranscriptEdits
-): Promise<TranscriptActionResult> {
-  const id = IdSchema.safeParse(sourceId);
-  const base = z.int().positive().safeParse(baseRevision);
-  const parsed = EditsSchema.safeParse(edits);
-  if (!(id.success && base.success)) {
-    return { message: "not a source id", ok: false };
-  }
-  if (!parsed.success) {
-    return { invalid: true, message: "that edit cannot be saved", ok: false };
-  }
-
+  const command = parsed.data;
   const loaded = await scoped(async (tx, scope) => {
-    const [row] = await tx
-      .select()
-      .from(transcript)
-      .where(eq(transcript.sourceId, id.data))
+    const [found] = await tx
+      .select({
+        deletionRequestedAt: source.deletionRequestedAt,
+        row: transcript,
+      })
+      .from(source)
+      .innerJoin(transcript, eq(transcript.sourceId, source.id))
+      .where(eq(source.id, id.data))
       .limit(1);
-    if (!row || row.currentRevision === null) {
+    if (!found || found.row.currentRevision === null) {
       return null;
+    }
+    const [prior] = await tx
+      .select()
+      .from(transcriptRevision)
+      .where(
+        and(
+          eq(transcriptRevision.transcriptId, found.row.id),
+          sql`${transcriptRevision.metadata}->>'mutationKey' = ${command.mutationKey}`
+        )
+      )
+      .limit(1);
+    if (prior) {
+      const metadata = TranscriptCorrectionMetadataSchema.safeParse(
+        prior.metadata
+      );
+      return metadata.success
+        ? { duplicate: { metadata: metadata.data, revision: prior.revision } }
+        : { keyConflict: true as const };
+    }
+    if (
+      found.deletionRequestedAt ||
+      found.row.currentRevision !== command.baseRevision
+    ) {
+      return {
+        deleted: Boolean(found.deletionRequestedAt),
+        stale: found.row.currentRevision !== command.baseRevision,
+      };
     }
     const [current] = await tx
       .select()
       .from(transcriptRevision)
       .where(
         and(
-          eq(transcriptRevision.transcriptId, row.id),
-          eq(transcriptRevision.revision, row.currentRevision)
+          eq(transcriptRevision.transcriptId, found.row.id),
+          eq(transcriptRevision.revision, command.baseRevision)
         )
       )
       .limit(1);
-    return current
-      ? { current, prefix: sourcePrefix(scope.organizationId, id.data), row }
+    const wantedRevision =
+      command.action === "undo" ? command.targetRevision : command.baseRevision;
+    const [wanted] =
+      wantedRevision === command.baseRevision
+        ? [current]
+        : await tx
+            .select()
+            .from(transcriptRevision)
+            .where(
+              and(
+                eq(transcriptRevision.transcriptId, found.row.id),
+                eq(transcriptRevision.revision, wantedRevision)
+              )
+            )
+            .limit(1);
+    const [machine] = await tx
+      .select({ revision: transcriptRevision.revision })
+      .from(transcriptRevision)
+      .where(
+        and(
+          eq(transcriptRevision.transcriptId, found.row.id),
+          eq(transcriptRevision.kind, "machine"),
+          lte(transcriptRevision.revision, wantedRevision)
+        )
+      )
+      .orderBy(desc(transcriptRevision.revision))
+      .limit(1);
+    return current && wanted && machine
+      ? {
+          current,
+          machineRevision: machine.revision,
+          prefix: sourcePrefix(scope.organizationId, id.data),
+          row: found.row,
+          wanted,
+        }
       : null;
   });
   if (!loaded) {
-    return { message: "there is no transcript for this source", ok: false };
+    return { message: "there is no transcript revision to correct", ok: false };
   }
-  if (loaded.row.currentRevision !== base.data) {
-    return { message: STALE_REVISION_MESSAGE, ok: false, stale: true };
+  if ("duplicate" in loaded) {
+    return sameCommand(loaded.duplicate.metadata.command, command)
+      ? { ok: true, revision: loaded.duplicate.revision }
+      : {
+          invalid: true,
+          message: "that mutation key already names a different correction",
+          ok: false,
+        };
+  }
+  if ("keyConflict" in loaded) {
+    return {
+      invalid: true,
+      message: "that mutation key already names an unreadable correction",
+      ok: false,
+    };
+  }
+  if ("deleted" in loaded) {
+    return loaded.deleted
+      ? { message: "This source is pending deletion.", ok: false }
+      : { message: STALE_REVISION_MESSAGE, ok: false, stale: true };
   }
 
-  const content = await readRevision(loaded.current.storageKey);
-  const failure = applyEdits(content, parsed.data);
-  if (failure) {
-    // The base revision was current a line ago, so this is the edit and not
-    // the revision: an index this transcript does not have. Reloading would
-    // not help and would throw away what the reader typed.
-    return { invalid: true, message: failure, ok: false };
-  }
-
-  const next = base.data + 1;
-  // One object per attempt. Two tabs saving against the same revision both
-  // upload; the compare-and-swap below publishes one of them and the other's
-  // object is discarded, so the accepted pointer never serves the loser's
-  // bytes (S2 review, I03).
+  const wantedContent = await readRevision(loaded.wanted.storageKey);
+  const annotationParse = TranscriptRevisionAnnotationsSchema.safeParse(
+    loaded.wanted.metadata.annotations
+  );
+  const wantedAnnotations = annotationParse.success
+    ? annotationParse.data
+    : legacyAnnotations(
+        loaded.row.id,
+        loaded.machineRevision,
+        wantedContent,
+        loaded.row.speakerLabels
+      );
+  const structural =
+    command.action === "undo"
+      ? {
+          affectedIdentityIds: wantedAnnotations.wordIdentities.map(
+            (identity) => identity.id
+          ),
+          annotations: wantedAnnotations,
+          content: wantedContent,
+          deletedIdentityIds: [],
+        }
+      : applyStructuralCorrection(wantedContent, wantedAnnotations, command);
+  const next = command.baseRevision + 1;
+  const intentHash = createHash("sha256")
+    .update(canonicalJson(command))
+    .digest("hex");
   const key = transcriptCorrectionKey(
     loaded.prefix,
     next,
-    randomUUID().slice(0, 8)
+    `${command.mutationKey}-${intentHash.slice(0, 16)}`
   );
-  const sizeBytes = await writeRevision(key, content);
+  const artifact = await writeRevisionArtifact(key, structural.content);
+  const metadata = TranscriptCorrectionMetadataSchema.parse({
+    action: command.action,
+    affectedIdentityIds: structural.affectedIdentityIds,
+    annotations: structural.annotations,
+    artifactSha256: artifact.sha256,
+    baseRevision: command.baseRevision,
+    command,
+    deletedIdentityIds: structural.deletedIdentityIds,
+    mutationKey: command.mutationKey,
+  });
 
   const saved = await scoped(async (tx, scope) => {
-    // The guard is inside the write: between the read above and here another
-    // tab may have saved, and the update matching nothing is what says so.
-    const moved = await tx
-      .update(transcript)
-      .set({ currentRevision: next })
+    await tx.execute(
+      sql`SELECT 1 FROM ${source} WHERE ${source.id} = ${id.data} FOR UPDATE`
+    );
+    await tx.execute(
+      sql`SELECT 1 FROM ${transcript} WHERE ${transcript.id} = ${loaded.row.id} FOR UPDATE`
+    );
+    const [state] = await tx
+      .select({
+        currentRevision: transcript.currentRevision,
+        deletionRequestedAt: source.deletionRequestedAt,
+      })
+      .from(source)
+      .innerJoin(transcript, eq(transcript.sourceId, source.id))
+      .where(eq(source.id, id.data))
+      .limit(1);
+    const [prior] = await tx
+      .select()
+      .from(transcriptRevision)
       .where(
         and(
-          eq(transcript.id, loaded.row.id),
-          eq(transcript.currentRevision, base.data)
+          eq(transcriptRevision.transcriptId, loaded.row.id),
+          sql`${transcriptRevision.metadata}->>'mutationKey' = ${command.mutationKey}`
         )
       )
-      .returning({ id: transcript.id });
-    if (moved.length === 0) {
-      return false;
+      .limit(1);
+    if (prior) {
+      const priorMetadata = TranscriptCorrectionMetadataSchema.safeParse(
+        prior.metadata
+      );
+      return priorMetadata.success &&
+        sameCommand(priorMetadata.data.command, command)
+        ? { duplicate: prior.revision }
+        : { keyConflict: true as const };
+    }
+    if (state?.deletionRequestedAt) {
+      return { deleted: true as const };
+    }
+    if (state?.currentRevision !== command.baseRevision) {
+      return { stale: true as const };
     }
     await tx.insert(transcriptRevision).values({
-      baseRevision: base.data,
+      baseRevision: command.baseRevision,
       createdBy: scope.userId,
       kind: "correction",
-      metadata: {
-        edits: Array.isArray(parsed.data) ? parsed.data.length : 1,
-        kind: Array.isArray(parsed.data) ? "words" : "speaker",
-      },
+      metadata,
       organizationId: scope.organizationId,
       revision: next,
-      sizeBytes,
+      sizeBytes: artifact.sizeBytes,
       storageKey: key,
       transcriptId: loaded.row.id,
-      wordCount: content.words.length,
+      wordCount: structural.content.words.length,
     });
+    await tx
+      .update(transcript)
+      .set({ currentRevision: next })
+      .where(eq(transcript.id, loaded.row.id));
     const [counted] = await tx
       .select({
         total: sql<number>`COALESCE(SUM(${usageLedger.quantity}), 0)::bigint`,
@@ -397,8 +520,6 @@ export async function correctTranscript(
           sql`${usageLedger.detail}->>'category' = 'transcript'`
         )
       );
-    // The same delta pattern the pipeline meters with: every revision object
-    // that exists, minus what the transcript category has already counted.
     const [stored] = await tx
       .select({
         total: sql<number>`COALESCE(SUM(${transcriptRevision.sizeBytes}), 0)::bigint`,
@@ -408,20 +529,32 @@ export async function correctTranscript(
     const delta = Number(stored?.total ?? 0) - Number(counted?.total ?? 0);
     if (delta !== 0) {
       await tx.insert(usageLedger).values({
-        detail: {
-          category: "transcript",
-          revision: next,
-          total: Number(stored?.total ?? 0),
-        },
+        detail: { category: "transcript", revision: next },
+        idempotencyKey: `transcript-correction:${loaded.row.id}:${command.mutationKey}`,
         kind: "storage_bytes",
         organizationId: scope.organizationId,
         quantity: delta,
         sourceId: id.data,
       });
     }
-    return true;
+    return { saved: true as const };
   });
-  if (!saved) {
+  if ("duplicate" in saved) {
+    return { ok: true, revision: saved.duplicate };
+  }
+  if ("keyConflict" in saved) {
+    await discardRevision(key);
+    return {
+      invalid: true,
+      message: "that mutation key already names a different correction",
+      ok: false,
+    };
+  }
+  if ("deleted" in saved) {
+    await discardRevision(key);
+    return { message: "This source is pending deletion.", ok: false };
+  }
+  if ("stale" in saved) {
     await discardRevision(key);
     return { message: STALE_REVISION_MESSAGE, ok: false, stale: true };
   }

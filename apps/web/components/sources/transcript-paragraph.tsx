@@ -28,8 +28,10 @@ interface TranscriptParagraphProps {
   activeWord: number;
   /** The open correction, or null when it is not in this paragraph. */
   edit: WordEdit | null;
-  /** The search hit that has the focus, or -1. */
-  focusedWord: number;
+  /** First focused search word in this paragraph, or -1. */
+  focusedFirstWord: number;
+  /** Last focused search word in this paragraph, or -1. */
+  focusedLastWord: number;
   labels: Readonly<Record<string, string>>;
   onAssign: (utteranceIndex: number, speaker: string) => void;
   onCancelEdit: () => void;
@@ -37,6 +39,7 @@ interface TranscriptParagraphProps {
   onRenameSpeakers: () => void;
   onSaveEdit: (index: number, text: string) => void;
   paragraph: Paragraph;
+  readOnly: boolean;
   speakers: readonly string[];
   words: readonly TranscriptWord[];
 }
@@ -68,7 +71,8 @@ function confidencePercent(confidence: number): string {
 function ParagraphRow({
   activeWord,
   edit,
-  focusedWord,
+  focusedFirstWord,
+  focusedLastWord,
   labels,
   onAssign,
   onCancelEdit,
@@ -76,6 +80,7 @@ function ParagraphRow({
   onRenameSpeakers,
   onSaveEdit,
   paragraph,
+  readOnly,
   speakers,
   words,
 }: TranscriptParagraphProps) {
@@ -105,7 +110,11 @@ function ParagraphRow({
       spoken.push(
         <Word
           active={index === activeWord}
-          focused={index === focusedWord}
+          focused={
+            focusedFirstWord >= 0 &&
+            index >= focusedFirstWord &&
+            index <= focusedLastWord
+          }
           index={index}
           key={index}
           word={word}
@@ -126,6 +135,7 @@ function ParagraphRow({
               <Button
                 className="h-6 max-w-full justify-start truncate px-1.5 font-medium text-xs"
                 data-testid="speaker-chip"
+                disabled={readOnly}
                 size="sm"
                 variant="ghost"
               />

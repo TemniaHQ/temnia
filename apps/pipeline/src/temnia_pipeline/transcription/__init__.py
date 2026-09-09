@@ -106,6 +106,7 @@ class TranscribeRecord(BaseModel):
     gpu: str
     attempt: int
     call_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TranscriptionProgress(BaseModel):

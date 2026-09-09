@@ -16,12 +16,29 @@ from temnia_pipeline.modal_protocol import CONTRACT_VERSION
 
 
 @pytest.mark.parametrize(
-    "changed", ["src/temnia_pipeline/code.py", "pyproject.toml", "uv.lock", "Dockerfile"]
+    "changed",
+    [
+        "src/temnia_pipeline/code.py",
+        "pyproject.toml",
+        "uv.lock",
+        "Dockerfile",
+        "Dockerfile.speech",
+        "THIRD_PARTY_NOTICES.md",
+        "LICENSES/NLTK-3.10.3.txt",
+    ],
 )
 def test_build_identity_covers_source_and_runtime_build_inputs(
     tmp_path: Path, changed: str
 ) -> None:
-    for name in ("src/temnia_pipeline/code.py", "pyproject.toml", "uv.lock", "Dockerfile"):
+    for name in (
+        "src/temnia_pipeline/code.py",
+        "pyproject.toml",
+        "uv.lock",
+        "Dockerfile",
+        "Dockerfile.speech",
+        "THIRD_PARTY_NOTICES.md",
+        "LICENSES/NLTK-3.10.3.txt",
+    ):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("first")

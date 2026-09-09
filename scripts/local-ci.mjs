@@ -40,6 +40,11 @@ const GATE_PART_SIZE_BYTES = 5 * 1024 * 1024;
 const GATE_ADOPT_GRACE_SECONDS = 2;
 // Where the worker container sees the repository's recorded engine responses.
 const GATE_RECORDINGS_DIR = "/var/lib/temnia/recordings";
+const GATE_HARNESS_DIR = "/var/lib/temnia/harness-fixtures";
+const GATE_HARNESS_FIXTURES = resolve(
+  ROOT,
+  "apps/pipeline/tests/fixtures/harness"
+);
 // The substrate's model weights: about a gigabyte, downloaded once per machine
 // into the repository's ignored .cache/. The gate runs the tests that load them
 // (TEMNIA_MODEL_TESTS), because a segmenter that only runs when someone
@@ -56,7 +61,7 @@ const STAGES = [
   "fetch immutable substrate model snapshots before offline loading tests",
   "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
-  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, proxy)",
+  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, transcript correction, chapter render/review/export)",
 ];
 let receivedSignal;
 
@@ -272,7 +277,29 @@ async function runFullGate(sha) {
       TEMNIA_MODELS_DIR: GATE_MODELS_DIR,
       TEMPORAL_ADDRESS: "127.0.0.1:56233",
       TEST_DATABASE_URL: ownerUrl,
+      TEST_PIPELINE_DATABASE_URL: `postgres://temnia_pipeline:temnia_pipeline@127.0.0.1:${POSTGRES_HOST_PORT}/${database}`,
     };
+    const syntheticRoutes = JSON.parse(
+      readFileSync(
+        resolve(GATE_HARNESS_FIXTURES, "routes.synthetic.json"),
+        "utf8"
+      )
+    );
+    if (syntheticRoutes.synthetic !== true || !syntheticRoutes.snapshot_id) {
+      throw new Error(
+        "The gate requires an explicit synthetic harness route snapshot."
+      );
+    }
+    const harnessEnv = [
+      "-e",
+      "HARNESS_ENABLED=1",
+      "-e",
+      "HARNESS_BACKEND=recorded",
+      "-e",
+      "HARNESS_ALLOW_RECORDED=1",
+      "-e",
+      `HARNESS_ROUTE_SNAPSHOT_ID=${syntheticRoutes.snapshot_id}`,
+    ];
     const storageEnv = [
       "-e",
       "STORAGE_ENDPOINT=http://garage:3900",
@@ -362,6 +389,13 @@ async function runFullGate(sha) {
       // them. They are not baked into the image, which carries no tests.
       "-v",
       `${resolve(ROOT, "apps/pipeline/tests/fixtures/transcripts")}:${GATE_RECORDINGS_DIR}:ro`,
+      ...harnessEnv,
+      "-e",
+      `HARNESS_ROUTE_SNAPSHOT_PATH=${GATE_HARNESS_DIR}/routes.synthetic.json`,
+      "-e",
+      `HARNESS_RECORDED_FIXTURE_PATH=${GATE_HARNESS_DIR}/chapter.synthetic.json`,
+      "-v",
+      `${GATE_HARNESS_FIXTURES}:${GATE_HARNESS_DIR}:ro`,
       ...storageEnv,
       pipelineImage,
     ]);
@@ -384,6 +418,7 @@ async function runFullGate(sha) {
       `UPLOAD_PART_SIZE_BYTES=${GATE_PART_SIZE_BYTES}`,
       "-e",
       `UPLOAD_ADOPT_GRACE_SECONDS=${GATE_ADOPT_GRACE_SECONDS}`,
+      ...harnessEnv,
       ...storageEnv,
       webImage,
     ]);

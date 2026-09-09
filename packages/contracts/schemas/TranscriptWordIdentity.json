@@ -1,0 +1,41 @@
+{
+  "$defs": {
+    "TranscriptWordIdentity": {
+      "$id": "#/$defs/TranscriptWordIdentity",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "timingOrigin": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "manual"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "parentIds",
+        "timingOrigin"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptWordIdentity"
+    }
+  },
+  "$id": "TranscriptWordIdentity.json",
+  "$ref": "#/$defs/TranscriptWordIdentity",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

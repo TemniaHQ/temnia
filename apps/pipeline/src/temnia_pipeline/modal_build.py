@@ -16,7 +16,18 @@ def source_build_id(pipeline_root: Path | None = None) -> str:
     the image environment so a container never recomputes it from partial files.
     """
     root = pipeline_root or Path(__file__).resolve().parents[2]
-    files = [root / name for name in ("pyproject.toml", "uv.lock", "Dockerfile")]
+    files = [
+        root / name
+        for name in (
+            "pyproject.toml",
+            "uv.lock",
+            "Dockerfile",
+            "Dockerfile.speech",
+            "THIRD_PARTY_NOTICES.md",
+            "LICENSES/NLTK-3.10.3.txt",
+        )
+        if (root / name).is_file()
+    ]
     files.extend(sorted((root / "src" / "temnia_pipeline").rglob("*.py")))
     digest = hashlib.sha256()
     for path in files:

@@ -1,0 +1,94 @@
+{
+  "routes": [
+    {
+      "cache_enabled": false,
+      "context_tokens": 65536,
+      "eligibility": {
+        "cache_qualified": false,
+        "probe_artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "probed_at": "2026-09-08",
+        "strict_json_schema": true,
+        "zero_data_retention": true
+      },
+      "family": "synthetic-fixture-family",
+      "gateway_model": "synthetic/explicit-chapter-fixture",
+      "id": "synthetic-chapter-fixture-v1",
+      "max_output_tokens": 8192,
+      "open_weight": true,
+      "prices": {
+        "cache_read": null,
+        "cache_write": null,
+        "input": 0,
+        "output": 0,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "synthetic-recorded",
+      "reasoning_effort": null,
+      "service_tier": null
+    },
+    {
+      "cache_enabled": false,
+      "context_tokens": 65536,
+      "eligibility": {
+        "cache_qualified": false,
+        "probe_artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "probed_at": "2026-09-08",
+        "strict_json_schema": true,
+        "zero_data_retention": true
+      },
+      "family": "synthetic-fixture-family-b",
+      "gateway_model": "synthetic/explicit-chapter-fixture-b",
+      "id": "synthetic-chapter-fixture-b-v1",
+      "max_output_tokens": 8192,
+      "open_weight": false,
+      "prices": {
+        "cache_read": null,
+        "cache_write": null,
+        "input": 0,
+        "output": 0,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "synthetic-recorded",
+      "reasoning_effort": null,
+      "service_tier": null
+    },
+    {
+      "cache_enabled": false,
+      "context_tokens": 65536,
+      "eligibility": {
+        "cache_qualified": false,
+        "probe_artifact_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "probed_at": "2026-09-08",
+        "strict_json_schema": true,
+        "zero_data_retention": true
+      },
+      "family": "synthetic-fixture-family-c",
+      "gateway_model": "synthetic/explicit-chapter-fixture-c",
+      "id": "synthetic-chapter-fixture-c-v1",
+      "max_output_tokens": 8192,
+      "open_weight": false,
+      "prices": {
+        "cache_read": null,
+        "cache_write": null,
+        "input": 0,
+        "output": 0,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "synthetic-recorded",
+      "reasoning_effort": null,
+      "service_tier": null
+    }
+  ],
+  "seats": {
+    "propose": {"route_ids": ["synthetic-chapter-fixture-v1", "synthetic-chapter-fixture-b-v1", "synthetic-chapter-fixture-c-v1"]},
+    "summary": {"route_ids": ["synthetic-chapter-fixture-b-v1", "synthetic-chapter-fixture-v1", "synthetic-chapter-fixture-c-v1"]},
+    "verify": {"route_ids": ["synthetic-chapter-fixture-c-v1", "synthetic-chapter-fixture-b-v1", "synthetic-chapter-fixture-v1"]}
+  },
+  "signature": null,
+  "snapshot_id": "e2997f13380128fe116e038c3116d7fd4904ddf364eef79be1783c8e9cb0d06a",
+  "synthetic": true,
+  "version": 1
+}

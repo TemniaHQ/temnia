@@ -100,7 +100,12 @@ EXPECTED_ENUMS = {
     "source_status": {"uploading", "uploaded", "processing", "ready", "failed"},
     "artifact_kind": {"master", "hls", "peaks", "thumbnails", "audio", "shots"},
     "upload_status": {"active", "completed", "aborted"},
-    "usage_kind": {"storage_bytes", "processing_seconds", "transcription_seconds"},
+    "usage_kind": {
+        "storage_bytes",
+        "processing_seconds",
+        "transcription_seconds",
+        "provider_cost_micros",
+    },
     "transcript_status": {"pending", "processing", "ready", "failed"},
     "transcript_revision_kind": {"machine", "correction"},
 }

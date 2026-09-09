@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "HarnessEvidenceWord": {
+      "$id": "#/$defs/HarnessEvidenceWord",
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lineageIds": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "speaker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timing": {
+          "type": "string",
+          "enum": [
+            "aligned",
+            "interpolated"
+          ]
+        },
+        "wordIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "confidence",
+        "endMs",
+        "id",
+        "lineageIds",
+        "speaker",
+        "startMs",
+        "text",
+        "timing",
+        "wordIndex"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceWord"
+    }
+  },
+  "$id": "HarnessEvidenceWord.json",
+  "$ref": "#/$defs/HarnessEvidenceWord",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

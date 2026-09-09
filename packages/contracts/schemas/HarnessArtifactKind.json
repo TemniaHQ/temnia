@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "HarnessArtifactKind": {
+      "$id": "#/$defs/HarnessArtifactKind",
+      "type": "string",
+      "enum": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint",
+        "speech_assignment"
+      ],
+      "title": "HarnessArtifactKind"
+    }
+  },
+  "$id": "HarnessArtifactKind.json",
+  "$ref": "#/$defs/HarnessArtifactKind",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."harness_artifact_kind" ADD VALUE 'speech_assignment';

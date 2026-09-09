@@ -24,8 +24,9 @@ interface TranscriptSpeakersDialogProps {
   speakers: readonly string[];
 }
 
-/** Two ids with one name are one speaker, on screen and in every export. */
-export const MERGE_NOTICE = "This will merge the two speakers.";
+/** Duplicate labels are presentation only; identity merge is an explicit edit. */
+export const MERGE_NOTICE =
+  "These speakers will keep separate identities with the same display name.";
 
 function trimmed(draft: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -49,10 +50,8 @@ export function willMerge(draft: Record<string, string>): boolean {
 /**
  * Rename the speakers a diarizer only knows as "0" and "1".
  *
- * Names live on the transcript row, so a rename costs no revision and no
- * storage. Giving two ids the same name is the manual merge over-segmented
- * diarization needs, and it is announced before Save rather than discovered
- * afterwards; nothing merges on its own.
+ * Names are saved in revision annotations. Matching names remain distinct;
+ * merging diarization identities is a separate explicit structural command.
  */
 export function TranscriptSpeakersDialog({
   error,
@@ -81,8 +80,7 @@ export function TranscriptSpeakersDialog({
           <DialogTitle>Speakers</DialogTitle>
           <DialogDescription>
             The names here are used in the transcript and in every caption
-            export. They are not part of a revision, so renaming one costs
-            nothing.
+            export. Saving names creates a new transcript revision.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">

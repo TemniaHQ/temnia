@@ -1,0 +1,6 @@
+# syntax=docker/dockerfile:1
+# Modal builds this small base, then installs the Python/model layers declared
+# in modal_speech_app.py. Both source images are immutable linux/amd64 manifests.
+FROM mwader/static-ffmpeg:8.1.2@sha256:33f770f812cbfc3de96c547157fc9faf8bd95a36481753439ffa761045167585 AS ffmpeg
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04@sha256:cff3a0d82d2c2b47bab252d67fa9b34a20ef4c50781d98501b5c7367ea9afd10
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/

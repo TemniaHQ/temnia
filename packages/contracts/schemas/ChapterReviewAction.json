@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "ChapterReviewAction": {
+      "$id": "#/$defs/ChapterReviewAction",
+      "type": "string",
+      "enum": [
+        "accept",
+        "reject",
+        "nudge",
+        "restore",
+        "merge",
+        "undo",
+        "retry",
+        "cancel",
+        "raise_budget"
+      ],
+      "title": "ChapterReviewAction"
+    }
+  },
+  "$id": "ChapterReviewAction.json",
+  "$ref": "#/$defs/ChapterReviewAction",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

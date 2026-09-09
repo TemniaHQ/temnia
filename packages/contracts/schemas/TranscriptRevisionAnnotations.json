@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "TranscriptRevisionAnnotations": {
+      "$id": "#/$defs/TranscriptRevisionAnnotations",
+      "type": "object",
+      "properties": {
+        "speakerIdentities": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/TranscriptSpeakerIdentity"
+          }
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "wordIdentities": {
+          "maxItems": 250000,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TranscriptWordIdentity"
+          }
+        }
+      },
+      "required": [
+        "speakerIdentities",
+        "version",
+        "wordIdentities"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptRevisionAnnotations"
+    },
+    "TranscriptSpeakerIdentity": {
+      "$id": "#/$defs/TranscriptSpeakerIdentity",
+      "type": "object",
+      "properties": {
+        "identityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "parentIdentityIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "identityId",
+        "label",
+        "parentIdentityIds"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptSpeakerIdentity"
+    },
+    "TranscriptWordIdentity": {
+      "$id": "#/$defs/TranscriptWordIdentity",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentIds": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "timingOrigin": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "manual"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "parentIds",
+        "timingOrigin"
+      ],
+      "additionalProperties": false,
+      "title": "TranscriptWordIdentity"
+    }
+  },
+  "$id": "TranscriptRevisionAnnotations.json",
+  "$ref": "#/$defs/TranscriptRevisionAnnotations",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

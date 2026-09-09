@@ -3,6 +3,7 @@
 import { VideoPlayer } from "@videojs/react/video";
 import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
+import { ChapterPanel } from "@/components/sources/chapter-panel";
 import { SourceTimestamp } from "@/components/sources/source-timestamp";
 import { TranscriptPanel } from "@/components/sources/transcript-panel";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { HarnessAvailability } from "@/lib/harness/config";
+import type { ChapterView } from "@/lib/harness/queries";
 import {
   formatBytes,
   formatDuration,
@@ -60,12 +63,20 @@ interface ArtifactSummary {
 
 interface SourceWorkspaceProps {
   artifacts: ArtifactSummary[];
+  chapterAvailability: HarnessAvailability;
+  chapters: ChapterView;
   peaksUrl: string | null;
   playlistUrl: string | null;
   posterUrl: string | null;
   source: SourceSummary;
   speakerLabels: Record<string, string>;
   transcript: TranscriptRowSummary | null;
+  transcriptAnnotationsUrl: string | null;
+  transcriptRevisions: Array<{
+    annotationsUrl: string;
+    revision: number;
+    url: string;
+  }>;
   /** The media-proxy URL of the transcript's current revision, if it has one. */
   transcriptUrl: string | null;
 }
@@ -86,7 +97,11 @@ export function SourceWorkspace({
   posterUrl,
   speakerLabels,
   transcript,
+  transcriptAnnotationsUrl,
+  transcriptRevisions,
   transcriptUrl,
+  chapterAvailability,
+  chapters,
 }: SourceWorkspaceProps) {
   // The one row that is not a string: an absolute instant belongs to the
   // reader's time zone, which only the browser knows, so it renders itself in
@@ -136,6 +151,9 @@ export function SourceWorkspace({
             <TabsList>
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="transcript">Transcript</TabsTrigger>
+              <TabsTrigger data-testid="chapters-tab" value="chapters">
+                Chapters
+              </TabsTrigger>
               <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
             </TabsList>
             <TabsContent value="details">
@@ -153,12 +171,21 @@ export function SourceWorkspace({
             </TabsContent>
             <TabsContent value="transcript">
               <TranscriptPanel
+                annotationsUrl={transcriptAnnotationsUrl}
                 labels={speakerLabels}
+                revisions={transcriptRevisions}
                 revisionUrl={transcriptUrl}
                 row={transcript}
                 sourceId={source.id}
                 sourceStatus={source.status}
                 title={source.title}
+              />
+            </TabsContent>
+            <TabsContent value="chapters">
+              <ChapterPanel
+                availability={chapterAvailability}
+                initialView={chapters}
+                sourceId={source.id}
               />
             </TabsContent>
             <TabsContent value="artifacts">

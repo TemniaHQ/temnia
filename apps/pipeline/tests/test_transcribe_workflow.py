@@ -28,7 +28,7 @@ from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from temnia_pipeline import db, storage
-from temnia_pipeline.contracts import Scope, TranscribeInput, TranscriptV1
+from temnia_pipeline.contracts import Scope, TranscribeInput, TranscriptStage, TranscriptV1
 from temnia_pipeline.ingest import Context
 from temnia_pipeline.settings import (
     PipelineSettings,
@@ -36,6 +36,8 @@ from temnia_pipeline.settings import (
     TranscodeSettings,
     TranscriptionSettings,
 )
+from temnia_pipeline.speech.activities import SpeechActivities
+from temnia_pipeline.speech.progress import report_speech_progress
 from temnia_pipeline.transcription.activities import Transcribe
 from temnia_pipeline.transcription.factory import make_transcription
 from temnia_pipeline.transcription.runner import provider_failure, transcription_failure
@@ -166,11 +168,12 @@ async def run_workflow(ctx: Context, request: TranscribeInput) -> object:
     ) as env:
         queue = f"test-{uuid.uuid4()}"
         transcribe = Transcribe(ctx)
+        speech = SpeechActivities(ctx)
         async with Worker(
             env.client,
             task_queue=queue,
             workflows=[TranscribeWorkflow],
-            activities=transcribe.activities(),
+            activities=[*transcribe.activities(), *speech.activities()],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "pydantic", "pydantic_core"
@@ -530,6 +533,29 @@ async def test_a_claim_is_idempotent_per_run_and_refused_to_another(
 
 
 @pytest.mark.timeout(60)
+async def test_transcription_claim_refuses_a_source_fenced_for_deletion(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """The source deletion fence is checked before any transcript upsert."""
+    _prefix, source_id, _project_id = source
+    url = pipeline_url()
+    async with db.scoped(url, SEEDED) as conn:
+        await conn.execute(
+            "UPDATE source SET deletion_requested_at = now() WHERE id = %s",
+            (source_id,),
+        )
+        attempt = await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "transcribe-delete", "run-delete"
+        )
+        transcript = await (
+            await conn.execute("SELECT id FROM transcript WHERE source_id = %s", (source_id,))
+        ).fetchone()
+    assert attempt == 0
+    assert transcript is None
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
 async def test_writes_from_a_run_that_lost_the_row_change_nothing(
     source: tuple[str, uuid.UUID, uuid.UUID],
 ) -> None:
@@ -565,6 +591,76 @@ async def test_writes_from_a_run_that_lost_the_row_change_nothing(
 
         await db.report_transcription_progress(conn, source_id, "align", 50, "run-2")
         assert (await transcript_row(conn, source_id))["stage"] == "align"
+    await db.close_pool()
+
+
+@pytest.mark.timeout(60)
+async def test_checkpointed_progress_refreshes_only_the_current_run(
+    source: tuple[str, uuid.UUID, uuid.UUID],
+) -> None:
+    """A poll after the UI stall threshold refreshes liveness without reviving an old run."""
+    prefix, source_id, _project_id = source
+    url = pipeline_url()
+    request = TranscribeInput(
+        scope=SEEDED,
+        sourceId=source_id,
+        artifactPrefix=prefix,
+        audioKey=prefix + "audio/audio.m4a",
+        durationMs=DURATION_MS,
+    )
+    async with db.scoped(url, SEEDED) as conn:
+        assert await db.claim_transcription(
+            conn, source_id, SEEDED.organizationId, "transcribe-progress", "run-current"
+        )
+        await conn.execute(
+            """
+            UPDATE transcript SET stage = 'planning', heartbeat_at = now() - interval '6 minutes'
+             WHERE source_id = %s
+            """,
+            (source_id,),
+        )
+        before = await transcript_row(conn, source_id)
+
+    stale = ActivityEnvironment()
+    stale.info = dataclasses.replace(stale.info, workflow_run_id="run-stale")
+    await stale.run(report_speech_progress, url, request, TranscriptStage.align)
+    async with db.scoped(url, SEEDED) as conn:
+        after_stale = await transcript_row(conn, source_id)
+    assert after_stale["stage"] == "planning"
+    assert after_stale["heartbeat_at"] == before["heartbeat_at"]
+
+    current = ActivityEnvironment()
+    current.info = dataclasses.replace(current.info, workflow_run_id="run-current")
+    heartbeats: list[object] = []
+    current.on_heartbeat = heartbeats.append
+    await current.run(
+        report_speech_progress,
+        url,
+        request,
+        TranscriptStage.speech_coverage,
+        update_visible_stage=False,
+    )
+    async with db.scoped(url, SEEDED) as conn:
+        after_parallel_coverage = await transcript_row(conn, source_id)
+    assert after_parallel_coverage["stage"] == "planning"
+    assert after_parallel_coverage["percent"] is None
+    assert after_parallel_coverage["heartbeat_at"] > before["heartbeat_at"]
+
+    await current.run(
+        report_speech_progress,
+        url,
+        request,
+        TranscriptStage.speech_coverage,
+    )
+    async with db.scoped(url, SEEDED) as conn:
+        after_current = await transcript_row(conn, source_id)
+    assert after_current["stage"] == "speech_coverage"
+    assert after_current["percent"] is None
+    assert after_current["heartbeat_at"] > before["heartbeat_at"]
+    assert heartbeats == [
+        {"stage": "speech_coverage", "progress": None},
+        {"stage": "speech_coverage", "progress": None},
+    ]
     await db.close_pool()
 
 

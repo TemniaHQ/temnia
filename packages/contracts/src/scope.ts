@@ -22,6 +22,19 @@ export const SEEDED_SCOPE: Scope = {
   userId: "0192e8a0-0000-7000-8000-000000000002",
 };
 
+/** Generated-language view of the same caller-free scope stub used by the web. */
+export const SeededScopeSchema = z
+  .object({
+    organizationId: z
+      .literal(SEEDED_SCOPE.organizationId)
+      .default(SEEDED_SCOPE.organizationId),
+    userId: z.literal(SEEDED_SCOPE.userId).default(SEEDED_SCOPE.userId),
+  })
+  .strict()
+  .meta({ id: "SeededScope", title: "SeededScope" });
+
+export type SeededScope = z.infer<typeof SeededScopeSchema>;
+
 /**
  * A second seeded organization that owns nothing the first may see. The isolation
  * suite probes every table against this pair.

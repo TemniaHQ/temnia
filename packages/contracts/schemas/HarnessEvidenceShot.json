@@ -1,0 +1,27 @@
+{
+  "$defs": {
+    "HarnessEvidenceShot": {
+      "$id": "#/$defs/HarnessEvidenceShot",
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "score",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessEvidenceShot"
+    }
+  },
+  "$id": "HarnessEvidenceShot.json",
+  "$ref": "#/$defs/HarnessEvidenceShot",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

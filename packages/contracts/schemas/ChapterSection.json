@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "ChapterSection": {
+      "$id": "#/$defs/ChapterSection",
+      "type": "object",
+      "properties": {
+        "endBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ]
+        },
+        "quoteWordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reviewState": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "accepted",
+            "rejected"
+          ]
+        },
+        "startBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endBoundaryId",
+        "flags",
+        "id",
+        "kind",
+        "quoteWordIds",
+        "reason",
+        "reviewState",
+        "startBoundaryId",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterSection"
+    }
+  },
+  "$id": "ChapterSection.json",
+  "$ref": "#/$defs/ChapterSection",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -18,6 +18,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -64,6 +65,8 @@ export const source = pgTable(
     createdBy: uuid("created_by").references(() => user.id, {
       onDelete: "set null",
     }),
+    /** Set only after deletion is fenced; new harness history refuses this source. */
+    deletionRequestedAt: timestamptz("deletion_requested_at"),
     /** Probed after upload; null until then. */
     durationMs: integer("duration_ms"),
     errorMessage: text("error_message"),
@@ -92,6 +95,7 @@ export const source = pgTable(
     width: integer("width"),
   },
   (table) => [
+    unique("source_organization_id_idx").on(table.organizationId, table.id),
     index("source_project_idx").on(table.projectId, table.createdAt),
     index("source_organization_status_idx").on(
       table.organizationId,
@@ -188,6 +192,7 @@ export const usageKind = pgEnum("usage_kind", [
   "storage_bytes",
   "processing_seconds",
   "transcription_seconds",
+  "provider_cost_micros",
 ]);
 
 /**
@@ -295,6 +300,11 @@ export const transcript = pgTable(
     // what makes a second workflow for the same source a no-op rather than a
     // second GPU job.
     uniqueIndex("transcript_source_idx").on(table.sourceId),
+    unique("transcript_organization_source_id_idx").on(
+      table.organizationId,
+      table.sourceId,
+      table.id
+    ),
     index("transcript_organization_status_idx").on(
       table.organizationId,
       table.status
@@ -341,6 +351,11 @@ export const transcriptRevision = pgTable(
   },
   (table) => [
     uniqueIndex("transcript_revision_idx").on(
+      table.transcriptId,
+      table.revision
+    ),
+    unique("transcript_revision_organization_transcript_revision_idx").on(
+      table.organizationId,
       table.transcriptId,
       table.revision
     ),

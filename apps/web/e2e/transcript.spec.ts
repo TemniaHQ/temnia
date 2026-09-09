@@ -34,7 +34,8 @@ const TERMINAL = resolve(process.cwd(), "e2e/fixtures/master-12s.mp4");
 const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
 // Machine revisions are `rev-N.json`; a correction's key carries its attempt.
-const REVISION_URL = /transcript\/rev-\d+(-[0-9a-f]{8})?\.json/;
+const REVISION_URL =
+  /transcript\/rev-\d+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{16})?\.json(?:\?|$)/;
 // The last two are what a nesting mistake looks like: the parser closes the
 // offending tag and the server HTML and the client tree stop agreeing, which
 // on a production build is React #418 and nothing else (the S1 lesson).
@@ -220,6 +221,29 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
   await page.getByTestId("transcript-search").press("Escape");
   await expect(page.getByTestId("transcript-match-count")).toHaveCount(0);
 
+  // A phrase is one navigable hit whose whole word span is highlighted.
+  // Punctuation in the query need not have been emitted by the recognizer.
+  await page.getByTestId("transcript-search").fill("Thanks, for");
+  await expect(page.getByTestId("transcript-match-count")).toHaveText("1/2");
+  await expect(page.locator('[data-word][data-focused="true"]')).toHaveCount(2);
+  await expect(page.locator('[data-word="20"]')).toHaveAttribute(
+    "data-focused",
+    "true"
+  );
+  await expect(page.locator('[data-word="21"]')).toHaveAttribute(
+    "data-focused",
+    "true"
+  );
+  await page.getByTestId("transcript-next").click();
+  await expect(page.getByTestId("transcript-match-count")).toHaveText("2/2");
+  await expect(page.locator('[data-word="88"]')).toHaveAttribute(
+    "data-focused",
+    "true"
+  );
+  await page.getByTestId("transcript-previous").click();
+  await expect(page.getByTestId("transcript-match-count")).toHaveText("1/2");
+  await page.getByTestId("transcript-search").press("Escape");
+
   // A search and follow-scroll both want the pane, and the search asked for it
   // first: follow is off, and Jump to current is how it starts again.
   const follow = page.getByTestId("transcript-follow");
@@ -271,7 +295,7 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
   const vtt = await page.request.get(`/api/sources/${sourceId}/transcript.vtt`);
   expect(await vtt.text()).toContain("<v Priya>");
 
-  // Reassigning a turn is a correction like any other: revision three.
+  // Reassigning a turn is a correction like any other: revision four.
   await page.getByTestId("speaker-chip").first().click();
   await page.getByRole("menuitem", { name: "Sam" }).click();
   await expect
@@ -282,7 +306,7 @@ test("a recorded transcript is read, searched, corrected, and exported", async (
         ).headers().etag,
       { timeout: 20_000 }
     )
-    .toBe('"rev-3"');
+    .toBe('"rev-4"');
 
   // Two contexts on the same revision: the second save is refused with words.
   const other = await browser.newContext();

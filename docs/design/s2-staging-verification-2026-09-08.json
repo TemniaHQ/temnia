@@ -1,0 +1,88 @@
+{
+  "sourceId": "01a07b1d-3b3b-727d-9456-824effb25346",
+  "workflowId": "transcribe-01a07b1d-3b3b-727d-9456-824effb25346",
+  "runId": "01a080fe-4389-7613-bc28-3ba5ae4dcb01",
+  "checks": {
+    "exactRunCompleted": true,
+    "workflowInputOutputIdentity": true,
+    "completedActivityExpectedCall": true,
+    "oneLogicalAttempt": true,
+    "freshRowOwnedByCompletedRun": true,
+    "freshRowReadyAtExpectedRevision": true,
+    "revisionIdentity": true,
+    "exactStoredBytes": true,
+    "sourceDurationUnchanged": true,
+    "wordCountsAgree": true,
+    "speakerCountsAgree": true,
+    "languageProviderAgree": true,
+    "speakerReferencesAgree": true,
+    "timingInvariants": true,
+    "utteranceInvariants": true,
+    "oneCurrentAttemptLedgerEntry": true,
+    "meteredRuntimeAgrees": true,
+    "revisionStorageLedgerAgrees": true
+  },
+  "wordCount": 20587,
+  "speakerCount": 2,
+  "utteranceCount": 241,
+  "language": "en",
+  "durationMs": 9060473,
+  "sourceBytes": 1911080861,
+  "revision": 1,
+  "revisionBytes": 2117635,
+  "revisionSha256": "c4222ccd028e5be24270c8411baaba589000bf997578161b322b674c8e1b51be",
+  "callIdFromCompletedActivity": "fc-01M20FWJ252T1KWHG1G9JG842W",
+  "gpu": "L4",
+  "gpuSeconds": 635.22,
+  "workflowStartedAt": "2026-09-08T12:29:02.217399+00:00",
+  "workflowClosedAt": "2026-09-08T12:40:02.481409+00:00",
+  "workflowSeconds": 660.264,
+  "interpolatedWords": 0,
+  "nullSpeakerWords": 0,
+  "nullConfidenceWords": 0,
+  "alignmentScoresBelow0_5": 2609,
+  "zeroDurationWords": 0,
+  "firstWordStartMs": 91,
+  "lastWordEndMs": 9044040,
+  "uncoveredTailMs": 16433,
+  "largestUncoveredIntervalsMs": [
+    [
+      1840232,
+      1845918
+    ],
+    [
+      1668749,
+      1673632
+    ],
+    [
+      7140138,
+      7144899
+    ],
+    [
+      206028,
+      210623
+    ],
+    [
+      133235,
+      137825
+    ]
+  ],
+  "currentAttemptLedger": [
+    {
+      "kind": "transcription_seconds",
+      "quantity": 9060,
+      "detail": {
+        "gpu": "L4",
+        "model": "large-v3",
+        "attempt": 1,
+        "category": "transcription",
+        "provider": "whisperx",
+        "gpuSeconds": 635.22
+      },
+      "idempotency_key": "transcription:01a07b1d-3b3b-727d-9456-824effb25346:1"
+    }
+  ],
+  "accountedRevisionBytes": 2117635,
+  "scope": "completed transcription consistency; not WER, DER, VAD recall, all-prefix storage or total billed GPU cost",
+  "passed": true
+}

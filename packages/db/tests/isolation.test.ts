@@ -17,7 +17,7 @@ import {
   type Scope,
   SEEDED_SCOPE,
 } from "@temnia/contracts";
-import { eq, getTableName, sql } from "drizzle-orm";
+import { and, eq, getTableName } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,6 +28,14 @@ import {
 } from "../src/client.ts";
 import {
   artifact,
+  chapterReviewEvent,
+  chapterRevision,
+  harnessArtifact,
+  harnessArtifactDependency,
+  harnessAttempt,
+  harnessOperation,
+  harnessReservation,
+  harnessRun,
   member,
   organization,
   project,
@@ -47,16 +55,23 @@ if (!ownerUrl) {
   );
 }
 const appRole = process.env.TEST_APP_ROLE ?? "temnia_app";
+const pipelineRole = process.env.TEST_PIPELINE_ROLE ?? "temnia_pipeline";
 // The probes run as the app role. Dev and gate databases share the compose
 // password; anything else sets TEST_APP_DATABASE_URL explicitly.
 const CREDENTIALS = /\/\/[^@]+@/;
+const FOREIGN_KEY_REJECTION = /foreign key constraint/;
+const PERMISSION_REJECTION = /permission denied/;
 const POLICY_REJECTION = /row-level security|duplicate key/;
 const appUrl =
   process.env.TEST_APP_DATABASE_URL ??
   ownerUrl.replace(CREDENTIALS, `//${appRole}:${appRole}@`);
+const pipelineUrl =
+  process.env.TEST_PIPELINE_DATABASE_URL ??
+  ownerUrl.replace(CREDENTIALS, `//${pipelineRole}:${pipelineRole}@`);
 
 const owner = new pg.Client({ connectionString: ownerUrl });
 let app: DatabaseHandle;
+let pipeline: DatabaseHandle;
 
 const A: Scope = SEEDED_SCOPE;
 
@@ -77,6 +92,22 @@ async function expectRejectedByPolicy(
 }
 const B: Scope = PROBE_SCOPE;
 
+async function expectDatabaseRejected(
+  attempt: Promise<unknown>,
+  pattern: RegExp
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await attempt;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught, "the database accepted a forbidden write").toBeDefined();
+  const root = (caught as { cause?: unknown }).cause ?? caught;
+  const message = root instanceof Error ? root.message : String(root);
+  expect(message).toMatch(pattern);
+}
+
 interface TableRow {
   has_organization_id: boolean;
   policy_count: number;
@@ -95,38 +126,63 @@ const SCOPE_EXCEPTIONS: Record<string, string> = {
  * One probe per table: creates a row under `scope` (using rows created earlier
  * for the same scope) and returns the values to attempt as a cross-scope insert.
  */
+interface ProbeFixture {
+  crossValues: Record<string, unknown>;
+  rowId: string;
+}
+
 interface Probe {
-  create: (
-    scope: Scope,
-    ctx: Map<string, string>
-  ) => Promise<Record<string, unknown>>;
+  create: (scope: Scope, ctx: Map<string, string>) => Promise<ProbeFixture>;
   table: PgTable;
 }
+
+const ownedHarnessSourceIds = new Set<string>();
+const ownedProjectIds = new Set<string>();
 
 const probes: Probe[] = [
   {
     create: (scope) =>
       Promise.resolve({
-        name: "probe",
-        slug: `probe-${scope.organizationId.slice(-4)}-${Date.now()}`,
+        crossValues: {
+          name: "probe",
+          slug: `probe-${scope.organizationId.slice(-4)}-${Date.now()}`,
+        },
+        rowId: scope.organizationId,
       }),
     table: organization,
   },
   {
     create: (scope) =>
       Promise.resolve({
-        email: `probe-${scope.userId.slice(-4)}-${Date.now()}@example.invalid`,
-        name: "probe",
+        crossValues: {
+          email: `probe-${scope.userId.slice(-4)}-${Date.now()}@example.invalid`,
+          name: "probe",
+        },
+        rowId: scope.userId,
       }),
     table: user,
   },
   {
-    create: (scope) =>
-      Promise.resolve({
+    create: async (scope) => {
+      const crossValues = {
         organizationId: scope.organizationId,
         role: "member",
         userId: scope.userId,
-      }),
+      };
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx
+          .select({ id: member.id })
+          .from(member)
+          .where(
+            and(
+              eq(member.organizationId, scope.organizationId),
+              eq(member.userId, scope.userId)
+            )
+          )
+          .limit(1)
+      );
+      return { crossValues, rowId: row?.id ?? "" };
+    },
     table: member,
   },
   {
@@ -139,7 +195,10 @@ const probes: Probe[] = [
         tx.insert(project).values(values).returning({ id: project.id })
       );
       ctx.set("project", row?.id ?? "");
-      return values;
+      if (row?.id) {
+        ownedProjectIds.add(row.id);
+      }
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: project,
   },
@@ -158,7 +217,7 @@ const probes: Probe[] = [
         tx.insert(source).values(values).returning({ id: source.id })
       );
       ctx.set("source", row?.id ?? "");
-      return values;
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: source,
   },
@@ -173,8 +232,10 @@ const probes: Probe[] = [
         sourceId: ctx.get("source") ?? "",
         storageKey: `org/${scope.organizationId}/source/probe/master.mp4`,
       };
-      await withScope(app.db, scope, (tx) => tx.insert(upload).values(values));
-      return values;
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx.insert(upload).values(values).returning({ id: upload.id })
+      );
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: upload,
   },
@@ -188,10 +249,10 @@ const probes: Probe[] = [
         sourceId: ctx.get("source") ?? "",
         storageKey: `org/${scope.organizationId}/source/probe/shots.json`,
       };
-      await withScope(app.db, scope, (tx) =>
-        tx.insert(artifact).values(values)
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx.insert(artifact).values(values).returning({ id: artifact.id })
       );
-      return values;
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: artifact,
   },
@@ -203,10 +264,10 @@ const probes: Probe[] = [
         quantity: 1,
         sourceId: ctx.get("source") ?? "",
       };
-      await withScope(app.db, scope, (tx) =>
-        tx.insert(usageLedger).values(values)
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx.insert(usageLedger).values(values).returning({ id: usageLedger.id })
       );
-      return values;
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: usageLedger,
   },
@@ -220,7 +281,7 @@ const probes: Probe[] = [
         tx.insert(transcript).values(values).returning({ id: transcript.id })
       );
       ctx.set("transcript", row?.id ?? "");
-      return values;
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: transcript,
   },
@@ -235,29 +296,66 @@ const probes: Probe[] = [
         transcriptId: ctx.get("transcript") ?? "",
         wordCount: 1,
       };
-      await withScope(app.db, scope, (tx) =>
-        tx.insert(transcriptRevision).values(values)
+      const [row] = await withScope(app.db, scope, (tx) =>
+        tx
+          .insert(transcriptRevision)
+          .values(values)
+          .returning({ id: transcriptRevision.id })
       );
-      return values;
+      return { crossValues: values, rowId: row?.id ?? "" };
     },
     table: transcriptRevision,
   },
 ];
 
+const harnessTables = [
+  chapterReviewEvent,
+  chapterRevision,
+  harnessArtifact,
+  harnessArtifactDependency,
+  harnessAttempt,
+  harnessOperation,
+  harnessReservation,
+  harnessRun,
+] as const;
+
 beforeAll(async () => {
   await owner.connect();
   app = createDatabase(appUrl, 2);
+  pipeline = createDatabase(pipelineUrl, 2);
 });
 
 afterAll(async () => {
-  // Owner cleanup of anything a probe left behind (cascades from project).
-  await owner.query(`DELETE FROM project WHERE name = 'probe project'`);
-  await owner.query(`DELETE FROM organization WHERE slug LIKE 'probe-%'`);
-  await owner.query(
-    `DELETE FROM "user" WHERE email LIKE 'probe-%@example.invalid'`
-  );
+  const harnessSources = [...ownedHarnessSourceIds];
+  if (harnessSources.length > 0) {
+    // History uses RESTRICT, so remove only this suite's harness graph in reverse.
+    for (const table of [
+      "chapter_review_event",
+      "chapter_revision",
+      "harness_reservation",
+      "harness_attempt",
+      "harness_operation",
+      "harness_run",
+      "harness_artifact_dependency",
+      "harness_artifact",
+    ]) {
+      // biome-ignore lint/performance/noAwaitInLoops: FK order is required for exact fixture cleanup
+      await owner.query(
+        `DELETE FROM ${table} WHERE source_id = ANY($1::uuid[])`,
+        [harnessSources]
+      );
+    }
+  }
+  const projects = [...ownedProjectIds];
+  if (projects.length > 0) {
+    // Cascades the ordinary media probes rooted in their exact owned projects.
+    await owner.query("DELETE FROM project WHERE id = ANY($1::uuid[])", [
+      projects,
+    ]);
+  }
   await owner.end();
   await app.close();
+  await pipeline.close();
 });
 
 async function catalogue(): Promise<TableRow[]> {
@@ -301,33 +399,62 @@ describe("every owned table", () => {
 
   it("has a probe in this suite", async () => {
     const rows = await catalogue();
-    const probed = new Set(probes.map((p) => getTableName(p.table)));
+    const probed = new Set([
+      ...probes.map((p) => getTableName(p.table)),
+      ...harnessTables.map((table) => getTableName(table)),
+    ]);
     const unprobed = rows
       .map((r) => r.table_name)
       .filter((t) => !probed.has(t));
     expect(unprobed, "add a probe for every new table").toEqual([]);
   });
 
-  it("grants the app and pipeline roles DML and nothing more", async () => {
+  it("grants each role exactly the operations its writer boundary needs", async () => {
     const { rows } = await owner.query<{
+      grantee: string;
       table_name: string;
       privileges: string[];
     }>(`
-      SELECT table_name::text, array_agg(DISTINCT privilege_type::text ORDER BY privilege_type::text) AS privileges
+      SELECT grantee::text, table_name::text,
+             array_agg(DISTINCT privilege_type::text ORDER BY privilege_type::text) AS privileges
       FROM information_schema.role_table_grants
       WHERE table_schema = 'public' AND grantee IN ('temnia_app', 'temnia_pipeline')
         AND table_name NOT LIKE '\\_\\_drizzle%'
-      GROUP BY table_name
+      GROUP BY grantee, table_name
     `);
     const tables = (await catalogue()).map((r) => r.table_name);
+    const immutable = new Set([
+      "chapter_review_event",
+      "chapter_revision",
+      "harness_artifact",
+      "harness_artifact_dependency",
+    ]);
+    const mutable = new Set([
+      "harness_attempt",
+      "harness_operation",
+      "harness_reservation",
+      "harness_run",
+    ]);
     for (const table of tables) {
-      const grant = rows.find((r) => r.table_name === table);
-      expect(grant?.privileges, `${table} grants`).toEqual([
-        "DELETE",
-        "INSERT",
-        "SELECT",
-        "UPDATE",
-      ]);
+      const appGrant = rows.find(
+        (r) => r.grantee === "temnia_app" && r.table_name === table
+      );
+      const pipelineGrant = rows.find(
+        (r) => r.grantee === "temnia_pipeline" && r.table_name === table
+      );
+      const isHarness = immutable.has(table) || mutable.has(table);
+      expect(appGrant?.privileges, `${table} app grants`).toEqual(
+        isHarness ? ["SELECT"] : ["DELETE", "INSERT", "SELECT", "UPDATE"]
+      );
+      let expectedPipeline = ["DELETE", "INSERT", "SELECT", "UPDATE"];
+      if (immutable.has(table)) {
+        expectedPipeline = ["INSERT", "SELECT"];
+      } else if (mutable.has(table)) {
+        expectedPipeline = ["INSERT", "SELECT", "UPDATE"];
+      }
+      expect(pipelineGrant?.privileges, `${table} pipeline grants`).toEqual(
+        expectedPipeline
+      );
     }
   });
 });
@@ -355,6 +482,299 @@ describe("the app role", () => {
   });
 });
 
+describe("harness writer boundary and scoped references", () => {
+  const sha = "a".repeat(64);
+  const otherSha = "b".repeat(64);
+  let sourceA = "";
+  let sourceB = "";
+  let transcriptA = "";
+  let evidenceArtifactId = "";
+  let proposalArtifactId = "";
+  let editArtifactId = "";
+  let runId = "";
+  let operationId = "";
+  let attemptId = "";
+
+  beforeAll(async () => {
+    const createSource = async (scope: Scope) => {
+      const [projectRow] = await withScope(app.db, scope, (tx) =>
+        tx
+          .insert(project)
+          .values({
+            name: "harness isolation project",
+            organizationId: scope.organizationId,
+          })
+          .returning({ id: project.id })
+      );
+      if (projectRow?.id) {
+        ownedProjectIds.add(projectRow.id);
+      }
+      const [sourceRow] = await withScope(app.db, scope, (tx) =>
+        tx
+          .insert(source)
+          .values({
+            contentType: "video/mp4",
+            masterKey: `org/${scope.organizationId}/source/isolation/master.mp4`,
+            organizationId: scope.organizationId,
+            originalFilename: "isolation.mp4",
+            projectId: projectRow?.id ?? "",
+            sizeBytes: 1,
+            title: "harness isolation source",
+          })
+          .returning({ id: source.id })
+      );
+      if (sourceRow?.id) {
+        ownedHarnessSourceIds.add(sourceRow.id);
+      }
+      return sourceRow?.id ?? "";
+    };
+
+    sourceA = await createSource(A);
+    sourceB = await createSource(B);
+    const [transcriptRow] = await withScope(app.db, A, (tx) =>
+      tx
+        .insert(transcript)
+        .values({ organizationId: A.organizationId, sourceId: sourceA })
+        .returning({ id: transcript.id })
+    );
+    transcriptA = transcriptRow?.id ?? "";
+    await withScope(app.db, A, (tx) =>
+      tx.insert(transcriptRevision).values({
+        kind: "machine",
+        organizationId: A.organizationId,
+        revision: 1,
+        sizeBytes: 1,
+        storageKey: `org/${A.organizationId}/source/isolation/transcript/rev-1.json`,
+        transcriptId: transcriptA,
+        wordCount: 1,
+      })
+    );
+
+    const artifacts = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessArtifact)
+        .values([
+          {
+            fingerprint: sha,
+            kind: "evidence",
+            organizationId: A.organizationId,
+            sha256: sha,
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/evidence.json`,
+            transcriptId: transcriptA,
+            transcriptRevision: 1,
+          },
+          {
+            fingerprint: otherSha,
+            kind: "proposal",
+            organizationId: A.organizationId,
+            sha256: otherSha,
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/proposal.json`,
+          },
+          {
+            fingerprint: "c".repeat(64),
+            kind: "edit",
+            organizationId: A.organizationId,
+            sha256: "c".repeat(64),
+            sizeBytes: 1,
+            sourceId: sourceA,
+            storageKey: `org/${A.organizationId}/source/isolation/harness/edit.json`,
+          },
+        ])
+        .returning({ id: harnessArtifact.id, kind: harnessArtifact.kind })
+    );
+    evidenceArtifactId =
+      artifacts.find((row) => row.kind === "evidence")?.id ?? "";
+    proposalArtifactId =
+      artifacts.find((row) => row.kind === "proposal")?.id ?? "";
+    editArtifactId = artifacts.find((row) => row.kind === "edit")?.id ?? "";
+
+    await withScope(pipeline.db, A, (tx) =>
+      tx.insert(harnessArtifactDependency).values({
+        artifactId: proposalArtifactId,
+        inputArtifactId: evidenceArtifactId,
+        organizationId: A.organizationId,
+        sourceId: sourceA,
+      })
+    );
+    const [run] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessRun)
+        .values({
+          budgetMicros: 10_000,
+          evidenceArtifactId,
+          lane: "chapters",
+          organizationId: A.organizationId,
+          requestKey: "0192e8a0-0000-7000-8000-000000000101",
+          sourceId: sourceA,
+        })
+        .returning({ id: harnessRun.id })
+    );
+    runId = run?.id ?? "";
+    const [operation] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessOperation)
+        .values({
+          configHash: sha,
+          inputHash: sha,
+          kind: "model",
+          organizationId: A.organizationId,
+          runId,
+          semanticKey: sha,
+          sourceId: sourceA,
+          stage: "propose",
+        })
+        .returning({ id: harnessOperation.id })
+    );
+    operationId = operation?.id ?? "";
+    const [attempt] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .insert(harnessAttempt)
+        .values({
+          attemptNumber: 1,
+          costStatus: "estimated",
+          estimatedCostMicros: 1000,
+          operationId,
+          organizationId: A.organizationId,
+          ownerToken: "isolation-owner",
+          provider: "recorded",
+          requestHash: sha,
+          runId,
+          sourceId: sourceA,
+        })
+        .returning({ id: harnessAttempt.id })
+    );
+    attemptId = attempt?.id ?? "";
+    await withScope(pipeline.db, A, async (tx) => {
+      await tx.insert(harnessReservation).values({
+        amountMicros: 1000,
+        attemptId,
+        organizationId: A.organizationId,
+        runId,
+        sourceId: sourceA,
+      });
+      await tx.insert(chapterRevision).values({
+        artifactId: editArtifactId,
+        mutationKey: "0192e8a0-0000-7000-8000-000000000102",
+        organizationId: A.organizationId,
+        revision: 1,
+        runId,
+        sourceId: sourceA,
+      });
+      await tx.insert(chapterReviewEvent).values({
+        action: "accept",
+        baseRevision: 1,
+        mutationKey: "0192e8a0-0000-7000-8000-000000000103",
+        organizationId: A.organizationId,
+        resultingRevision: 1,
+        runId,
+        sourceId: sourceA,
+        state: "applied",
+      });
+    });
+  });
+
+  it("lets the pipeline create and update mutable rows", async () => {
+    const [updated] = await withScope(pipeline.db, A, (tx) =>
+      tx
+        .update(harnessRun)
+        .set({ stage: "compile", status: "running" })
+        .where(eq(harnessRun.id, runId))
+        .returning({ id: harnessRun.id })
+    );
+    expect(updated?.id).toBe(runId);
+  });
+
+  it("gives the app read-only harness access", async () => {
+    for (const table of harnessTables) {
+      // biome-ignore lint/performance/noAwaitInLoops: each table is an independent RLS assertion
+      const rowsA = await withScope(app.db, A, (tx) => tx.select().from(table));
+      expect(
+        rowsA.length,
+        `${getTableName(table)} visible under A`
+      ).toBeGreaterThan(0);
+      const rowsB = await withScope(app.db, B, (tx) => tx.select().from(table));
+      expect(rowsB, `${getTableName(table)} hidden under B`).toEqual([]);
+      const unscoped = await app.db.select().from(table);
+      expect(unscoped, `${getTableName(table)} hidden without scope`).toEqual(
+        []
+      );
+    }
+
+    await expectDatabaseRejected(
+      withScope(app.db, A, (tx) =>
+        tx.insert(harnessRun).values({
+          budgetMicros: 1,
+          lane: "chapters",
+          organizationId: A.organizationId,
+          requestKey: "forbidden-app-write",
+          sourceId: sourceA,
+        })
+      ),
+      PERMISSION_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(app.db, A, (tx) =>
+        tx.update(harnessRun).set({ stage: "forbidden" })
+      ),
+      PERMISSION_REJECTION
+    );
+  });
+
+  it("keeps immutable history insert-only and all harness rows undeletable", async () => {
+    await expectDatabaseRejected(
+      withScope(pipeline.db, A, (tx) =>
+        tx
+          .update(harnessArtifact)
+          .set({ metadata: { changed: true } })
+          .where(eq(harnessArtifact.id, evidenceArtifactId))
+      ),
+      PERMISSION_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(pipeline.db, A, (tx) =>
+        tx.delete(harnessRun).where(eq(harnessRun.id, runId))
+      ),
+      PERMISSION_REJECTION
+    );
+  });
+
+  it("rejects cross-organization and cross-source composite references", async () => {
+    await expectDatabaseRejected(
+      withScope(pipeline.db, B, (tx) =>
+        tx.insert(harnessRun).values({
+          budgetMicros: 1,
+          evidenceArtifactId,
+          lane: "chapters",
+          organizationId: B.organizationId,
+          requestKey: "cross-organization-artifact",
+          sourceId: sourceB,
+        })
+      ),
+      FOREIGN_KEY_REJECTION
+    );
+    await expectDatabaseRejected(
+      withScope(pipeline.db, B, (tx) =>
+        tx.insert(harnessAttempt).values({
+          attemptNumber: 2,
+          costStatus: "estimated",
+          estimatedCostMicros: 1,
+          operationId,
+          organizationId: B.organizationId,
+          ownerToken: "cross-org",
+          provider: "recorded",
+          requestHash: otherSha,
+          sourceId: sourceB,
+        })
+      ),
+      FOREIGN_KEY_REJECTION
+    );
+  });
+});
+
 describe("cross-organization probes", () => {
   const ctxA = new Map<string, string>();
 
@@ -375,40 +795,44 @@ describe("cross-organization probes", () => {
     const name = getTableName(probe.table);
     describe(name, () => {
       let crossValues: Record<string, unknown>;
+      let rowId = "";
 
       it("a row written under A is invisible under B and without scope", async () => {
-        crossValues = await probe.create(A, ctxA);
+        const fixture = await probe.create(A, ctxA);
+        ({ crossValues, rowId } = fixture);
+        expect(rowId).not.toBe("");
+        const table = probe.table as unknown as { id: never };
         const underA = await withScope(app.db, A, (tx) =>
-          tx.select().from(probe.table)
+          tx.select().from(probe.table).where(eq(table.id, rowId))
         );
-        expect(underA.length).toBeGreaterThan(0);
+        expect(underA).toHaveLength(1);
         const underB = await withScope(app.db, B, (tx) =>
-          tx.select().from(probe.table)
+          tx.select().from(probe.table).where(eq(table.id, rowId))
         );
-        const idsA = new Set(underA.map((r) => (r as { id: string }).id));
-        expect(
-          underB.filter((r) => idsA.has((r as { id: string }).id))
-        ).toEqual([]);
-        const unscoped = await app.db.select().from(probe.table);
+        expect(underB).toEqual([]);
+        const unscoped = await app.db
+          .select()
+          .from(probe.table)
+          .where(eq(table.id, rowId));
         expect(unscoped).toEqual([]);
       });
 
       it("cannot be updated or deleted under B", async () => {
         const table = probe.table as unknown as { id: never };
-        const [row] = await withScope(app.db, A, (tx) =>
-          tx.select().from(probe.table).limit(1)
-        );
-        const { id } = row as { id: string };
         const updated = await withScope(app.db, B, (tx) =>
-          tx.update(probe.table).set({}).where(eq(table.id, id)).returning()
-        ).catch(() => []);
+          tx
+            .update(probe.table)
+            .set({ id: rowId })
+            .where(eq(table.id, rowId))
+            .returning()
+        );
         expect(updated).toEqual([]);
         const deleted = await withScope(app.db, B, (tx) =>
-          tx.delete(probe.table).where(eq(table.id, id)).returning()
+          tx.delete(probe.table).where(eq(table.id, rowId)).returning()
         );
         expect(deleted).toEqual([]);
         const still = await withScope(app.db, A, (tx) =>
-          tx.select().from(probe.table).where(eq(table.id, id))
+          tx.select().from(probe.table).where(eq(table.id, rowId))
         );
         expect(still).toHaveLength(1);
       });
@@ -435,13 +859,20 @@ describe("cross-organization probes", () => {
   }
 
   it("counts what the probes left, per scope", async () => {
-    const [countA] = await withScope(app.db, A, (tx) =>
-      tx.select({ n: sql<number>`count(*)::int` }).from(project)
+    const projectId = ctxA.get("project") ?? "";
+    const underA = await withScope(app.db, A, (tx) =>
+      tx
+        .select({ id: project.id })
+        .from(project)
+        .where(eq(project.id, projectId))
     );
-    const [countB] = await withScope(app.db, B, (tx) =>
-      tx.select({ n: sql<number>`count(*)::int` }).from(project)
+    const underB = await withScope(app.db, B, (tx) =>
+      tx
+        .select({ id: project.id })
+        .from(project)
+        .where(eq(project.id, projectId))
     );
-    expect(countA?.n).toBeGreaterThan(0);
-    expect(countB?.n).toBe(0);
+    expect(underA).toEqual([{ id: projectId }]);
+    expect(underB).toEqual([]);
   });
 });

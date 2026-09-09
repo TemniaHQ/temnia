@@ -52,6 +52,7 @@ let reservations: unknown[][];
 /** The DB supplies CAS outcomes; assertions inspect the real Drizzle predicate. */
 function transaction() {
   return {
+    execute: () => Promise.resolve([]),
     insert: () => ({
       values: (values: Record<string, unknown>) => {
         mutations.push({ values });

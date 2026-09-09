@@ -23,11 +23,13 @@ def make_transcription(settings: PipelineSettings, store: S3Store) -> Transcript
     The Modal modules are imported only when they are the chosen provider, so a
     worker replaying recordings never loads the SDK.
     """
-    if settings.transcription.provider == "modal":
+    if settings.transcription.provider in {"modal", "modal-checkpointed"}:
         from temnia_pipeline.transcription.modal_whisperx import (  # noqa: PLC0415
             ModalWhisperXProvider,
         )
 
+        # Checkpointed new histories use SpeechActivities. Keeping the v4
+        # runner here lets pre-patch workflow history reattach to temnia-media.
         return TranscriptionRunner(
             ModalWhisperXProvider(settings.transcription), poll_seconds=POLL_SECONDS
         )

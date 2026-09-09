@@ -95,7 +95,9 @@ async def claim_source(
                SET status = 'processing', ingest_workflow_id = %s, ingest_stage = 'probe',
                    ingest_percent = NULL, ingest_heartbeat_at = now(), error_message = NULL,
                    updated_at = now()
-             WHERE id = %s AND status IN ('uploaded', 'failed', 'processing', 'ready')
+             WHERE id = %s
+               AND deletion_requested_at IS NULL
+               AND status IN ('uploaded', 'failed', 'processing', 'ready')
          RETURNING id
             """,
             (workflow_id, source_id),
@@ -300,7 +302,24 @@ async def claim_transcription(
     so the two rules do not contradict each other: this activity refuses to
     interrupt work, and the user's Retry is the thing that says a finished
     transcript may be replaced.
+
+    The source row is locked before the transcript row. Deletion uses the same
+    source-first order, so a claim either commits before deletion starts or
+    observes the deletion fence and creates no transcript state.
     """
+    source = await (
+        await conn.execute(
+            """
+            SELECT id FROM source
+             WHERE id = %s AND organization_id = %s
+               AND deletion_requested_at IS NULL
+             FOR UPDATE
+            """,
+            (source_id, organization_id),
+        )
+    ).fetchone()
+    if source is None:
+        return 0
     row = await (
         await conn.execute(
             """
@@ -336,14 +355,26 @@ async def claim_transcription(
 async def report_transcription_progress(
     conn: AsyncConnection[dict[str, Any]],
     source_id: UUID,
-    stage: str,
+    stage: str | None,
     percent: int | None,
     run_id: str,
 ) -> None:
     """Best-effort progress, and the heartbeat the surface reads to say "stalled".
 
     Fenced on the run: a late write from a run that lost the row changes nothing.
+    A null stage is a liveness-only write for parallel work that must not replace
+    the visible primary stage or its last measured percentage.
     """
+    if stage is None:
+        await conn.execute(
+            """
+            UPDATE transcript
+               SET heartbeat_at = now(), updated_at = now()
+             WHERE source_id = %s AND status = 'processing' AND run_id = %s
+            """,
+            (source_id, run_id),
+        )
+        return
     await conn.execute(
         """
         UPDATE transcript

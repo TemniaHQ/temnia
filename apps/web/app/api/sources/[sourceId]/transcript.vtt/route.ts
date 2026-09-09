@@ -6,9 +6,14 @@ import type { NextRequest } from "next/server";
 import { captionResponse } from "@/lib/transcript/export";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: RouteContext<"/api/sources/[sourceId]/transcript.vtt">
 ): Promise<Response> {
   const { sourceId } = await context.params;
-  return captionResponse(sourceId, "vtt");
+  const revision = Number(request.nextUrl.searchParams.get("revision"));
+  return captionResponse(
+    sourceId,
+    "vtt",
+    Number.isInteger(revision) && revision > 0 ? revision : undefined
+  );
 }

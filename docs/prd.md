@@ -30,7 +30,7 @@ An agency-grade AI content operations platform. Long-form sources go in — a tw
 ### 1.2 Positioning
 
 - **Against creator studios (Riverside, Descript).** They record and polish one creator's session. Temnia starts after the master exists, takes it from wherever it was recorded, and serves the agency that runs weekly work for many clients under approval and rights governance. Temnia does not record.
-- **Against clipping tools (Opus Clip, Vizard, Klap, Munch).** They cherry-pick shorts with black-box selection and boundaries that "start too early, end too late" (the category's universal complaint). Temnia's clips are grounded to the word timeline, boundary-verified by deterministic sensors and an independent-family verifier, explainable against a strategist brief, and reviewed in tooling built for the review — and Temnia ships a coverage lane (chapters) nobody pairs with agency workflow.
+- **Against clipping tools (Opus Clip, Vizard, Klap, Munch).** They cherry-pick shorts with black-box selection and boundaries that "start too early, end too late" (the category's universal complaint). Temnia leads with an exact-cover chapter partition: every source interval belongs to a chapter or an explicit drop, with one shared cut between neighbors. Those cuts are grounded to the word timeline, checked by deterministic sensors and an independent-family verifier, explained against an editorial brief, and reviewed in tooling built for correction. Moments hang off that chapter structure.
 - **Against coverage editors (Eddie AI).** Editor-grade rough cuts without multi-client workflow, transparency, or client approval.
 - **The open flank** ([clipping-landscape.md](clipping-landscape.md) §1): multi-client agency workflow + editor-quality coverage clips + transparent, steerable selection + real boundary tooling in review. That intersection is Temnia's declared shape.
 
@@ -138,7 +138,7 @@ Authorization is role × scope (organization / client / brand / campaign / proje
 
 ## 6. Transcription and speaker intelligence
 
-- Provider seam with Deepgram (nova-3, diarization, smart format, language detection) as primary, AssemblyAI behind the same interface, and a deterministic mock provider for tests. Adapters parse the provider's raw response with Temnia's own schema so a contract change is a loud alarm. `[roadmap]`
+- Provider seam with WhisperX large-v3, alignment and pyannote diarization on Modal, plus a deterministic recorded provider for tests. Stage checkpoints and independent speech evidence improve recovery and identify omissions; a hosted fallback is selected only if qualification shows it is needed. Adapters parse the provider's raw response with Temnia's own schema so a contract change is a loud alarm. `[roadmap]`
 - Transcription is a follow-on job with its own lifecycle, silence-based reaper, and retry; a provider outage cannot fail a finished ingest. `[roadmap]`
 - Canonical transcript JSON in storage with integer-millisecond words, confidence, and speaker ids; Postgres holds the lifecycle and an append-only revision ledger. Revisions are reserved for changes to the words. `[roadmap]`
 - Transcript viewer with click-to-seek, search, speaker naming, and low-confidence highlighting; transcript corrections that create revisions; SRT and VTT export built on speaker-aware cue segmentation. `[roadmap]`

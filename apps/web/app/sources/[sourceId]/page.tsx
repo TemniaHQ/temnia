@@ -10,6 +10,8 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { harnessSettings } from "@/lib/harness/config";
+import { getChapterView } from "@/lib/harness/queries";
 import { resolveScope } from "@/lib/scope/resolve-scope";
 import { getSourceWithArtifacts } from "@/lib/sources/queries";
 import { getTranscript } from "@/lib/transcript/queries";
@@ -20,9 +22,10 @@ export default async function SourcePage({
   params,
 }: PageProps<"/sources/[sourceId]">) {
   const { sourceId } = await params;
-  const [found, transcript] = await Promise.all([
+  const [found, transcript, chapters] = await Promise.all([
     getSourceWithArtifacts(sourceId),
     getTranscript(sourceId),
+    getChapterView(sourceId),
   ]);
   if (!found) {
     notFound();
@@ -68,6 +71,8 @@ export default async function SourcePage({
           sizeBytes: a.sizeBytes,
           storageKey: a.storageKey,
         }))}
+        chapterAvailability={harnessSettings()}
+        chapters={chapters}
         peaksUrl={has("peaks") ? `${prefix}${ARTIFACT_PATHS.peaks}` : null}
         playlistUrl={has("hls") ? `${prefix}${ARTIFACT_PATHS.hlsMaster}` : null}
         posterUrl={
@@ -104,6 +109,18 @@ export default async function SourcePage({
                 wordCount: transcript?.current?.wordCount ?? null,
               }
             : null
+        }
+        transcriptAnnotationsUrl={
+          row?.currentRevision
+            ? `/api/sources/${source.id}/transcript-annotations?revision=${row.currentRevision}`
+            : null
+        }
+        transcriptRevisions={
+          transcript?.revisions.map((revision) => ({
+            annotationsUrl: `/api/sources/${source.id}/transcript-annotations?revision=${revision.revision}`,
+            revision: revision.revision,
+            url: `/api/media/${revision.storageKey}`,
+          })) ?? []
         }
         transcriptUrl={transcriptUrl}
       />
