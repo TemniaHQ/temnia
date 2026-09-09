@@ -8,6 +8,12 @@ the isolated qualification. Use the [staging runbook](staging.md) for services a
 For a local product pass with recorded responses, use the
 [manual-testing walkthrough](chapter-harness-manual-testing.md).
 
+The [2026-09-09 staging admission record](../design/chapter-staging-qualification-2026-09-09.md)
+records the enabled live configuration and the long-recording preflight. A qualified transport
+route is eligible for this bounded staging experiment; its position in the experiment does not
+declare an editorial audition winner. Runtime-only settings can use the verified
+[Dokploy reload procedure](staging.md#4b-apply-runtime-configuration-without-a-code-change).
+
 ## Deploy the schema and worker together
 
 Use a clean, verified commit. Migration `0003_harness_foundation.sql` adds the scoped harness
