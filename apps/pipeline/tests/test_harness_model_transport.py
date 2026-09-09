@@ -27,6 +27,7 @@ from temnia_pipeline.harness.cassettes import (
 from temnia_pipeline.harness.gateway import (
     GatewayChatModel,
     GatewayConfig,
+    GatewayError,
     GenerationIdentityError,
     lookup_generation,
 )
@@ -113,6 +114,12 @@ def test_cost_estimate_uses_integer_ceiling_and_requested_output_cap() -> None:
         estimate_cost(candidate, payload_bytes=513 * 1024)
 
 
+def test_unproven_qualification_route_cannot_be_saved_as_a_snapshot() -> None:
+    candidate = route("qualification-unproven:candidate", "family-a", "provider-one")
+    with pytest.raises(ValueError, match="unproven qualification routes"):
+        snapshot((candidate,), {"propose": SeatRoutePool(route_ids=(candidate.id,))})
+
+
 def cassette_metadata(*, synthetic: bool = False) -> CassetteMetadata:
     return CassetteMetadata(
         route_id="route-a",
@@ -181,7 +188,13 @@ async def test_gateway_generation_cost_is_decimal_ceil_and_byok_remains_unknown(
                     "provider_name": candidate.provider,
                     "is_byok": calls == 2,
                     "total_cost": "0.0000011",
-                    "input_tokens": 4,
+                    "tokens_prompt": 4,
+                    "tokens_completion": 8,
+                    "native_tokens_prompt": 5,
+                    "native_tokens_completion": 9,
+                    "native_tokens_cached": 2,
+                    "native_tokens_reasoning": 3,
+                    "native_tokens_cache_creation": 0,
                 }
             },
         )
@@ -202,6 +215,13 @@ async def test_gateway_generation_cost_is_decimal_ceil_and_byok_remains_unknown(
         )
     assert reported.actual_cost_micros == 2
     assert reported.components["totalCost"] == str(Decimal("0.0000011"))
+    assert reported.components["inputTokens"] == 4
+    assert reported.components["outputTokens"] == 8
+    assert reported.components["nativeInputTokens"] == 5
+    assert reported.components["nativeOutputTokens"] == 9
+    assert reported.components["cachedInputTokens"] == 2
+    assert reported.components["reasoningTokens"] == 3
+    assert reported.components["cacheCreationTokens"] == 0
     assert byok.status == "byok_unknown"
     assert byok.actual_cost_micros is None
     assert calls == 2
@@ -273,6 +293,49 @@ async def test_gateway_money_parses_raw_json_without_float_rounding() -> None:
         )
     assert observed.actual_cost_micros == 2
     assert observed.components["totalCost"] == "0.0000010000000000000000001"
+    assert observed.components["inputTokens"] is None
+    assert observed.components["reasoningTokens"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"[]", b"null", b"1"])
+async def test_gateway_generation_rejects_non_object_receipts(body: bytes) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        _ = request
+        return httpx.Response(200, content=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GatewayError, match="must be a JSON object"):
+            await lookup_generation(
+                client,
+                config=GatewayConfig(api_key="test-key"),
+                route=route("a", "family-a", "provider-one"),
+                generation_id="generation-one",
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("amount", "expected"), [("0.0000505", 51), ("0", 0), ("1", 1_000_000)])
+async def test_gateway_generation_accepts_integer_money_without_float_conversion(
+    amount: str, expected: int
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        body = (
+            '{"data":{"id":"generation-one","model":"model/family-a",'
+            '"provider_name":"provider-one","is_byok":false,'
+            f'"total_cost":{amount},"gateway_cost":{amount},"upstream_inference_cost":0}}}}'
+        )
+        return httpx.Response(200, content=body.encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        observed = await lookup_generation(
+            client,
+            config=GatewayConfig(api_key="test-key"),
+            route=route("a", "family-a", "provider-one"),
+            generation_id="generation-one",
+        )
+    assert observed.actual_cost_micros == expected
+    assert observed.components["upstreamInferenceCost"] == "0"
 
 
 class StrictAnswer(BaseModel):

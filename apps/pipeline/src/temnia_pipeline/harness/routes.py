@@ -17,6 +17,7 @@ MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024
 TOKENS_PER_PRICE_UNIT = 1_000_000
 PROTOCOL_OVERHEAD_BYTES = 8192
 MIN_PRODUCTION_FAMILIES = 3
+UNPROVEN_ROUTE_PREFIX = "qualification-unproven:"
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ServiceTier = Literal["auto", "default", "flex", "priority"]
@@ -113,6 +114,8 @@ class RouteSnapshot(BaseModel):
     @model_validator(mode="after")
     def _consistent_catalogue(self) -> Self:
         by_id = {route.id: route for route in self.routes}
+        if any(route.id.startswith(UNPROVEN_ROUTE_PREFIX) for route in self.routes):
+            raise ValueError("unproven qualification routes cannot enter a route snapshot")
         if len(by_id) != len(self.routes):
             raise ValueError("route IDs must be unique")
         aliases: dict[str, tuple[str, bool]] = {}

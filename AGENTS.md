@@ -537,6 +537,21 @@ Future selection needs prospective quality tolerances/listening, additional sour
 billing. The report, exact exclusions and identities are in
 `docs/design/checkpointed-speech-optimization-2026-09-09.md`; shared staging is unchanged.
 
+**2026-09-09 — Gateway authentication and catalogue metadata do not establish live eligibility.**
+The first staging request with mandatory per-request ZDR was rejected because Vercel Pro Trial
+does not permit it; the key itself authenticated successfully. Vercel requires an active paid Pro
+or Enterprise plan for this control, independently of gateway credits. Keep chapter planning
+disabled until the account entitlement and exact provider/schema/identity/cost path are qualified.
+Do not weaken privacy to pass a smoke. Probe candidates remain separate from production snapshots;
+the reserved `qualification-unproven:` route prefix cannot enter a saved snapshot. The bounded
+qualifier preserves admission, response and cost evidence without retrying inference or claiming
+editorial quality. Paid Pro subsequently cleared the entitlement; DeepSeek/DeepInfra, Qwen/Alibaba
+and Kimi/Alibaba passed all three schemas. The live failures also require integer-safe Decimal
+settlement and prompt-v3 copy-only word anchors before rollout. Gemini/Vertex's integer-enum
+rejection and Kimi/Wafer's schema failure exclude those exact pairings, not their whole families.
+No editorial winner is selected from transport success. Record:
+`docs/design/gateway-staging-qualification-2026-09-09.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
