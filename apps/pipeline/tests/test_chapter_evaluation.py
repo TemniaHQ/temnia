@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import pytest
+from pydantic_ai import ModelResponse, TextPart
 
 from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
     ChapterRenders,
+    HarnessArtifactKind,
+    HarnessArtifactRef,
     HarnessEvidence,
     Kind,
     ReviewState,
@@ -23,14 +27,30 @@ from temnia_pipeline.evals.chapters import (
     EditorialVerificationBody,
     EvaluationBundle,
     HumanLabels,
+    ImmutableArtifactFact,
+    SummaryGroundingArtifact,
     content_sha256,
     required_check_names,
     validate_bundle,
     validate_labels,
 )
+from temnia_pipeline.harness import bundle_export as bundle_export_module
 from temnia_pipeline.harness import cli
 from temnia_pipeline.harness.artifacts import fingerprint_for
+from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.gateway import CostObservation, GenerationIdentityError
+from temnia_pipeline.harness.models import HierarchicalSummaryV1
+from temnia_pipeline.harness.prompts import (
+    PromptSentence,
+    PromptWindow,
+    render_summary_prompt,
+    render_summary_reduction_prompt,
+)
+from temnia_pipeline.harness.summary_grounding import (
+    SummaryFallback,
+    SummaryGroundingReport,
+    grounding_artifact_fingerprint,
+)
 from temnia_pipeline.harness.validators import HarnessValidationError
 from temnia_pipeline.scope import resolve_scope
 
@@ -82,7 +102,10 @@ def _evidence() -> HarnessEvidence:
                     "timeMs": 10000,
                 },
             ],
-            "config": {},
+            "config": {
+                "sourceObject": {"sha256": "d" * 64},
+                "sourceTimeline": {"hasAudio": True, "hasVideo": True},
+            },
             "durationMs": 10000,
             "frameRate": {"numerator": 25, "denominator": 1},
             "modelVersions": {"model:sentence": "fixture"},
@@ -336,6 +359,134 @@ def _bundle(*, accepted: bool = False) -> EvaluationBundle:
     )
 
 
+def _bundle_with_grounding() -> EvaluationBundle:
+    bundle = _bundle()
+    assert bundle.evidence_sha256 is not None
+    evidence_ref = HarnessArtifactRef(
+        fingerprint="6" * 64,
+        id=EVIDENCE_ARTIFACT,
+        kind=HarnessArtifactKind.evidence,
+        sha256=bundle.evidence_sha256,
+        sizeBytes=100,
+        storageKey="private/evidence.json",
+    )
+    response_ref = HarnessArtifactRef(
+        fingerprint="7" * 64,
+        id=RESULT,
+        kind=HarnessArtifactKind.model_response,
+        sha256="8" * 64,
+        sizeBytes=100,
+        storageKey="private/model-response.json",
+    )
+    source_summary = HierarchicalSummaryV1.model_validate(
+        {
+            "version": 1,
+            "units": [
+                {
+                    "id": "unit-one",
+                    "firstSentenceId": "s1",
+                    "lastSentenceId": "s1",
+                    "quoteWordIds": ["w2"],
+                    "text": "generated claim",
+                },
+                {
+                    "id": "unit-two",
+                    "firstSentenceId": "s2",
+                    "lastSentenceId": "s2",
+                    "quoteWordIds": ["w2"],
+                    "text": "second",
+                },
+            ],
+        }
+    )
+    normalized = source_summary.model_copy(
+        update={
+            "units": [
+                source_summary.units[0].model_copy(
+                    update={"quoteWordIds": ["w1"], "text": "first"}
+                ),
+                source_summary.units[1],
+            ]
+        }
+    )
+    evidence = _evidence()
+    prompt = render_summary_prompt(
+        PromptWindow(
+            sourceId=SOURCE,
+            evidenceSha256=bundle.evidence_sha256,
+            windowId="window-0000",
+            firstSentenceId="s1",
+            lastSentenceId="s2",
+            sentences=tuple(
+                PromptSentence(
+                    id=sentence.id,
+                    text=sentence.text,
+                    firstWordId=sentence.wordIds[0].root,
+                    lastWordId=sentence.wordIds[-1].root,
+                    speakers=tuple(sentence.speakers),
+                )
+                for sentence in evidence.sentences
+            ),
+        )
+    )
+    body = SummaryGroundingReport(
+        runId=RUN,
+        hierarchyLevel=1,
+        modelStage="summary:window-0000",
+        windowId="window-0000",
+        firstSentenceId="s1",
+        lastSentenceId="s2",
+        windowSentenceCount=2,
+        windowPromptSha256=hashlib.sha256(prompt.encode()).hexdigest(),
+        evidence=evidence_ref,
+        rawResponse=response_ref,
+        sourceSummarySha256=content_sha256(source_summary),
+        normalizedSummary=normalized,
+        fallbacks=(
+            SummaryFallback(
+                unitId="unit-one",
+                firstSentenceId="s1",
+                lastSentenceId="s1",
+                rejectedQuoteWordIds=("w2",),
+                replacementQuoteWordIds=("w1",),
+            ),
+        ),
+    )
+    grounding = SummaryGroundingArtifact(
+        artifact=ImmutableArtifactFact(
+            id=UUID("90000000-0000-0000-0000-000000000009"),
+            source_id=SOURCE,
+            kind="checks",
+            fingerprint=grounding_artifact_fingerprint(body),
+            sha256=content_sha256(body),
+            size_bytes=100,
+            storage_key="private/grounding.json",
+        ),
+        body=body,
+        dependencies=(
+            ImmutableArtifactFact(
+                id=evidence_ref.id,
+                source_id=SOURCE,
+                kind="evidence",
+                fingerprint=evidence_ref.fingerprint,
+                sha256=evidence_ref.sha256,
+                size_bytes=evidence_ref.sizeBytes,
+                storage_key=evidence_ref.storageKey,
+            ),
+            ImmutableArtifactFact(
+                id=response_ref.id,
+                source_id=SOURCE,
+                kind="model_response",
+                fingerprint=response_ref.fingerprint,
+                sha256=response_ref.sha256,
+                size_bytes=response_ref.sizeBytes,
+                storage_key=response_ref.storageKey,
+            ),
+        ),
+    )
+    return bundle.model_copy(update={"summary_grounding": (grounding,)})
+
+
 def test_bundle_rejects_corruption_mixed_source_and_invalid_cover() -> None:
     bundle = _bundle()
     validate_bundle(bundle)
@@ -350,6 +501,416 @@ def test_bundle_rejects_corruption_mixed_source_and_invalid_cover() -> None:
     invalid = bundle.model_copy(update={"edit": broken, "edit_sha256": content_sha256(broken)})
     with pytest.raises(HarnessValidationError, match="boundaries and sections"):
         validate_bundle(invalid)
+
+
+def test_old_bundle_defaults_to_no_summary_grounding() -> None:
+    raw = _bundle().model_dump(mode="json", by_alias=True)
+    raw.pop("summaryGrounding")
+    bundle = EvaluationBundle.model_validate_json(json.dumps(raw), strict=True)
+    assert bundle.summary_grounding == ()
+    assert build_report(bundle).summary_grounding is None
+
+
+def test_summary_grounding_is_portable_and_reports_reference_outcomes() -> None:
+    bundle = _bundle_with_grounding()
+    validate_bundle(bundle)
+    metrics = build_report(bundle).summary_grounding
+    assert metrics is not None
+    assert metrics.report_count == 1
+    assert metrics.summary_unit_count == 2
+    assert metrics.first_pass_reference_valid_report_count == 0
+    assert metrics.first_pass_reference_valid_unit_count == 1
+    assert metrics.extractive_fallback_report_count == 1
+    assert metrics.extractive_fallback_unit_count == 1
+    assert metrics.rejected_quote_anchor_count == 1
+
+
+def test_summary_grounding_reduction_uses_only_contained_prior_windows() -> None:
+    bundle = _bundle_with_grounding()
+    assert bundle.evidence is not None
+    base = bundle.summary_grounding[0]
+    first_prompt = render_summary_prompt(
+        PromptWindow(
+            sourceId=SOURCE,
+            evidenceSha256=base.body.evidence.sha256,
+            windowId="window-0000",
+            firstSentenceId="s1",
+            lastSentenceId="s1",
+            sentences=(
+                PromptSentence(
+                    id="s1",
+                    text="first",
+                    firstWordId="w1",
+                    lastWordId="w1",
+                    speakers=("0",),
+                ),
+            ),
+        )
+    )
+    first_body = base.body.model_copy(
+        update={
+            "lastSentenceId": "s1",
+            "windowSentenceCount": 1,
+            "windowPromptSha256": hashlib.sha256(first_prompt.encode()).hexdigest(),
+            "normalizedSummary": base.body.normalizedSummary.model_copy(
+                update={"units": base.body.normalizedSummary.units[:1]}
+            ),
+        }
+    )
+    first = base.model_copy(
+        update={
+            "body": first_body,
+            "artifact": base.artifact.model_copy(
+                update={
+                    "fingerprint": grounding_artifact_fingerprint(first_body),
+                    "sha256": content_sha256(first_body),
+                }
+            ),
+        }
+    )
+    second_prompt = render_summary_prompt(
+        PromptWindow(
+            sourceId=SOURCE,
+            evidenceSha256=base.body.evidence.sha256,
+            windowId="window-0001",
+            firstSentenceId="s2",
+            lastSentenceId="s2",
+            sentences=(
+                PromptSentence(
+                    id="s2",
+                    text="second",
+                    firstWordId="w2",
+                    lastWordId="w2",
+                    speakers=("0",),
+                ),
+            ),
+        )
+    )
+    second_body = base.body.model_copy(
+        update={
+            "modelStage": "summary:window-0001",
+            "windowId": "window-0001",
+            "firstSentenceId": "s2",
+            "lastSentenceId": "s2",
+            "windowSentenceCount": 1,
+            "windowPromptSha256": hashlib.sha256(second_prompt.encode()).hexdigest(),
+            "normalizedSummary": base.body.normalizedSummary.model_copy(
+                update={"units": base.body.normalizedSummary.units[1:]}
+            ),
+            "fallbacks": (),
+        }
+    )
+    second = base.model_copy(
+        update={
+            "body": second_body,
+            "artifact": base.artifact.model_copy(
+                update={
+                    "id": UUID("90000000-0000-0000-0000-000000000010"),
+                    "fingerprint": grounding_artifact_fingerprint(second_body),
+                    "sha256": content_sha256(second_body),
+                }
+            ),
+        }
+    )
+
+    def report_ref(item: SummaryGroundingArtifact) -> HarnessArtifactRef:
+        assert item.artifact.size_bytes is not None
+        assert item.artifact.storage_key is not None
+        return HarnessArtifactRef(
+            fingerprint=item.artifact.fingerprint,
+            id=item.artifact.id,
+            kind=HarnessArtifactKind.checks,
+            sha256=item.artifact.sha256,
+            sizeBytes=item.artifact.size_bytes,
+            storageKey=item.artifact.storage_key,
+        )
+
+    parent_prompt = render_summary_reduction_prompt(
+        source_id=SOURCE,
+        evidence_sha256=first_body.evidence.sha256,
+        summaries=[first_body.normalizedSummary.model_dump(mode="json")],
+        hierarchy_level=2,
+    )
+    parent_body = first_body.model_copy(
+        update={
+            "hierarchyLevel": 2,
+            "modelStage": "summary:level:2:reduction-0000",
+            "windowId": "reduction-0000",
+            "windowPromptSha256": hashlib.sha256(parent_prompt.encode()).hexdigest(),
+            "inputArtifacts": (report_ref(first), report_ref(second)),
+            "fallbacks": (),
+        }
+    )
+    parent = base.model_copy(
+        update={
+            "body": parent_body,
+            "artifact": base.artifact.model_copy(
+                update={
+                    "id": UUID("90000000-0000-0000-0000-000000000011"),
+                    "fingerprint": grounding_artifact_fingerprint(parent_body),
+                    "sha256": content_sha256(parent_body),
+                }
+            ),
+            "dependencies": (
+                *base.dependencies,
+                first.artifact,
+                second.artifact,
+            ),
+        }
+    )
+
+    validate_bundle(bundle.model_copy(update={"summary_grounding": (first, second, parent)}))
+
+
+def test_summary_grounding_rejects_corrupt_identity_lineage_and_fallback() -> None:
+    bundle = _bundle_with_grounding()
+    item = bundle.summary_grounding[0]
+    with pytest.raises(HarnessValidationError, match="body hash"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "summary_grounding": (
+                        item.model_copy(
+                            update={
+                                "artifact": item.artifact.model_copy(update={"sha256": "0" * 64})
+                            }
+                        ),
+                    )
+                }
+            )
+        )
+    with pytest.raises(HarnessValidationError, match="dependency closure"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "summary_grounding": (
+                        item.model_copy(update={"dependencies": item.dependencies[:-1]}),
+                    )
+                }
+            )
+        )
+    bad_summary = item.body.normalizedSummary.model_copy(
+        update={
+            "units": [
+                item.body.normalizedSummary.units[0].model_copy(
+                    update={"text": "not the exact source excerpt"}
+                ),
+                item.body.normalizedSummary.units[1],
+            ]
+        }
+    )
+    bad_body = item.body.model_copy(update={"normalizedSummary": bad_summary})
+    bad_item = item.model_copy(
+        update={
+            "body": bad_body,
+            "artifact": item.artifact.model_copy(
+                update={
+                    "fingerprint": grounding_artifact_fingerprint(bad_body),
+                    "sha256": content_sha256(bad_body),
+                }
+            ),
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="fallback content"):
+        validate_bundle(bundle.model_copy(update={"summary_grounding": (bad_item,)}))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("size_bytes", 101),
+        ("storage_key", "private/changed-evidence.json"),
+    ],
+)
+def test_summary_grounding_rejects_changed_dependency_location(
+    field: str, value: int | str
+) -> None:
+    bundle = _bundle_with_grounding()
+    item = bundle.summary_grounding[0]
+    changed = item.dependencies[0].model_copy(update={field: value})
+    with pytest.raises(HarnessValidationError, match="dependency identity"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "summary_grounding": (
+                        item.model_copy(update={"dependencies": (changed, *item.dependencies[1:])}),
+                    )
+                }
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _bundle_with_grounding()
+    grounding = fixture.summary_grounding[0]
+    assert fixture.evidence is not None
+    evidence_ref = grounding.body.evidence
+    response_ref = grounding.body.rawResponse
+    source_summary = HierarchicalSummaryV1.model_validate(
+        {
+            "version": 1,
+            "units": [
+                {
+                    "id": "unit-one",
+                    "firstSentenceId": "s1",
+                    "lastSentenceId": "s1",
+                    "quoteWordIds": ["w2"],
+                    "text": "generated claim",
+                },
+                {
+                    "id": "unit-two",
+                    "firstSentenceId": "s2",
+                    "lastSentenceId": "s2",
+                    "quoteWordIds": ["w2"],
+                    "text": "second",
+                },
+            ],
+        }
+    )
+    response_body = MODEL_RESPONSE_ADAPTER.dump_python(
+        ModelResponse(
+            parts=[TextPart(json.dumps(source_summary.model_dump(mode="json")))],
+            model_name="fixture",
+            provider_name="recorded",
+        ),
+        mode="json",
+    )
+    grounding_id = grounding.artifact.id
+    rows: dict[UUID, dict[str, Any]] = {
+        evidence_ref.id: {
+            "id": evidence_ref.id,
+            "source_id": SOURCE,
+            "kind": "evidence",
+            "fingerprint": evidence_ref.fingerprint,
+            "sha256": evidence_ref.sha256,
+            "size_bytes": evidence_ref.sizeBytes,
+            "storage_key": evidence_ref.storageKey,
+            "metadata": {"format": "harness-evidence/1"},
+        },
+        response_ref.id: {
+            "id": response_ref.id,
+            "source_id": SOURCE,
+            "kind": "model_response",
+            "fingerprint": response_ref.fingerprint,
+            "sha256": response_ref.sha256,
+            "size_bytes": response_ref.sizeBytes,
+            "storage_key": response_ref.storageKey,
+            "metadata": {
+                "cassetteMode": "off",
+                "promptVersion": "summary-v1",
+                "synthetic": True,
+            },
+        },
+        grounding_id: {
+            "id": grounding_id,
+            "source_id": SOURCE,
+            "kind": "checks",
+            "fingerprint": grounding.artifact.fingerprint,
+            "sha256": grounding.artifact.sha256,
+            "size_bytes": 100,
+            "storage_key": "private/grounding.json",
+            "metadata": {
+                "format": grounding.body.format,
+                "runId": str(RUN),
+                "windowId": grounding.body.windowId,
+                "hierarchyLevel": grounding.body.hierarchyLevel,
+                "modelStage": grounding.body.modelStage,
+                "fallbackUnitCount": 1,
+                "fallbackQuoteCount": 1,
+            },
+        },
+    }
+    snapshot_type = vars(bundle_export_module)["_Snapshot"]
+    snapshot = snapshot_type(
+        run={
+            "id": RUN,
+            "source_id": SOURCE,
+            "evidence_artifact_id": EVIDENCE_ARTIFACT,
+            "status": "failed",
+            "current_revision": 0,
+            "accepted_revision": None,
+            "config": {"routeSnapshotId": "route-snapshot"},
+        },
+        source={"id": SOURCE, "duration_ms": 10000},
+        observed_at=NOW,
+        revision=None,
+        descriptor_id=None,
+        verification_id=None,
+        grounding_ids=(grounding_id,),
+        rows=rows,
+        dependencies={grounding_id: (evidence_ref.id, response_ref.id)},
+        attempts=(
+            {
+                "id": UUID("30000000-0000-0000-0000-000000000006"),
+                "operation_id": UUID("40000000-0000-0000-0000-000000000007"),
+                "attempt_number": 1,
+                "state": "succeeded",
+                "provider": "recorded",
+                "model": "fixture",
+                "family": "fixture",
+                "route": {"id": "fixture"},
+                "estimated_cost_micros": 0,
+                "actual_cost_micros": 0,
+                "cost_status": "reported",
+                "reservation_state": None,
+                "result_artifact_id": response_ref.id,
+                "remote_handle": None,
+                "usage": {"outputTokens": 7},
+                "dispatched_at": NOW,
+                "finished_at": NOW + timedelta(seconds=1),
+            },
+        ),
+        events=(),
+    )
+    bodies = {
+        evidence_ref.id: fixture.evidence.model_dump(mode="json"),
+        response_ref.id: response_body,
+        grounding_id: grounding.body.model_dump(mode="json"),
+    }
+
+    async def read_snapshot(*_args: object, **_kwargs: object) -> object:
+        return snapshot
+
+    async def read_artifact_json(*_args: object, **kwargs: object) -> object:
+        return bodies[cast("UUID", kwargs["artifact_id"])]
+
+    monkeypatch.setattr(bundle_export_module, "_read_snapshot", read_snapshot)
+    monkeypatch.setattr(bundle_export_module.artifacts, "read_artifact_json", read_artifact_json)
+    exported = await bundle_export_module.export_evaluation_bundle(
+        "postgresql://unused",
+        scope=resolve_scope(),
+        store=cast("Any", object()),
+        run_id=RUN,
+    )
+    assert exported.current_revision == 0
+    assert exported.status == "failed"
+    assert exported.summary_grounding == (grounding,)
+    changed_summary = source_summary.model_copy(
+        update={
+            "units": [
+                source_summary.units[0].model_copy(update={"text": "changed raw bytes"}),
+                source_summary.units[1],
+            ]
+        }
+    )
+    bodies[response_ref.id] = MODEL_RESPONSE_ADAPTER.dump_python(
+        ModelResponse(
+            parts=[TextPart(json.dumps(changed_summary.model_dump(mode="json")))],
+            model_name="fixture",
+            provider_name="recorded",
+        ),
+        mode="json",
+    )
+    with pytest.raises(ValueError, match="source summary hash"):
+        await bundle_export_module.export_evaluation_bundle(
+            "postgresql://unused",
+            scope=resolve_scope(),
+            store=cast("Any", object()),
+            run_id=RUN,
+        )
 
 
 def test_report_keeps_unknown_labels_cost_and_event_span_distinct() -> None:

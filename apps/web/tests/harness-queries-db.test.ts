@@ -18,6 +18,7 @@ const runId = randomUUID();
 const evidenceId = randomUUID();
 const editId = randomUUID();
 const descriptorId = randomUUID();
+const groundingId = randomUUID();
 const editSha256 = "e".repeat(64);
 const checkCount = 70;
 
@@ -180,6 +181,28 @@ suite("chapter view Postgres dependency ownership", () => {
         [SEEDED_SCOPE.organizationId, sourceId, descriptorId, checkId]
       );
     }
+    await owner.query(
+      `INSERT INTO harness_artifact
+         (id, organization_id, source_id, kind, fingerprint, storage_key,
+          sha256, size_bytes, metadata)
+       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
+      [
+        groundingId,
+        SEEDED_SCOPE.organizationId,
+        sourceId,
+        "f".repeat(64),
+        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding.json`,
+        "b".repeat(64),
+        JSON.stringify({
+          fallbackQuoteCount: 3,
+          fallbackUnitCount: 2,
+          format: "chapter-summary-grounding/1",
+          hierarchyLevel: 1,
+          runId,
+          windowId: "window-1",
+        }),
+      ]
+    );
   }, 20_000);
 
   afterAll(async () => {
@@ -207,7 +230,9 @@ suite("chapter view Postgres dependency ownership", () => {
   it("returns every descriptor-owned check and frozen transcript revision", async () => {
     const view = await getChapterView(sourceId, runId);
     const checks = view.artifacts.filter(
-      (artifact) => artifact.kind === "checks"
+      (artifact) =>
+        artifact.kind === "checks" &&
+        artifact.metadata.format === "chapter-checks/1"
     );
     expect(checks).toHaveLength(checkCount);
     expect(
@@ -216,6 +241,11 @@ suite("chapter view Postgres dependency ownership", () => {
     expect(view.run).toMatchObject({
       currentTranscriptRevision: 2,
       evidenceTranscriptRevision: 1,
+    });
+    expect(view.summaryGrounding).toMatchObject({
+      fallbackQuoteCount: 3,
+      fallbackUnitCount: 2,
+      reports: [{ id: groundingId }],
     });
   });
 });

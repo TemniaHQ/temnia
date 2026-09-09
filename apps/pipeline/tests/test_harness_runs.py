@@ -385,6 +385,126 @@ async def test_known_failure_marks_only_the_active_owner_and_preserves_cancellat
         await db.close_pool()
 
 
+async def test_retry_clears_only_current_failure_and_keeps_review_history() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET status = 'failed', error_message = 'known planning failure'
+                 WHERE id = %s
+                """,
+                (start.request.runId,),
+            )
+        base = ChapterReviewInput(
+            action=ChapterReviewAction.raise_budget,
+            baseRevision=0,
+            boundaryId=None,
+            budgetMicros=2_000_000,
+            mutationKey=uuid.uuid4(),
+            otherSectionId=None,
+            reason="Retain the known failure until retry is explicit.",
+            runId=start.request.runId,
+            scope=SEEDED,
+            sectionId=None,
+            sourceId=source_id,
+            targetRevision=None,
+            targetTimeMs=None,
+        )
+        raised = await apply_operational_review(
+            url,
+            request=base,
+            max_run_budget_micros=10_000_000,
+        )
+        assert raised.state == "applied"
+        after_raise = await get_run(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+        )
+        assert after_raise.status == HarnessRunStatus.failed
+        assert after_raise.error_message == "known planning failure"
+
+        retry = base.model_copy(
+            update={
+                "action": ChapterReviewAction.retry,
+                "budgetMicros": None,
+                "mutationKey": uuid.uuid4(),
+                "reason": "Retry the known failed work.",
+            }
+        )
+        first = await apply_operational_review(
+            url,
+            request=retry,
+            max_run_budget_micros=10_000_000,
+        )
+        duplicate = await apply_operational_review(
+            url,
+            request=retry,
+            max_run_budget_micros=10_000_000,
+        )
+        assert first == duplicate
+        assert first.state == "applied"
+        after_retry = await get_run(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+        )
+        assert after_retry.status == HarnessRunStatus.pending
+        assert after_retry.error_message is None
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET status = 'outcome_unknown', error_message = 'provider outcome unresolved'
+                 WHERE id = %s
+                """,
+                (start.request.runId,),
+            )
+        refused = await apply_operational_review(
+            url,
+            request=retry.model_copy(update={"mutationKey": uuid.uuid4()}),
+            max_run_budget_micros=10_000_000,
+        )
+        assert refused.state == "refused"
+        after_refusal = await get_run(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+        )
+        assert after_refusal.status == HarnessRunStatus.outcome_unknown
+        assert after_refusal.error_message == "provider outcome unresolved"
+        async with db.scoped(url, SEEDED) as conn:
+            events = await (
+                await conn.execute(
+                    """
+                    SELECT action, state, result
+                      FROM chapter_review_event
+                     WHERE run_id = %s
+                     ORDER BY created_at
+                    """,
+                    (start.request.runId,),
+                )
+            ).fetchall()
+        assert [(str(row["action"]), str(row["state"])) for row in events] == [
+            ("raise_budget", "applied"),
+            ("retry", "applied"),
+            ("retry", "refused"),
+        ]
+        assert ChapterReviewOutput.model_validate(events[1]["result"]) == first
+    finally:
+        await db.close_pool()
+
+
 async def test_actual_budget_exhaustion_pauses_then_raise_resumes_same_run() -> None:
     url = pipeline_url()
     value = snapshot()
@@ -452,6 +572,7 @@ async def test_actual_budget_exhaustion_pauses_then_raise_resumes_same_run() -> 
                 run_id=start.request.runId,
             )
             assert paused.status == HarnessRunStatus.budget_paused
+            assert paused.error_message is not None
             assert paused.dispatch_count == 0
             raise_budget = failing_review.model_copy(
                 update={
@@ -481,6 +602,7 @@ async def test_actual_budget_exhaustion_pauses_then_raise_resumes_same_run() -> 
             )
             assert after.status == HarnessRunStatus.pending
             assert after.budget_micros == 100
+            assert after.error_message is None
     finally:
         await db.close_pool()
 
@@ -563,7 +685,11 @@ async def test_known_pending_run_is_claimed_by_one_new_workflow_execution() -> N
         assert created.created
         async with db.scoped(url, SEEDED) as conn:
             await conn.execute(
-                "UPDATE harness_run SET status = 'pending' WHERE id = %s",
+                """
+                UPDATE harness_run
+                   SET status = 'pending', error_message = 'failure from the prior execution'
+                 WHERE id = %s
+                """,
                 (start.request.runId,),
             )
         contenders = tuple(
@@ -599,6 +725,7 @@ async def test_known_pending_run_is_claimed_by_one_new_workflow_execution() -> N
         assert isinstance(refused[0], IdentityConflict)
         winner = claimed[0]
         assert winner.run.status == HarnessRunStatus.running
+        assert winner.run.error_message is None
         assert winner.run.workflow_id in {item.workflow.workflow_id for item in contenders}
         assert winner.run.workflow_run_id in {item.workflow.workflow_run_id for item in contenders}
     finally:

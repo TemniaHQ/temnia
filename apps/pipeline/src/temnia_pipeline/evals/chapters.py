@@ -21,6 +21,16 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.artifacts import canonical_json, fingerprint_for
 from temnia_pipeline.harness.models import EditorialVerdictV1
+from temnia_pipeline.harness.prompts import (
+    PromptSentence,
+    PromptWindow,
+    render_summary_prompt,
+    render_summary_reduction_prompt,
+)
+from temnia_pipeline.harness.summary_grounding import (
+    SummaryGroundingReport,
+    grounding_artifact_fingerprint,
+)
 from temnia_pipeline.harness.validators import (
     HarnessValidationError,
     rational,
@@ -103,9 +113,11 @@ class ImmutableArtifactFact(EvaluationModel):
 
     id: UUID
     source_id: UUID
-    kind: Literal["edit", "render", "model_response", "checks"]
+    kind: Literal["evidence", "edit", "render", "model_response", "checks"]
     fingerprint: SHA256
     sha256: SHA256
+    size_bytes: Annotated[int | None, Field(ge=0)] = None
+    storage_key: Annotated[str | None, Field(min_length=1)] = None
 
 
 class EditorialVerificationBody(EvaluationModel):
@@ -126,6 +138,14 @@ class EditorialVerificationArtifact(EvaluationModel):
     edit: ImmutableArtifactFact
     descriptor: ImmutableArtifactFact
     model_response: ImmutableArtifactFact
+
+
+class SummaryGroundingArtifact(EvaluationModel):
+    """One portable grounding report with its exact persisted dependency closure."""
+
+    artifact: ImmutableArtifactFact
+    body: SummaryGroundingReport
+    dependencies: tuple[ImmutableArtifactFact, ...]
 
 
 class ReviewEvent(EvaluationModel):
@@ -244,6 +264,7 @@ class EvaluationBundle(EvaluationModel):
     renders: ChapterRenders | None = None
     checks: tuple[CheckArtifact, ...] = ()
     editorial_verification: EditorialVerificationArtifact | None = None
+    summary_grounding: tuple[SummaryGroundingArtifact, ...] = ()
     review_events: tuple[ReviewEvent, ...] = ()
     attempts: tuple[AttemptFact, ...] = ()
     provenance: Provenance
@@ -370,6 +391,259 @@ def required_check_names(bundle: EvaluationBundle) -> frozenset[str]:
     return frozenset(names)
 
 
+def _summary_ref_matches_fact(ref: object, fact: ImmutableArtifactFact) -> bool:
+    """Compare the immutable fields shared by an artifact ref and portable fact."""
+    return bool(
+        getattr(ref, "id", None) == fact.id
+        and getattr(getattr(ref, "kind", None), "value", None) == fact.kind
+        and getattr(ref, "fingerprint", None) == fact.fingerprint
+        and getattr(ref, "sha256", None) == fact.sha256
+        and getattr(ref, "sizeBytes", None) == fact.size_bytes
+        and getattr(ref, "storageKey", None) == fact.storage_key
+    )
+
+
+def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
+    reports = bundle.summary_grounding
+    if not reports:
+        return
+    if bundle.evidence is None or bundle.evidence_sha256 is None:
+        raise HarnessValidationError("summary grounding requires accepted evidence")
+    validate_evidence(bundle.evidence)
+    if content_sha256(bundle.evidence) != bundle.evidence_sha256:
+        raise HarnessValidationError("evidence body hash differs from evidenceSha256")
+    if (
+        bundle.evidence.sourceId != bundle.source_id
+        or bundle.evidence.sourceFingerprint != bundle.source_fingerprint
+        or bundle.evidence.durationMs != bundle.duration_ms
+    ):
+        raise HarnessValidationError("summary grounding evidence belongs to a different source")
+    artifact_ids = [item.artifact.id for item in reports]
+    if len(artifact_ids) != len(set(artifact_ids)):
+        raise HarnessValidationError("summary grounding contains duplicate artifacts")
+    reports_by_id = {item.artifact.id: item for item in reports}
+    response_ids = {
+        attempt.result_artifact_id
+        for attempt in bundle.attempts
+        if attempt.state == "succeeded"
+        and attempt.result_artifact_id is not None
+        and attempt.response_present
+    }
+    evidence_ids: set[UUID] = set()
+    identities: set[tuple[int, str, str]] = set()
+    sentence_positions = {
+        sentence.id: index for index, sentence in enumerate(bundle.evidence.sentences)
+    }
+    word_owners = {
+        word.root: sentence.id
+        for sentence in bundle.evidence.sentences
+        for word in sentence.wordIds
+    }
+    for item in reports:
+        body = item.body
+        if item.artifact.source_id != bundle.source_id or item.artifact.kind != "checks":
+            raise HarnessValidationError("summary grounding artifact crosses source scope")
+        if content_sha256(body) != item.artifact.sha256:
+            raise HarnessValidationError("summary grounding body hash is invalid")
+        if grounding_artifact_fingerprint(body) != item.artifact.fingerprint:
+            raise HarnessValidationError("summary grounding fingerprint is invalid")
+        if body.runId != bundle.run_id:
+            raise HarnessValidationError("summary grounding belongs to a different run")
+        expected_stage = (
+            f"summary:{body.windowId}"
+            if body.hierarchyLevel == 1
+            else f"summary:level:{body.hierarchyLevel}:{body.windowId}"
+        )
+        if body.modelStage != expected_stage:
+            raise HarnessValidationError("summary grounding stage identity is invalid")
+        identity = (body.hierarchyLevel, body.modelStage, body.windowId)
+        if identity in identities:
+            raise HarnessValidationError("summary grounding contains a duplicate stage window")
+        identities.add(identity)
+        refs = (body.evidence, body.rawResponse, *body.inputArtifacts)
+        ref_ids = [ref.id for ref in refs]
+        if len(ref_ids) != len(set(ref_ids)):
+            raise HarnessValidationError("summary grounding names duplicate dependencies")
+        facts = item.dependencies
+        fact_ids = [fact.id for fact in facts]
+        if len(fact_ids) != len(set(fact_ids)) or set(fact_ids) != set(ref_ids):
+            raise HarnessValidationError("summary grounding dependency closure is invalid")
+        facts_by_id = {fact.id: fact for fact in facts}
+        for ref in refs:
+            fact = facts_by_id.get(ref.id)
+            if (
+                fact is None
+                or fact.source_id != bundle.source_id
+                or not _summary_ref_matches_fact(ref, fact)
+            ):
+                raise HarnessValidationError("summary grounding dependency identity is invalid")
+        evidence_fact = facts_by_id[body.evidence.id]
+        if evidence_fact.kind != "evidence" or body.evidence.sha256 != bundle.evidence_sha256:
+            raise HarnessValidationError("summary grounding names different evidence")
+        evidence_ids.add(body.evidence.id)
+        if (
+            facts_by_id[body.rawResponse.id].kind != "model_response"
+            or body.rawResponse.id not in response_ids
+        ):
+            raise HarnessValidationError(
+                "summary grounding raw response is not an accepted run attempt"
+            )
+        if any(
+            facts_by_id[ref.id].kind != "checks"
+            or ref.id == item.artifact.id
+            or ref.id not in reports_by_id
+            or not _summary_ref_matches_fact(ref, reports_by_id[ref.id].artifact)
+            or reports_by_id[ref.id].body.hierarchyLevel != body.hierarchyLevel - 1
+            or reports_by_id[ref.id].body.evidence != body.evidence
+            for ref in body.inputArtifacts
+        ):
+            raise HarnessValidationError("summary grounding input lineage is incomplete")
+        if (body.hierarchyLevel == 1) != (not body.inputArtifacts):
+            raise HarnessValidationError("summary grounding hierarchy lineage is invalid")
+        try:
+            window_start = sentence_positions[body.firstSentenceId]
+            window_end = sentence_positions[body.lastSentenceId]
+        except KeyError as error:
+            raise HarnessValidationError(
+                "summary grounding window names a foreign sentence"
+            ) from error
+        if window_end < window_start or window_end - window_start + 1 != body.windowSentenceCount:
+            raise HarnessValidationError("summary grounding window range is invalid")
+        contained_inputs: list[SummaryGroundingReport] = []
+        if body.inputArtifacts:
+            for ref in body.inputArtifacts:
+                prior = reports_by_id[ref.id].body
+                try:
+                    prior_start = sentence_positions[prior.firstSentenceId]
+                    prior_end = sentence_positions[prior.lastSentenceId]
+                except KeyError as error:
+                    raise HarnessValidationError(
+                        "summary grounding input window names a foreign sentence"
+                    ) from error
+                if window_start <= prior_start and prior_end <= window_end:
+                    contained_inputs.append(prior)
+            contained_inputs.sort(key=lambda report: sentence_positions[report.firstSentenceId])
+            expected_input_start = window_start
+            for prior in contained_inputs:
+                prior_start = sentence_positions[prior.firstSentenceId]
+                prior_end = sentence_positions[prior.lastSentenceId]
+                if (
+                    prior_start != expected_input_start
+                    or prior_end < prior_start
+                    or prior_end - prior_start + 1 != prior.windowSentenceCount
+                    or prior_end > window_end
+                ):
+                    raise HarnessValidationError(
+                        "summary grounding input windows do not cover their parent"
+                    )
+                expected_input_start = prior_end + 1
+            if expected_input_start != window_end + 1:
+                raise HarnessValidationError("summary grounding input windows leave a parent gap")
+        language_value = bundle.evidence.config.get("detectedLanguage")
+        detected_language = (
+            language_value.strip()
+            if isinstance(language_value, str) and language_value.strip()
+            else None
+        )
+        if body.hierarchyLevel == 1:
+            source_sentences = bundle.evidence.sentences[window_start : window_end + 1]
+            expected_prompt = render_summary_prompt(
+                PromptWindow(
+                    sourceId=bundle.source_id,
+                    evidenceSha256=body.evidence.sha256,
+                    windowId=body.windowId,
+                    firstSentenceId=body.firstSentenceId,
+                    lastSentenceId=body.lastSentenceId,
+                    sentences=tuple(
+                        PromptSentence(
+                            id=sentence.id,
+                            text=sentence.text,
+                            firstWordId=sentence.wordIds[0].root,
+                            lastWordId=sentence.wordIds[-1].root,
+                            speakers=tuple(sentence.speakers),
+                        )
+                        for sentence in source_sentences
+                    ),
+                ),
+                detected_language=detected_language,
+            )
+        else:
+            expected_prompt = render_summary_reduction_prompt(
+                source_id=bundle.source_id,
+                evidence_sha256=body.evidence.sha256,
+                summaries=[
+                    report.normalizedSummary.model_dump(mode="json") for report in contained_inputs
+                ],
+                hierarchy_level=body.hierarchyLevel,
+                detected_language=detected_language,
+            )
+        if hashlib.sha256(expected_prompt.encode()).hexdigest() != body.windowPromptSha256:
+            raise HarnessValidationError("summary grounding prompt hash is invalid")
+        units = {unit.id: unit for unit in body.normalizedSummary.units}
+        if len(units) != len(body.normalizedSummary.units):
+            raise HarnessValidationError("summary grounding contains duplicate unit identities")
+        fallback_ids = [fallback.unitId for fallback in body.fallbacks]
+        if len(fallback_ids) != len(set(fallback_ids)):
+            raise HarnessValidationError("summary grounding contains duplicate fallbacks")
+        fallbacks_by_id = {fallback.unitId: fallback for fallback in body.fallbacks}
+        expected_start = window_start
+        for unit in body.normalizedSummary.units:
+            try:
+                unit_start = sentence_positions[unit.firstSentenceId]
+                unit_end = sentence_positions[unit.lastSentenceId]
+            except KeyError as error:
+                raise HarnessValidationError(
+                    "summary grounding unit names a foreign sentence"
+                ) from error
+            if unit_start != expected_start or unit_end < unit_start or unit_end > window_end:
+                raise HarnessValidationError(
+                    "summary grounding units do not exactly cover their window"
+                )
+            if any(
+                (owner := word_owners.get(quote)) is None
+                or not unit_start <= sentence_positions[owner] <= unit_end
+                for quote in unit.quoteWordIds
+            ):
+                raise HarnessValidationError("summary grounding quote lies outside its source unit")
+            fallback = fallbacks_by_id.get(unit.id)
+            if fallback is not None:
+                source_sentences = bundle.evidence.sentences[unit_start : unit_end + 1]
+                expected_text = " ".join(sentence.text for sentence in source_sentences)
+                expected_quotes = tuple(
+                    dict.fromkeys(
+                        (
+                            source_sentences[0].wordIds[0].root,
+                            source_sentences[-1].wordIds[-1].root,
+                        )
+                    )
+                )
+                if (
+                    not fallback.rejectedQuoteWordIds
+                    or fallback.firstSentenceId != unit.firstSentenceId
+                    or fallback.lastSentenceId != unit.lastSentenceId
+                    or fallback.replacementQuoteWordIds != expected_quotes
+                    or tuple(unit.quoteWordIds) != expected_quotes
+                    or unit.text != expected_text
+                ):
+                    raise HarnessValidationError("summary grounding fallback content is invalid")
+            expected_start = unit_end + 1
+        if expected_start != window_end + 1:
+            raise HarnessValidationError(
+                "summary grounding units leave a gap in their source window"
+            )
+        for fallback in body.fallbacks:
+            unit = units.get(fallback.unitId)
+            if (
+                unit is None
+                or fallback.firstSentenceId != unit.firstSentenceId
+                or fallback.lastSentenceId != unit.lastSentenceId
+                or tuple(unit.quoteWordIds) != fallback.replacementQuoteWordIds
+            ):
+                raise HarnessValidationError("summary grounding fallback identity is invalid")
+    if len(evidence_ids) != 1:
+        raise HarnessValidationError("summary grounding mixes evidence artifacts")
+
+
 def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
     """Refuse corrupt, mixed-source, stale-revision, or ungrounded inputs."""
     for attempt in bundle.attempts:
@@ -397,6 +671,7 @@ def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
             raise HarnessValidationError("an edit or revision requires grounded evidence")
         if bundle.accepted_revision is not None:
             raise HarnessValidationError("an incomplete run cannot name an accepted revision")
+    _validate_summary_grounding(bundle)
     if bundle.edit is None:
         if bundle.current_revision != 0 or bundle.accepted_revision is not None:
             raise HarnessValidationError("a current or accepted revision requires an edit body")

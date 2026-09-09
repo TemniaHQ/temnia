@@ -4,6 +4,13 @@
 **Inputs:** [prd.md](prd.md) v1.2 (what the product does), the dated decisions in [AGENTS.md](../AGENTS.md), the 2026-09-05 tech-stack research (three structural decisions accepted the same day, §9), [design/studio-direction.md](design/studio-direction.md) and the exploration-03 prototype, [build-in-public.md](build-in-public.md). The legacy `sprint-plan.md` and `pipeline-implementation-plan.md` were consulted as reference only, per the 2026-09-05 rule; every departure is listed in §8 with its reason.
 **Precedence:** the PRD owns *what* and *for whom*; this file owns *sequence*; the tech stack (an S0 deliverable) owns system design; the pipeline architecture and clip-cut architecture (S3–S4 deliverables) own the harness and editorial design. Where this file and the PRD disagree on sequence, this file wins and the PRD is updated.
 
+**S3–S4 amendment (2026-09-09):** validate hierarchical summaries before dispatching the next
+window. A complete, valid sentence partition with a misplaced visible quote can use an explicit
+source-excerpt fallback for that whole unit, retaining the rejected model output and provenance.
+Foreign IDs and coverage defects still refuse. Model evaluation distinguishes first-pass output
+from fallback; no extra model repair is consumed. The measured staging failure and full design
+are in [chapter summary grounding](plans/chapter-summary-grounding-360-view.md).
+
 ## 1. How to read this plan
 
 - **A sprint is a scope unit with an exit test, not a calendar block.** The legacy sized two-week sprints for a three-person team and then shipped its first six in three calendar weeks with one founder working AI-assisted. This plan is sized for that team: one founder, coding agents doing most of the implementation. The working assumption is about a week per sprint; the exit test, not the date, decides when a sprint ends. Sequence is the commitment.

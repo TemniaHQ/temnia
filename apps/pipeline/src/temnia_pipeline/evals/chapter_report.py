@@ -62,6 +62,18 @@ class MoneyMetrics(EvaluationModel):
     attempts: tuple[AttemptFact, ...]
 
 
+class SummaryGroundingMetrics(EvaluationModel):
+    """Source-reference outcomes; these do not measure factual or editorial quality."""
+
+    report_count: int
+    summary_unit_count: int
+    first_pass_reference_valid_report_count: int
+    first_pass_reference_valid_unit_count: int
+    extractive_fallback_report_count: int
+    extractive_fallback_unit_count: int
+    rejected_quote_anchor_count: int
+
+
 class ChapterEvaluationReport(EvaluationModel):
     """Machine-readable report paired with a human-readable CLI table."""
 
@@ -95,6 +107,7 @@ class ChapterEvaluationReport(EvaluationModel):
     review_nudge_count: int
     event_elapsed_span_seconds: float | None
     boundary_metrics: BoundaryMetrics
+    summary_grounding: SummaryGroundingMetrics | None = None
     money: MoneyMetrics
     provenance: dict[str, object]
     human_review_tasks: HumanReviewTasks | None
@@ -269,6 +282,28 @@ def _accepted_chapter_count(bundle: EvaluationBundle) -> int | None:
     return len(kept)
 
 
+def _summary_grounding(bundle: EvaluationBundle) -> SummaryGroundingMetrics | None:
+    reports = bundle.summary_grounding
+    if not reports:
+        return None
+    unit_count = sum(len(item.body.normalizedSummary.units) for item in reports)
+    fallback_count = sum(len(item.body.fallbacks) for item in reports)
+    fallback_reports = sum(bool(item.body.fallbacks) for item in reports)
+    return SummaryGroundingMetrics(
+        report_count=len(reports),
+        summary_unit_count=unit_count,
+        first_pass_reference_valid_report_count=len(reports) - fallback_reports,
+        first_pass_reference_valid_unit_count=unit_count - fallback_count,
+        extractive_fallback_report_count=fallback_reports,
+        extractive_fallback_unit_count=fallback_count,
+        rejected_quote_anchor_count=sum(
+            len(fallback.rejectedQuoteWordIds)
+            for item in reports
+            for fallback in item.body.fallbacks
+        ),
+    )
+
+
 def build_report(
     bundle: EvaluationBundle,
     labels: HumanLabels | None = None,
@@ -368,6 +403,7 @@ def build_report(
         review_nudge_count=event_counts["nudge"],
         event_elapsed_span_seconds=event_span,
         boundary_metrics=boundary_metrics,
+        summary_grounding=_summary_grounding(bundle),
         money=money,
         provenance=bundle.provenance.model_dump(mode="json", by_alias=True),
         human_review_tasks=build_review_tasks(bundle) if edit is not None else None,
@@ -381,6 +417,7 @@ def build_report(
 def readable_table(report: ChapterEvaluationReport) -> str:
     """Render a compact deterministic table without hiding unknown values."""
     source = report.source_fingerprint[:12] if report.source_fingerprint else "unmeasured"
+    grounding = report.summary_grounding
     rows: tuple[tuple[str, str], ...] = (
         ("source", source),
         ("revision", f"{report.current_revision} (accepted {report.accepted_revision or 'none'})"),
@@ -391,6 +428,15 @@ def readable_table(report: ChapterEvaluationReport) -> str:
             f"{report.technical_failure_count} / {report.technical_warning_count}",
         ),
         ("human labels", str(report.boundary_metrics.label_count)),
+        (
+            "summary refs first pass / fallback",
+            (
+                f"{grounding.first_pass_reference_valid_unit_count} / "
+                f"{grounding.extractive_fallback_unit_count}"
+                if grounding is not None
+                else "not measured"
+            ),
+        ),
         ("live attempts", str(report.money.live_dispatch_count)),
         ("known spend micros", str(report.money.known_spent_micros)),
         ("active exposure micros", str(report.money.active_reserved_exposure_micros)),

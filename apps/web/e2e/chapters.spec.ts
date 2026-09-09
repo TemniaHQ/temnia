@@ -5,7 +5,13 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+  test,
+} from "@playwright/test";
 import {
   ChapterChecksSchema,
   type ChapterEditSpec,
@@ -327,11 +333,88 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByText("Last accepted output", { exact: true })
   ).toHaveCount(0);
+  const groundingPattern = `**/api/sources/${sourceId}/chapters**`;
+  const groundingHandler = async (route: Route) => {
+    const response = await route.fetch();
+    const next = (await response.json()) as ChapterView;
+    next.acceptedEdit = null;
+    next.currentEdit = null;
+    if (next.run) {
+      next.run.currentRevision = 0;
+      next.run.status = "needs_review";
+    }
+    next.summaryGrounding = {
+      fallbackQuoteCount: 3,
+      fallbackUnitCount: 2,
+      reports: [
+        {
+          id: "00000000-0000-4000-8000-000000000099",
+          kind: "checks",
+          metadata: {
+            fallbackQuoteCount: 3,
+            fallbackUnitCount: 2,
+            format: "chapter-summary-grounding/1",
+            hierarchyLevel: 1,
+            runId,
+            windowId: "window-1",
+          },
+          sha256: "9".repeat(64),
+          sizeBytes: 1,
+          url: "/api/media/grounding-report.json",
+        },
+      ],
+    };
+    await route.fulfill({ json: next, response });
+  };
+  await page.route(groundingPattern, groundingHandler);
+  try {
+    await expect(
+      page.getByTestId("chapter-summary-grounding-warning")
+    ).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(
+      page.getByTestId("chapter-summary-grounding-warning")
+    ).toContainText(
+      "Used the original transcript for 2 summary passages after finding 3 mismatched source references."
+    );
+    await expect(
+      page.getByRole("link", {
+        exact: true,
+        name: "Inspect source reference report 1",
+      })
+    ).toHaveAttribute("href", "/api/media/grounding-report.json");
+    await expect(
+      page.getByRole("link", { exact: true, name: "Open checks" })
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(
+        "Planning stopped before an edit was produced. Review the reason and start a new run to try again.",
+        { exact: true }
+      )
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Technical checks are still being verified. Acceptance and export are waiting.",
+        { exact: true }
+      )
+    ).toHaveCount(0);
+  } finally {
+    await page.unroute(groundingPattern, groundingHandler);
+  }
   const initialHashes = await renderHashes(page, state.view);
   await page.reload();
   await page.getByRole("tab", { exact: true, name: "Chapters" }).click();
   await expect(page.getByTestId("chapters-panel")).toBeVisible();
   expect((await readView(page, sourceId)).run?.id).toBe(runId);
+  const existingBudget = page.getByLabel("New maximum budget in dollars", {
+    exact: true,
+  });
+  await expect(existingBudget).toHaveValue("1.00");
+  await existingBudget.fill("1.234567");
+  // The same-run status poll must not overwrite an unsent operator draft.
+  await page.waitForTimeout(3200);
+  await expect(existingBudget).toHaveValue("1.234567");
   await independentPlayers(
     page,
     initial.sections.filter((section) => section.kind === "keep").length
@@ -437,6 +520,9 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await delayedManifestStarted.promise;
   await page.getByRole("button", { exact: true, name: "New run" }).click();
   await expect(page.getByTestId("chapters-new-run")).toBeVisible();
+  await expect(
+    page.getByLabel("Maximum budget in dollars", { exact: true })
+  ).toHaveValue("1.00");
   delayedManifest.resolve();
   await expect
     .poll(() => delayedManifestFinished, { timeout: 15_000 })
@@ -445,6 +531,7 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await page
     .getByRole("button", { exact: true, name: "Cancel new run" })
     .click();
+  await expect(existingBudget).toHaveValue("1.234567");
   const acceptedDownloads = page.getByTestId("accepted-downloads");
   await expect(acceptedDownloads).toBeVisible({ timeout: STAGE_TIMEOUT });
   expect(manifestRequestCount).toBe(2);
@@ -533,15 +620,50 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   expect((await page.request.get(exportUrl ?? "")).ok()).toBe(true);
 
   // Increasing a ceiling must preserve a checked review and its accepted export.
+  const chapterViewPattern = `**/api/sources/${sourceId}/chapters**`;
+  const appliedRaiseHeld = deferred();
+  const releaseAppliedRaise = deferred();
+  const appliedRaiseDelivered = deferred();
+  const holdAppliedRaise = async (route: Route) => {
+    const response = await route.fetch();
+    const body = await response.body();
+    const next = JSON.parse(body.toString()) as ChapterView;
+    const applied = next.events.some(
+      (event) => event.action === "raise_budget" && event.state === "applied"
+    );
+    const matchesAppliedRaise =
+      next.run?.id === runId && next.run?.budgetMicros === 2_000_000 && applied;
+    if (matchesAppliedRaise) {
+      appliedRaiseHeld.resolve();
+      await releaseAppliedRaise.promise;
+    }
+    await route.fulfill({ body, response });
+    if (matchesAppliedRaise) {
+      appliedRaiseDelivered.resolve();
+    }
+  };
+  await page.route(chapterViewPattern, holdAppliedRaise);
   await page
     .getByLabel("New maximum budget in dollars", { exact: true })
     .fill("2.00");
-  await page.getByRole("button", { exact: true, name: "Raise budget" }).click();
-  await expect
-    .poll(async () => (await readView(page, sourceId)).run?.budgetMicros, {
-      timeout: STAGE_TIMEOUT,
-    })
-    .toBe(2_000_000);
+  try {
+    await page
+      .getByRole("button", { exact: true, name: "Raise budget" })
+      .click();
+    await appliedRaiseHeld.promise;
+    await page
+      .getByLabel("New maximum budget in dollars", { exact: true })
+      .fill("2.25");
+    releaseAppliedRaise.resolve();
+    await appliedRaiseDelivered.promise;
+    await expect(
+      page.getByLabel("New maximum budget in dollars", { exact: true })
+    ).toHaveValue("2.25");
+  } finally {
+    releaseAppliedRaise.resolve();
+    await page.unroute(chapterViewPattern, holdAppliedRaise);
+  }
+  expect((await readView(page, sourceId)).run?.budgetMicros).toBe(2_000_000);
   expect((await readView(page, sourceId)).run?.currentRevision).toBe(
     state.revision
   );
@@ -573,6 +695,11 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
 
   await page.getByRole("button", { exact: true, name: "New run" }).click();
   const newBrief = page.getByLabel("Editorial brief", { exact: true });
+  const newBudget = page.getByLabel("Maximum budget in dollars", {
+    exact: true,
+  });
+  await expect(newBudget).toHaveValue("1.00");
+  await newBudget.fill("1.50");
   await newBrief.fill("A second independently reviewed chapter cut.");
   // Intentionally outlast the 2.5-second status poll that previously dismissed it.
   await page.waitForTimeout(3200);
@@ -587,16 +714,29 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     .not.toBe(runId);
   const secondRun = await checkedRevision(page, sourceId, 0);
   expect(secondRun.view.run?.id).not.toBe(runId);
+  const secondRunId = secondRun.view.run?.id;
+  await expect(
+    page.getByLabel("New maximum budget in dollars", { exact: true })
+  ).toHaveValue("1.50");
   await page
     .getByLabel("Chapter run", { exact: true })
     .selectOption(runId ?? "");
   await expect(page.getByLabel("Chapter run", { exact: true })).toHaveValue(
     runId ?? ""
   );
+  await expect(
+    page.getByLabel("New maximum budget in dollars", { exact: true })
+  ).toHaveValue("2.00");
   await page.waitForTimeout(3200);
   await expect(page.getByLabel("Chapter run", { exact: true })).toHaveValue(
     runId ?? ""
   );
+  await page
+    .getByLabel("Chapter run", { exact: true })
+    .selectOption(secondRunId ?? "");
+  await expect(
+    page.getByLabel("New maximum budget in dollars", { exact: true })
+  ).toHaveValue("1.50");
   await page.getByRole("tab", { exact: true, name: "Transcript" }).click();
   await page.getByTestId("transcript-edit-mode").click();
   await page.locator('[data-word="0"]').click();

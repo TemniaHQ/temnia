@@ -36,9 +36,13 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { verifiedArtifactJson } from "@/lib/harness/artifact";
 import {
+  appliedBudgetMatchesDraft,
+  budgetInputFromMicros,
   type ChapterPanelMessage,
+  chapterPlanningStoppedMessage,
   chapterWaitingMessage,
   clearMatchedStartMessage,
+  summaryGroundingMessage,
 } from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
 import {
@@ -89,6 +93,12 @@ interface BoundaryAudition {
 interface BoundaryAuditionError {
   boundaryId: string;
   message: string;
+}
+
+interface SubmittedBudgetDraft {
+  mutationKey: string;
+  runId: string;
+  value: string;
 }
 
 const pendingStartKey = (sourceId: string) =>
@@ -170,7 +180,10 @@ export function ChapterPanel({
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [message, setMessage] = useState<ChapterPanelMessage | null>(null);
   const [brief, setBrief] = useState("");
-  const [budget, setBudget] = useState("1.00");
+  const [newRunBudget, setNewRunBudget] = useState("1.00");
+  const [selectedRunBudget, setSelectedRunBudget] = useState(() =>
+    initialView.run ? budgetInputFromMicros(initialView.run.budgetMicros) : ""
+  );
   const [reason, setReason] = useState("");
   const [nudgeByBoundary, setNudgeByBoundary] = useState<
     Record<string, string>
@@ -211,6 +224,10 @@ export function ChapterPanel({
   sourcePause.current = sourcePlayback?.pause;
   const refreshSequence = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
+  const selectedBudgetRunId = useRef(initialView.run?.id ?? null);
+  const selectedBudgetDirty = useRef(false);
+  const selectedBudgetValue = useRef(selectedRunBudget);
+  const submittedBudgetDraft = useRef<SubmittedBudgetDraft | null>(null);
   const selectedArtifact = view.currentEdit ?? view.acceptedEdit;
   const selectedArtifactIdentity = selectedArtifact
     ? `${selectedArtifact.id}:${selectedArtifact.sha256}`
@@ -416,12 +433,33 @@ export function ChapterPanel({
             text: status.message,
           });
         }
-        if (
-          pendingCommand &&
-          next.events.some(
-            (event) => event.mutationKey === pendingCommand.mutationKey
-          )
-        ) {
+        const completedCommand = pendingCommand
+          ? next.events.find(
+              (event) => event.mutationKey === pendingCommand.mutationKey
+            )
+          : undefined;
+        if (pendingCommand && completedCommand) {
+          const submitted = submittedBudgetDraft.current;
+          if (
+            submitted?.mutationKey === pendingCommand.mutationKey &&
+            typeof pendingCommand.budgetMicros === "number" &&
+            next.run &&
+            appliedBudgetMatchesDraft({
+              commandState: completedCommand.state,
+              currentDraft: selectedBudgetValue.current,
+              observedMicros: next.run.budgetMicros,
+              runMatches:
+                next.run.id === pendingCommand.runId &&
+                submitted.runId === pendingCommand.runId,
+              submittedDraft: submitted.value,
+              submittedMicros: pendingCommand.budgetMicros,
+            })
+          ) {
+            selectedBudgetDirty.current = false;
+          }
+          if (submitted?.mutationKey === pendingCommand.mutationKey) {
+            submittedBudgetDraft.current = null;
+          }
           clearSessionIntent(pendingCommandKey(pendingCommand.runId));
           setPendingCommand(null);
           setPendingResolution((current) =>
@@ -470,10 +508,30 @@ export function ChapterPanel({
       setSelectedRunId(recovered.runId);
       setCreatingNew(false);
       setBrief(recovered.brief);
-      setBudget(recovered.budgetDollars);
+      setNewRunBudget(recovered.budgetDollars);
       setPendingResolution(null);
     }
   }, [sourceId]);
+
+  useEffect(() => {
+    if (!view.run) {
+      return;
+    }
+    if (selectedBudgetRunId.current !== view.run.id) {
+      selectedBudgetRunId.current = view.run.id;
+      selectedBudgetDirty.current = false;
+      const value = budgetInputFromMicros(view.run.budgetMicros);
+      selectedBudgetValue.current = value;
+      setSelectedRunBudget(value);
+      return;
+    }
+    // biome-ignore lint/suspicious/noUnnecessaryConditions: input events mutate this ref between polled snapshots
+    if (!selectedBudgetDirty.current) {
+      const value = budgetInputFromMicros(view.run.budgetMicros);
+      selectedBudgetValue.current = value;
+      setSelectedRunBudget(value);
+    }
+  }, [view.run]);
 
   useEffect(() => {
     if (!view.run) {
@@ -551,15 +609,14 @@ export function ChapterPanel({
     // but only a new id/hash should reset or retry its validation error.
   }, [selectedArtifactIdentity]);
 
-  const relatedArtifacts = useMemo(
-    () =>
-      view.artifacts.filter(
-        (artifact) =>
-          artifact.metadata.editSha256 ===
-          (view.currentEdit ?? view.acceptedEdit)?.sha256
-      ),
-    [view.acceptedEdit, view.artifacts, view.currentEdit]
-  );
+  const relatedArtifacts = useMemo(() => {
+    const editSha256 = (view.currentEdit ?? view.acceptedEdit)?.sha256;
+    return editSha256
+      ? view.artifacts.filter(
+          (artifact) => artifact.metadata.editSha256 === editSha256
+        )
+      : [];
+  }, [view.acceptedEdit, view.artifacts, view.currentEdit]);
   useEffect(() => {
     if (descriptorCheckState === "loading") {
       setCheckState("loading");
@@ -768,7 +825,7 @@ export function ChapterPanel({
     const runId = crypto.randomUUID();
     const intent = {
       brief,
-      budgetDollars: budget,
+      budgetDollars: newRunBudget,
       requestKey: runId,
       runId,
       sourceId,
@@ -831,6 +888,13 @@ export function ChapterPanel({
       targetTimeMs: null,
       ...fields,
     };
+    if (action === "raise_budget") {
+      submittedBudgetDraft.current = {
+        mutationKey: intent.mutationKey,
+        runId: view.run.id,
+        value: selectedRunBudget,
+      };
+    }
     writeSessionIntent(pendingCommandKey(view.run.id), intent);
     setPendingCommand(intent);
     submitCommand(intent);
@@ -902,8 +966,8 @@ export function ChapterPanel({
           aria-label="Maximum budget in dollars"
           id={`${formId}-budget`}
           inputMode="decimal"
-          onChange={(event) => setBudget(event.target.value)}
-          value={budget}
+          onChange={(event) => setNewRunBudget(event.target.value)}
+          value={newRunBudget}
         />
         <Button data-testid="chapter-start" disabled={pending} onClick={begin}>
           {pending ? "Starting…" : "Create chapters"}
@@ -934,6 +998,11 @@ export function ChapterPanel({
     descriptorCheckState,
     hasSelectedEdit: selectedArtifact !== null,
   });
+  const groundingMessage = summaryGroundingMessage(view.summaryGrounding);
+  const planningStoppedMessage = chapterPlanningStoppedMessage(
+    run.status,
+    run.currentRevision
+  );
   return (
     <div className="space-y-4" data-testid="chapters-panel">
       <div className="flex flex-wrap items-center gap-2">
@@ -985,6 +1054,32 @@ export function ChapterPanel({
       </p>
       {run.errorMessage ? (
         <p className="text-destructive text-sm">{run.errorMessage}</p>
+      ) : null}
+      {planningStoppedMessage ? (
+        <p className="text-muted-foreground text-sm">
+          {planningStoppedMessage}
+        </p>
+      ) : null}
+      {groundingMessage ? (
+        <div
+          className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm"
+          data-testid="chapter-summary-grounding-warning"
+        >
+          <p>{groundingMessage}</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {view.summaryGrounding.reports.map((report, index) => (
+              <a
+                className="underline"
+                href={report.url}
+                key={report.id}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Inspect source reference report {index + 1}
+              </a>
+            ))}
+          </div>
+        </div>
       ) : null}
       {run.status === "cancelled" ? (
         <p className="text-muted-foreground text-sm">
@@ -1126,8 +1221,12 @@ export function ChapterPanel({
             aria-label="New maximum budget in dollars"
             id={`${formId}-budget`}
             inputMode="decimal"
-            onChange={(event) => setBudget(event.target.value)}
-            value={budget}
+            onChange={(event) => {
+              selectedBudgetDirty.current = true;
+              selectedBudgetValue.current = event.target.value;
+              setSelectedRunBudget(event.target.value);
+            }}
+            value={selectedRunBudget}
           />
         </div>
       </div>
@@ -1145,14 +1244,14 @@ export function ChapterPanel({
           commandBusy ||
           ["cancelled", "outcome_unknown", "ready"].includes(run.status) ||
           parseDollarMicros(
-            budget,
+            selectedRunBudget,
             availability.settings.maxRunBudgetMicros
           ) === null
         }
         onClick={() =>
           command("raise_budget", {
             budgetMicros: parseDollarMicros(
-              budget,
+              selectedRunBudget,
               availability.settings.maxRunBudgetMicros
             ),
           })

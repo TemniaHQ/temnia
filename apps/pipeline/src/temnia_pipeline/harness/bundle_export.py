@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, LiteralString, cast
 
@@ -27,9 +28,23 @@ from temnia_pipeline.evals.chapters import (
     ImmutableArtifactFact,
     Provenance,
     ReviewEvent,
+    SummaryGroundingArtifact,
     validate_bundle,
 )
 from temnia_pipeline.harness import artifacts
+from temnia_pipeline.harness.prompts import (
+    PromptSentence,
+    PromptWindow,
+    render_summary_prompt,
+    render_summary_reduction_prompt,
+)
+from temnia_pipeline.harness.summary_grounding import (
+    GROUNDING_FORMAT,
+    SummaryGroundingRefusal,
+    SummaryGroundingReport,
+    ground_summary,
+    normalized_summary_from_response,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -53,6 +68,7 @@ class _Snapshot:
     revision: Mapping[str, Any] | None
     descriptor_id: UUID | None
     verification_id: UUID | None
+    grounding_ids: tuple[UUID, ...]
     rows: Mapping[UUID, Mapping[str, Any]]
     dependencies: Mapping[UUID, tuple[UUID, ...]]
     attempts: tuple[Mapping[str, Any], ...]
@@ -84,7 +100,14 @@ def _artifact_fact(row: Mapping[str, Any]) -> ImmutableArtifactFact:
         kind=cast("Any", str(row["kind"])),
         fingerprint=str(row["fingerprint"]),
         sha256=str(row["sha256"]),
+        size_bytes=int(row["size_bytes"]),
+        storage_key=str(row["storage_key"]),
     )
+
+
+def _summary_grounding_report(value: object) -> SummaryGroundingReport:
+    """Validate a decoded JSON value with Pydantic's strict JSON conversions."""
+    return SummaryGroundingReport.model_validate_json(artifacts.canonical_json(value), strict=True)
 
 
 async def _one_or_none(
@@ -190,6 +213,23 @@ async def _read_snapshot(
             )
         verification_id = verification["id"] if verification is not None else None
 
+        grounding_rows = await (
+            await conn.execute(
+                """
+                SELECT * FROM harness_artifact
+                 WHERE source_id = %s AND kind = 'checks'
+                   AND metadata->>'format' = %s
+                   AND metadata->>'runId' = %s
+                 ORDER BY created_at, id
+                 LIMIT %s
+                """,
+                (source_id, GROUNDING_FORMAT, str(run_id), MAX_EXPORT_ARTIFACTS + 1),
+            )
+        ).fetchall()
+        if len(grounding_rows) > MAX_EXPORT_ARTIFACTS:
+            raise ValueError(f"run exceeds {MAX_EXPORT_ARTIFACTS} summary grounding artifacts")
+        grounding_ids = tuple(row["id"] for row in grounding_rows)
+
         attempts = await (
             await conn.execute(
                 """
@@ -229,12 +269,16 @@ async def _read_snapshot(
                 edit_id,
                 descriptor_id,
                 verification_id,
+                *grounding_ids,
                 *(row.get("result_artifact_id") for row in attempts),
             )
             if value is not None
         }
         dependency_rows: Sequence[Mapping[str, Any]] = ()
-        if descriptor_id is not None or verification_id is not None:
+        dependency_roots = tuple(
+            value for value in (descriptor_id, verification_id, *grounding_ids) if value is not None
+        )
+        if dependency_roots:
             dependency_rows = await (
                 await conn.execute(
                     """
@@ -243,7 +287,7 @@ async def _read_snapshot(
                      WHERE artifact_id = ANY(%s)
                      ORDER BY artifact_id, input_artifact_id
                     """,
-                    ([value for value in (descriptor_id, verification_id) if value],),
+                    (list(dependency_roots),),
                 )
             ).fetchall()
         all_ids = root_ids | {row["input_artifact_id"] for row in dependency_rows}
@@ -280,6 +324,7 @@ async def _read_snapshot(
             revision=revision,
             descriptor_id=descriptor_id,
             verification_id=verification_id,
+            grounding_ids=grounding_ids,
             rows=rows,
             dependencies={key: tuple(value) for key, value in dependencies.items()},
             attempts=tuple(attempts),
@@ -331,6 +376,152 @@ async def export_evaluation_bundle(
         edit = ChapterEditSpec.model_validate(bodies[edit_id])
         edit_sha = str(snapshot.rows[edit_id]["sha256"])
         edit_revision = int(snapshot.revision["revision"])
+
+    summary_grounding: list[SummaryGroundingArtifact] = []
+    accepted_response_ids = {
+        row["result_artifact_id"]
+        for row in snapshot.attempts
+        if row.get("result_artifact_id") is not None and row.get("state") == "succeeded"
+    }
+    for grounding_id in snapshot.grounding_ids:
+        grounding_row = snapshot.rows[grounding_id]
+        body = _summary_grounding_report(bodies[grounding_id])
+        metadata = _metadata(grounding_row)
+        expected_metadata = {
+            "format": body.format,
+            "runId": str(body.runId),
+            "windowId": body.windowId,
+            "hierarchyLevel": body.hierarchyLevel,
+            "modelStage": body.modelStage,
+            "fallbackUnitCount": len(body.fallbacks),
+            "fallbackQuoteCount": sum(
+                len(fallback.rejectedQuoteWordIds) for fallback in body.fallbacks
+            ),
+        }
+        if any(metadata.get(key) != value for key, value in expected_metadata.items()):
+            raise ValueError("summary grounding artifact metadata is invalid")
+        if body.runId != run_id or body.evidence.id != evidence_id:
+            raise ValueError("summary grounding artifact belongs to a different run evidence")
+        if body.rawResponse.id not in accepted_response_ids:
+            raise ValueError("summary grounding response is not an accepted run attempt")
+        try:
+            source_summary = normalized_summary_from_response(bodies[body.rawResponse.id])
+        except SummaryGroundingRefusal as error:
+            raise ValueError("summary grounding raw response body is invalid") from error
+        source_summary_sha256 = hashlib.sha256(
+            artifacts.canonical_json(source_summary.model_dump(mode="json"))
+        ).hexdigest()
+        if source_summary_sha256 != body.sourceSummarySha256:
+            raise ValueError("summary grounding source summary hash is invalid")
+        if evidence is None:
+            raise ValueError("summary grounding artifact has no accepted evidence body")
+        language_value = evidence.config.get("detectedLanguage")
+        detected_language = (
+            language_value.strip()
+            if isinstance(language_value, str) and language_value.strip()
+            else None
+        )
+        positions = {sentence.id: index for index, sentence in enumerate(evidence.sentences)}
+        try:
+            window_start = positions[body.firstSentenceId]
+            window_end = positions[body.lastSentenceId]
+        except KeyError as error:
+            raise ValueError("summary grounding window names a foreign sentence") from error
+        if body.hierarchyLevel == 1:
+            source_sentences = evidence.sentences[window_start : window_end + 1]
+            expected_prompt = render_summary_prompt(
+                PromptWindow(
+                    sourceId=source_id,
+                    evidenceSha256=body.evidence.sha256,
+                    windowId=body.windowId,
+                    firstSentenceId=body.firstSentenceId,
+                    lastSentenceId=body.lastSentenceId,
+                    sentences=tuple(
+                        PromptSentence(
+                            id=sentence.id,
+                            text=sentence.text,
+                            firstWordId=sentence.wordIds[0].root,
+                            lastWordId=sentence.wordIds[-1].root,
+                            speakers=tuple(sentence.speakers),
+                        )
+                        for sentence in source_sentences
+                    ),
+                ),
+                detected_language=detected_language,
+            )
+            allowed_model_anchors = frozenset(
+                word.root
+                for sentence in source_sentences
+                for word in (sentence.wordIds[0], sentence.wordIds[-1])
+            )
+        else:
+            input_reports = [
+                _summary_grounding_report(bodies[ref.id]) for ref in body.inputArtifacts
+            ]
+            contained_reports = sorted(
+                (
+                    report
+                    for report in input_reports
+                    if report.firstSentenceId in positions
+                    and report.lastSentenceId in positions
+                    and window_start <= positions[report.firstSentenceId]
+                    and positions[report.lastSentenceId] <= window_end
+                ),
+                key=lambda report: positions[report.firstSentenceId],
+            )
+            expected_prompt = render_summary_reduction_prompt(
+                source_id=source_id,
+                evidence_sha256=body.evidence.sha256,
+                summaries=[
+                    report.normalizedSummary.model_dump(mode="json") for report in contained_reports
+                ],
+                hierarchy_level=body.hierarchyLevel,
+                detected_language=detected_language,
+            )
+            allowed_model_anchors = frozenset(
+                quote
+                for report in contained_reports
+                for unit in report.normalizedSummary.units
+                for quote in unit.quoteWordIds
+            )
+        if hashlib.sha256(expected_prompt.encode()).hexdigest() != body.windowPromptSha256:
+            raise ValueError("summary grounding prompt hash is invalid")
+        try:
+            expected_grounding = ground_summary(
+                evidence=evidence,
+                window_first_sentence_id=body.firstSentenceId,
+                window_last_sentence_id=body.lastSentenceId,
+                window_sentence_count=body.windowSentenceCount,
+                summary=source_summary,
+                allowed_model_anchors=allowed_model_anchors,
+            )
+        except SummaryGroundingRefusal as error:
+            raise ValueError("summary grounding report cannot be reproduced") from error
+        if (
+            expected_grounding.summary != body.normalizedSummary
+            or expected_grounding.fallbacks != body.fallbacks
+        ):
+            raise ValueError("summary grounding fallback differs from its raw response")
+        refs = (body.evidence, body.rawResponse, *body.inputArtifacts)
+        ref_ids = [ref.id for ref in refs]
+        if len(ref_ids) != len(set(ref_ids)):
+            raise ValueError("summary grounding artifact names duplicate dependencies")
+        dependency_ids = snapshot.dependencies.get(grounding_id, ())
+        if set(dependency_ids) != set(ref_ids) or len(dependency_ids) != len(ref_ids):
+            raise ValueError("summary grounding artifact dependency closure is invalid")
+        dependency_facts: list[ImmutableArtifactFact] = []
+        for ref in refs:
+            dependency_row = snapshot.rows.get(ref.id)
+            if dependency_row is None or _artifact_ref(dependency_row) != ref:
+                raise ValueError("summary grounding artifact dependency identity is invalid")
+            dependency_facts.append(_artifact_fact(dependency_row))
+        summary_grounding.append(
+            SummaryGroundingArtifact(
+                artifact=_artifact_fact(grounding_row),
+                body=body,
+                dependencies=tuple(dependency_facts),
+            )
+        )
 
     renders = None
     descriptor_sha = None
@@ -501,6 +692,7 @@ async def export_evaluation_bundle(
         renders=renders,
         checks=tuple(checks),
         editorial_verification=verification,
+        summary_grounding=tuple(summary_grounding),
         review_events=tuple(
             ReviewEvent(
                 action=str(row["action"]),
