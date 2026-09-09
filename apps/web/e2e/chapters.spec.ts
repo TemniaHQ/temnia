@@ -308,6 +308,12 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     .fill("1.00");
   await page.getByTestId("chapter-start").click();
   let state = await checkedRevision(page, sourceId, 0);
+  await expect(
+    page.getByText(
+      "Chapter editing was dispatched. Waiting for the durable run record.",
+      { exact: true }
+    )
+  ).toHaveCount(0);
   const initial = state.edit;
   const runId = state.view.run?.id;
   expect(

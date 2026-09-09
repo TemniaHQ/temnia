@@ -258,7 +258,15 @@ backend. It proves mechanics and never establishes live model quality or price.
 | `needs_review` | Listen around cuts, correct boundaries, and accept every keep/drop with required reasons. Human review resolves editorial concerns; technical failures still block export. |
 | `ready` | Export the accepted revision. Later content corrections create a new revision while the prior export remains available. |
 
-Gateway cost lookup is read-only unless `--apply` is supplied:
+The worker saves a known model response before looking up its charge. It allows up to twenty
+seconds total for that lookup and polling of explicitly pending receipts. A missing receipt or
+lookup error leaves the cost unresolved and its reservation active; it does not repeat inference.
+Error observations retain a sanitized error class. Qualification uses its separately bounded
+lookup window. A zero reported amount beside unresolved exposure is not evidence of a free call.
+
+Before reconciliation, export the stopped run and preserve the attempt facts and original usage
+observations privately. Settlement replaces the row's latest usage with the verified charge
+components. Gateway cost lookup is read-only unless `--apply` is supplied:
 
 ```bash
 uv run --frozen temnia-harness reconcile-cost --run-id RUN_UUID

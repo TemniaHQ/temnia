@@ -564,6 +564,19 @@ The standard mount API has no read-only flag in this version. The nonsecret rout
 content-addressed, root-owned `0444` file; the UID-10001 worker's write attempt is refused. This is
 file permission enforcement, not a Docker read-only mount. Procedure: `docs/runbooks/staging.md`.
 
+**2026-09-09 — Internal summary labels belong to code; source anchors remain model constraints.**
+The first 151-minute live chapter run stopped after seven summaries because the seventh returned
+five empty unit labels. These labels identify summary units, not source evidence. Derive them
+deterministically inside the model activity after preserving the raw response, for both fresh
+and reused results. Keep the request schema/fingerprint and immutable receipt unchanged, so
+recovery does not purchase the same seven results again. Do not normalize sentence endpoints,
+quote anchors or editorial content. Compared with another paid repair or a wider source schema,
+this removes a model responsibility that has no editorial value. The same run exposed missing
+heartbeats during a quiet source download and delayed generation accounting; supervise I/O
+liveness with separate finite stall deadlines and poll known generation receipts for a bounded
+period. Unknown charges retain reservations. Plan: `docs/plans/chapter-live-failures-360-view.md`;
+measured outcome: `docs/design/chapter-staging-qualification-2026-09-09.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
+from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
@@ -18,7 +20,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext
+from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext, TextPart
 from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
@@ -53,7 +55,7 @@ from temnia_pipeline.harness.gateway import (
     GatewayConfig,
     GatewayError,
     build_gateway_model,
-    lookup_generation,
+    observe_generation_cost,
 )
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
 
@@ -66,6 +68,8 @@ MODEL_RESPONSE_SCHEMA_VERSION = "pydantic-ai-model-response-v1"
 HTTP_CLIENT_ERROR_MIN = 400
 HTTP_CLIENT_ERROR_MAX = 500
 HTTP_REQUEST_TIMEOUT = 408
+MAX_SUMMARY_ID_LENGTH = 256
+SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
 
 
 class ModelPersistenceError(RuntimeError):
@@ -264,6 +268,111 @@ def _response_from_artifact(value: object) -> ModelResponse:
     return MODEL_RESPONSE_ADAPTER.validate_python(value)
 
 
+def _summary_unit_id(
+    index: int,
+    first_sentence_id: str,
+    last_sentence_id: str,
+    collision_index: int,
+) -> str:
+    identity = json.dumps(
+        [index, first_sentence_id, last_sentence_id, collision_index],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    return f"summary-{index:04d}-{hashlib.sha256(identity).hexdigest()}"
+
+
+def _summary_body(content: str) -> dict[str, Any] | None:
+    try:
+        value: object = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else None
+
+
+def _normalized_summary_units(
+    raw_units: object,
+) -> tuple[list[dict[str, Any]], bool] | None:
+    if not isinstance(raw_units, list):
+        return None
+    values = cast("list[object]", raw_units)
+    if not all(isinstance(value, dict) for value in values):
+        return None
+    unit_values = cast("list[dict[str, Any]]", values)
+    labels = [value.get("id") for value in unit_values]
+    label_counts = Counter(
+        value
+        for value in labels
+        if isinstance(value, str) and 1 <= len(value) <= MAX_SUMMARY_ID_LENGTH
+    )
+    used = {value for value, count in label_counts.items() if count == 1}
+    units: list[dict[str, Any]] = []
+    changed = False
+    for index, value in enumerate(unit_values):
+        unit = dict(value)
+        label = unit.get("id")
+        if not (
+            isinstance(label, str)
+            and 1 <= len(label) <= MAX_SUMMARY_ID_LENGTH
+            and label_counts[label] == 1
+        ):
+            first = unit.get("firstSentenceId")
+            last = unit.get("lastSentenceId")
+            if not isinstance(first, str) or not isinstance(last, str):
+                return None
+            collision_index = 0
+            label = _summary_unit_id(index, first, last, collision_index)
+            while label in used:
+                collision_index += 1
+                label = _summary_unit_id(index, first, last, collision_index)
+            unit["id"] = label
+            used.add(label)
+            changed = True
+        units.append(unit)
+    return units, changed
+
+
+def _replace_summary_text(
+    response: ModelResponse,
+    text_index: int,
+    text_part: TextPart,
+    body: dict[str, Any],
+) -> ModelResponse:
+    try:
+        content = json.dumps(
+            body,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        return response
+    parts = list(response.parts)
+    parts[text_index] = replace(text_part, content=content)
+    return replace(response, parts=parts)
+
+
+def _normalize_summary_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
+    """Derive invalid cosmetic summary labels without changing retained provider bytes."""
+    if deps.schema_version != SUMMARY_SCHEMA_VERSION:
+        return response
+    text_indexes = [
+        index for index, part in enumerate(response.parts) if isinstance(part, TextPart)
+    ]
+    if len(text_indexes) != 1:
+        return response
+    text_index = text_indexes[0]
+    text_part = response.parts[text_index]
+    if not isinstance(text_part, TextPart):  # pragma: no cover - narrowed above
+        return response
+    body = _summary_body(text_part.content)
+    units = _normalized_summary_units(body.get("units") if body is not None else None)
+    if body is None or units is None or not units[1]:
+        return response
+    body["units"] = units[0]
+    return _replace_summary_text(response, text_index, text_part, body)
+
+
 async def _heartbeat(attempt_id: UUID) -> None:
     while True:
         await asyncio.sleep(10)
@@ -277,19 +386,30 @@ async def _observe_cost(
         return CostObservation(status="reported", actual_cost_micros=0, components={})
     if response.provider_response_id is None or runtime.gateway is None:
         return None
-    if runtime.lookup_client is not None:
-        return await lookup_generation(
-            runtime.lookup_client,
-            config=runtime.gateway,
-            route=deps.route,
-            generation_id=response.provider_response_id,
-        )
-    async with httpx.AsyncClient() as client:
-        return await lookup_generation(
-            client,
-            config=runtime.gateway,
-            route=deps.route,
-            generation_id=response.provider_response_id,
+    try:
+        if runtime.lookup_client is not None:
+            return await observe_generation_cost(
+                runtime.lookup_client,
+                config=runtime.gateway,
+                route=deps.route,
+                generation_id=response.provider_response_id,
+            )
+        async with httpx.AsyncClient() as client:
+            return await observe_generation_cost(
+                client,
+                config=runtime.gateway,
+                route=deps.route,
+                generation_id=response.provider_response_id,
+            )
+    except (GatewayError, httpx.HTTPError, ValueError) as error:
+        return CostObservation(
+            status="pending",
+            actual_cost_micros=None,
+            components={
+                "generationId": response.provider_response_id,
+                "reason": "lookup_error",
+                "errorType": type(error).__name__,
+            },
         )
 
 
@@ -445,7 +565,7 @@ class BudgetedModel(WrapperModel):
                 store=runtime.store,
                 artifact_id=artifact_id,
             )
-            return _response_from_artifact(stored)
+            return _normalize_summary_response(self.deps, _response_from_artifact(stored))
         owner_token = _owner_token(runtime)
         recovery_attempt = await ledger.find_recoverable_attempt(
             runtime.database_url,
@@ -523,7 +643,7 @@ class BudgetedModel(WrapperModel):
             )
             if self.deps.cassette_mode == CassetteMode.RECORD:
                 runtime.cassette_store.record(request_hash, _cassette_metadata(self.deps), response)
-            return response
+            return _normalize_summary_response(self.deps, response)
         if recovery_attempt is not None:
             raise ledger.OutcomeUnknown(
                 "a prior dispatched attempt has no durable response and cannot be repeated"
@@ -646,7 +766,7 @@ class BudgetedModel(WrapperModel):
             )
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
         try:
-            return await self._accept_response(
+            accepted = await self._accept_response(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
                 attempt=attempt,
@@ -655,6 +775,7 @@ class BudgetedModel(WrapperModel):
                 response_fingerprint=response_fingerprint,
                 response=response,
             )
+            return _normalize_summary_response(self.deps, accepted)
         except asyncio.CancelledError:
             await self._record_unknown(
                 runtime=runtime,

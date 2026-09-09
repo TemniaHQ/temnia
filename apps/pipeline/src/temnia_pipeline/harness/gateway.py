@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import math
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal, Self, cast
 
@@ -35,6 +37,8 @@ from temnia_pipeline.harness.routes import RouteEntry
 GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"
 USD_TO_MICROS = Decimal(1_000_000)
 HTTP_NOT_FOUND = 404
+COST_LOOKUP_WAIT_SECONDS = 20.0
+MAX_COST_LOOKUP_WAIT_SECONDS = 30.0
 
 
 class GatewayError(RuntimeError):
@@ -196,6 +200,55 @@ async def lookup_generation(
     return CostObservation(
         status="reported", actual_cost_micros=_micros(data.total_cost), components=components
     )
+
+
+async def observe_generation_cost(  # noqa: PLR0913
+    client: httpx.AsyncClient,
+    *,
+    config: GatewayConfig,
+    route: RouteEntry,
+    generation_id: str,
+    wait_seconds: float = COST_LOOKUP_WAIT_SECONDS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> CostObservation:
+    """Wait finitely for a known generation's receipt; never repeat inference.
+
+    The wait budget includes the first lookup. Zero means one lookup with its
+    configured timeout and no polling. Only an explicitly pending result permits
+    further lookups. Errors, identity mismatches, BYOK and cancellation propagate.
+    """
+    if not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= MAX_COST_LOOKUP_WAIT_SECONDS:
+        raise ValueError("cost lookup wait must be finite and between zero and 30 seconds")
+    deadline = monotonic() + wait_seconds
+    first_timeout = (
+        min(config.lookup_timeout_seconds, wait_seconds)
+        if wait_seconds > 0
+        else config.lookup_timeout_seconds
+    )
+    try:
+        async with asyncio.timeout(first_timeout):
+            observation = await lookup_generation(
+                client, config=config, route=route, generation_id=generation_id
+            )
+    except TimeoutError as error:
+        raise httpx.ReadTimeout("generation cost lookup exceeded its bounded time limit") from error
+    while observation.status == "pending":
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        await sleep(min(2.0, remaining))
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        try:
+            async with asyncio.timeout(remaining):
+                observation = await lookup_generation(
+                    client, config=config, route=route, generation_id=generation_id
+                )
+        except TimeoutError:
+            break
+    return observation
 
 
 class GatewayChatModel(WrapperModel):

@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { verifiedArtifactJson } from "@/lib/harness/artifact";
+import {
+  type ChapterPanelMessage,
+  chapterWaitingMessage,
+  clearMatchedStartMessage,
+} from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
 import {
   clearSessionIntent,
@@ -210,6 +215,93 @@ describe("chapter revision pointers", () => {
         2
       )
     ).toEqual({ accepted: "accepted", current: "current" });
+  });
+});
+
+describe("chapter panel status copy", () => {
+  const startMessage: ChapterPanelMessage = {
+    kind: "start",
+    runId: "run-2",
+    text: "Waiting for the durable run record.",
+  };
+
+  it.each(["immediate", "delayed", "recovered"])(
+    "clears %s start feedback only when its exact durable run appears",
+    () => {
+      expect(clearMatchedStartMessage(startMessage, "run-2")).toBeNull();
+    }
+  );
+
+  it("preserves an unmatched start and unrelated feedback", () => {
+    expect(clearMatchedStartMessage(startMessage, "run-1")).toEqual(
+      startMessage
+    );
+    expect(
+      clearMatchedStartMessage(
+        { kind: "command", text: "Review command could not be refreshed." },
+        "run-2"
+      )
+    ).toEqual({
+      kind: "command",
+      text: "Review command could not be refreshed.",
+    });
+    expect(
+      clearMatchedStartMessage(
+        { kind: "refresh", text: "Chapter status could not be refreshed." },
+        "run-2"
+      )
+    ).toEqual({
+      kind: "refresh",
+      text: "Chapter status could not be refreshed.",
+    });
+  });
+
+  it("does not claim technical verification before an edit exists", () => {
+    expect(
+      chapterWaitingMessage({
+        checkState: "loading",
+        descriptorCheckState: "loading",
+        hasSelectedEdit: false,
+      })
+    ).toBeNull();
+  });
+
+  it("distinguishes rendering from actual technical-check loading", () => {
+    expect(
+      chapterWaitingMessage({
+        checkState: "loading",
+        descriptorCheckState: "loading",
+        hasSelectedEdit: true,
+      })
+    ).toBe(
+      "Chapter renders are still being prepared. Technical checks follow each render."
+    );
+    expect(
+      chapterWaitingMessage({
+        checkState: "loading",
+        descriptorCheckState: "loaded",
+        hasSelectedEdit: true,
+      })
+    ).toBe(
+      "Technical checks are still being verified. Acceptance and export are waiting."
+    );
+  });
+
+  it("leaves invalid and terminal check states to the existing blocked copy", () => {
+    expect(
+      chapterWaitingMessage({
+        checkState: "blocked",
+        descriptorCheckState: "invalid",
+        hasSelectedEdit: true,
+      })
+    ).toBeNull();
+    expect(
+      chapterWaitingMessage({
+        checkState: "pass",
+        descriptorCheckState: "loaded",
+        hasSelectedEdit: true,
+      })
+    ).toBeNull();
   });
 });
 
