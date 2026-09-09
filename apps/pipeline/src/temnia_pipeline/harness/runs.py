@@ -231,7 +231,7 @@ async def start_or_refetch_run(  # noqa: PLR0912
                         """
                         UPDATE harness_run
                            SET workflow_id = %s, workflow_run_id = %s,
-                               status = 'running', updated_at = now()
+                               status = 'running', error_message = NULL, updated_at = now()
                          WHERE id = %s AND status = 'pending'
                          RETURNING *
                         """,
@@ -743,6 +743,8 @@ async def apply_operational_review(  # noqa: PLR0912, PLR0915
                        SET budget_micros = %s,
                            status = CASE WHEN status = 'budget_paused'
                                          THEN 'pending' ELSE status END,
+                           error_message = CASE WHEN status = 'budget_paused'
+                                                THEN NULL ELSE error_message END,
                            updated_at = now()
                      WHERE id = %s
                     """,
@@ -755,7 +757,11 @@ async def apply_operational_review(  # noqa: PLR0912, PLR0915
                 message = "Only known failed or budget-paused work may retry."
             else:
                 await conn.execute(
-                    "UPDATE harness_run SET status = 'pending', updated_at = now() WHERE id = %s",
+                    """
+                    UPDATE harness_run
+                       SET status = 'pending', error_message = NULL, updated_at = now()
+                     WHERE id = %s
+                    """,
                     (request.runId,),
                 )
                 state = State.applied

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -10,10 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from temporalio import activity
-from temporalio.client import WorkflowFailureError
+from temporalio.client import WorkflowFailureError, WorkflowHistory
+from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from temnia_pipeline.contracts import (
     ChapterProposal,
@@ -46,9 +49,12 @@ from temnia_pipeline.harness.runtime_types import (
     StageUpdate,
     StartRunRequest,
     StartRunResult,
+    ValidatedSummary,
+    ValidateSummaryRequest,
     WorkflowIdentity,
 )
 from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.summary_grounding import SummaryGroundingReport
 from temnia_pipeline.harness.workflows import ChapterRunWorkflow
 
 if TYPE_CHECKING:
@@ -203,10 +209,18 @@ class FakeSummaryAgent:
     """Deterministic structured output at the exact model call sites in the workflow."""
 
     def __init__(self) -> None:
+        self.events: list[str] = []
         self.malformed = False
+        self.stages: list[str] = []
+        self.unexpected = False
 
     async def run(self, _prompt: str, **kwargs: object) -> SimpleNamespace:
         deps = cast("Any", kwargs["deps"])
+        self.stages.append(str(deps.stage))
+        self.events.append(f"model:{deps.stage}")
+        if self.unexpected:
+            message = "fixture response has an invalid schema"
+            raise UnexpectedModelBehavior(message)
         first = str(deps.operation_inputs["firstSentenceId"])
         last = str(deps.operation_inputs["lastSentenceId"])
         if self.malformed:
@@ -233,9 +247,11 @@ class FakeProposalAgent:
 
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.deps: list[Any] = []
 
-    async def run(self, prompt: str, **_kwargs: object) -> SimpleNamespace:
+    async def run(self, prompt: str, **kwargs: object) -> SimpleNamespace:
         self.prompts.append(prompt)
+        self.deps.append(kwargs["deps"])
         output = ChapterProposal.model_validate(
             {
                 "sections": [
@@ -274,6 +290,9 @@ class HierarchyActivities:
         self.start_count = 0
         self.compiled: list[ChapterProposal] = []
         self.failures: list[MarkRunFailedRequest] = []
+        self.summary_validations: list[ValidateSummaryRequest] = []
+        self.summary_validation_refusal: str | None = None
+        self.summary_events: list[str] = []
 
     @activity.defn(name="start_chapter_run")
     async def start(self, request: StartRunRequest) -> StartRunResult:
@@ -321,6 +340,23 @@ class HierarchyActivities:
         self.compiled.append(request.proposal)
         return CompileProposalResult(refusal="Captured the grounded global proposal.")
 
+    @activity.defn(name="validate_chapter_summary")
+    async def validate_summary(self, request: ValidateSummaryRequest) -> ValidatedSummary:
+        self.summary_validations.append(request)
+        self.summary_events.append(f"validate:{request.model_stage}")
+        if self.summary_validation_refusal is not None:
+            return ValidatedSummary(refusal=self.summary_validation_refusal)
+        reference = HarnessArtifactRef(
+            fingerprint=uuid.uuid5(uuid.NAMESPACE_URL, f"fingerprint:{request.model_stage}").hex
+            * 2,
+            id=uuid.uuid5(uuid.NAMESPACE_URL, request.model_stage),
+            kind=HarnessArtifactKind.checks,
+            sha256=uuid.uuid5(uuid.NAMESPACE_DNS, request.model_stage).hex * 2,
+            sizeBytes=1,
+            storageKey=f"grounding/{request.model_stage}.json",
+        )
+        return ValidatedSummary(summary=request.summary, artifact=reference)
+
     @activity.defn(name="update_chapter_run_stage")
     async def update(self, request: StageUpdate) -> RunSnapshot:
         start = StartRunRequest(
@@ -344,6 +380,7 @@ class HierarchyActivities:
         return (
             self.build,
             self.prepare,
+            self.validate_summary,
             hierarchy.prepare_global_chapter_proposal,
             self.compile,
             self.cleanup_source_cache,
@@ -379,6 +416,21 @@ async def _run(
     )
 
 
+async def _run_with_history(
+    environment: WorkflowEnvironment,
+    queue: str,
+    request: ChapterRunInput,
+) -> tuple[object, WorkflowHistory]:
+    handle = await environment.client.start_workflow(
+        ChapterRunWorkflow.run,
+        request,
+        id=f"hierarchy-history-{uuid.uuid4()}",
+        task_queue=queue,
+    )
+    result = await handle.result()
+    return result, await handle.fetch_history()
+
+
 @pytest.fixture
 def hierarchy_runtime(
     monkeypatch: pytest.MonkeyPatch,
@@ -389,15 +441,71 @@ def hierarchy_runtime(
     hierarchy = HarnessActivities(cast("Any", context), settings, routes)
     summary = FakeSummaryAgent()
     proposal = FakeProposalAgent()
+    summary.events = shell.summary_events
 
     async def fake_get_run(*_args: object, **_kwargs: object) -> object:
-        return SimpleNamespace(brief="Preserve every original sentence.", route_snapshot=routes)
+        return SimpleNamespace(
+            brief="Preserve every original sentence.",
+            evidence_artifact_id=EVIDENCE_ID,
+            route_snapshot=routes,
+        )
 
     async def fake_read(*_args: object, **_kwargs: object) -> dict[str, object]:
         return cast("dict[str, object]", EVIDENCE.model_dump(mode="json"))
 
+    async def fake_find(*_args: object, **_kwargs: object) -> object:
+        return activities_module.artifacts.HarnessArtifact(
+            id=EVIDENCE_REF.id,
+            organization_id=SCOPE.organizationId,
+            source_id=SOURCE_ID,
+            kind=EVIDENCE_REF.kind.value,
+            fingerprint=EVIDENCE_REF.fingerprint,
+            storage_key=EVIDENCE_REF.storageKey,
+            sha256=EVIDENCE_REF.sha256,
+            size_bytes=EVIDENCE_REF.sizeBytes,
+            metadata={"format": "chapter-evidence/1"},
+            transcript_id=TRANSCRIPT_ID,
+            transcript_revision=1,
+            dependency_ids=(),
+        )
+
     monkeypatch.setattr(activities_module.runs, "get_run", fake_get_run)
     monkeypatch.setattr(activities_module.artifacts, "read_artifact_json", fake_read)
+    monkeypatch.setattr(activities_module.artifacts, "find_artifact", fake_find)
+
+    async def fake_grounding_report(
+        *, scope: object, source_id: object, reference: HarnessArtifactRef
+    ) -> SummaryGroundingReport:
+        del scope, source_id
+        validation = next(
+            request
+            for request in reversed(shell.summary_validations)
+            if uuid.uuid5(uuid.NAMESPACE_URL, request.model_stage) == reference.id
+        )
+        return SummaryGroundingReport(
+            runId=RUN_ID,
+            hierarchyLevel=validation.hierarchy_level,
+            modelStage=validation.model_stage,
+            windowId=validation.window.id,
+            firstSentenceId=validation.window.first_sentence_id,
+            lastSentenceId=validation.window.last_sentence_id,
+            windowSentenceCount=validation.window.sentence_count,
+            windowPromptSha256=hashlib.sha256(validation.window.prompt.encode()).hexdigest(),
+            evidence=validation.evidence,
+            rawResponse=HarnessArtifactRef(
+                fingerprint="1" * 64,
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"raw:{validation.model_stage}"),
+                kind=HarnessArtifactKind.model_response,
+                sha256="2" * 64,
+                sizeBytes=1,
+                storageKey=f"responses/{validation.model_stage}.json",
+            ),
+            inputArtifacts=validation.input_artifacts,
+            sourceSummarySha256="3" * 64,
+            normalizedSummary=HierarchicalSummaryV1.model_validate(validation.summary),
+        )
+
+    monkeypatch.setattr(hierarchy, "_grounding_report", fake_grounding_report)
     monkeypatch.setattr(workflows_module, "chapter_summarize_v1", summary)
     monkeypatch.setattr(workflows_module, "chapter_propose_v1", proposal)
     return shell, hierarchy, summary, proposal
@@ -430,7 +538,8 @@ async def test_temporal_multi_window_hierarchy_reaches_original_id_proposal(
                 activities=list(shell.control()),
             )
         )
-        result = cast("Any", await _run(environment, queue, _request()))
+        raw_result, history = await _run_with_history(environment, queue, _request())
+        result = cast("Any", raw_result)
     assert result.status == HarnessRunStatus.needs_review
     assert len(shell.compiled) == 1
     assert [
@@ -439,6 +548,105 @@ async def test_temporal_multi_window_hierarchy_reaches_original_id_proposal(
     assert len(proposal.prompts) == 1
     assert "s000000" in proposal.prompts[0]
     assert "s000003" in proposal.prompts[0]
+    assert len(shell.summary_validations) == 2
+    assert len(proposal.deps[0].input_artifact_ids) == 3
+    assert len(proposal.deps[0].operation_inputs["groundingArtifacts"]) == 2
+    activity_names = [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in cast("Any", history).events
+        if event.HasField("activity_task_scheduled_event_attributes")
+    ]
+    marker_names = [
+        event.marker_recorded_event_attributes.marker_name
+        for event in cast("Any", history).events
+        if event.HasField("marker_recorded_event_attributes")
+    ]
+    assert marker_names == ["core_patch"]
+    assert activity_names.count("validate_chapter_summary") == 2
+    assert shell.summary_events == [
+        "model:summary:window-0",
+        "validate:summary:window-0",
+        "model:summary:window-1",
+        "validate:summary:window-1",
+    ]
+    await Replayer(
+        workflows=[ChapterRunWorkflow],
+        data_converter=pydantic_data_converter,
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+
+
+async def test_temporal_summary_refusal_stops_before_the_next_model_call(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+) -> None:
+    shell, hierarchy, summary, proposal = hierarchy_runtime
+    shell.summary_validation_refusal = "The summary window cannot be grounded."
+    queue = f"chapter-hierarchy-refusal-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        result = cast("Any", await _run(environment, queue, _request()))
+    assert result.status == HarnessRunStatus.needs_review
+    assert result.errorMessage == "The summary window cannot be grounded."
+    assert summary.stages == ["summary:window-0"]
+    assert len(shell.summary_validations) == 1
+    assert proposal.prompts == []
+
+
+async def test_temporal_malformed_summary_refuses_without_another_model_call(
+    hierarchy_runtime: tuple[
+        HierarchyActivities, HarnessActivities, FakeSummaryAgent, FakeProposalAgent
+    ],
+) -> None:
+    shell, hierarchy, summary, proposal = hierarchy_runtime
+    summary.unexpected = True
+    queue = f"chapter-hierarchy-schema-refusal-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(plugins=[PydanticAIPlugin()]) as environment,
+        AsyncExitStack() as stack,
+    ):
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=queue,
+                workflows=[ChapterRunWorkflow],
+                activities=list(shell.heavy(hierarchy)),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            )
+        )
+        await stack.enter_async_context(
+            Worker(
+                environment.client,
+                task_queue=control_task_queue(queue),
+                activities=list(shell.control()),
+            )
+        )
+        result = cast("Any", await _run(environment, queue, _request()))
+    assert result.status == HarnessRunStatus.needs_review
+    assert result.errorMessage == "A summary response did not match the required structure."
+    assert summary.stages == ["summary:window-0"]
+    assert shell.summary_validations == []
+    assert proposal.prompts == []
 
 
 async def test_temporal_foreign_summary_fails_visibly_then_recovers(

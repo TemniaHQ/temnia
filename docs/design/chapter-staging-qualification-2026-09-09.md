@@ -1,10 +1,11 @@
 # Chapter staging qualification — 2026-09-09
 
-**Status:** the live harness is enabled on staging. Its first real-source run failed in planning
-after seven summary calls and before publishing an edit. The seven charges were reconciled to
-**$0.004196** in the integer-microdollar ledger, with zero remaining reserved exposure. The run
-and its raw responses are retained. PR #27 addresses the observed failures; render, review and
-export qualification remain pending.
+**Status:** PR #27 is merged and deployed. One retry of the original run reused all seven accepted
+responses and completed 25 summary windows, then failed on quote ownership before any chapter
+proposal. The ledger is **$0.015614 spent, zero reserved**, with 25 total physical dispatches and
+no model repair. The source, run and all raw responses are retained. Render, review and export
+qualification remain pending; the follow-up adds immediate grounding validation and explicit
+source-excerpt fallback for eligible citation errors.
 
 ## Deployment and route evidence
 
@@ -153,3 +154,86 @@ After the fix is merged and deployed, recover the same run and verify no repeate
 its seven committed responses. Then inspect rendered files, captions, cut previews and the
 acceptance/export flow. This failed run does not establish editorial quality or end-to-end
 completion. Human boundary labels, listening quality and model auditions remain separate work.
+
+
+## PR #27 deployment and same-run continuation
+
+The final PR #27 commit `0786e76` passed its exact-commit gate at 13:28:28 UTC, including all
+1,087 application tests, both Docker images and 18 production-image browser tests. Two earlier
+attempts had failed at npm tarball downloads; bounded Docker install concurrency and fetch time
+resolved the observed build failure. The pipeline image also fetched and loaded its pinned models.
+The required GitHub check passed before Rajesh merged `0c37a9c` at 13:59:49 UTC.
+
+Both running services were verified before retry. The web replacement started at 14:01:16 UTC,
+and the pipeline replacement at 14:04:49 UTC. The four changed pipeline file hashes match the
+merge, the worker reports ready, and web health is HTTP 200. Both retain the admitted gateway
+snapshot, $3 maximum, 32 dispatches and one repair; recorded mode is disabled, the gateway key
+remains worker-only and the existing Modal speech configuration is unchanged. The pre-resume
+private receipt SHA-256 is `f3bca24f9574051d48c9aab4d2c597f028aca6c81c3b483f5abdf6abe0f8784e`.
+
+A single Retry through the authenticated browser resumed the same run at 14:10:41 UTC. The UI
+confirmed its durable command result; the database retained the original run, source and ledger
+with seven dispatches, 4,196 spent micros and zero reserved exposure. The child execution moved
+past evidence preparation and the seven prior summaries into previously unattempted windows.
+After the child stopped, all original seven operation, attempt, artifact and dependency tuples
+matched the pre-resume receipt. Each operation still has its single original physical attempt;
+the additional 18 dispatches belong to previously unattempted windows.
+
+This continuation also exposed stale current-error text during a running retry and a budget
+field initialized independently of the selected run. The
+[recovery-state plan](../plans/chapter-resume-states-360-view.md) addresses both. An initially
+stale accessibility option did not reproduce when the native selector was opened, so its query
+is unchanged.
+
+At **14:28:26 UTC**, after every summary had returned, the global planning activity rejected
+`summary quote anchor lies outside its source unit`. The first violation was in window 14:
+two visible quote anchors belonged to sentence 1179, just before the unit's range 1180–1182
+(these are zero-based diagnostic indices). Inspection of all 25 responses found **10 misplaced
+anchors across five windows**. All were copied from visible input anchors; none were invented.
+Every unit and window sentence range still passed ordered exact coverage. This is a separate
+semantic citation failure, not a recurrence of the cosmetic summary-label defect.
+
+All 25 known responses remain accepted, with **15,614 spent microdollars**, zero reserved,
+25 physical dispatches and zero semantic repairs. Revision remains zero. No proposal, chapter
+render, verifier or export was dispatched. The complete resumed history has 191 events; the
+private capture SHA-256 is `ccf9447d92c3909b98cd7e81789f07bfede88e5a11fd3155ea530a433afbbd83`.
+The 25 summaries contain 201 units. Six units need the proposed fallback; 195 retain their
+original prose. Their full source excerpts range from 68 to 1,057 characters. A read-only
+simulation using each range's first and last word anchors changes the complete hierarchy prompt
+from 154,506 to 152,956 UTF-8 bytes, within the 512 KiB payload ceiling. These are sizing
+measurements, not a successful production implementation test or model-quality score.
+The private failed-run evaluation bundle SHA-256 is
+`d3f6886038dc4ba6d428a55b045402a6d88a79cf4632fc392bc90c9e8af0c3f2`;
+its report remains incomplete, with no accepted-chapter or human-label denominator.
+The all-response grounding analysis SHA-256 is
+`46ceced4a0efc76e6d14bb96a2f67f169c287444a8401a93a1e25d81fbd6c32c`.
+
+The [grounding plan](../plans/chapter-summary-grounding-360-view.md) moves validation after each
+summary and replaces an eligible invalid unit's whole generated text with an exact source
+excerpt, with immutable provenance and a visible reviewer notice. It keeps source coverage,
+non-prompt/foreign ID refusals, model budgets and the original raw response identities intact.
+No second Retry, new run, budget increase or source/GPU change was made after this failure.
+
+The follow-up's focused checks pass: 12 grounding/persistence tests, four Temporal hierarchy
+tests, 20 export/evaluation tests and 218 web tests (three existing skips). Python and web static
+checks are clean. Both retained histories replay against the new worker, as does a newly recorded
+history containing the validation patch. The real Temporal/Postgres test runs the same summary
+in two executions while retaining one provider call, one model attempt and one grounding report;
+its raw response, accounting and repair count remain unchanged. These local checks establish the
+recovery mechanics, not the untested live proposal, render or editorial result.
+
+The current production prompt validator and grounding functions also pass against all 25 retained
+Temporal responses offline: 201 units, 195 unchanged, six source-excerpt fallbacks across five
+windows, and 10 rejected anchors. The resulting global proposal prompt is 152,956 UTF-8 bytes.
+All three frozen proposal routes admit it under the current context estimator; their prompt-based
+reservations are 14,367, 105,150 and 606,324 microdollars respectively. The dispatched request still
+includes its serialized envelope and must pass the ordinary reservation gate. No provider call
+was made for this check.
+
+The private offline receipt SHA-256 is
+`5a8603b6bda931a495287e1878c3dee27d6732096c2da783bb144bfc8797b7ce`.
+It records that 21 retained Temporal response envelopes match the artifact-body hash exactly;
+four differ in non-output serialization. Per-window summary/violation facts and the original
+seven operation, attempt, artifact and dependency hashes match the retained capture. This offline
+result is not a claim that all response envelopes are byte-identical, or that the live run has
+completed.

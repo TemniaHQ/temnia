@@ -47,6 +47,7 @@ from temnia_pipeline.harness.compiler import CompilerConfig, compile_chapters
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
 from temnia_pipeline.harness.prompts import (
+    SUMMARIZE_PROMPT_VERSION,
     PromptSentence,
     PromptWindow,
     render_hierarchy_proposal_prompt,
@@ -112,7 +113,18 @@ from temnia_pipeline.harness.runtime_types import (
     StageUpdate,
     StartRunRequest,
     StartRunResult,
+    ValidatedSummary,
+    ValidateSummaryRequest,
     VerificationPlan,
+)
+from temnia_pipeline.harness.summary_grounding import (
+    GROUNDING_FORMAT,
+    SummaryGroundingRefusal,
+    SummaryGroundingReport,
+    allowed_anchors_from_exact_prompt,
+    ground_summary,
+    grounding_artifact_fingerprint,
+    normalized_summary_from_response,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError, rounded_milliseconds, word_id
 from temnia_pipeline.media.chapter_checks import (
@@ -141,6 +153,7 @@ HARNESS_WORKSPACE_TTL_SECONDS = 24 * 60 * 60
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Sequence
+    from uuid import UUID
 
     from temnia_pipeline.harness.routes import RouteSnapshot
     from temnia_pipeline.harness.settings import HarnessSettings
@@ -543,6 +556,261 @@ class HarnessActivities:
             synthetic_summary_payload=self._recorded_output("summary"),
         )
 
+    async def _grounding_report(
+        self,
+        *,
+        scope: Scope,
+        source_id: UUID,
+        reference: HarnessArtifactRef,
+    ) -> SummaryGroundingReport:
+        if reference.kind != HarnessArtifactKind.checks:
+            raise RuntimeError("summary grounding lineage names the wrong artifact kind")
+        accepted = await artifacts.find_artifact(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=source_id,
+            identity=artifacts.ArtifactIdentity(kind="checks", fingerprint=reference.fingerprint),
+        )
+        if accepted is None or self._artifact_ref(accepted) != reference:
+            raise RuntimeError("summary grounding artifact identity does not match storage")
+        if accepted.metadata.get("format") != GROUNDING_FORMAT:
+            raise RuntimeError("summary grounding artifact has the wrong format")
+        loaded = await artifacts.read_artifact_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=source_id,
+            store=self.ctx.store,
+            artifact_id=reference.id,
+        )
+        report = SummaryGroundingReport.model_validate_json(artifacts.canonical_json(loaded))
+        if (
+            accepted.metadata.get("runId") != str(report.runId)
+            or accepted.metadata.get("windowId") != report.windowId
+            or accepted.metadata.get("hierarchyLevel") != report.hierarchyLevel
+            or accepted.metadata.get("modelStage") != report.modelStage
+            or accepted.metadata.get("fallbackUnitCount") != len(report.fallbacks)
+            or accepted.metadata.get("fallbackQuoteCount")
+            != sum(len(value.rejectedQuoteWordIds) for value in report.fallbacks)
+            or grounding_artifact_fingerprint(report) != accepted.fingerprint
+        ):
+            raise RuntimeError("summary grounding artifact metadata differs from its body")
+        expected_dependencies = {
+            report.evidence.id,
+            report.rawResponse.id,
+            *(value.id for value in report.inputArtifacts),
+        }
+        if set(accepted.dependency_ids) != expected_dependencies or len(
+            accepted.dependency_ids
+        ) != len(expected_dependencies):
+            raise RuntimeError("summary grounding artifact dependency lineage differs")
+        return report
+
+    @activity.defn(name="validate_chapter_summary")
+    async def validate_chapter_summary(  # noqa: C901, PLR0912, PLR0915
+        self, request: ValidateSummaryRequest
+    ) -> ValidatedSummary:
+        """Ground one retained summary and publish its immutable audit report."""
+        self._require_enabled()
+        ref = request.run
+        scope = Scope(
+            organizationId=ref.scope_organization_id,
+            userId=ref.scope_user_id,
+        )
+        run = await runs.get_run(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            run_id=ref.run_id,
+        )
+        if run.evidence_artifact_id != request.evidence.id:
+            raise RuntimeError("summary validation does not name the run's accepted evidence")
+        expected_stage = (
+            f"summary:{request.window.id}"
+            if request.hierarchy_level == 1
+            else f"summary:level:{request.hierarchy_level}:{request.window.id}"
+        )
+        if request.model_stage != expected_stage:
+            raise RuntimeError("summary validation stage does not match its window")
+        loaded_evidence = await artifacts.read_artifact_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            artifact_id=request.evidence.id,
+        )
+        evidence = HarnessEvidence.model_validate(loaded_evidence)
+        accepted_evidence = await artifacts.find_artifact(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            identity=artifacts.ArtifactIdentity(
+                kind="evidence",
+                fingerprint=request.evidence.fingerprint,
+                transcript_id=evidence.transcriptId,
+                transcript_revision=evidence.transcriptRevision,
+            ),
+        )
+        if accepted_evidence is None or self._artifact_ref(accepted_evidence) != request.evidence:
+            raise RuntimeError("summary evidence identity does not match storage")
+        async with db.scoped(self.ctx.settings.database_url, scope) as conn:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT o.id AS operation_id, a.fingerprint
+                      FROM harness_operation o
+                      JOIN harness_artifact a ON a.id = o.result_artifact_id
+                     WHERE o.run_id = %s AND o.source_id = %s
+                       AND o.kind = 'model' AND o.stage = %s
+                       AND o.status = 'succeeded' AND a.kind = 'model_response'
+                    """,
+                    (ref.run_id, ref.source_id, request.model_stage),
+                )
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeError("summary stage does not have one accepted model response")
+        raw_response = await artifacts.find_artifact(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            identity=artifacts.ArtifactIdentity(
+                kind="model_response", fingerprint=str(rows[0]["fingerprint"])
+            ),
+        )
+        if raw_response is None:
+            raise RuntimeError("accepted summary response artifact is absent")
+        raw_ref = self._artifact_ref(raw_response)
+        metadata = raw_response.metadata
+        expected_raw_dependencies = {
+            request.evidence.id,
+            *(value.id for value in request.input_artifacts),
+        }
+        if (
+            metadata.get("format") not in (None, "pydantic-ai-model-response-v1")
+            or metadata.get("operationId") != str(rows[0]["operation_id"])
+            or metadata.get("runId") != str(ref.run_id)
+            or metadata.get("schemaVersion") != "hierarchical-summary/1"
+            or metadata.get("promptVersion") != SUMMARIZE_PROMPT_VERSION
+            or set(raw_response.dependency_ids) != expected_raw_dependencies
+            or len(raw_response.dependency_ids) != len(expected_raw_dependencies)
+        ):
+            raise RuntimeError("accepted summary response lineage does not match its operation")
+        raw_body = await artifacts.read_artifact_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            artifact_id=raw_ref.id,
+        )
+        try:
+            supplied = HierarchicalSummaryV1.model_validate(request.summary)
+        except ValueError:
+            return ValidatedSummary(refusal="The summary response shape could not be verified.")
+        try:
+            retained = normalized_summary_from_response(raw_body)
+        except SummaryGroundingRefusal as error:
+            return ValidatedSummary(refusal=str(error))
+        if supplied != retained:
+            raise RuntimeError("summary payload differs from its retained model response")
+
+        input_reports = tuple(
+            [
+                await self._grounding_report(
+                    scope=scope,
+                    source_id=ref.source_id,
+                    reference=reference,
+                )
+                for reference in request.input_artifacts
+            ]
+        )
+        if request.hierarchy_level == 1:
+            if input_reports:
+                raise RuntimeError("first-level summary cannot name prior grounding inputs")
+        else:
+            if not input_reports:
+                raise RuntimeError("reduction summary requires prior grounding inputs")
+            if any(
+                report.runId != ref.run_id
+                or report.evidence != request.evidence
+                or report.hierarchyLevel != request.hierarchy_level - 1
+                for report in input_reports
+            ):
+                raise RuntimeError("prior grounding lineage does not match the reduction")
+        try:
+            allowed_model_anchors = allowed_anchors_from_exact_prompt(
+                evidence=evidence,
+                evidence_sha256=request.evidence.sha256,
+                source_id=ref.source_id,
+                window_id=request.window.id,
+                window_first_sentence_id=request.window.first_sentence_id,
+                window_last_sentence_id=request.window.last_sentence_id,
+                window_sentence_count=request.window.sentence_count,
+                prompt=request.window.prompt,
+                hierarchy_level=request.hierarchy_level,
+                input_reports=input_reports,
+            )
+            grounded = ground_summary(
+                evidence=evidence,
+                window_first_sentence_id=request.window.first_sentence_id,
+                window_last_sentence_id=request.window.last_sentence_id,
+                window_sentence_count=request.window.sentence_count,
+                summary=supplied,
+                allowed_model_anchors=allowed_model_anchors,
+            )
+        except SummaryGroundingRefusal as error:
+            return ValidatedSummary(refusal=str(error))
+
+        source_summary_sha256 = hashlib.sha256(
+            artifacts.canonical_json(supplied.model_dump(mode="json"))
+        ).hexdigest()
+        report = SummaryGroundingReport(
+            runId=ref.run_id,
+            hierarchyLevel=request.hierarchy_level,
+            modelStage=request.model_stage,
+            windowId=request.window.id,
+            firstSentenceId=request.window.first_sentence_id,
+            lastSentenceId=request.window.last_sentence_id,
+            windowSentenceCount=request.window.sentence_count,
+            windowPromptSha256=hashlib.sha256(request.window.prompt.encode()).hexdigest(),
+            evidence=request.evidence,
+            rawResponse=raw_ref,
+            inputArtifacts=request.input_artifacts,
+            sourceSummarySha256=source_summary_sha256,
+            normalizedSummary=grounded.summary,
+            fallbacks=grounded.fallbacks,
+        )
+        fingerprint = grounding_artifact_fingerprint(report)
+        dependencies = (
+            request.evidence.id,
+            raw_ref.id,
+            *(value.id for value in request.input_artifacts),
+        )
+        if len(set(dependencies)) != len(dependencies):
+            raise RuntimeError("summary grounding dependencies must be unique")
+        accepted = await artifacts.publish_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            identity=artifacts.ArtifactIdentity(kind="checks", fingerprint=fingerprint),
+            content=report.model_dump(mode="json"),
+            metadata={
+                "format": GROUNDING_FORMAT,
+                "runId": str(ref.run_id),
+                "windowId": request.window.id,
+                "hierarchyLevel": request.hierarchy_level,
+                "modelStage": request.model_stage,
+                "fallbackUnitCount": len(grounded.fallbacks),
+                "fallbackQuoteCount": sum(
+                    len(value.rejectedQuoteWordIds) for value in grounded.fallbacks
+                ),
+            },
+            dependency_ids=dependencies,
+        )
+        return ValidatedSummary(
+            summary=grounded.summary.model_dump(mode="json"),
+            artifact=self._artifact_ref(accepted),
+        )
+
     @activity.defn(name="prepare_global_chapter_proposal")
     async def prepare_global_chapter_proposal(  # noqa: C901, PLR0912, PLR0915
         self, request: PrepareGlobalProposalRequest
@@ -570,6 +838,57 @@ class HarnessActivities:
             artifact_id=request.evidence.id,
         )
         evidence = HarnessEvidence.model_validate(loaded)
+        if request.grounding_artifacts:
+            if run.evidence_artifact_id != request.evidence.id:
+                raise RuntimeError("grounded global proposal does not name the run evidence")
+            accepted_evidence = await artifacts.find_artifact(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                identity=artifacts.ArtifactIdentity(
+                    kind="evidence",
+                    fingerprint=request.evidence.fingerprint,
+                    transcript_id=evidence.transcriptId,
+                    transcript_revision=evidence.transcriptRevision,
+                ),
+            )
+            if (
+                accepted_evidence is None
+                or self._artifact_ref(accepted_evidence) != request.evidence
+            ):
+                raise RuntimeError("global proposal evidence identity does not match storage")
+            if len(request.grounding_artifacts) != len(request.summaries):
+                raise RuntimeError("each summary requires one grounding artifact")
+            reports = tuple(
+                [
+                    await self._grounding_report(
+                        scope=scope,
+                        source_id=ref.source_id,
+                        reference=reference,
+                    )
+                    for reference in request.grounding_artifacts
+                ]
+            )
+            for window, raw_summary, report in zip(
+                request.windows, request.summaries, reports, strict=True
+            ):
+                try:
+                    supplied = HierarchicalSummaryV1.model_validate(raw_summary)
+                except ValueError as error:
+                    raise RuntimeError("grounded summary payload is invalid") from error
+                if (
+                    report.runId != ref.run_id
+                    or report.evidence != request.evidence
+                    or report.hierarchyLevel != request.hierarchy_level
+                    or report.windowId != window.id
+                    or report.firstSentenceId != window.first_sentence_id
+                    or report.lastSentenceId != window.last_sentence_id
+                    or report.windowSentenceCount != window.sentence_count
+                    or report.windowPromptSha256
+                    != hashlib.sha256(window.prompt.encode()).hexdigest()
+                    or report.normalizedSummary != supplied
+                ):
+                    raise RuntimeError("grounding report identity differs from its summary window")
         language_value = evidence.config.get("detectedLanguage")
         detected_language = (
             language_value.strip()
@@ -645,12 +964,14 @@ class HarnessActivities:
                 route=route,
                 synthetic_payload=self._recorded_output("propose"),
                 hierarchy_level=request.hierarchy_level,
+                input_artifacts=request.grounding_artifacts,
             )
         if request.hierarchy_level >= MAX_HIERARCHY_LEVEL:
             return GlobalProposalPlan(
                 route=route,
                 hierarchy_level=request.hierarchy_level,
                 refusal="Eight complete hierarchy levels still exceed the qualified context.",
+                input_artifacts=request.grounding_artifacts,
             )
         summary_route = select_route(run.route_snapshot, "summary")
         reductions: list[PlanningWindow] = []
@@ -700,11 +1021,13 @@ class HarnessActivities:
                     route=route,
                     hierarchy_level=request.hierarchy_level,
                     refusal=("One complete summary unit exceeds the qualified reduction context."),
+                    input_artifacts=request.grounding_artifacts,
                 )
         return GlobalProposalPlan(
             route=route,
             reduction_windows=tuple(reductions),
             hierarchy_level=request.hierarchy_level + 1,
+            input_artifacts=request.grounding_artifacts,
         )
 
     @activity.defn(name="prepare_chapter_verification")
@@ -2239,6 +2562,7 @@ class HarnessActivities:
         return (
             self.build_chapter_evidence,
             self.prepare_chapter_proposal,
+            self.validate_chapter_summary,
             self.prepare_global_chapter_proposal,
             self.prepare_chapter_verification,
             self.compile_chapter_proposal,

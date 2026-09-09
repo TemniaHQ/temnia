@@ -220,6 +220,38 @@ class ProposalPlan(BaseModel):
     synthetic_summary_payload: dict[str, object] | None = None
 
 
+class ValidateSummaryRequest(BaseModel):
+    """One retained model summary and its immutable grounding lineage."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    run: RunRef
+    evidence: HarnessArtifactRef
+    window: PlanningWindow
+    summary: dict[str, object]
+    model_stage: Annotated[str, Field(min_length=1, max_length=128)]
+    hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
+    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
+
+
+class ValidatedSummary(BaseModel):
+    """Grounded summary value or a finite content-free semantic refusal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    summary: dict[str, object] | None = None
+    artifact: HarnessArtifactRef | None = None
+    refusal: Annotated[str | None, Field(max_length=2000)] = None
+
+    @model_validator(mode="after")
+    def _one_outcome(self) -> ValidatedSummary:
+        accepted = self.summary is not None and self.artifact is not None
+        if accepted == (self.refusal is not None):
+            message = "validated summary requires exactly one accepted or refused outcome"
+            raise ValueError(message)
+        return self
+
+
 class PrepareGlobalProposalRequest(BaseModel):
     """Grounded first-level summaries used to build the global proposal prompt."""
 
@@ -230,6 +262,7 @@ class PrepareGlobalProposalRequest(BaseModel):
     windows: tuple[PlanningWindow, ...]
     summaries: tuple[dict[str, object], ...]
     hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
+    grounding_artifacts: tuple[HarnessArtifactRef, ...] = ()
 
 
 class GlobalProposalPlan(BaseModel):
@@ -243,6 +276,7 @@ class GlobalProposalPlan(BaseModel):
     reduction_windows: tuple[PlanningWindow, ...] = ()
     hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
     refusal: Annotated[str | None, Field(max_length=2000)] = None
+    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
 
 
 class CompileProposalRequest(BaseModel):

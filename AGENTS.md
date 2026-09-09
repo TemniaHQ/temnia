@@ -584,6 +584,28 @@ the frozen lockfile, integrity checks and default two retries. Offline install c
 an empty store; a persistent cache mount is a separate optimization. This is a build-only override,
 not a global pnpm setting. Evidence and comparison: `docs/plans/chapter-live-failures-360-view.md`.
 
+**2026-09-09 — A chapter run's error is current state; prior failures remain in durable history.**
+The first staging retry after PR #27 displayed a previous terminal error beside a running status.
+Permitted retry and budget-paused resume clear that current error atomically, and a successful
+pending execution claim clears stale pre-deploy state too. Refused commands and a budget increase
+that does not resume a failed run preserve its error. Temporal and review events remain the
+history. Budget drafts belong to the selected run and are not overwritten by status polling.
+The observed cases and verification plan are in `docs/plans/chapter-resume-states-360-view.md`.
+
+**2026-09-09 — Invalid summary citations can fall back to exact source excerpts.** The resumed
+151-minute run reused its seven original responses and completed 25 summary windows, then rejected
+10 prompt-visible quote anchors across five windows because they belonged to other units. Validate
+each response before starting the next summary. Only after proving the complete sentence partition,
+an otherwise real visible anchor attached to the wrong unit permits replacing that entire unit's
+generated prose and citations with its exact source excerpt. Foreign IDs, inferred anchors and
+structural coverage errors remain refusals. Preserve the raw response, publish explicit immutable
+fallback provenance, expose it to the reviewer and retain it for model evaluation. This adds no
+provider call and consumes no semantic model-repair slot. Compared with repeated paid summaries,
+a larger repair call and silent citation reassignment, it preserves grounded content at lower
+execution risk. Prompt/context bounds remain enforced. The model-response normalizer above stays
+cosmetic; this separate derived artifact does not rewrite the model's answer. Plan and compatibility
+tests: `docs/plans/chapter-summary-grounding-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

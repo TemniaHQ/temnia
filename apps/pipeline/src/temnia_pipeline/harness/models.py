@@ -290,9 +290,10 @@ def _summary_body(content: str) -> dict[str, Any] | None:
     return cast("dict[str, Any]", value) if isinstance(value, dict) else None
 
 
-def _normalized_summary_units(
+def normalized_summary_units(
     raw_units: object,
 ) -> tuple[list[dict[str, Any]], bool] | None:
+    """Derive unique bounded labels while preserving every semantic unit field."""
     if not isinstance(raw_units, list):
         return None
     values = cast("list[object]", raw_units)
@@ -366,7 +367,7 @@ def _normalize_summary_response(deps: HarnessModelDeps, response: ModelResponse)
     if not isinstance(text_part, TextPart):  # pragma: no cover - narrowed above
         return response
     body = _summary_body(text_part.content)
-    units = _normalized_summary_units(body.get("units") if body is not None else None)
+    units = normalized_summary_units(body.get("units") if body is not None else None)
     if body is None or units is None or not units[1]:
         return response
     body["units"] = units[0]

@@ -75,6 +75,8 @@ with workflow.unsafe.imports_passed_through():
         StageUpdate,
         StartRunRequest,
         StartRunResult,
+        ValidatedSummary,
+        ValidateSummaryRequest,
         VerificationPlan,
         WorkflowIdentity,
     )
@@ -116,7 +118,7 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             await self._record_known_failure(request, error)
             raise
 
-    async def _run_program(  # noqa: C901, PLR0912, PLR0915
+    async def _run_program(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self, request: ChapterRunInput
     ) -> ChapterRunOutput:
         """Build evidence, make one guarded proposal, and accept revision one."""
@@ -193,39 +195,80 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
         proposal_fixture = plan.synthetic_payload
         generation_families = {proposal_route.family}
         hierarchy_level = 0
+        proposal_grounding_artifacts: tuple[HarnessArtifactRef, ...] = ()
         if len(plan.windows) > 1:
+            validate_summaries = workflow.patched("chapter-summary-validation-v1")
             generation_families.add(plan.summary_route.family)
             summaries: list[dict[str, object]] = []
+            grounding_artifacts: list[HarnessArtifactRef] = []
             for window in plan.windows:
-                summary_result = await chapter_summarize_v1.run(
-                    window.prompt,
-                    deps=HarnessModelDeps(
-                        scope=request.scope,
-                        source_id=request.sourceId,
-                        run_id=request.runId,
-                        stage=f"summary:{window.id}",
-                        program_version="chapter-workflow/1",
-                        prompt_version=SUMMARIZE_PROMPT_VERSION,
-                        schema_version="hierarchical-summary/1",
-                        route=plan.summary_route,
-                        operation_inputs={
-                            "evidenceArtifactId": str(evidence.artifact.id),
-                            "evidenceSha256": evidence.artifact.sha256,
-                            "firstSentenceId": window.first_sentence_id,
-                            "lastSentenceId": window.last_sentence_id,
-                            "windowId": window.id,
-                        },
-                        operation_config={
-                            "hierarchyLevel": 1,
-                            "maxOutputTokens": request.config.maxOutputTokens,
-                        },
-                        input_artifact_ids=(evidence.artifact.id,),
-                        dispatch_limit=request.config.maxDispatches,
-                        synthetic_payload=plan.synthetic_summary_payload,
-                    ),
-                    model_settings={"max_tokens": request.config.maxOutputTokens},
-                )
-                summaries.append(summary_result.output.model_dump(mode="json"))
+                model_stage = f"summary:{window.id}"
+                try:
+                    summary_result = await chapter_summarize_v1.run(
+                        window.prompt,
+                        deps=HarnessModelDeps(
+                            scope=request.scope,
+                            source_id=request.sourceId,
+                            run_id=request.runId,
+                            stage=model_stage,
+                            program_version="chapter-workflow/1",
+                            prompt_version=SUMMARIZE_PROMPT_VERSION,
+                            schema_version="hierarchical-summary/1",
+                            route=plan.summary_route,
+                            operation_inputs={
+                                "evidenceArtifactId": str(evidence.artifact.id),
+                                "evidenceSha256": evidence.artifact.sha256,
+                                "firstSentenceId": window.first_sentence_id,
+                                "lastSentenceId": window.last_sentence_id,
+                                "windowId": window.id,
+                            },
+                            operation_config={
+                                "hierarchyLevel": 1,
+                                "maxOutputTokens": request.config.maxOutputTokens,
+                            },
+                            input_artifact_ids=(evidence.artifact.id,),
+                            dispatch_limit=request.config.maxDispatches,
+                            synthetic_payload=plan.synthetic_summary_payload,
+                        ),
+                        model_settings={"max_tokens": request.config.maxOutputTokens},
+                    )
+                except UnexpectedModelBehavior:
+                    if not validate_summaries:
+                        raise
+                    return await self._planning_refusal(
+                        request,
+                        evidence.artifact,
+                        control_queue,
+                        "A summary response did not match the required structure.",
+                    )
+                summary = summary_result.output.model_dump(mode="json")
+                if validate_summaries:
+                    validated = await workflow.execute_activity(
+                        "validate_chapter_summary",
+                        ValidateSummaryRequest(
+                            run=ref,
+                            evidence=evidence.artifact,
+                            window=window,
+                            summary=summary,
+                            model_stage=model_stage,
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=ACTIVITY_RETRY,
+                        result_type=ValidatedSummary,
+                    )
+                    if validated.refusal is not None:
+                        return await self._planning_refusal(
+                            request,
+                            evidence.artifact,
+                            control_queue,
+                            validated.refusal,
+                        )
+                    if validated.summary is None or validated.artifact is None:
+                        message = "summary validation returned no accepted or refused outcome"
+                        raise RuntimeError(message)
+                    summary = validated.summary
+                    grounding_artifacts.append(validated.artifact)
+                summaries.append(summary)
             global_plan = await workflow.execute_activity(
                 "prepare_global_chapter_proposal",
                 PrepareGlobalProposalRequest(
@@ -233,6 +276,7 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     evidence=evidence.artifact,
                     windows=plan.windows,
                     summaries=tuple(summaries),
+                    grounding_artifacts=(tuple(grounding_artifacts) if validate_summaries else ()),
                 ),
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=ACTIVITY_RETRY,
@@ -271,36 +315,88 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     message = "hierarchy returned neither a prompt nor reduction windows"
                     raise RuntimeError(message)
                 summaries = []
+                grounding_artifacts = []
                 for window in global_plan.reduction_windows:
-                    summary_result = await chapter_summarize_v1.run(
-                        window.prompt,
-                        deps=HarnessModelDeps(
-                            scope=request.scope,
-                            source_id=request.sourceId,
-                            run_id=request.runId,
-                            stage=(f"summary:level:{global_plan.hierarchy_level}:{window.id}"),
-                            program_version="chapter-workflow/1",
-                            prompt_version=SUMMARIZE_PROMPT_VERSION,
-                            schema_version="hierarchical-summary/1",
-                            route=plan.summary_route,
-                            operation_inputs={
-                                "evidenceArtifactId": str(evidence.artifact.id),
-                                "evidenceSha256": evidence.artifact.sha256,
-                                "firstSentenceId": window.first_sentence_id,
-                                "lastSentenceId": window.last_sentence_id,
-                                "windowId": window.id,
-                            },
-                            operation_config={
-                                "hierarchyLevel": global_plan.hierarchy_level,
-                                "maxOutputTokens": request.config.maxOutputTokens,
-                            },
-                            input_artifact_ids=(evidence.artifact.id,),
-                            dispatch_limit=request.config.maxDispatches,
-                            synthetic_payload=plan.synthetic_summary_payload,
-                        ),
-                        model_settings={"max_tokens": request.config.maxOutputTokens},
-                    )
-                    summaries.append(summary_result.output.model_dump(mode="json"))
+                    model_stage = f"summary:level:{global_plan.hierarchy_level}:{window.id}"
+                    operation_inputs: dict[str, object] = {
+                        "evidenceArtifactId": str(evidence.artifact.id),
+                        "evidenceSha256": evidence.artifact.sha256,
+                        "firstSentenceId": window.first_sentence_id,
+                        "lastSentenceId": window.last_sentence_id,
+                        "windowId": window.id,
+                    }
+                    input_artifact_ids = (evidence.artifact.id,)
+                    if validate_summaries:
+                        operation_inputs["groundingArtifacts"] = [
+                            {"id": str(item.id), "sha256": item.sha256}
+                            for item in global_plan.input_artifacts
+                        ]
+                        input_artifact_ids = (
+                            evidence.artifact.id,
+                            *(item.id for item in global_plan.input_artifacts),
+                        )
+                    try:
+                        summary_result = await chapter_summarize_v1.run(
+                            window.prompt,
+                            deps=HarnessModelDeps(
+                                scope=request.scope,
+                                source_id=request.sourceId,
+                                run_id=request.runId,
+                                stage=model_stage,
+                                program_version="chapter-workflow/1",
+                                prompt_version=SUMMARIZE_PROMPT_VERSION,
+                                schema_version="hierarchical-summary/1",
+                                route=plan.summary_route,
+                                operation_inputs=operation_inputs,
+                                operation_config={
+                                    "hierarchyLevel": global_plan.hierarchy_level,
+                                    "maxOutputTokens": request.config.maxOutputTokens,
+                                },
+                                input_artifact_ids=input_artifact_ids,
+                                dispatch_limit=request.config.maxDispatches,
+                                synthetic_payload=plan.synthetic_summary_payload,
+                            ),
+                            model_settings={"max_tokens": request.config.maxOutputTokens},
+                        )
+                    except UnexpectedModelBehavior:
+                        if not validate_summaries:
+                            raise
+                        return await self._planning_refusal(
+                            request,
+                            evidence.artifact,
+                            control_queue,
+                            "A summary response did not match the required structure.",
+                        )
+                    summary = summary_result.output.model_dump(mode="json")
+                    if validate_summaries:
+                        validated = await workflow.execute_activity(
+                            "validate_chapter_summary",
+                            ValidateSummaryRequest(
+                                run=ref,
+                                evidence=evidence.artifact,
+                                window=window,
+                                summary=summary,
+                                model_stage=model_stage,
+                                hierarchy_level=global_plan.hierarchy_level,
+                                input_artifacts=global_plan.input_artifacts,
+                            ),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=ACTIVITY_RETRY,
+                            result_type=ValidatedSummary,
+                        )
+                        if validated.refusal is not None:
+                            return await self._planning_refusal(
+                                request,
+                                evidence.artifact,
+                                control_queue,
+                                validated.refusal,
+                            )
+                        if validated.summary is None or validated.artifact is None:
+                            message = "summary validation returned no accepted or refused outcome"
+                            raise RuntimeError(message)
+                        summary = validated.summary
+                        grounding_artifacts.append(validated.artifact)
+                    summaries.append(summary)
                 global_plan = await workflow.execute_activity(
                     "prepare_global_chapter_proposal",
                     PrepareGlobalProposalRequest(
@@ -309,6 +405,9 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                         windows=global_plan.reduction_windows,
                         summaries=tuple(summaries),
                         hierarchy_level=global_plan.hierarchy_level,
+                        grounding_artifacts=(
+                            tuple(grounding_artifacts) if validate_summaries else ()
+                        ),
                     ),
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=ACTIVITY_RETRY,
@@ -318,6 +417,8 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             proposal_prompt = global_plan.prompt
             proposal_route = global_plan.route
             proposal_fixture = global_plan.synthetic_payload
+            if validate_summaries:
+                proposal_grounding_artifacts = global_plan.input_artifacts
         model_stage = "proposal:global"
         compiled: CompiledRevision | None = None
         semantic_error = "The proposal did not satisfy the exact-cover contract."
@@ -325,6 +426,23 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
         while compiled is None:
             semantic_failure = True
             try:
+                proposal_operation_inputs: dict[str, object] = {
+                    "evidenceArtifactId": str(evidence.artifact.id),
+                    "evidenceSha256": evidence.artifact.sha256,
+                    "firstSentenceId": plan.windows[0].first_sentence_id,
+                    "lastSentenceId": plan.windows[-1].last_sentence_id,
+                    "windowCount": len(plan.windows),
+                }
+                proposal_input_artifact_ids = (evidence.artifact.id,)
+                if proposal_grounding_artifacts:
+                    proposal_operation_inputs["groundingArtifacts"] = [
+                        {"id": str(item.id), "sha256": item.sha256}
+                        for item in proposal_grounding_artifacts
+                    ]
+                    proposal_input_artifact_ids = (
+                        evidence.artifact.id,
+                        *(item.id for item in proposal_grounding_artifacts),
+                    )
                 proposal_result = await chapter_propose_v1.run(
                     proposal_prompt,
                     deps=HarnessModelDeps(
@@ -336,20 +454,14 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                         prompt_version=PROPOSE_PROMPT_VERSION,
                         schema_version="chapter-proposal/1",
                         route=proposal_route,
-                        operation_inputs={
-                            "evidenceArtifactId": str(evidence.artifact.id),
-                            "evidenceSha256": evidence.artifact.sha256,
-                            "firstSentenceId": plan.windows[0].first_sentence_id,
-                            "lastSentenceId": plan.windows[-1].last_sentence_id,
-                            "windowCount": len(plan.windows),
-                        },
+                        operation_inputs=proposal_operation_inputs,
                         operation_config={
                             "hierarchyLevel": hierarchy_level,
                             "maxOutputTokens": request.config.maxOutputTokens,
                             "repairIndex": run.repair_count,
                             "requestKey": str(request.requestKey),
                         },
-                        input_artifact_ids=(evidence.artifact.id,),
+                        input_artifact_ids=proposal_input_artifact_ids,
                         dispatch_limit=request.config.maxDispatches,
                         synthetic_payload=proposal_fixture,
                     ),

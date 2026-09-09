@@ -48,6 +48,24 @@ export interface ChapterView {
     currentTranscriptRevision: number | null;
   } | null;
   runs: Array<{ createdAt: string; id: string; status: string }>;
+  summaryGrounding: {
+    fallbackQuoteCount: number;
+    fallbackUnitCount: number;
+    reports: ChapterArtifactRef[];
+  };
+}
+
+const MAX_SUMMARY_GROUNDING_REPORTS = 128;
+
+function groundingCount(
+  metadata: Record<string, unknown>,
+  key: "fallbackQuoteCount" | "fallbackUnitCount"
+): number {
+  const value = metadata[key];
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error(`Summary grounding report has invalid ${key}.`);
+  }
+  return Number(value);
 }
 
 export function artifactIdsForRevisionPointers(
@@ -112,6 +130,11 @@ export function getChapterView(
           id: row.id,
           status: row.status,
         })),
+        summaryGrounding: {
+          fallbackQuoteCount: 0,
+          fallbackUnitCount: 0,
+          reports: [],
+        },
       };
     }
     const [revisionRows, recentEvents] = await Promise.all([
@@ -272,7 +295,29 @@ export function getChapterView(
       .from(transcript)
       .where(eq(transcript.sourceId, sourceId))
       .limit(1);
-    const artifacts = [...editArtifacts, ...dependencies];
+    const groundingArtifacts = await tx
+      .select()
+      .from(harnessArtifact)
+      .where(
+        and(
+          eq(harnessArtifact.sourceId, sourceId),
+          eq(harnessArtifact.kind, "checks"),
+          sql`${harnessArtifact.metadata}->>'format' = 'chapter-summary-grounding/1'`,
+          sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`
+        )
+      )
+      .orderBy(harnessArtifact.createdAt, harnessArtifact.id)
+      .limit(MAX_SUMMARY_GROUNDING_REPORTS + 1);
+    if (groundingArtifacts.length > MAX_SUMMARY_GROUNDING_REPORTS) {
+      throw new Error(
+        "Chapter run exceeds the summary grounding report limit."
+      );
+    }
+    const artifacts = [
+      ...editArtifacts,
+      ...dependencies,
+      ...groundingArtifacts,
+    ];
     const refs = artifacts.map((artifact) => ({
       id: artifact.id,
       kind: artifact.kind as ChapterArtifactRef["kind"],
@@ -319,6 +364,24 @@ export function getChapterView(
         id: row.id,
         status: row.status,
       })),
+      summaryGrounding: {
+        fallbackQuoteCount: groundingArtifacts.reduce(
+          (total, artifact) =>
+            total + groundingCount(artifact.metadata, "fallbackQuoteCount"),
+          0
+        ),
+        fallbackUnitCount: groundingArtifacts.reduce(
+          (total, artifact) =>
+            total + groundingCount(artifact.metadata, "fallbackUnitCount"),
+          0
+        ),
+        reports: refs.filter(
+          (artifact) =>
+            artifact.kind === "checks" &&
+            artifact.metadata.format === "chapter-summary-grounding/1" &&
+            artifact.metadata.runId === selected.id
+        ),
+      },
     };
   });
 }

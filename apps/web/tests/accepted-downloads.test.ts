@@ -256,6 +256,11 @@ function fixture(): Fixture {
         synthetic: true,
       },
       runs: [{ createdAt: "2026-09-09T00:00:00Z", id: RUN, status: "ready" }],
+      summaryGrounding: {
+        fallbackQuoteCount: 0,
+        fallbackUnitCount: 0,
+        reports: [],
+      },
     },
   };
 }

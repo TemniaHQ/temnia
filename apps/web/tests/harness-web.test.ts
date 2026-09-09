@@ -3,9 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { verifiedArtifactJson } from "@/lib/harness/artifact";
 import {
+  appliedBudgetMatchesDraft,
+  budgetInputFromMicros,
   type ChapterPanelMessage,
+  chapterPlanningStoppedMessage,
   chapterWaitingMessage,
   clearMatchedStartMessage,
+  summaryGroundingMessage,
 } from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
 import {
@@ -26,6 +30,43 @@ describe("chapter money", () => {
     expect(parseDollarMicros("0.0000001", 20_000_000)).toBeNull();
     expect(parseDollarMicros("20.000001", 20_000_000)).toBeNull();
     expect(parseDollarMicros("0", 20_000_000)).toBeNull();
+  });
+
+  it("renders exact integer micros for an editable existing-run budget", () => {
+    expect(budgetInputFromMicros(3_000_000)).toBe("3.00");
+    expect(budgetInputFromMicros(3_100_000)).toBe("3.10");
+    expect(budgetInputFromMicros(999_257)).toBe("0.999257");
+    expect(budgetInputFromMicros(1)).toBe("0.000001");
+    expect(() => budgetInputFromMicros(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      "budget micros must be a nonnegative safe integer"
+    );
+  });
+
+  it("releases a dirty draft only for its exact durable applied command", () => {
+    const applied = {
+      commandState: "applied",
+      currentDraft: "3.50",
+      observedMicros: 3_500_000,
+      runMatches: true,
+      submittedDraft: "3.50",
+      submittedMicros: 3_500_000,
+    };
+    expect(appliedBudgetMatchesDraft(applied)).toBe(true);
+    expect(
+      appliedBudgetMatchesDraft({ ...applied, commandState: "refused" })
+    ).toBe(false);
+    expect(
+      appliedBudgetMatchesDraft({ ...applied, commandState: "pending" })
+    ).toBe(false);
+    expect(
+      appliedBudgetMatchesDraft({ ...applied, currentDraft: "3.75" })
+    ).toBe(false);
+    expect(
+      appliedBudgetMatchesDraft({ ...applied, observedMicros: 3_000_000 })
+    ).toBe(false);
+    expect(appliedBudgetMatchesDraft({ ...applied, runMatches: false })).toBe(
+      false
+    );
   });
 });
 
@@ -302,6 +343,31 @@ describe("chapter panel status copy", () => {
         hasSelectedEdit: true,
       })
     ).toBeNull();
+  });
+
+  it("reports source-excerpt grounding separately from technical checks", () => {
+    expect(
+      summaryGroundingMessage({
+        fallbackQuoteCount: 1,
+        fallbackUnitCount: 2,
+      })
+    ).toBe(
+      "Used the original transcript for 2 summary passages after finding 1 mismatched source reference. Review these passages before accepting the chapters."
+    );
+    expect(
+      summaryGroundingMessage({
+        fallbackQuoteCount: 0,
+        fallbackUnitCount: 0,
+      })
+    ).toBeNull();
+  });
+
+  it("explains a planning refusal that has no editable revision", () => {
+    expect(chapterPlanningStoppedMessage("needs_review", 0)).toBe(
+      "Planning stopped before an edit was produced. Review the reason and start a new run to try again."
+    );
+    expect(chapterPlanningStoppedMessage("needs_review", 1)).toBeNull();
+    expect(chapterPlanningStoppedMessage("running", 0)).toBeNull();
   });
 });
 
