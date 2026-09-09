@@ -72,10 +72,13 @@ class GenerationData(BaseModel):
     total_cost: Decimal | None = None
     gateway_cost: Decimal | None = None
     upstream_inference_cost: Decimal | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cached_input_tokens: int | None = None
-    reasoning_tokens: int | None = None
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    native_tokens_prompt: int | None = None
+    native_tokens_completion: int | None = None
+    native_tokens_cached: int | None = None
+    native_tokens_reasoning: int | None = None
+    native_tokens_cache_creation: int | None = None
 
     @model_validator(mode="after")
     def _finite_nonnegative(self) -> Self:
@@ -84,10 +87,13 @@ class GenerationData(BaseModel):
             if value is not None and (not value.is_finite() or value < 0):
                 raise ValueError(f"{name} must be finite and nonnegative")
         for name in (
-            "input_tokens",
-            "output_tokens",
-            "cached_input_tokens",
-            "reasoning_tokens",
+            "tokens_prompt",
+            "tokens_completion",
+            "native_tokens_prompt",
+            "native_tokens_completion",
+            "native_tokens_cached",
+            "native_tokens_reasoning",
+            "native_tokens_cache_creation",
         ):
             value = getattr(self, name)
             if value is not None and value < 0:
@@ -144,13 +150,16 @@ async def lookup_generation(
             components={"generationId": generation_id, "reason": "usage_not_found"},
         )
     response.raise_for_status()
-    raw = cast("dict[str, Any]", json.loads(response.content, parse_float=Decimal))
+    raw_value = json.loads(response.content, parse_float=Decimal)
+    if not isinstance(raw_value, dict):
+        raise GatewayError("gateway generation response must be a JSON object")
+    raw = cast("dict[str, Any]", raw_value)
     data_value = raw.get("data")
     if isinstance(data_value, dict):
         data_mapping = cast("dict[str, Any]", data_value)
         for name in ("total_cost", "gateway_cost", "upstream_inference_cost"):
             value = data_mapping.get(name)
-            if isinstance(value, str):
+            if isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool)):
                 data_mapping[name] = Decimal(value)
     envelope = GenerationEnvelope.model_validate(raw, strict=True)
     data = envelope.data
@@ -170,10 +179,13 @@ async def lookup_generation(
         "upstreamInferenceCost": (
             str(data.upstream_inference_cost) if data.upstream_inference_cost is not None else None
         ),
-        "inputTokens": data.input_tokens,
-        "outputTokens": data.output_tokens,
-        "cachedInputTokens": data.cached_input_tokens,
-        "reasoningTokens": data.reasoning_tokens,
+        "inputTokens": data.tokens_prompt,
+        "outputTokens": data.tokens_completion,
+        "nativeInputTokens": data.native_tokens_prompt,
+        "nativeOutputTokens": data.native_tokens_completion,
+        "cachedInputTokens": data.native_tokens_cached,
+        "reasoningTokens": data.native_tokens_reasoning,
+        "cacheCreationTokens": data.native_tokens_cache_creation,
     }
     if data.is_byok:
         return CostObservation(

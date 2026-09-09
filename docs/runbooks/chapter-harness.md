@@ -159,6 +159,64 @@ namespace be removed. A duration-based resource estimate is not an actual provid
 
 ## Enable chapter planning
 
+### Gateway account and credential preflight
+
+For Vercel AI Gateway, confirm the team's plan supports **per-request zero data retention**.
+It requires an active paid Pro or Enterprise plan. A Pro Trial is insufficient: the September 9
+staging preflight received HTTP 403 with that exact restriction. Gateway credits do not activate
+the required plan. See the [provider policy](https://vercel.com/docs/ai-gateway/security-and-compliance/zdr)
+and [observed staging result](../design/gateway-staging-qualification-2026-09-09.md).
+
+Create an AI Gateway API key named `temnia-staging`, give it a small explicit spend budget
+($10 for the initial operator setup), choose no automatic budget refresh, and save its value
+only in **Dokploy → temnia → staging → pipeline → Environment** as `AI_GATEWAY_API_KEY`.
+Preserve existing environment variables and keep `HARNESS_ENABLED=0` during preparation.
+The web application, build arguments and route snapshot never receive this credential.
+An authenticated `/v1/credits` read proves key access, not ZDR entitlement or model eligibility.
+A bounded synthetic request with the actual mandatory privacy/routing controls proves the
+account can attempt that route; never disable those controls to get past an entitlement error.
+
+### Qualified routes and rollout
+
+Run the finite qualifier from `apps/pipeline` in an isolated **staging** qualification environment
+with the reviewed package code, frozen dependencies and the pipeline's gateway key in its process
+environment. The operator script is in the checkout; it is not copied into the deployment image.
+Use a matching reviewed checkout or read-only mounts for the one-off container, without changing
+the running worker's code. Candidate files contain public metadata only and never credentials.
+
+```bash
+uv run --frozen python scripts/qualify_harness_gateway.py run \
+  --candidates /qualification/candidates.json \
+  --journal /qualification/output/journal.json \
+  --receipts /qualification/output/receipts \
+  --report /qualification/output/report.json \
+  --max-exposure-micros 618112 \
+  --max-dispatches 3 \
+  --max-output-tokens 8192
+```
+
+The example shows the September 9 final Kimi/Alibaba batch: 618,112 micros remained after
+381,888 micros of earlier admissions, and only three schema calls were planned. Use its reviewed
+one-candidate file. For another session, declare its own total and subtract all prior admitted
+exposure; creating another journal does not reset the session's spending limit.
+The command refuses existing admission files and output collisions. It saves serialized SDK responses before
+validation and waits at most a bounded interval for read-only cost ingestion. An ambiguous result,
+unreconciled charge or account rejection halts rather than repeating inference. A successful report
+proves only the tested request shapes, not editorial quality or maximum context capacity.
+
+For a journal with a saved generation handle and unresolved cost, use a separate report path and
+the SHA-256 of the exact retained journal bytes:
+
+```bash
+uv run --frozen python scripts/qualify_harness_gateway.py reconcile \
+  --journal /qualification/output/journal.json \
+  --journal-sha256 EXACT_RETAINED_JOURNAL_SHA256 \
+  --report /qualification/output/reconciliation.json
+```
+
+Reconciliation performs lookups only. It never resumes the paid batch or turns incomplete
+validation into a passed result. Preserve the original journal and receipts.
+
 Supply a qualified, immutable route JSON file to the worker and validate its canonical snapshot ID:
 
 ```bash
