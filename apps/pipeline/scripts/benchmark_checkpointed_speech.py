@@ -1528,6 +1528,7 @@ async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     expected_original_ledger_sha256 = cast(
                         "str", acknowledged["immutableLedgerSha256"]
                     )
+                    recovery_journal_sha256 = current_journal_sha256
                 else:
                     original_snapshot = await _database_snapshot(base, journal.cases[0])
                     original_facts = _original_recovery_facts(
@@ -1545,6 +1546,7 @@ async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         deployment_source_build_id=manifest.source_build_id,
                         lease=lease,
                     )
+                    recovery_journal_sha256 = hashlib.sha256(journal_path.read_bytes()).hexdigest()
                 recovery_summary, recovery_run_id, receipt_sha256 = await _recover_failed_case(
                     base=base,
                     temporal=temporal,
@@ -1555,7 +1557,7 @@ async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     output_dir=output_dir,
                     task_queue_prefix=args.task_queue,
                     worker_source_build_id=current_worker_build,
-                    current_journal_sha256=current_journal_sha256,
+                    current_journal_sha256=recovery_journal_sha256,
                     original_journal_sha256=original_journal_sha256,
                     expected_original_ledger_sha256=expected_original_ledger_sha256,
                 )
