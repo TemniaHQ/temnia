@@ -39,9 +39,11 @@ import {
   appliedBudgetMatchesDraft,
   budgetInputFromMicros,
   type ChapterPanelMessage,
+  chapterOutcomeUnknownMessage,
   chapterPlanningStoppedMessage,
   chapterWaitingMessage,
   clearMatchedStartMessage,
+  newRunExposureMessage,
   summaryGroundingMessage,
 } from "@/lib/harness/chapter-ui";
 import { technicalEligibility } from "@/lib/harness/checks";
@@ -945,6 +947,9 @@ export function ChapterPanel({
     );
   }
   if (creatingNew || !view.run) {
+    const exposureMessage = view.run
+      ? newRunExposureMessage(view.run.status)
+      : null;
     return (
       <div
         className="space-y-4"
@@ -952,6 +957,14 @@ export function ChapterPanel({
       >
         {availability.settings.synthetic ? (
           <Badge>Recorded test backend</Badge>
+        ) : null}
+        {exposureMessage ? (
+          <p
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm"
+            data-testid="chapter-new-run-exposure-warning"
+          >
+            {exposureMessage}
+          </p>
         ) : null}
         <Label htmlFor={`${formId}-brief`}>Editorial brief</Label>
         <Textarea
@@ -1003,6 +1016,7 @@ export function ChapterPanel({
     run.status,
     run.currentRevision
   );
+  const outcomeUnknownMessage = chapterOutcomeUnknownMessage(run.status);
   return (
     <div className="space-y-4" data-testid="chapters-panel">
       <div className="flex flex-wrap items-center gap-2">
@@ -1052,6 +1066,14 @@ export function ChapterPanel({
         {" · "}budget {formatMicros(run.budgetMicros)} · {run.dispatchCount}{" "}
         dispatches
       </p>
+      {outcomeUnknownMessage ? (
+        <p
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm"
+          data-testid="chapter-outcome-unknown-explanation"
+        >
+          {outcomeUnknownMessage}
+        </p>
+      ) : null}
       {run.errorMessage ? (
         <p className="text-destructive text-sm">{run.errorMessage}</p>
       ) : null}

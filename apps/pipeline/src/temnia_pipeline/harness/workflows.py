@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
 from temporalio.workflow import ParentClosePolicy
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -26,17 +29,24 @@ with workflow.unsafe.imports_passed_through():
         HarnessRunStatus,
     )
     from temnia_pipeline.harness.models import (
+        COMPACT_PROPOSAL_SCHEMA_VERSION,
         HARNESS_AGENTS,
         HarnessModelDeps,
         KnownProviderRejection,
+        canonical_chapter_proposal,
         chapter_propose_v1,
+        chapter_propose_v2,
         chapter_summarize_v1,
         chapter_verify_v1,
+        compact_synthetic_proposal,
     )
     from temnia_pipeline.harness.prompts import (
+        COMPACT_PROPOSE_PROMPT_VERSION,
         PROPOSE_PROMPT_VERSION,
         SUMMARIZE_PROMPT_VERSION,
         VERIFY_PROMPT_VERSION,
+        render_compact_proposal_prompt,
+        render_proposal_repair_prompt,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.routes import (
@@ -64,6 +74,8 @@ with workflow.unsafe.imports_passed_through():
         PrepareGlobalProposalRequest,
         PreparePlanningRequest,
         PrepareVerificationRequest,
+        ProposalDiagnostic,
+        ProposalDiagnosticRequest,
         ProposalPlan,
         RenderRevisionRequest,
         RenderRevisionResult,
@@ -418,49 +430,89 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             proposal_route = global_plan.route
             proposal_fixture = global_plan.synthetic_payload
             if validate_summaries:
-                proposal_grounding_artifacts = global_plan.input_artifacts
-        model_stage = "proposal:global"
+                proposal_grounding_artifacts = cast(
+                    "GlobalProposalPlan", global_plan
+                ).input_artifacts
+        compact_proposal = bool(workflow.patched("chapter-compact-proposal-v1"))
+        if compact_proposal:
+            try:
+                proposal_prompt = render_compact_proposal_prompt(proposal_prompt)
+                estimate_cost(
+                    proposal_route,
+                    payload_bytes=len(proposal_prompt.encode()),
+                    max_output_tokens=request.config.maxOutputTokens,
+                )
+            except ContextWindowExceeded:
+                return await self._planning_refusal(
+                    request,
+                    evidence.artifact,
+                    control_queue,
+                    "The compact proposal request exceeds the bounded model context.",
+                )
+            proposal_fixture = compact_synthetic_proposal(proposal_fixture)
+        model_stage = "proposal:v2:global" if compact_proposal else "proposal:global"
+        proposal_prompt_version = (
+            COMPACT_PROPOSE_PROMPT_VERSION if compact_proposal else PROPOSE_PROMPT_VERSION
+        )
+        proposal_schema_version = (
+            COMPACT_PROPOSAL_SCHEMA_VERSION if compact_proposal else "chapter-proposal/1"
+        )
+        proposal_program_version = (
+            "chapter-workflow/2" if compact_proposal else "chapter-workflow/1"
+        )
+        proposal_base_prompt = proposal_prompt
+        proposal_repair_artifacts: tuple[HarnessArtifactRef, ...] = ()
         compiled: CompiledRevision | None = None
         semantic_error = "The proposal did not satisfy the exact-cover contract."
-        failover_index = 0
+        failover_index: int = 0
         while compiled is None:
             semantic_failure = True
+            diagnostic: ProposalDiagnostic | None = None
+            proposal_operation_inputs: dict[str, object] = {
+                "evidenceArtifactId": str(evidence.artifact.id),
+                "evidenceSha256": evidence.artifact.sha256,
+                "firstSentenceId": plan.windows[0].first_sentence_id,
+                "lastSentenceId": plan.windows[-1].last_sentence_id,
+                "windowCount": len(plan.windows),
+            }
+            proposal_input_artifacts: tuple[HarnessArtifactRef, ...] = ()
+            if proposal_grounding_artifacts:
+                proposal_operation_inputs["groundingArtifacts"] = [
+                    {"id": str(item.id), "sha256": item.sha256}
+                    for item in proposal_grounding_artifacts
+                ]
+                proposal_input_artifacts = proposal_grounding_artifacts
+            if proposal_repair_artifacts:
+                proposal_operation_inputs["repairArtifacts"] = [
+                    {"id": str(item.id), "sha256": item.sha256}
+                    for item in proposal_repair_artifacts
+                ]
+                proposal_input_artifacts = proposal_input_artifacts + proposal_repair_artifacts
+            proposal_input_artifact_ids: tuple[UUID, ...] = (
+                evidence.artifact.id,
+                *(item.id for item in proposal_input_artifacts),
+            )
+            proposal_operation_config: dict[str, object] = {
+                "hierarchyLevel": hierarchy_level,
+                "maxOutputTokens": request.config.maxOutputTokens,
+                "repairIndex": run.repair_count,
+                "requestKey": str(request.requestKey),
+            }
             try:
-                proposal_operation_inputs: dict[str, object] = {
-                    "evidenceArtifactId": str(evidence.artifact.id),
-                    "evidenceSha256": evidence.artifact.sha256,
-                    "firstSentenceId": plan.windows[0].first_sentence_id,
-                    "lastSentenceId": plan.windows[-1].last_sentence_id,
-                    "windowCount": len(plan.windows),
-                }
-                proposal_input_artifact_ids = (evidence.artifact.id,)
-                if proposal_grounding_artifacts:
-                    proposal_operation_inputs["groundingArtifacts"] = [
-                        {"id": str(item.id), "sha256": item.sha256}
-                        for item in proposal_grounding_artifacts
-                    ]
-                    proposal_input_artifact_ids = (
-                        evidence.artifact.id,
-                        *(item.id for item in proposal_grounding_artifacts),
-                    )
-                proposal_result = await chapter_propose_v1.run(
+                proposal_agent = chapter_propose_v2 if compact_proposal else chapter_propose_v1
+                proposal_result = await proposal_agent.run(
                     proposal_prompt,
                     deps=HarnessModelDeps(
                         scope=request.scope,
                         source_id=request.sourceId,
                         run_id=request.runId,
                         stage=model_stage,
-                        program_version="chapter-workflow/1",
-                        prompt_version=PROPOSE_PROMPT_VERSION,
-                        schema_version="chapter-proposal/1",
+                        program_version=proposal_program_version,
+                        prompt_version=proposal_prompt_version,
+                        schema_version=proposal_schema_version,
                         route=proposal_route,
                         operation_inputs=proposal_operation_inputs,
-                        operation_config={
-                            "hierarchyLevel": hierarchy_level,
-                            "maxOutputTokens": request.config.maxOutputTokens,
-                            "repairIndex": run.repair_count,
-                            "requestKey": str(request.requestKey),
-                        },
+                        operation_config=proposal_operation_config,
                         input_artifact_ids=proposal_input_artifact_ids,
                         dispatch_limit=request.config.maxDispatches,
                         synthetic_payload=proposal_fixture,
@@ -469,6 +521,23 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                 )
             except UnexpectedModelBehavior:
                 semantic_error = "The model response did not match the strict proposal schema."
+                if compact_proposal:
+                    diagnostic = await self._diagnose_proposal(
+                        ProposalDiagnosticRequest(
+                            run=ref,
+                            evidence=evidence.artifact,
+                            model_stage=model_stage,
+                            route=proposal_route,
+                            prompt_version=proposal_prompt_version,
+                            schema_version=proposal_schema_version,
+                            max_output_tokens=request.config.maxOutputTokens,
+                            program_version=proposal_program_version,
+                            operation_inputs=proposal_operation_inputs,
+                            operation_config=proposal_operation_config,
+                            input_artifacts=proposal_input_artifacts,
+                        )
+                    )
+                    semantic_error = diagnostic.message
             except KnownProviderRejection:
                 semantic_failure = False
                 semantic_error = "The qualified provider conclusively rejected the request."
@@ -483,7 +552,11 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     CompileProposalRequest(
                         run=ref,
                         evidence=evidence.artifact,
-                        proposal=proposal_result.output,
+                        proposal=(
+                            canonical_chapter_proposal(proposal_result.output)
+                            if compact_proposal
+                            else proposal_result.output
+                        ),
                         generator_family=proposal_route.family,
                         model_stage=model_stage,
                     ),
@@ -495,10 +568,59 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     compiled = compile_result.compiled
                     break
                 semantic_error = compile_result.refusal or semantic_error
+                if compact_proposal:
+                    diagnostic = await self._diagnose_proposal(
+                        ProposalDiagnosticRequest(
+                            run=ref,
+                            evidence=evidence.artifact,
+                            model_stage=model_stage,
+                            route=proposal_route,
+                            prompt_version=proposal_prompt_version,
+                            schema_version=proposal_schema_version,
+                            max_output_tokens=request.config.maxOutputTokens,
+                            program_version=proposal_program_version,
+                            operation_inputs=proposal_operation_inputs,
+                            operation_config=proposal_operation_config,
+                            input_artifacts=proposal_input_artifacts,
+                            compiler_refusal=semantic_error,
+                        )
+                    )
+                    semantic_error = diagnostic.message
             if semantic_failure and run.repair_count >= request.config.maxRepairs:
                 return await self._planning_refusal(
                     request, evidence.artifact, control_queue, semantic_error
                 )
+            repair_prompt = proposal_prompt
+            repair_input_artifacts: tuple[HarnessArtifactRef, ...] = ()
+            if semantic_failure and compact_proposal:
+                if diagnostic is None:
+                    message = "semantic proposal failure has no diagnostic"
+                    raise RuntimeError(message)
+                try:
+                    repair_prompt = render_proposal_repair_prompt(
+                        proposal_base_prompt,
+                        feedback={
+                            "code": diagnostic.code,
+                            "compilerCode": diagnostic.compiler_code,
+                            "issues": [
+                                issue.model_dump(mode="json") for issue in diagnostic.issues
+                            ],
+                            "message": diagnostic.message,
+                        },
+                        diagnostic_artifact=(
+                            diagnostic.artifact.id,
+                            diagnostic.artifact.sha256,
+                        ),
+                        response_artifact=(diagnostic.response.id, diagnostic.response.sha256),
+                    )
+                except ContextWindowExceeded:
+                    return await self._planning_refusal(
+                        request,
+                        evidence.artifact,
+                        control_queue,
+                        "The diagnosed proposal repair exceeds the bounded model context.",
+                    )
+                repair_input_artifacts = (diagnostic.artifact, diagnostic.response)
             excluded = set(generation_families)
             repair_route = None
             while repair_route is None:
@@ -518,7 +640,7 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                 try:
                     estimate_cost(
                         candidate,
-                        payload_bytes=len(proposal_prompt.encode()),
+                        payload_bytes=len(repair_prompt.encode()),
                         max_output_tokens=request.config.maxOutputTokens,
                     )
                 except ContextWindowExceeded:
@@ -545,10 +667,21 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             proposal_route = repair_route
             generation_families.add(repair_route.family)
             if semantic_failure:
-                model_stage = f"proposal:repair:{run.repair_count}"
+                proposal_prompt = repair_prompt
+                if compact_proposal:
+                    proposal_repair_artifacts = cast(
+                        "tuple[HarnessArtifactRef, ...]", repair_input_artifacts
+                    )
+                    model_stage = f"proposal:v2:repair:{run.repair_count}"
+                else:
+                    model_stage = f"proposal:repair:{run.repair_count}"
             else:
-                failover_index += 1
-                model_stage = f"proposal:failover:{failover_index}"
+                failover_index = failover_index + 1
+                model_stage = (
+                    f"proposal:v2:failover:{failover_index}"
+                    if compact_proposal
+                    else f"proposal:failover:{failover_index}"
+                )
         if compiled is None:
             message = "proposal loop ended without a compiled revision"
             raise RuntimeError(message)
@@ -707,6 +840,17 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             run_id=request.runId,
         )
         await self._cleanup_source_cache(ref)
+
+    @staticmethod
+    async def _diagnose_proposal(request: ProposalDiagnosticRequest) -> ProposalDiagnostic:
+        """Inspect one retained response without any further provider request."""
+        return await workflow.execute_activity(
+            "diagnose_chapter_proposal",
+            request,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=ACTIVITY_RETRY,
+            result_type=ProposalDiagnostic,
+        )
 
     @staticmethod
     async def _cleanup_source_cache(ref: RunRef) -> None:

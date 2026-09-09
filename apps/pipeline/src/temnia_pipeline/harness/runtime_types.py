@@ -291,6 +291,47 @@ class CompileProposalRequest(BaseModel):
     model_stage: Annotated[str, Field(min_length=1, max_length=128)]
 
 
+class ProposalDiagnosticRequest(BaseModel):
+    """Exact retained proposal response to inspect without another model call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    run: RunRef
+    evidence: HarnessArtifactRef
+    model_stage: Annotated[str, Field(min_length=1, max_length=128)]
+    route: RouteEntry
+    program_version: Annotated[str, Field(min_length=1, max_length=128)]
+    prompt_version: Annotated[str, Field(min_length=1, max_length=128)]
+    schema_version: Annotated[str, Field(min_length=1, max_length=128)]
+    max_output_tokens: Annotated[int, Field(gt=0)]
+    operation_inputs: dict[str, object]
+    operation_config: dict[str, object]
+    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
+    compiler_refusal: Annotated[str | None, Field(min_length=1, max_length=2000)] = None
+
+
+class ProposalDiagnosticIssue(BaseModel):
+    """Content-free schema path and validation code safe for repair feedback."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    path: Annotated[str, Field(min_length=1, max_length=256)]
+    code: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class ProposalDiagnostic(BaseModel):
+    """Content-free reason and immutable evidence for one unusable proposal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    artifact: HarnessArtifactRef
+    response: HarnessArtifactRef
+    code: Literal["output_limit", "invalid_json", "invalid_schema", "compiler_refusal"]
+    message: Annotated[str, Field(min_length=1, max_length=1000)]
+    issues: Annotated[tuple[ProposalDiagnosticIssue, ...], Field(max_length=32)] = ()
+    compiler_code: Annotated[str | None, Field(max_length=128)] = None
+
+
 class CompiledRevision(BaseModel):
     """Immutable proposal/edit artifacts ready for revision CAS acceptance."""
 

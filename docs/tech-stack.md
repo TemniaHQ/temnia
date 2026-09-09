@@ -175,6 +175,13 @@ The PRD's binding principles (§1.5) are the design constraints; the ones that s
 | Tracing and prompt registry | **OpenTelemetry from PydanticAI into self-hosted Langfuse v4** (MIT) | Langfuse Cloud (Hobby, then Core $29), Braintrust, Phoenix (ELv2), Opik | Decided at S3 (Rajesh, 2026-09-07). Self-host needs Postgres, ClickHouse, Redis, and object storage; the VPS cost is measured, not assumed. Metadata-only in production. Phoenix is the fallback if the self-host cost is too high |
 | Evals | **the C2 eval runner** (Pk, WindowDiff, GHD, window-tolerant F1 with density, purity, coverage, tIoU-F1) plus **pydantic-evals** for LLM-judge cases and judge calibration against a 250-sample truth set | in-house runner with the legacy parity chain, promptfoo | The segmentation metrics carry over from the substrate eval runner (§8, `evals/segmentation.py`); pydantic-evals adds LLM-judge calibration the legacy chain never had. Cassettes are recorded responses replayed by a request-hash model wrapper, never live models in CI |
 
+The chapter proposer now has a compact internal native-output contract, distinct from the shared
+canonical proposal/edit contract. It bounds quote arrays and editorial text, derives section labels
+in code and supplies retained validation evidence to the one bounded repair. This follows measured
+output truncation on the long staging source; it selects no new model or vendor and requires saved
+qualification of the new request shape. Design and compatibility evidence:
+[chapter proposal output](plans/chapter-proposal-output-360-view.md).
+
 ## 10. Rendering and visuals
 
 | Slot | Pick | Compared | Verdict |

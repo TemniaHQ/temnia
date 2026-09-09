@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import httpx2
@@ -22,17 +22,22 @@ from temnia_pipeline.harness.qualification import (
 API_KEY = "qualification-test-key-marker"
 
 
-def _candidate_payload(*, price: int = 1) -> dict[str, Any]:
+def _candidate_payload(*, price: int = 1, count: int = 1) -> dict[str, Any]:
+    words = ("one", "two", "three")
     return {
         "version": 1,
         "catalogueObservedAt": datetime(2026, 9, 9, tzinfo=UTC).isoformat(),
         "catalogueSha256": "a" * 64,
         "candidates": [
             {
-                "id": "candidate-one",
-                "gatewayModel": "family/model-one",
-                "family": "family",
-                "provider": "provider-one",
+                "id": f"candidate-{words[index]}",
+                "gatewayModel": (
+                    f"family/model-{words[index]}"
+                    if index == 0
+                    else f"family-{words[index]}/model-{words[index]}"
+                ),
+                "family": "family" if index == 0 else f"family-{words[index]}",
+                "provider": f"provider-{words[index]}",
                 "openWeight": True,
                 "contextTokens": 100_000,
                 "maxOutputTokens": 8192,
@@ -46,13 +51,14 @@ def _candidate_payload(*, price: int = 1) -> dict[str, Any]:
                     "requestSurcharge": 0,
                 },
             }
+            for index in range(count)
         ],
     }
 
 
-def _candidate_file(tmp_path: Path, *, price: int = 1) -> Path:
+def _candidate_file(tmp_path: Path, *, price: int = 1, count: int = 1) -> Path:
     path = tmp_path / "candidates.json"
-    path.write_text(json.dumps(_candidate_payload(price=price)))
+    path.write_text(json.dumps(_candidate_payload(price=price, count=count)))
     return path
 
 
@@ -94,6 +100,15 @@ def _outputs() -> list[dict[str, Any]]:
     ]
 
 
+def _compact_outputs(candidate_count: int) -> list[dict[str, Any]]:
+    outputs: list[dict[str, Any]] = []
+    for _ in range(candidate_count):
+        candidate_outputs = _outputs()
+        del candidate_outputs[1]["sections"][0]["id"]
+        outputs.extend(candidate_outputs)
+    return outputs
+
+
 def _request_transport(
     outputs: list[dict[str, Any]] | None = None,
 ) -> tuple[httpx2.MockTransport, list[dict[str, Any]]]:
@@ -111,7 +126,7 @@ def _request_transport(
                 "id": generation_id,
                 "object": "chat.completion",
                 "created": 1,
-                "model": "family/model-one",
+                "model": requests[-1]["model"],
                 "choices": [
                     {
                         "index": 0,
@@ -161,6 +176,34 @@ def _lookup_transport(
     return httpx.MockTransport(handler), generations
 
 
+def _three_candidate_lookup_transport() -> tuple[httpx.MockTransport, list[str]]:
+    generations: list[str] = []
+    models = ("family/model-one", "family-two/model-two", "family-three/model-three")
+    providers = ("provider-one", "provider-two", "provider-three")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        generation_id = request.url.params["id"]
+        generations.append(generation_id)
+        candidate_index = (int(generation_id.removeprefix("generation-")) - 1) // 3
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "data": {
+                    "id": generation_id,
+                    "model": models[candidate_index],
+                    "provider_name": providers[candidate_index],
+                    "is_byok": False,
+                    "total_cost": "0.000001",
+                    "tokens_prompt": 10,
+                    "tokens_completion": 10,
+                }
+            },
+        )
+
+    return httpx.MockTransport(handler), generations
+
+
 def _paths(tmp_path: Path) -> dict[str, Path]:
     return {
         "journal_path": tmp_path / "journal.json",
@@ -169,11 +212,16 @@ def _paths(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _limits(*, exposure: int = 100_000) -> QualificationLimits:
+def _limits(
+    *,
+    exposure: int = 100_000,
+    proposal_wire: Literal["canonical", "compact"] = "canonical",
+) -> QualificationLimits:
     return QualificationLimits(
         max_exposure_micros=exposure,
         max_dispatches=12,
         max_output_tokens=256,
+        proposal_wire=proposal_wire,
         lookup_wait_seconds=0,
     )
 
@@ -231,6 +279,115 @@ async def test_success_records_three_private_hash_verifiable_receipts(tmp_path: 
         assert call["response"]["sizeBytes"] == len(body)
         assert call["response"]["sha256"] == hashlib.sha256(body).hexdigest()
         assert API_KEY.encode() not in body
+
+
+@pytest.mark.asyncio
+async def test_compact_wire_qualifies_three_families_and_freezes_call_identity(
+    tmp_path: Path,
+) -> None:
+    request_transport, requests = _request_transport(_compact_outputs(3))
+    lookup_transport, generations = _three_candidate_lookup_transport()
+    paths = _paths(tmp_path)
+
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=3),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=_limits(proposal_wire="compact"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+
+    assert report["status"] == "completed"
+    assert report["passed"] is True
+    assert report["dispatchCount"] == 9
+    assert report["proposalWire"] == "compact"
+    assert report["limits"]["proposal_wire"] == "compact"
+    assert generations == [f"generation-{index}" for index in range(1, 10)]
+    assert len(requests) == 9
+    for call in report["calls"]:
+        stage = call["stage"]
+        assert call["proposalWire"] == "compact"
+        assert call["promptVersion"]
+        assert call["schemaVersion"] == (
+            "chapter-proposal-compact/1" if stage == "proposal" else f"qualification-{stage}/1"
+        )
+        assert call["response"]["promptVersion"] == call["promptVersion"]
+        assert call["response"]["schemaVersion"] == call["schemaVersion"]
+    proposal_requests = requests[1::3]
+    assert all(
+        "id"
+        not in request["response_format"]["json_schema"]["schema"]["$defs"][
+            "CompactChapterProposalSection"
+        ]["properties"]
+        for request in proposal_requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_canonical_wire_keeps_historical_journal_shape(tmp_path: Path) -> None:
+    request_transport, _ = _request_transport()
+    lookup_transport, _ = _lookup_transport()
+
+    report = await _run(
+        tmp_path,
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+
+    assert "proposalWire" not in report
+    assert "proposal_wire" not in report["limits"]
+    assert all("proposalWire" not in call for call in report["calls"])
+    assert all("promptVersion" not in call for call in report["calls"])
+    assert all("schemaVersion" not in call for call in report["calls"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", ["wire", "prompt"])
+async def test_compact_journal_identity_tamper_refuses_before_lookup(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    request_transport, _ = _request_transport(_compact_outputs(1))
+    lookup_transport, _ = _lookup_transport()
+    paths = _paths(tmp_path)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=_limits(proposal_wire="compact"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    if tamper == "wire":
+        report["proposalWire"] = "canonical"
+        expected = "proposal wire is inconsistent"
+    else:
+        report["calls"][1]["promptVersion"] = "wrong-prompt"
+        expected = "compact call metadata is invalid"
+    journal = tmp_path / "tampered-journal.json"
+    body = json.dumps(report, separators=(",", ":"), sort_keys=True).encode() + b"\n"
+    journal.write_bytes(body)
+    lookups = 0
+
+    async def lookup(_request: httpx.Request) -> httpx.Response:
+        nonlocal lookups
+        lookups += 1
+        return httpx.Response(500)
+
+    with pytest.raises(QualificationRefusal, match=expected):
+        await reconcile_journal(
+            journal_path=journal,
+            expected_sha256=hashlib.sha256(body).hexdigest(),
+            api_key=API_KEY,
+            report_path=tmp_path / "tampered-reconciliation.json",
+            lookup_transport=httpx.MockTransport(lookup),
+        )
+    assert lookups == 0
 
 
 @pytest.mark.asyncio

@@ -26,17 +26,24 @@ from temnia_pipeline.evals.chapters import (
     EditorialVerificationBody,
     EvaluationBundle,
     ImmutableArtifactFact,
+    ProposalDiagnosticArtifact,
     Provenance,
     ReviewEvent,
     SummaryGroundingArtifact,
     validate_bundle,
 )
 from temnia_pipeline.harness import artifacts
+from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.prompts import (
     PromptSentence,
     PromptWindow,
     render_summary_prompt,
     render_summary_reduction_prompt,
+)
+from temnia_pipeline.harness.proposal_diagnostics import (
+    DIAGNOSTIC_FORMAT,
+    ProposalDiagnosticReport,
+    validate_diagnostic_report,
 )
 from temnia_pipeline.harness.summary_grounding import (
     GROUNDING_FORMAT,
@@ -69,6 +76,7 @@ class _Snapshot:
     descriptor_id: UUID | None
     verification_id: UUID | None
     grounding_ids: tuple[UUID, ...]
+    diagnostic_ids: tuple[UUID, ...]
     rows: Mapping[UUID, Mapping[str, Any]]
     dependencies: Mapping[UUID, tuple[UUID, ...]]
     attempts: tuple[Mapping[str, Any], ...]
@@ -108,6 +116,13 @@ def _artifact_fact(row: Mapping[str, Any]) -> ImmutableArtifactFact:
 def _summary_grounding_report(value: object) -> SummaryGroundingReport:
     """Validate a decoded JSON value with Pydantic's strict JSON conversions."""
     return SummaryGroundingReport.model_validate_json(artifacts.canonical_json(value), strict=True)
+
+
+def _proposal_diagnostic_report(value: object) -> ProposalDiagnosticReport:
+    """Validate a decoded diagnostic with Pydantic's strict JSON conversions."""
+    return ProposalDiagnosticReport.model_validate_json(
+        artifacts.canonical_json(value), strict=True
+    )
 
 
 async def _one_or_none(
@@ -230,6 +245,23 @@ async def _read_snapshot(
             raise ValueError(f"run exceeds {MAX_EXPORT_ARTIFACTS} summary grounding artifacts")
         grounding_ids = tuple(row["id"] for row in grounding_rows)
 
+        diagnostic_rows = await (
+            await conn.execute(
+                """
+                SELECT * FROM harness_artifact
+                 WHERE source_id = %s AND kind = 'checks'
+                   AND metadata->>'format' = %s
+                   AND metadata->>'runId' = %s
+                 ORDER BY created_at, id
+                 LIMIT %s
+                """,
+                (source_id, DIAGNOSTIC_FORMAT, str(run_id), MAX_EXPORT_ARTIFACTS + 1),
+            )
+        ).fetchall()
+        if len(diagnostic_rows) > MAX_EXPORT_ARTIFACTS:
+            raise ValueError(f"run exceeds {MAX_EXPORT_ARTIFACTS} proposal diagnostic artifacts")
+        diagnostic_ids = tuple(row["id"] for row in diagnostic_rows)
+
         attempts = await (
             await conn.execute(
                 """
@@ -270,13 +302,21 @@ async def _read_snapshot(
                 descriptor_id,
                 verification_id,
                 *grounding_ids,
+                *diagnostic_ids,
                 *(row.get("result_artifact_id") for row in attempts),
             )
             if value is not None
         }
         dependency_rows: Sequence[Mapping[str, Any]] = ()
         dependency_roots = tuple(
-            value for value in (descriptor_id, verification_id, *grounding_ids) if value is not None
+            value
+            for value in (
+                descriptor_id,
+                verification_id,
+                *grounding_ids,
+                *diagnostic_ids,
+            )
+            if value is not None
         )
         if dependency_roots:
             dependency_rows = await (
@@ -325,6 +365,7 @@ async def _read_snapshot(
             descriptor_id=descriptor_id,
             verification_id=verification_id,
             grounding_ids=grounding_ids,
+            diagnostic_ids=diagnostic_ids,
             rows=rows,
             dependencies={key: tuple(value) for key, value in dependencies.items()},
             attempts=tuple(attempts),
@@ -383,6 +424,107 @@ async def export_evaluation_bundle(
         for row in snapshot.attempts
         if row.get("result_artifact_id") is not None and row.get("state") == "succeeded"
     }
+    proposal_diagnostics: list[ProposalDiagnosticArtifact] = []
+    accepted_responses = {
+        row["result_artifact_id"]: row
+        for row in snapshot.attempts
+        if row.get("result_artifact_id") is not None and row.get("state") == "succeeded"
+    }
+    for diagnostic_id in snapshot.diagnostic_ids:
+        diagnostic_row = snapshot.rows[diagnostic_id]
+        body = _proposal_diagnostic_report(bodies[diagnostic_id])
+        metadata = _metadata(diagnostic_row)
+        expected_metadata = {
+            "attemptId": str(body.attemptId),
+            "code": body.code,
+            "evidenceArtifactId": str(body.evidence.id),
+            "format": body.format,
+            "maxOutputTokens": body.maxOutputTokens,
+            "modelStage": body.modelStage,
+            "operationId": str(body.operationId),
+            "promptVersion": body.promptVersion,
+            "responseArtifactId": str(body.response.id),
+            "routeId": body.routeId,
+            "runId": str(body.runId),
+            "schemaVersion": body.schemaVersion,
+        }
+        if any(metadata.get(key) != value for key, value in expected_metadata.items()):
+            raise ValueError("proposal diagnostic artifact metadata is invalid")
+        if body.runId != run_id or body.evidence.id != evidence_id:
+            raise ValueError("proposal diagnostic belongs to different run evidence")
+        accepted_attempt = accepted_responses.get(body.response.id)
+        if accepted_attempt is None:
+            raise ValueError("proposal diagnostic response is not an accepted run attempt")
+        response_row = snapshot.rows.get(body.response.id)
+        if response_row is None:
+            raise ValueError("proposal diagnostic response artifact is absent")
+        response_metadata = _metadata(response_row)
+        route = (
+            cast("Mapping[str, Any]", accepted_attempt["route"])
+            if isinstance(accepted_attempt.get("route"), dict)
+            else {}
+        )
+        if (
+            body.attemptId != accepted_attempt["id"]
+            or body.operationId != accepted_attempt["operation_id"]
+            or body.providerResponseId != accepted_attempt.get("remote_handle")
+            or response_metadata.get("attemptId") != str(accepted_attempt["id"])
+            or response_metadata.get("operationId") != str(accepted_attempt["operation_id"])
+            or response_metadata.get("runId") != str(run_id)
+            or response_metadata.get("routeId") != body.routeId
+            or route.get("id") != body.routeId
+            or response_metadata.get("promptVersion") != body.promptVersion
+            or response_metadata.get("schemaVersion") != body.schemaVersion
+            or response_metadata.get("maxOutputTokens") != body.maxOutputTokens
+        ):
+            raise ValueError("proposal diagnostic response lineage is invalid")
+        response = MODEL_RESPONSE_ADAPTER.validate_python(bodies[body.response.id])
+        if body.providerResponseId != response.provider_response_id:
+            raise ValueError("proposal diagnostic response facts are invalid")
+        try:
+            validate_diagnostic_report(body, response)
+        except ValueError as error:
+            raise ValueError(
+                "proposal diagnostic differs from its retained response body"
+            ) from error
+        refs = (body.evidence, body.response, *body.inputArtifacts)
+        ref_ids = [ref.id for ref in refs]
+        dependency_ids = snapshot.dependencies.get(diagnostic_id, ())
+        if (
+            len(ref_ids) != len(set(ref_ids))
+            or set(dependency_ids) != set(ref_ids)
+            or len(dependency_ids) != len(ref_ids)
+        ):
+            raise ValueError("proposal diagnostic artifact dependency closure is invalid")
+        dependency_facts: list[ImmutableArtifactFact] = []
+        for ref in refs:
+            dependency_row = snapshot.rows.get(ref.id)
+            if dependency_row is None or _artifact_ref(dependency_row) != ref:
+                raise ValueError("proposal diagnostic dependency identity is invalid")
+            dependency_facts.append(_artifact_fact(dependency_row))
+        for ref in body.inputArtifacts:
+            input_row = snapshot.rows[ref.id]
+            input_metadata = _metadata(input_row)
+            if input_row["kind"] == "model_response":
+                if ref.id not in accepted_response_ids or input_metadata.get("runId") != str(
+                    run_id
+                ):
+                    raise ValueError("proposal diagnostic input response lineage is invalid")
+                continue
+            if (
+                input_row["kind"] != "checks"
+                or ref.id == diagnostic_id
+                or input_metadata.get("runId") != str(run_id)
+                or input_metadata.get("format") not in {GROUNDING_FORMAT, DIAGNOSTIC_FORMAT}
+            ):
+                raise ValueError("proposal diagnostic input artifact lineage is invalid")
+        proposal_diagnostics.append(
+            ProposalDiagnosticArtifact(
+                artifact=_artifact_fact(diagnostic_row),
+                body=body,
+                dependencies=tuple(dependency_facts),
+            )
+        )
     for grounding_id in snapshot.grounding_ids:
         grounding_row = snapshot.rows[grounding_id]
         body = _summary_grounding_report(bodies[grounding_id])
@@ -693,6 +835,7 @@ async def export_evaluation_bundle(
         checks=tuple(checks),
         editorial_verification=verification,
         summary_grounding=tuple(summary_grounding),
+        proposal_diagnostics=tuple(proposal_diagnostics),
         review_events=tuple(
             ReviewEvent(
                 action=str(row["action"]),

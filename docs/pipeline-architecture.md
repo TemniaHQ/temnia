@@ -96,6 +96,14 @@ fills a gap, discards an overlap or trims an awkward interval into a plausible a
 repair may submit a new proposal; the original remains inspectable. Source text is quoted
 evidence, never instructions authorizing tools or changing the editing brief.
 
+The model-facing compact proposal bounds title, reason, summary and quote arrays without imposing
+a chapter count. Code derives section labels and converts the complete typed answer to the shared
+canonical proposal before compilation. A failed output has an immutable diagnostic tied to its
+raw response, source evidence, route and attempt. The one independent-family repair receives
+bounded validation feedback, and its request identity includes those artifacts. Truncated JSON
+is never completed in code. New workflow executions use a versioned path; retained histories keep
+their original agent and request shape. Details: [proposal output](plans/chapter-proposal-output-360-view.md).
+
 Hierarchy summaries are validated individually before the next summary call. If their sentence
 partition is valid but a prompt-visible quote belongs to another unit, code can replace that
 entire unit's generated prose and citations with the exact source excerpt for its verified range.

@@ -259,6 +259,27 @@ def test_exact_reviewed_caps_reach_runner_without_transport(
     assert limits.max_exposure_micros == MAX_EXPOSURE_MICROS
     assert limits.max_dispatches == MAX_DISPATCHES
     assert limits.max_output_tokens == MAX_OUTPUT_TOKENS
+    assert limits.proposal_wire == "canonical"
+
+
+def test_compact_proposal_wire_reaches_runner_without_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidates = _write_catalogue(tmp_path)
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "private-test-key")
+    observed: dict[str, object] = {}
+
+    async def complete(**kwargs: object) -> dict[str, object]:
+        observed.update(kwargs)
+        return {"status": "completed", "passed": True}
+
+    monkeypatch.setattr(driver, "run_qualification", complete)
+    arguments = [*_run_arguments(tmp_path, candidates), "--proposal-wire", "compact"]
+
+    assert driver.main(arguments) == 0
+    limits = observed["limits"]
+    assert isinstance(limits, QualificationLimits)
+    assert limits.proposal_wire == "compact"
 
 
 async def test_output_paths_must_be_distinct_before_journal_or_transport(

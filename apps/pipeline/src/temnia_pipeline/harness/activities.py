@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 
 import obstore as obs
+from pydantic_ai import TextPart
 from temporalio import activity
 
 from temnia_pipeline import db
@@ -43,6 +44,7 @@ from temnia_pipeline.contracts import (
     TranscriptV1,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
+from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.compiler import CompilerConfig, compile_chapters
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
@@ -55,6 +57,14 @@ from temnia_pipeline.harness.prompts import (
     render_summary_prompt,
     render_summary_reduction_prompt,
     render_verifier_prompt,
+)
+from temnia_pipeline.harness.proposal_diagnostics import (
+    DIAGNOSTIC_FORMAT,
+    ProposalDiagnosticReport,
+    ProposalUsageCounts,
+    diagnose_response,
+    diagnostic_artifact_fingerprint,
+    validate_diagnostic_report,
 )
 from temnia_pipeline.harness.rendering import (
     RenderSection,
@@ -102,6 +112,8 @@ from temnia_pipeline.harness.runtime_types import (
     PrepareGlobalProposalRequest,
     PreparePlanningRequest,
     PrepareVerificationRequest,
+    ProposalDiagnostic,
+    ProposalDiagnosticRequest,
     ProposalPlan,
     RenderRevisionRequest,
     RenderRevisionResult,
@@ -809,6 +821,274 @@ class HarnessActivities:
         return ValidatedSummary(
             summary=grounded.summary.model_dump(mode="json"),
             artifact=self._artifact_ref(accepted),
+        )
+
+    @activity.defn(name="diagnose_chapter_proposal")
+    async def diagnose_chapter_proposal(  # noqa: C901, PLR0912, PLR0915
+        self, request: ProposalDiagnosticRequest
+    ) -> ProposalDiagnostic:
+        """Inspect one retained unusable proposal without another provider call."""
+        self._require_enabled()
+        ref = request.run
+        scope = Scope(
+            organizationId=ref.scope_organization_id,
+            userId=ref.scope_user_id,
+        )
+        run = await runs.get_run(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            run_id=ref.run_id,
+        )
+        if run.evidence_artifact_id != request.evidence.id:
+            raise RuntimeError("proposal diagnostic does not name the run's accepted evidence")
+        if (
+            run.route_snapshot.route(request.route.id) != request.route
+            or run.config.maxOutputTokens != request.max_output_tokens
+        ):
+            raise RuntimeError("proposal diagnostic route or output limit differs from the run")
+        loaded_evidence = await artifacts.read_artifact_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            artifact_id=request.evidence.id,
+        )
+        evidence = HarnessEvidence.model_validate(loaded_evidence)
+        accepted_evidence = await artifacts.find_artifact(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            identity=artifacts.ArtifactIdentity(
+                kind="evidence",
+                fingerprint=request.evidence.fingerprint,
+                transcript_id=evidence.transcriptId,
+                transcript_revision=evidence.transcriptRevision,
+            ),
+        )
+        if accepted_evidence is None or self._artifact_ref(accepted_evidence) != request.evidence:
+            raise RuntimeError("proposal diagnostic evidence identity does not match storage")
+        async with db.scoped(self.ctx.settings.database_url, scope) as conn:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT o.id AS operation_id, o.result_artifact_id,
+                           o.semantic_key, o.input_hash, o.config_hash,
+                           a.fingerprint, t.id AS attempt_id, t.provider,
+                           t.model, t.family, t.route
+                      FROM harness_operation o
+                      JOIN harness_artifact a ON a.id = o.result_artifact_id
+                      JOIN harness_attempt t ON t.operation_id = o.id
+                       AND t.result_artifact_id = a.id AND t.state = 'succeeded'
+                     WHERE o.run_id = %s AND o.source_id = %s
+                       AND o.kind = 'model' AND o.stage = %s
+                       AND o.status = 'succeeded' AND a.kind = 'model_response'
+                       AND t.provider = %s AND t.model = %s AND t.family = %s
+                       AND t.route = %s::jsonb
+                       AND a.metadata->>'routeId' = %s
+                       AND a.metadata->>'promptVersion' = %s
+                       AND a.metadata->>'schemaVersion' = %s
+                       AND a.metadata->>'maxOutputTokens' = %s
+                    """,
+                    (
+                        ref.run_id,
+                        ref.source_id,
+                        request.model_stage,
+                        request.route.provider,
+                        request.route.gateway_model,
+                        request.route.family,
+                        json.dumps(request.route.model_dump(mode="json")),
+                        request.route.id,
+                        request.prompt_version,
+                        request.schema_version,
+                        str(request.max_output_tokens),
+                    ),
+                )
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeError("proposal stage does not have one accepted model response")
+        row = rows[0]
+        raw_response = await artifacts.find_artifact(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            identity=artifacts.ArtifactIdentity(
+                kind="model_response", fingerprint=str(row["fingerprint"])
+            ),
+        )
+        if raw_response is None or raw_response.id != row["result_artifact_id"]:
+            raise RuntimeError("accepted proposal response artifact is absent")
+        raw_ref = self._artifact_ref(raw_response)
+        metadata = raw_response.metadata
+        route_body = request.route.model_dump(mode="json")
+        if (
+            metadata.get("format") not in (None, "pydantic-ai-model-response-v1")
+            or metadata.get("attemptId") != str(row["attempt_id"])
+            or metadata.get("operationId") != str(row["operation_id"])
+            or metadata.get("runId") != str(ref.run_id)
+            or metadata.get("programVersion") != request.program_version
+            or metadata.get("routeId") != request.route.id
+            or metadata.get("route") != route_body
+            or metadata.get("schemaVersion") != request.schema_version
+            or metadata.get("promptVersion") != request.prompt_version
+            or metadata.get("maxOutputTokens") != request.max_output_tokens
+            or row["route"] != route_body
+            or row["provider"] != request.route.provider
+            or row["model"] != request.route.gateway_model
+            or row["family"] != request.route.family
+        ):
+            raise RuntimeError("accepted proposal response lineage does not match its operation")
+        if request.max_output_tokens > request.route.max_output_tokens:
+            raise RuntimeError("proposal diagnostic output limit exceeds its frozen route")
+        expected_response_dependencies = (
+            request.evidence.id,
+            *(value.id for value in request.input_artifacts),
+        )
+        if len(set(expected_response_dependencies)) != len(expected_response_dependencies):
+            raise RuntimeError("proposal diagnostic input dependencies must be unique")
+        if set(raw_response.dependency_ids) != set(expected_response_dependencies) or len(
+            raw_response.dependency_ids
+        ) != len(expected_response_dependencies):
+            raise RuntimeError("proposal response dependencies differ from its exact inputs")
+        request_hash = metadata.get("requestHash")
+        if not isinstance(request_hash, str):
+            raise TypeError("proposal response request identity is absent")
+        semantic_key, input_hash, config_hash = ledger.operation_identity(
+            run_id=ref.run_id,
+            kind=ledger.OperationKind.MODEL,
+            inputs={**request.operation_inputs, "requestHash": request_hash},
+            config={
+                **request.operation_config,
+                "programVersion": request.program_version,
+                "promptVersion": request.prompt_version,
+                "route": route_body,
+                "schemaVersion": request.schema_version,
+            },
+        )
+        if (
+            row["semantic_key"] != semantic_key
+            or row["input_hash"] != input_hash
+            or row["config_hash"] != config_hash
+        ):
+            raise RuntimeError("proposal response operation identity differs from its request")
+        async with db.scoped(self.ctx.settings.database_url, scope) as conn:
+            dependency_rows = await (
+                await conn.execute(
+                    """
+                    SELECT id, kind, metadata
+                      FROM harness_artifact
+                     WHERE source_id = %s AND id = ANY(%s)
+                    """,
+                    (ref.source_id, list(raw_response.dependency_ids)),
+                )
+            ).fetchall()
+        if len(dependency_rows) != len(raw_response.dependency_ids):
+            raise RuntimeError("proposal response has an absent dependency")
+        references = {value.id: value for value in request.input_artifacts}
+        for dependency in dependency_rows:
+            if dependency["id"] == request.evidence.id:
+                continue
+            dependency_metadata = cast("dict[str, object]", dependency["metadata"])
+            dependency_format = dependency_metadata.get("format")
+            if dependency_metadata.get("runId") != str(ref.run_id) or not (
+                (
+                    dependency["kind"] == "checks"
+                    and dependency_format
+                    in {"chapter-summary-grounding/1", "chapter-proposal-diagnostic/1"}
+                )
+                or dependency["kind"] == "model_response"
+            ):
+                raise RuntimeError("proposal response has invalid repair or grounding lineage")
+            accepted_input = await artifacts.find_artifact(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                identity=artifacts.ArtifactIdentity(
+                    kind=references[dependency["id"]].kind,
+                    fingerprint=references[dependency["id"]].fingerprint,
+                ),
+            )
+            if (
+                accepted_input is None
+                or self._artifact_ref(accepted_input) != references[dependency["id"]]
+            ):
+                raise RuntimeError("proposal response input artifact identity differs")
+        raw_body = await artifacts.read_artifact_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            artifact_id=raw_ref.id,
+        )
+        response = MODEL_RESPONSE_ADAPTER.validate_python(raw_body)
+        code, message, issues, compiler_code = diagnose_response(
+            response=response,
+            schema_version=request.schema_version,
+            compiler_refusal=request.compiler_refusal,
+        )
+        report = ProposalDiagnosticReport(
+            runId=ref.run_id,
+            modelStage=request.model_stage,
+            evidence=request.evidence,
+            response=raw_ref,
+            inputArtifacts=request.input_artifacts,
+            operationId=row["operation_id"],
+            attemptId=row["attempt_id"],
+            providerResponseId=response.provider_response_id,
+            routeId=request.route.id,
+            promptVersion=request.prompt_version,
+            schemaVersion=request.schema_version,
+            maxOutputTokens=request.max_output_tokens,
+            finishReason=str(response.finish_reason)
+            if response.finish_reason is not None
+            else None,
+            responsePartCount=len(response.parts),
+            textPartCount=sum(isinstance(part, TextPart) for part in response.parts),
+            usage=ProposalUsageCounts(
+                inputTokens=response.usage.input_tokens,
+                outputTokens=response.usage.output_tokens,
+            ),
+            code=code,
+            message=message,
+            issues=issues,
+            compilerCode=compiler_code,
+        )
+        validate_diagnostic_report(report, response)
+        fingerprint = diagnostic_artifact_fingerprint(report)
+        accepted = await artifacts.publish_json(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            identity=artifacts.ArtifactIdentity(kind="checks", fingerprint=fingerprint),
+            content=report.model_dump(mode="json"),
+            metadata={
+                "code": code,
+                "evidenceArtifactId": str(request.evidence.id),
+                "format": DIAGNOSTIC_FORMAT,
+                "maxOutputTokens": request.max_output_tokens,
+                "modelStage": request.model_stage,
+                "operationId": str(row["operation_id"]),
+                "attemptId": str(row["attempt_id"]),
+                "promptVersion": request.prompt_version,
+                "responseArtifactId": str(raw_ref.id),
+                "routeId": request.route.id,
+                "runId": str(ref.run_id),
+                "schemaVersion": request.schema_version,
+            },
+            dependency_ids=(
+                request.evidence.id,
+                raw_ref.id,
+                *(value.id for value in request.input_artifacts),
+            ),
+        )
+        return ProposalDiagnostic(
+            artifact=self._artifact_ref(accepted),
+            response=raw_ref,
+            code=code,
+            message=message,
+            issues=issues,
+            compiler_code=compiler_code,
         )
 
     @activity.defn(name="prepare_global_chapter_proposal")
@@ -2563,6 +2843,7 @@ class HarnessActivities:
             self.build_chapter_evidence,
             self.prepare_chapter_proposal,
             self.validate_chapter_summary,
+            self.diagnose_chapter_proposal,
             self.prepare_global_chapter_proposal,
             self.prepare_chapter_verification,
             self.compile_chapter_proposal,

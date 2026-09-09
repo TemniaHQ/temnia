@@ -37,6 +37,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--max-exposure-micros", required=True, type=int)
     run.add_argument("--max-dispatches", required=True, type=int)
     run.add_argument("--max-output-tokens", required=True, type=int)
+    run.add_argument("--proposal-wire", choices=("canonical", "compact"), default="canonical")
     run.add_argument("--request-timeout-seconds", type=float, default=300)
     run.add_argument("--lookup-timeout-seconds", type=float, default=10)
     run.add_argument("--lookup-wait-seconds", type=float, default=30)
@@ -66,6 +67,7 @@ async def _run(args: argparse.Namespace) -> int:
         max_exposure_micros=args.max_exposure_micros,
         max_dispatches=args.max_dispatches,
         max_output_tokens=args.max_output_tokens,
+        proposal_wire=args.proposal_wire,
         request_timeout_seconds=args.request_timeout_seconds,
         lookup_timeout_seconds=args.lookup_timeout_seconds,
         lookup_wait_seconds=args.lookup_wait_seconds,

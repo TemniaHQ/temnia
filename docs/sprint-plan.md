@@ -11,6 +11,11 @@ Foreign IDs and coverage defects still refuse. Model evaluation distinguishes fi
 from fallback; no extra model repair is consumed. The measured staging failure and full design
 are in [chapter summary grounding](plans/chapter-summary-grounding-360-view.md).
 
+The subsequent global proposal also needs a bounded output contract: representative anchors,
+short editorial text, code-owned section labels, and an error-directed repair tied to the retained
+response. Chapter count remains variable. The measured truncation, unknown repair outcome and
+compatibility plan are in [chapter proposal output](plans/chapter-proposal-output-360-view.md).
+
 ## 1. How to read this plan
 
 - **A sprint is a scope unit with an exit test, not a calendar block.** The legacy sized two-week sprints for a three-person team and then shipped its first six in three calendar weeks with one founder working AI-assisted. This plan is sized for that team: one founder, coding agents doing most of the implementation. The working assumption is about a week per sprint; the exit test, not the date, decides when a sprint ends. Sequence is the commitment.

@@ -606,6 +606,20 @@ execution risk. Prompt/context bounds remain enforced. The model-response normal
 cosmetic; this separate derived artifact does not rewrite the model's answer. Plan and compatibility
 tests: `docs/plans/chapter-summary-grounding-360-view.md`.
 
+**2026-09-09 — Proposal output is bounded independently of source context.** After summary
+grounding recovered all 25 saved responses, the live global proposal exhausted 8,192 output
+tokens before covering the whole source. Exhaustive quote arrays and pretty-print whitespace
+dominated its output; the repair repeated the request without feedback and timed out. Use a
+versioned compact internal proposal schema with at most two representative anchors per section
+and bounded editorial text. Derive section labels in code, while leaving chapter count to the
+content and keeping the canonical edit contract compatible. Preserve the paid raw response and
+an immutable, content-free diagnostic; bind the one independent-family repair to that evidence
+and estimate its complete prompt before dispatch. Old Temporal histories keep their original
+agent and request shape. Raising caps, completing partial JSON and silently trimming output were
+rejected because they hide the failure rather than reduce avoidable work. Unknown transport
+outcomes retain their reservation; a new run is separately budgeted work, never a settlement or
+reuse of a missing response. Plan: `docs/plans/chapter-proposal-output-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
