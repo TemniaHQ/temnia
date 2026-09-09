@@ -2,15 +2,16 @@
 
 # Public refusals are intentionally content-free and stable.
 # Pydantic resolves these annotations at runtime; fixed refusal names omit Error.
-# ruff: noqa: C901, EM101, N815, N818, PLR0912, PLR0913, TC001, TC003, TRY003
+# ruff: noqa: C901, EM101, N815, N818, PLR0912, PLR0913, PLR0915, TC001, TC003, TRY003
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from pydantic_ai import TextPart
 
 from temnia_pipeline.contracts import HarnessArtifactRef, HarnessEvidence
@@ -29,6 +30,7 @@ from temnia_pipeline.harness.prompts import (
 
 GROUNDING_FORMAT = "chapter-summary-grounding/1"
 GROUNDING_POLICY_VERSION = "summary-grounding-v1"
+COVERAGE_GROUNDING_POLICY_VERSION = "summary-grounding-v2"
 MAX_SUMMARY_TEXT_LENGTH = 20_000
 
 
@@ -49,6 +51,31 @@ class SummaryFallback(BaseModel):
     provenance: Literal["extractive_source_fallback"] = "extractive_source_fallback"
 
 
+class SummaryCoverageDiagnostic(BaseModel):
+    """Content-free interval defect counts from one retained model response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    code: Literal["interval_cover_invalid"] = "interval_cover_invalid"
+    originalUnitCount: Annotated[int, Field(gt=0)]
+    coveredSentenceCount: Annotated[int, Field(ge=0)]
+    gapSentenceCount: Annotated[int, Field(ge=0)]
+    overlapSentenceCount: Annotated[int, Field(ge=0)]
+    orderingViolationCount: Annotated[int, Field(ge=0)]
+
+
+class SummaryCoverageFallback(BaseModel):
+    """Auditable provenance for one whole-window source replacement."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    unitId: Annotated[str, Field(min_length=1, max_length=256)]
+    firstSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    lastSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    replacementQuoteWordIds: tuple[Annotated[str, Field(min_length=1, max_length=256)], ...]
+    provenance: Literal["extractive_source_window_fallback"] = "extractive_source_window_fallback"
+
+
 class GroundedSummary(BaseModel):
     """Pure summary result and its fallback audit entries."""
 
@@ -56,6 +83,8 @@ class GroundedSummary(BaseModel):
 
     summary: HierarchicalSummaryV1
     fallbacks: tuple[SummaryFallback, ...] = ()
+    coverageDiagnostic: SummaryCoverageDiagnostic | None = None
+    coverageFallback: SummaryCoverageFallback | None = None
 
 
 class SummaryGroundingReport(BaseModel):
@@ -81,7 +110,73 @@ class SummaryGroundingReport(BaseModel):
     fallbacks: tuple[SummaryFallback, ...] = ()
 
 
-def grounding_artifact_fingerprint(report: SummaryGroundingReport) -> str:
+class SummaryGroundingReportV2(BaseModel):
+    """Versioned whole-window coverage recovery without changing v1 bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    format: Literal["chapter-summary-grounding/1"] = GROUNDING_FORMAT
+    policyVersion: Literal["summary-grounding-v2"] = COVERAGE_GROUNDING_POLICY_VERSION
+    runId: UUID
+    hierarchyLevel: Literal[1]
+    modelStage: Annotated[str, Field(min_length=1, max_length=128)]
+    windowId: Annotated[str, Field(min_length=1, max_length=256)]
+    firstSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    lastSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
+    windowSentenceCount: Annotated[int, Field(gt=0)]
+    windowPromptSha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    evidence: HarnessArtifactRef
+    rawResponse: HarnessArtifactRef
+    inputArtifacts: tuple[HarnessArtifactRef, ...] = ()
+    sourceSummarySha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    normalizedSummary: HierarchicalSummaryV1
+    fallbacks: tuple[SummaryFallback, ...] = ()
+    coverageDiagnostic: SummaryCoverageDiagnostic
+    coverageFallback: SummaryCoverageFallback
+
+
+type SummaryGroundingReportType = SummaryGroundingReport | SummaryGroundingReportV2
+SUMMARY_GROUNDING_REPORT_ADAPTER: TypeAdapter[SummaryGroundingReportType] = TypeAdapter(
+    Annotated[SummaryGroundingReportType, Field(discriminator="policyVersion")]
+)
+
+
+def read_summary_grounding_report(value: object) -> SummaryGroundingReportType:
+    """Strictly decode either portable policy without changing its wire shape."""
+    if isinstance(value, (bytes, str)):
+        payload = value
+    else:
+        try:
+            payload = json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as error:
+            raise SummaryGroundingRefusal(
+                "The summary grounding report could not be verified."
+            ) from error
+    try:
+        return SUMMARY_GROUNDING_REPORT_ADAPTER.validate_json(payload, strict=True)
+    except ValueError as error:
+        raise SummaryGroundingRefusal(
+            "The summary grounding report could not be verified."
+        ) from error
+
+
+def coverage_fallback_window_count(report: SummaryGroundingReportType) -> int:
+    """Return the explicit whole-window fallback count for portable metadata."""
+    return int(isinstance(report, SummaryGroundingReportV2))
+
+
+def fallback_unit_count(report: SummaryGroundingReportType) -> int:
+    """Count quote-replaced units plus the v2 whole-window replacement."""
+    return len(report.fallbacks) + coverage_fallback_window_count(report)
+
+
+def grounding_artifact_fingerprint(report: SummaryGroundingReportType) -> str:
     """Recompute the immutable producer identity from the portable report."""
     from temnia_pipeline.harness import artifacts  # noqa: PLC0415
 
@@ -103,7 +198,7 @@ def grounding_artifact_fingerprint(report: SummaryGroundingReport) -> str:
             },
             "sourceSummarySha256": report.sourceSummarySha256,
         },
-        config={"format": GROUNDING_FORMAT, "policyVersion": GROUNDING_POLICY_VERSION},
+        config={"format": GROUNDING_FORMAT, "policyVersion": report.policyVersion},
     )
 
 
@@ -155,7 +250,7 @@ def allowed_anchors_from_exact_prompt(
     window_sentence_count: int,
     prompt: str,
     hierarchy_level: int,
-    input_reports: tuple[SummaryGroundingReport, ...] = (),
+    input_reports: tuple[SummaryGroundingReportType, ...] = (),
 ) -> frozenset[str]:
     """Rebuild the exact prompt and return only anchors actually shown to the model."""
     positions = {sentence.id: index for index, sentence in enumerate(evidence.sentences)}
@@ -250,8 +345,9 @@ def ground_summary(
     window_sentence_count: int,
     summary: HierarchicalSummaryV1,
     allowed_model_anchors: frozenset[str],
+    hierarchy_level: int = 1,
 ) -> GroundedSummary:
-    """Validate exact cover and replace only eligible neighbour-grounded units."""
+    """Validate exact cover and apply only policy-eligible source fallbacks."""
     sentence_positions = {sentence.id: index for index, sentence in enumerate(evidence.sentences)}
     if len(sentence_positions) != len(evidence.sentences):
         raise SummaryGroundingRefusal("The accepted evidence has duplicate sentence identities.")
@@ -266,25 +362,26 @@ def ground_summary(
     word_owners = {
         word.root: sentence.id for sentence in evidence.sentences for word in sentence.wordIds
     }
+    source_window = evidence.sentences[window_start : window_end + 1]
+    if any(not sentence.wordIds for sentence in source_window):
+        raise SummaryGroundingRefusal("A grounded source excerpt has no immutable word anchors.")
     visible_source_anchors = {
         word.root
-        for sentence in evidence.sentences[window_start : window_end + 1]
+        for sentence in source_window
         for word in (sentence.wordIds[0], sentence.wordIds[-1])
     }
-    expected_unit_start = window_start
-    normalized_units: list[SummaryUnit] = []
-    fallbacks: list[SummaryFallback] = []
+    ranges: list[tuple[int, int]] = []
     for unit in summary.units:
         try:
             unit_start = sentence_positions[unit.firstSentenceId]
             unit_end = sentence_positions[unit.lastSentenceId]
         except KeyError as error:
             raise SummaryGroundingRefusal("A summary unit names a foreign sentence.") from error
-        if unit_start != expected_unit_start or unit_end < unit_start or unit_end > window_end:
+        if not window_start <= unit_start <= unit_end <= window_end:
             raise SummaryGroundingRefusal(
-                "The summary units do not exactly cover their source window."
+                "A summary unit range lies outside its accepted source window."
             )
-        rejected: list[str] = []
+        ranges.append((unit_start, unit_end))
         for quote in unit.quoteWordIds:
             if quote not in visible_source_anchors or quote not in allowed_model_anchors:
                 raise SummaryGroundingRefusal(
@@ -296,6 +393,79 @@ def ground_summary(
             owner_position = sentence_positions[owner]
             if not window_start <= owner_position <= window_end:
                 raise SummaryGroundingRefusal("A summary quote lies outside its source window.")
+
+    expected_unit_start = window_start
+    exact_cover = True
+    for unit_start, unit_end in ranges:
+        if unit_start != expected_unit_start:
+            exact_cover = False
+        expected_unit_start = unit_end + 1
+    exact_cover = exact_cover and expected_unit_start == window_end + 1
+    if not exact_cover:
+        if hierarchy_level != 1:
+            raise SummaryGroundingRefusal(
+                "The summary units do not exactly cover their source window."
+            )
+        source_sentences = source_window
+        excerpt = " ".join(sentence.text for sentence in source_sentences)
+        if not excerpt.strip() or len(excerpt) > MAX_SUMMARY_TEXT_LENGTH:
+            raise SummaryGroundingRefusal(
+                "A grounded source excerpt is empty or exceeds the summary unit limit."
+            )
+        replacement_anchors = tuple(
+            dict.fromkeys(
+                (
+                    source_sentences[0].wordIds[0].root,
+                    source_sentences[-1].wordIds[-1].root,
+                )
+            )
+        )
+        coverage = [0] * window_sentence_count
+        ordering_violations = 0
+        previous_start: int | None = None
+        for unit_start, unit_end in ranges:
+            if previous_start is not None and unit_start < previous_start:
+                ordering_violations += 1
+            previous_start = unit_start
+            for position in range(unit_start, unit_end + 1):
+                coverage[position - window_start] += 1
+        unit_id = (
+            "coverage-fallback-"
+            + hashlib.sha256(
+                f"{window_first_sentence_id}\0{window_last_sentence_id}".encode()
+            ).hexdigest()[:24]
+        )
+        fallback_unit = SummaryUnit(
+            id=unit_id,
+            firstSentenceId=window_first_sentence_id,
+            lastSentenceId=window_last_sentence_id,
+            quoteWordIds=list(replacement_anchors),
+            text=excerpt,
+        )
+        return GroundedSummary(
+            summary=summary.model_copy(update={"units": [fallback_unit]}),
+            coverageDiagnostic=SummaryCoverageDiagnostic(
+                originalUnitCount=len(summary.units),
+                coveredSentenceCount=sum(value > 0 for value in coverage),
+                gapSentenceCount=sum(value == 0 for value in coverage),
+                overlapSentenceCount=sum(value > 1 for value in coverage),
+                orderingViolationCount=ordering_violations,
+            ),
+            coverageFallback=SummaryCoverageFallback(
+                unitId=unit_id,
+                firstSentenceId=window_first_sentence_id,
+                lastSentenceId=window_last_sentence_id,
+                replacementQuoteWordIds=replacement_anchors,
+            ),
+        )
+
+    normalized_units: list[SummaryUnit] = []
+    fallbacks: list[SummaryFallback] = []
+    for unit, (unit_start, unit_end) in zip(summary.units, ranges, strict=True):
+        rejected: list[str] = []
+        for quote in unit.quoteWordIds:
+            owner = word_owners[quote]
+            owner_position = sentence_positions[owner]
             if not unit_start <= owner_position <= unit_end:
                 rejected.append(quote)
         if rejected:
@@ -304,10 +474,6 @@ def ground_summary(
             if not excerpt.strip() or len(excerpt) > MAX_SUMMARY_TEXT_LENGTH:
                 raise SummaryGroundingRefusal(
                     "A grounded source excerpt is empty or exceeds the summary unit limit."
-                )
-            if any(not sentence.wordIds for sentence in source_sentences):
-                raise SummaryGroundingRefusal(
-                    "A grounded source excerpt has no immutable word anchors."
                 )
             replacement_anchors = tuple(
                 dict.fromkeys(
@@ -332,9 +498,6 @@ def ground_summary(
             )
         else:
             normalized_units.append(unit)
-        expected_unit_start = unit_end + 1
-    if expected_unit_start != window_end + 1:
-        raise SummaryGroundingRefusal("The summary units leave a gap in their source window.")
     return GroundedSummary(
         summary=summary.model_copy(update={"units": normalized_units}),
         fallbacks=tuple(fallbacks),

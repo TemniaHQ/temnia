@@ -7,9 +7,16 @@
 **S3–S4 amendment (2026-09-09):** validate hierarchical summaries before dispatching the next
 window. A complete, valid sentence partition with a misplaced visible quote can use an explicit
 source-excerpt fallback for that whole unit, retaining the rejected model output and provenance.
-Foreign IDs and coverage defects still refuse. Model evaluation distinguishes first-pass output
+Foreign IDs still refuse. Model evaluation distinguishes first-pass output
 from fallback; no extra model repair is consumed. The measured staging failure and full design
 are in [chapter summary grounding](plans/chapter-summary-grounding-360-view.md).
+
+**Coverage recovery amendment (2026-09-10):** a later long-source run omitted four of 80 sentences
+from a first-level summary window. After all input-ownership checks, a versioned whole-window
+source fallback can preserve that complete evidence without retaining the invalid generated
+partition. Existing accepted reports and paid responses are reused through guarded planning-only
+Retry at revision zero. Oversize, foreign, malformed and higher-level inputs still refuse.
+Design: [summary coverage recovery](plans/chapter-summary-coverage-recovery-360-view.md).
 
 The subsequent global proposal also needs a bounded output contract: representative anchors,
 short editorial text, code-owned section labels, and an error-directed repair tied to the retained

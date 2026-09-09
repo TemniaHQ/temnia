@@ -133,10 +133,15 @@ from temnia_pipeline.harness.summary_grounding import (
     GROUNDING_FORMAT,
     SummaryGroundingRefusal,
     SummaryGroundingReport,
+    SummaryGroundingReportType,
+    SummaryGroundingReportV2,
     allowed_anchors_from_exact_prompt,
+    coverage_fallback_window_count,
+    fallback_unit_count,
     ground_summary,
     grounding_artifact_fingerprint,
     normalized_summary_from_response,
+    read_summary_grounding_report,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError, rounded_milliseconds, word_id
 from temnia_pipeline.media.chapter_checks import (
@@ -574,7 +579,7 @@ class HarnessActivities:
         scope: Scope,
         source_id: UUID,
         reference: HarnessArtifactRef,
-    ) -> SummaryGroundingReport:
+    ) -> SummaryGroundingReportType:
         if reference.kind != HarnessArtifactKind.checks:
             raise RuntimeError("summary grounding lineage names the wrong artifact kind")
         accepted = await artifacts.find_artifact(
@@ -594,15 +599,18 @@ class HarnessActivities:
             store=self.ctx.store,
             artifact_id=reference.id,
         )
-        report = SummaryGroundingReport.model_validate_json(artifacts.canonical_json(loaded))
+        report = read_summary_grounding_report(loaded)
+        coverage_count = coverage_fallback_window_count(report)
         if (
             accepted.metadata.get("runId") != str(report.runId)
             or accepted.metadata.get("windowId") != report.windowId
             or accepted.metadata.get("hierarchyLevel") != report.hierarchyLevel
             or accepted.metadata.get("modelStage") != report.modelStage
-            or accepted.metadata.get("fallbackUnitCount") != len(report.fallbacks)
+            or accepted.metadata.get("fallbackUnitCount") != fallback_unit_count(report)
             or accepted.metadata.get("fallbackQuoteCount")
             != sum(len(value.rejectedQuoteWordIds) for value in report.fallbacks)
+            or (coverage_count == 1 and accepted.metadata.get("coverageFallbackWindowCount") != 1)
+            or (coverage_count == 0 and "coverageFallbackWindowCount" in accepted.metadata)
             or grounding_artifact_fingerprint(report) != accepted.fingerprint
         ):
             raise RuntimeError("summary grounding artifact metadata differs from its body")
@@ -767,6 +775,7 @@ class HarnessActivities:
                 window_sentence_count=request.window.sentence_count,
                 summary=supplied,
                 allowed_model_anchors=allowed_model_anchors,
+                hierarchy_level=request.hierarchy_level,
             )
         except SummaryGroundingRefusal as error:
             return ValidatedSummary(refusal=str(error))
@@ -774,22 +783,44 @@ class HarnessActivities:
         source_summary_sha256 = hashlib.sha256(
             artifacts.canonical_json(supplied.model_dump(mode="json"))
         ).hexdigest()
-        report = SummaryGroundingReport(
-            runId=ref.run_id,
-            hierarchyLevel=request.hierarchy_level,
-            modelStage=request.model_stage,
-            windowId=request.window.id,
-            firstSentenceId=request.window.first_sentence_id,
-            lastSentenceId=request.window.last_sentence_id,
-            windowSentenceCount=request.window.sentence_count,
-            windowPromptSha256=hashlib.sha256(request.window.prompt.encode()).hexdigest(),
-            evidence=request.evidence,
-            rawResponse=raw_ref,
-            inputArtifacts=request.input_artifacts,
-            sourceSummarySha256=source_summary_sha256,
-            normalizedSummary=grounded.summary,
-            fallbacks=grounded.fallbacks,
-        )
+        if grounded.coverageFallback is None:
+            report: SummaryGroundingReportType = SummaryGroundingReport(
+                runId=ref.run_id,
+                hierarchyLevel=request.hierarchy_level,
+                modelStage=request.model_stage,
+                windowId=request.window.id,
+                firstSentenceId=request.window.first_sentence_id,
+                lastSentenceId=request.window.last_sentence_id,
+                windowSentenceCount=request.window.sentence_count,
+                windowPromptSha256=hashlib.sha256(request.window.prompt.encode()).hexdigest(),
+                evidence=request.evidence,
+                rawResponse=raw_ref,
+                inputArtifacts=request.input_artifacts,
+                sourceSummarySha256=source_summary_sha256,
+                normalizedSummary=grounded.summary,
+                fallbacks=grounded.fallbacks,
+            )
+        else:
+            if grounded.coverageDiagnostic is None or request.hierarchy_level != 1:
+                raise RuntimeError("coverage fallback has incomplete policy diagnostics")
+            report = SummaryGroundingReportV2(
+                runId=ref.run_id,
+                hierarchyLevel=1,
+                modelStage=request.model_stage,
+                windowId=request.window.id,
+                firstSentenceId=request.window.first_sentence_id,
+                lastSentenceId=request.window.last_sentence_id,
+                windowSentenceCount=request.window.sentence_count,
+                windowPromptSha256=hashlib.sha256(request.window.prompt.encode()).hexdigest(),
+                evidence=request.evidence,
+                rawResponse=raw_ref,
+                inputArtifacts=request.input_artifacts,
+                sourceSummarySha256=source_summary_sha256,
+                normalizedSummary=grounded.summary,
+                fallbacks=grounded.fallbacks,
+                coverageDiagnostic=grounded.coverageDiagnostic,
+                coverageFallback=grounded.coverageFallback,
+            )
         fingerprint = grounding_artifact_fingerprint(report)
         dependencies = (
             request.evidence.id,
@@ -798,6 +829,19 @@ class HarnessActivities:
         )
         if len(set(dependencies)) != len(dependencies):
             raise RuntimeError("summary grounding dependencies must be unique")
+        metadata_values: dict[str, object] = {
+            "format": GROUNDING_FORMAT,
+            "runId": str(ref.run_id),
+            "windowId": request.window.id,
+            "hierarchyLevel": request.hierarchy_level,
+            "modelStage": request.model_stage,
+            "fallbackUnitCount": fallback_unit_count(report),
+            "fallbackQuoteCount": sum(
+                len(value.rejectedQuoteWordIds) for value in grounded.fallbacks
+            ),
+        }
+        if grounded.coverageFallback is not None:
+            metadata_values["coverageFallbackWindowCount"] = 1
         accepted = await artifacts.publish_json(
             self.ctx.settings.database_url,
             scope=scope,
@@ -805,17 +849,7 @@ class HarnessActivities:
             store=self.ctx.store,
             identity=artifacts.ArtifactIdentity(kind="checks", fingerprint=fingerprint),
             content=report.model_dump(mode="json"),
-            metadata={
-                "format": GROUNDING_FORMAT,
-                "runId": str(ref.run_id),
-                "windowId": request.window.id,
-                "hierarchyLevel": request.hierarchy_level,
-                "modelStage": request.model_stage,
-                "fallbackUnitCount": len(grounded.fallbacks),
-                "fallbackQuoteCount": sum(
-                    len(value.rejectedQuoteWordIds) for value in grounded.fallbacks
-                ),
-            },
+            metadata=metadata_values,
             dependency_ids=dependencies,
         )
         return ValidatedSummary(

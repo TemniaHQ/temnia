@@ -33,7 +33,8 @@ from temnia_pipeline.harness.proposal_diagnostics import (
     diagnostic_artifact_fingerprint,
 )
 from temnia_pipeline.harness.summary_grounding import (
-    SummaryGroundingReport,
+    SummaryGroundingReportType,
+    SummaryGroundingReportV2,
     grounding_artifact_fingerprint,
 )
 from temnia_pipeline.harness.validators import (
@@ -150,7 +151,7 @@ class SummaryGroundingArtifact(EvaluationModel):
     """One portable grounding report with its exact persisted dependency closure."""
 
     artifact: ImmutableArtifactFact
-    body: SummaryGroundingReport
+    body: SummaryGroundingReportType
     dependencies: tuple[ImmutableArtifactFact, ...]
 
 
@@ -538,7 +539,7 @@ def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0
             ) from error
         if window_end < window_start or window_end - window_start + 1 != body.windowSentenceCount:
             raise HarnessValidationError("summary grounding window range is invalid")
-        contained_inputs: list[SummaryGroundingReport] = []
+        contained_inputs: list[SummaryGroundingReportType] = []
         if body.inputArtifacts:
             for ref in body.inputArtifacts:
                 prior = reports_by_id[ref.id].body
@@ -660,6 +661,46 @@ def _validate_summary_grounding(bundle: EvaluationBundle) -> None:  # noqa: PLR0
             raise HarnessValidationError(
                 "summary grounding units leave a gap in their source window"
             )
+        if isinstance(body, SummaryGroundingReportV2):
+            fallback = body.coverageFallback
+            diagnostic = body.coverageDiagnostic
+            source_sentences = bundle.evidence.sentences[window_start : window_end + 1]
+            expected_text = " ".join(sentence.text for sentence in source_sentences)
+            expected_quotes = tuple(
+                dict.fromkeys(
+                    (
+                        source_sentences[0].wordIds[0].root,
+                        source_sentences[-1].wordIds[-1].root,
+                    )
+                )
+            )
+            if (
+                body.fallbacks
+                or len(body.normalizedSummary.units) != 1
+                or fallback.unitId != body.normalizedSummary.units[0].id
+                or fallback.firstSentenceId != body.firstSentenceId
+                or fallback.lastSentenceId != body.lastSentenceId
+                or fallback.replacementQuoteWordIds != expected_quotes
+                or body.normalizedSummary.units[0].firstSentenceId != body.firstSentenceId
+                or body.normalizedSummary.units[0].lastSentenceId != body.lastSentenceId
+                or tuple(body.normalizedSummary.units[0].quoteWordIds) != expected_quotes
+                or body.normalizedSummary.units[0].text != expected_text
+            ):
+                raise HarnessValidationError(
+                    "summary grounding coverage fallback content is invalid"
+                )
+            if (
+                diagnostic.coveredSentenceCount + diagnostic.gapSentenceCount
+                != body.windowSentenceCount
+                or diagnostic.coveredSentenceCount > body.windowSentenceCount
+                or diagnostic.overlapSentenceCount > diagnostic.coveredSentenceCount
+                or (
+                    diagnostic.gapSentenceCount == 0
+                    and diagnostic.overlapSentenceCount == 0
+                    and diagnostic.orderingViolationCount == 0
+                )
+            ):
+                raise HarnessValidationError("summary grounding coverage diagnostic is invalid")
         for fallback in body.fallbacks:
             unit = units.get(fallback.unitId)
             if (

@@ -263,7 +263,8 @@ backend. It proves mechanics and never establishes live model quality or price.
 | `failed` | Inspect the recorded error and fix its cause, then Retry. A terminal error must not leave a permanently active row. |
 | `outcome_unknown` | Retain the attempt, any known handle and reservation. Reconcile execution before dispatching that operation again; a charge alone is insufficient. New run creates separately budgeted work and leaves this exposure unresolved. |
 | `cancelled` | Keep historical revisions and accepted exports. In-flight provider expense may still need reconciliation. Start a new run for new editing work. |
-| `needs_review` | Listen around cuts, correct boundaries, and accept every keep/drop with required reasons. Human review resolves editorial concerns; technical failures still block export. |
+| `needs_review`, revision 0 | No edit exists yet. Inspect the planning refusal. After fixing its cause, Retry revalidates saved responses and continues unfinished work under the same budget; outstanding reservations or unknown attempts block it. An unchanged refusal may recur without another model call. |
+| `needs_review`, revision 1 or later | Listen around cuts, correct boundaries, and accept every keep/drop with required reasons. Human review resolves editorial concerns; technical failures still block export. |
 | `ready` | Export the accepted revision. Later content corrections create a new revision while the prior export remains available. |
 
 An unknown request with neither a generation handle nor a complete local response cannot be
@@ -272,6 +273,14 @@ Preserve the evidence before investigating the provider outcome. A new run sends
 requests; model-operation reuse is scoped to its original run. Include earlier reported charges
 and unresolved reservations when setting a session's remaining spending allowance. The UI shows
 per-run accounting, not an aggregate session ceiling.
+
+Summary warnings distinguish misplaced quote references from missing or inconsistent sentence
+ranges in a first-level window. Eligible coverage recovery discards the affected model summary and uses the complete
+source window with explicit provenance; it never silently changes the model's endpoints. The
+report remains inspectable and the model's original response and charge stay intact. Existing
+valid v1 reports retain their identities beside any v2 coverage-recovery report. No additional
+provider call is used for this deterministic replacement. This is source preservation, not
+editorial acceptance.
 
 Global proposals use a compact internal schema with bounded text and representative anchors;
 this limits output volume without imposing a chapter quota. A truncated or invalid response is

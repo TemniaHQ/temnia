@@ -39,6 +39,7 @@ import {
   appliedBudgetMatchesDraft,
   budgetInputFromMicros,
   type ChapterPanelMessage,
+  canRetryChapterRun,
   chapterOutcomeUnknownMessage,
   chapterPlanningStoppedMessage,
   chapterWaitingMessage,
@@ -1012,9 +1013,16 @@ export function ChapterPanel({
     hasSelectedEdit: selectedArtifact !== null,
   });
   const groundingMessage = summaryGroundingMessage(view.summaryGrounding);
+  const retryEligible = canRetryChapterRun({
+    currentRevision: run.currentRevision,
+    hasEdit: selectedArtifact !== null,
+    reservedMicros: run.reservedMicros,
+    status: run.status,
+  });
   const planningStoppedMessage = chapterPlanningStoppedMessage(
     run.status,
-    run.currentRevision
+    run.currentRevision,
+    retryEligible
   );
   const outcomeUnknownMessage = chapterOutcomeUnknownMessage(run.status);
   return (
@@ -1173,9 +1181,7 @@ export function ChapterPanel({
       ) : null}
       <div className="flex gap-2">
         <Button
-          disabled={
-            commandBusy || !["budget_paused", "failed"].includes(run.status)
-          }
+          disabled={commandBusy || !retryEligible}
           onClick={() => command("retry")}
         >
           Retry

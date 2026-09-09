@@ -107,13 +107,21 @@ their original agent and request shape. Details: [proposal output](plans/chapter
 Hierarchy summaries are validated individually before the next summary call. If their sentence
 partition is valid but a prompt-visible quote belongs to another unit, code can replace that
 entire unit's generated prose and citations with the exact source excerpt for its verified range.
-It does not attach new citations to the original generated claim. Foreign or non-prompt anchors,
-malformed output and coverage errors remain visible refusals. The bounded source excerpt and
+It does not attach new citations to the original generated claim. Foreign or non-prompt anchors
+and malformed output remain visible refusals. For a first-level window whose individually valid,
+input-owned ranges leave gaps, overlap or appear out of order, a separate v2 policy may discard the entire generated
+partition and substitute that complete source window. Its immutable coverage diagnostic and
+explicit source provenance distinguish it from a valid model summary. The original 20,000-character
+bound applies without truncation; higher-level coverage failures still refuse. The bounded source excerpt and
 its explicit fallback report are derived artifacts; raw model responses remain immutable and
 reusable. The report belongs to downstream request lineage and is visible in review and model
 evaluation. This adds no provider call or semantic repair claim. Context and hierarchy ceilings
 still apply. The measured trigger, alternatives and Temporal compatibility plan are in
-[summary grounding](plans/chapter-summary-grounding-360-view.md).
+[summary grounding](plans/chapter-summary-grounding-360-view.md) and
+[coverage recovery](plans/chapter-summary-coverage-recovery-360-view.md). Valid and quote-fallback
+v1 reports keep their exact identities; mixed-policy lineage is verified by each recorded policy.
+Known planning-only refusals can resume at revision zero using the existing responses, while
+outstanding reservations and unknown attempts prevent that continuation.
 
 The compiler chooses shared boundaries jointly from a monotonic candidate graph. Candidate
 costs expose displacement from the proposed sentence transition, acoustic clearance, speaker

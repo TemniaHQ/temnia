@@ -38,10 +38,12 @@ from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.summary_grounding import (
     SummaryGroundingRefusal,
     SummaryGroundingReport,
+    SummaryGroundingReportV2,
     allowed_anchors_from_exact_prompt,
     ground_summary,
     grounding_artifact_fingerprint,
     normalized_summary_from_response,
+    read_summary_grounding_report,
 )
 
 if TYPE_CHECKING:
@@ -211,7 +213,67 @@ def test_non_prompt_or_foreign_anchor_is_never_repaired(bad_quote: str) -> None:
         )
 
 
-def test_gap_or_overlap_is_never_repaired() -> None:
+@pytest.mark.parametrize(
+    ("ranges", "covered", "gaps", "overlaps", "ordering"),
+    [
+        (((0, 0), (2, 3)), 3, 1, 0, 0),
+        (((0, 2), (2, 3)), 4, 0, 1, 0),
+        (((2, 3), (0, 1)), 4, 0, 0, 1),
+        (((0, 2),), 3, 1, 0, 0),
+    ],
+)
+def test_level_one_invalid_cover_uses_one_exact_whole_window_fallback(
+    ranges: tuple[tuple[int, int], ...],
+    covered: int,
+    gaps: int,
+    overlaps: int,
+    ordering: int,
+) -> None:
+    source = _summary().units
+    supplied = _summary().model_copy(
+        update={
+            "units": [
+                source[min(index, len(source) - 1)].model_copy(
+                    update={
+                        "id": f"unit-{index}",
+                        "firstSentenceId": f"sentence-{first}",
+                        "lastSentenceId": f"sentence-{last}",
+                        "quoteWordIds": [f"word-{first * 2}"],
+                    }
+                )
+                for index, (first, last) in enumerate(ranges)
+            ]
+        }
+    )
+    result = ground_summary(
+        evidence=_evidence(),
+        window_first_sentence_id="sentence-0",
+        window_last_sentence_id="sentence-3",
+        window_sentence_count=4,
+        summary=supplied,
+        allowed_model_anchors=frozenset({f"word-{index}" for index in range(8)}),
+    )
+
+    assert result.fallbacks == ()
+    assert result.coverageDiagnostic is not None
+    assert result.coverageFallback is not None
+    assert result.coverageDiagnostic.model_dump() == {
+        "code": "interval_cover_invalid",
+        "originalUnitCount": len(ranges),
+        "coveredSentenceCount": covered,
+        "gapSentenceCount": gaps,
+        "overlapSentenceCount": overlaps,
+        "orderingViolationCount": ordering,
+    }
+    assert len(result.summary.units) == 1
+    assert result.summary.units[0].text == " ".join(
+        sentence.text for sentence in _evidence().sentences
+    )
+    assert result.summary.units[0].quoteWordIds == ["word-0", "word-7"]
+    assert result.coverageFallback.unitId == result.summary.units[0].id
+
+
+def test_higher_level_gap_or_overlap_is_never_repaired() -> None:
     supplied = _summary().model_copy(
         update={
             "units": [
@@ -228,6 +290,60 @@ def test_gap_or_overlap_is_never_repaired() -> None:
             window_sentence_count=4,
             summary=supplied,
             allowed_model_anchors=frozenset({"word-0", "word-3", "word-4", "word-7"}),
+            hierarchy_level=2,
+        )
+
+
+def test_invalid_cover_does_not_hide_an_unshown_quote() -> None:
+    supplied = _summary().model_copy(
+        update={
+            "units": [
+                _summary()
+                .units[0]
+                .model_copy(update={"lastSentenceId": "sentence-0", "quoteWordIds": ["word-1"]}),
+                _summary().units[1],
+            ]
+        }
+    )
+    with pytest.raises(SummaryGroundingRefusal, match="not an anchor present"):
+        ground_summary(
+            evidence=_evidence(),
+            window_first_sentence_id="sentence-0",
+            window_last_sentence_id="sentence-3",
+            window_sentence_count=4,
+            summary=supplied,
+            allowed_model_anchors=frozenset({"word-0", "word-3", "word-4", "word-7"}),
+        )
+
+
+def test_oversized_whole_window_coverage_fallback_refuses() -> None:
+    evidence = _evidence().model_copy(deep=True)
+    evidence.sentences[0].text = "x" * 20_001
+    supplied = _summary().model_copy(
+        update={"units": [_summary().units[0].model_copy(update={"lastSentenceId": "sentence-0"})]}
+    )
+    with pytest.raises(SummaryGroundingRefusal, match="empty or exceeds"):
+        ground_summary(
+            evidence=evidence,
+            window_first_sentence_id="sentence-0",
+            window_last_sentence_id="sentence-3",
+            window_sentence_count=4,
+            summary=supplied,
+            allowed_model_anchors=frozenset({"word-0", "word-3", "word-4"}),
+        )
+
+
+def test_whole_window_fallback_without_source_anchors_refuses() -> None:
+    evidence = _evidence().model_copy(deep=True)
+    evidence.sentences[1].wordIds = []
+    with pytest.raises(SummaryGroundingRefusal, match="no immutable word anchors"):
+        ground_summary(
+            evidence=evidence,
+            window_first_sentence_id="sentence-0",
+            window_last_sentence_id="sentence-3",
+            window_sentence_count=4,
+            summary=_summary().model_copy(update={"units": _summary().units[:1]}),
+            allowed_model_anchors=frozenset({"word-0", "word-3"}),
         )
 
 
@@ -336,10 +452,15 @@ def test_grounding_fingerprint_is_portable_and_sensitive_to_lineage() -> None:
     assert fingerprint != grounding_artifact_fingerprint(
         report.model_copy(update={"windowPromptSha256": "e" * 64})
     )
+    body = report.model_dump(mode="json")
+    assert "coverageDiagnostic" not in body
+    assert "coverageFallback" not in body
 
 
-async def test_validation_activity_binds_raw_response_and_publishes_exact_dependencies(  # noqa: C901
+@pytest.mark.parametrize("policy", ["v1", "v2"])
+async def test_validation_activity_binds_raw_response_and_publishes_exact_dependencies(  # noqa: C901, PLR0915
     monkeypatch: pytest.MonkeyPatch,
+    policy: str,
 ) -> None:
     routes = RouteSnapshot.model_validate_json(
         (FIXTURES / "routes.synthetic.json").read_bytes(), strict=True
@@ -362,6 +483,15 @@ async def test_validation_activity_binds_raw_response_and_publishes_exact_depend
     raw_ref = _ref(HarnessArtifactKind.model_response, 2)
     evidence = _evidence()
     supplied = _summary()
+    if policy == "v2":
+        supplied = supplied.model_copy(
+            update={
+                "units": [
+                    supplied.units[0].model_copy(update={"lastSentenceId": "sentence-0"}),
+                    supplied.units[1],
+                ]
+            }
+        )
     response = ModelResponse(
         parts=[TextPart(json.dumps(supplied.model_dump(mode="json")))], model_name="summary"
     )
@@ -493,10 +623,17 @@ async def test_validation_activity_binds_raw_response_and_publishes_exact_depend
         evidence_ref.id,
         raw_ref.id,
     )
-    report = SummaryGroundingReport.model_validate_json(
-        artifacts.canonical_json(published["content"])
-    )
+    report = read_summary_grounding_report(published["content"])
     assert report.rawResponse == raw_ref
-    assert report.fallbacks[0].unitId == "first"
     assert report.normalizedSummary.model_dump(mode="json") == result.summary
     assert cast("dict[str, object]", published["metadata"])["fallbackUnitCount"] == 1
+    if policy == "v2":
+        assert isinstance(report, SummaryGroundingReportV2)
+        assert report.coverageDiagnostic.gapSentenceCount == 1
+        assert report.coverageFallback.provenance == "extractive_source_window_fallback"
+        assert cast("dict[str, object]", published["metadata"])["coverageFallbackWindowCount"] == 1
+        assert cast("dict[str, object]", published["metadata"])["fallbackQuoteCount"] == 0
+    else:
+        assert isinstance(report, SummaryGroundingReport)
+        assert report.fallbacks[0].unitId == "first"
+        assert "coverageFallbackWindowCount" not in cast("dict[str, object]", published["metadata"])

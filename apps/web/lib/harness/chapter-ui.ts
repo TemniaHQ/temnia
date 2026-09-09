@@ -71,27 +71,65 @@ export function chapterWaitingMessage({
 }
 
 export function summaryGroundingMessage({
+  coverageFallbackWindowCount,
   fallbackQuoteCount,
   fallbackUnitCount,
 }: {
+  coverageFallbackWindowCount: number;
   fallbackQuoteCount: number;
   fallbackUnitCount: number;
 }): string | null {
   if (fallbackUnitCount === 0) {
     return null;
   }
+  if (coverageFallbackWindowCount > 0) {
+    const windows = coverageFallbackWindowCount === 1 ? "window" : "windows";
+    const passages = fallbackUnitCount === 1 ? "passage" : "passages";
+    const recovery = `Used the original transcript for ${coverageFallbackWindowCount} complete summary ${windows} after the model response had missing or inconsistent sentence ranges.`;
+    if (fallbackQuoteCount === 0) {
+      return `${recovery} Review the recovered ${passages} before accepting the chapters.`;
+    }
+    const references = fallbackQuoteCount === 1 ? "reference" : "references";
+    return `${recovery} Across this run, source excerpts were used for ${fallbackUnitCount} summary ${passages}, and ${fallbackQuoteCount} mismatched source ${references} were found. Review these passages before accepting the chapters.`;
+  }
   const passages = fallbackUnitCount === 1 ? "passage" : "passages";
   const references = fallbackQuoteCount === 1 ? "reference" : "references";
   return `Used the original transcript for ${fallbackUnitCount} summary ${passages} after finding ${fallbackQuoteCount} mismatched source ${references}. Review these passages before accepting the chapters.`;
 }
 
+export function canRetryChapterRun({
+  currentRevision,
+  hasEdit,
+  reservedMicros,
+  status,
+}: {
+  currentRevision: number;
+  hasEdit: boolean;
+  reservedMicros: number;
+  status: string;
+}): boolean {
+  if (["budget_paused", "failed"].includes(status)) {
+    return true;
+  }
+  return (
+    status === "needs_review" &&
+    currentRevision === 0 &&
+    !hasEdit &&
+    reservedMicros === 0
+  );
+}
+
 export function chapterPlanningStoppedMessage(
   status: string,
-  currentRevision: number
+  currentRevision: number,
+  retryEligible: boolean
 ): string | null {
-  return status === "needs_review" && currentRevision === 0
-    ? "Planning stopped before an edit was produced. Review the reason and start a new run to try again."
-    : null;
+  if (!(status === "needs_review" && currentRevision === 0)) {
+    return null;
+  }
+  return retryEligible
+    ? "Planning stopped before an edit was produced. Retry revalidates saved paid results and continues unfinished planning, but the same issue may stop it again. You can also start a new run."
+    : "Planning stopped before an edit was produced. This run cannot resume while saved work or provider exposure remains unresolved. You can start a new run, which may send separate paid requests.";
 }
 
 export function chapterOutcomeUnknownMessage(status: string): string | null {

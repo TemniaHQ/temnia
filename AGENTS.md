@@ -620,6 +620,33 @@ rejected because they hide the failure rather than reduce avoidable work. Unknow
 outcomes retain their reservation; a new run is separately budgeted work, never a settlement or
 reuse of a missing response. Plan: `docs/plans/chapter-proposal-output-360-view.md`.
 
+**2026-09-10 — Route qualification follows the exact request shape and real-source admission.**
+The compact-wire requalification passed DeepSeek/DeepInfra and Kimi/Alibaba, but Qwen/Alibaba
+returned the requested summary schema inside an array instead of summary data. The validator
+correctly refused it; the normalized receipt cannot distinguish the model, provider adapter or
+gateway adapter as the cause. Its earlier success does not qualify the new three-stage path.
+A separately bounded GLM-5.3-Flash/Baseten probe passed all three stages and is the replacement
+for the provisional staging pool, deployed with matching verified web/worker configuration.
+GPT-OSS/Baseten was
+considered but rejected before paid qualification: its 131,072 context does not fit the measured
+179,187-unit compact request under the harness's byte-conservative admission. Qwen/Parasail and
+GLM/DeepInfra were compared on current context, price and provider observations. No tokenizer
+limit, editorial winner or production default is inferred. Every new snapshot binds the fresh
+compact proof, preserves three families and independent verification, and leaves saved runs
+unchanged. Record: `docs/design/chapter-compact-staging-qualification-2026-09-10.md`.
+
+**2026-09-10 — A known summary coverage refusal can recover from complete source evidence.**
+The fresh long-source run stopped at its fifteenth summary: the model's ranges did not exactly
+cover the window, while all 15 responses and charges were retained. For first-level windows only,
+after strict identity, input ownership and prompt checks, discard the entire invalid partition
+and substitute the complete source window with an explicit v2 diagnostic and source provenance.
+Existing valid/quote-fallback v1 reports remain byte-identical; foreign, unshown, malformed,
+oversized and higher-level inputs still refuse. Known planning-only refusals may retry at revision
+zero without outstanding/unknown attempts, reusing their paid responses. This is compared against
+resubmission, silent endpoint adjustment, starting over and a new summary wire in
+`docs/plans/chapter-summary-coverage-recovery-360-view.md`. It does not select a model winner or
+waive independent verification and human acceptance.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

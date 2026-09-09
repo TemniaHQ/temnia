@@ -333,6 +333,9 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByText("Last accepted output", { exact: true })
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { exact: true, name: "Retry" })
+  ).toBeDisabled();
   const groundingPattern = `**/api/sources/${sourceId}/chapters**`;
   const groundingHandler = async (route: Route) => {
     const response = await route.fetch();
@@ -344,6 +347,7 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
       next.run.status = "needs_review";
     }
     next.summaryGrounding = {
+      coverageFallbackWindowCount: 1,
       fallbackQuoteCount: 3,
       fallbackUnitCount: 2,
       reports: [
@@ -351,6 +355,7 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
           id: "00000000-0000-4000-8000-000000000099",
           kind: "checks",
           metadata: {
+            coverageFallbackWindowCount: 1,
             fallbackQuoteCount: 3,
             fallbackUnitCount: 2,
             format: "chapter-summary-grounding/1",
@@ -376,7 +381,12 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     await expect(
       page.getByTestId("chapter-summary-grounding-warning")
     ).toContainText(
-      "Used the original transcript for 2 summary passages after finding 3 mismatched source references."
+      "Used the original transcript for 1 complete summary window after the model response had missing or inconsistent sentence ranges."
+    );
+    await expect(
+      page.getByTestId("chapter-summary-grounding-warning")
+    ).toContainText(
+      "source excerpts were used for 2 summary passages, and 3 mismatched source references were found."
     );
     await expect(
       page.getByRole("link", {
@@ -389,9 +399,77 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     ).toHaveCount(0);
     await expect(
       page.getByText(
-        "Planning stopped before an edit was produced. Review the reason and start a new run to try again.",
+        "Planning stopped before an edit was produced. Retry revalidates saved paid results and continues unfinished planning, but the same issue may stop it again. You can also start a new run.",
         { exact: true }
       )
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { exact: true, name: "Retry" })
+    ).toBeEnabled();
+    const retryResponseHeld = deferred();
+    const releaseRetryResponse = deferred();
+    let submittedRetry: Record<string, unknown> | null = null;
+    const retryActionPattern = new RegExp(`/sources/${sourceId}(?:\\?.*)?$`);
+    const interceptRetry = async (route: Route) => {
+      const request = route.request();
+      if (request.method() !== "POST" || !request.headers()["next-action"]) {
+        await route.continue();
+        return;
+      }
+      const args = JSON.parse(request.postData() ?? "[]") as unknown[];
+      const [candidate] = args;
+      if (
+        !(
+          candidate &&
+          typeof candidate === "object" &&
+          !Array.isArray(candidate)
+        )
+      ) {
+        throw new Error("unexpected chapter review action request shape");
+      }
+      submittedRetry = candidate as Record<string, unknown>;
+      const response = await route.fetch({
+        postData: JSON.stringify([
+          {
+            ...submittedRetry,
+            runId: "00000000-0000-4000-8000-000000000098",
+          },
+        ]),
+      });
+      retryResponseHeld.resolve();
+      await releaseRetryResponse.promise;
+      await route.fulfill({ response });
+    };
+    await page.route(retryActionPattern, interceptRetry);
+    try {
+      await page.getByRole("button", { exact: true, name: "Retry" }).click();
+      await retryResponseHeld.promise;
+      expect(submittedRetry).toMatchObject({
+        action: "retry",
+        baseRevision: 0,
+        runId,
+        sourceId,
+      });
+      await expect(
+        page.getByRole("button", { exact: true, name: "Retry" })
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("button", {
+          exact: true,
+          name: "Retry the same command",
+        })
+      ).toBeDisabled();
+      await expect(
+        page.getByText("Waiting for this review command’s durable result.", {
+          exact: true,
+        })
+      ).toBeVisible();
+    } finally {
+      releaseRetryResponse.resolve();
+      await page.unroute(retryActionPattern, interceptRetry);
+    }
+    await expect(
+      page.getByText("Chapter run not found.", { exact: true })
     ).toBeVisible();
     await expect(
       page.getByText(

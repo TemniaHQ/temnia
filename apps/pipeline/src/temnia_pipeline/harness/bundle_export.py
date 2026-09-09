@@ -48,9 +48,12 @@ from temnia_pipeline.harness.proposal_diagnostics import (
 from temnia_pipeline.harness.summary_grounding import (
     GROUNDING_FORMAT,
     SummaryGroundingRefusal,
-    SummaryGroundingReport,
+    SummaryGroundingReportType,
+    coverage_fallback_window_count,
+    fallback_unit_count,
     ground_summary,
     normalized_summary_from_response,
+    read_summary_grounding_report,
 )
 
 if TYPE_CHECKING:
@@ -113,9 +116,12 @@ def _artifact_fact(row: Mapping[str, Any]) -> ImmutableArtifactFact:
     )
 
 
-def _summary_grounding_report(value: object) -> SummaryGroundingReport:
+def _summary_grounding_report(value: object) -> SummaryGroundingReportType:
     """Validate a decoded JSON value with Pydantic's strict JSON conversions."""
-    return SummaryGroundingReport.model_validate_json(artifacts.canonical_json(value), strict=True)
+    try:
+        return read_summary_grounding_report(value)
+    except SummaryGroundingRefusal as error:
+        raise ValueError("summary grounding body is invalid") from error
 
 
 def _proposal_diagnostic_report(value: object) -> ProposalDiagnosticReport:
@@ -535,11 +541,16 @@ async def export_evaluation_bundle(
             "windowId": body.windowId,
             "hierarchyLevel": body.hierarchyLevel,
             "modelStage": body.modelStage,
-            "fallbackUnitCount": len(body.fallbacks),
+            "fallbackUnitCount": fallback_unit_count(body),
             "fallbackQuoteCount": sum(
                 len(fallback.rejectedQuoteWordIds) for fallback in body.fallbacks
             ),
         }
+        coverage_count = coverage_fallback_window_count(body)
+        if coverage_count:
+            expected_metadata["coverageFallbackWindowCount"] = coverage_count
+        elif "coverageFallbackWindowCount" in metadata:
+            raise ValueError("summary grounding artifact metadata is invalid")
         if any(metadata.get(key) != value for key, value in expected_metadata.items()):
             raise ValueError("summary grounding artifact metadata is invalid")
         if body.runId != run_id or body.evidence.id != evidence_id:
@@ -636,12 +647,15 @@ async def export_evaluation_bundle(
                 window_sentence_count=body.windowSentenceCount,
                 summary=source_summary,
                 allowed_model_anchors=allowed_model_anchors,
+                hierarchy_level=body.hierarchyLevel,
             )
         except SummaryGroundingRefusal as error:
             raise ValueError("summary grounding report cannot be reproduced") from error
         if (
             expected_grounding.summary != body.normalizedSummary
             or expected_grounding.fallbacks != body.fallbacks
+            or expected_grounding.coverageDiagnostic != getattr(body, "coverageDiagnostic", None)
+            or expected_grounding.coverageFallback != getattr(body, "coverageFallback", None)
         ):
             raise ValueError("summary grounding fallback differs from its raw response")
         refs = (body.evidence, body.rawResponse, *body.inputArtifacts)
