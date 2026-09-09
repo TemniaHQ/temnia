@@ -4,6 +4,15 @@
 
 The [checkpointed speech qualification](checkpointed-speech-qualification-2026-09-09.md) records the live builds, preserved failure, recovery proof, long-run timing/memory observations and limits. The new long path took 18m4.81s, slower than the earlier 11-minute combined run; independent recovery has not established a cost or latency win.
 
+The later [controlled performance report](checkpointed-speech-optimization-2026-09-09.md) evaluates
+coalesced progress, explicit CPU limits and parallel stage scheduling. Use that report for the latest
+measurements and configuration conclusions. All twelve planned cases completed: coalesced serial
+processing reduced the clean control comparison by 23.89%; parallel runs took about 8.8 minutes
+but increased estimated resources versus coalesced serial. Two transcript output groups failed the
+predeclared exact-output rule, so no configuration was selected. The paragraph above describes the
+earlier protocol-1 comparison. The [manual-testing walkthrough](../runbooks/chapter-harness-manual-testing.md) documents
+the exact local recorded setup and separates it from live chapter-model qualification.
+
 ## PR #24 implementation progress
 
 This is the current branch assessment, separate from the PR #23 baseline audit below. A focused
@@ -16,13 +25,13 @@ test is evidence for its named mechanism, not the whole product. The exact-SHA g
 | I18 — language and scale | Universal SaT evidence, preserved detected-language context, whole-sentence context windows, explicit size bounds | Non-English preservation and real Temporal multi-window hierarchy tests pass. The hierarchy has an eight-level bound and preserves exact original sentence ranges. This does not qualify every language or make an indivisible overlarge sentence processable. |
 | I24/I25 — transcript editing | Phrase search; delete/insert/split/merge; revisioned speaker identity and labels; explicit speaker merge; historical captions; undo; drafts keyed by word identity | Pure/action and real PostgreSQL checks pass. All three structural browser journeys passed across the initial run and focused regression rerun: complete structural/speaker/history controls, two conflicting tabs and explicit deleted-target retargeting, plus deleting all 93 words and recovering from an empty revision. Production-image coverage is recorded by the exact-commit gate. |
 | I28 — GPU memory/recovery | Separate recognition/alignment/diarization functions, single-use containers, reusable checkpoints, explicit OOM batch downgrade and partial telemetry | Controlled checkpoint/OOM/cancellation tests pass. A real CPU crash probe reproduced provider container restart despite retries=0 and verified admission refusal before repeated inference. The corrected live short test recovered an injected lost result with three physical dispatches before/after; the 151-minute run completed three isolated GPU stages without OOM. Sampled device peaks were recorded, but process peaks and live OOM recovery remain unqualified. |
-| I31 — attempts, costs and progress | Physical-attempt ledger, atomic reservations/dispatch fence, known/unknown costs, failed/cancelled attempt records, remote IDs and sampled telemetry | Real PostgreSQL races and response-publication recovery pass. Real Temporal cancellation waits for both speech activities to finish cleanup before terminal settlement. Proven undispatched, lost acknowledgement and known-handle cancellation paths have separate tests. The nine live GPU attempts include the initial known failure and retain 11,625,003 micros of unknown-cost exposure. Invoice costs and invisible provider startup/restart costs remain unknown without billing evidence. |
+| I31 — attempts, costs and progress | Physical-attempt ledger, atomic reservations/dispatch fence, known/unknown costs, failed/cancelled attempt records, remote IDs and sampled telemetry | Real PostgreSQL races and response-publication recovery pass. Real Temporal cancellation waits for both speech activities to finish cleanup before terminal settlement. Proven undispatched, lost acknowledgement and known-handle cancellation paths have separate tests. The original nine attempts retain 11,625,003 micros of unknown-cost exposure; the later 36-call matrix retains 13,770,018 separately. The provider reports $2.10079169 through 07:00 UTC across owned experiment/preparation apps, but incomplete app/hour data cannot settle exact attempts or separate C/D. No reservation was released on aggregate evidence. |
 | Missing chapter compiler | ID-grounded exact-cover proposals, joint monotonic boundary selection, rational media grid and shared boundaries, pure review mutations | Nineteen focused compiler tests pass, including post-quantization lexical and detector safety, alternative safe cuts and explicit review reasons. Candidate weights remain provisional. |
-| Missing durable model transport | Pinned PydanticAI/Temporal request guard, full response artifacts before validation, qualified immutable route pools, independent verifier policy, bounded reservations and cassettes | Real plugin/replay probe and scoped model-persistence tests pass. No live gateway credential is configured, so transport/privacy qualification and model auditions have not run. |
-| Missing rendered review/export | Real H264/AAC chapter renderer, captions, content-keyed reuse, strict decode and track-clock checks; revisioned browser controls | Actual NTSC/VFR, signed-start, delayed-audio, rotation, odd-size, corruption and process-cleanup tests pass. The complete chapter browser journey passes, including accepted export, retained output after edits/cancellation, approval without further model calls and a second run. Retrying an actual failed export also reached ready on revision 13 with dispatch count unchanged at nine. Production-image coverage is recorded by the exact-commit gate. |
+| Missing durable model transport | Pinned PydanticAI/Temporal request guard, full response artifacts before validation, qualified immutable route pools, independent verifier policy, bounded reservations and cassettes | Real plugin/replay probe and scoped model-persistence tests pass. Boot now validates output/context capacity for every required seat route, including failovers. No live gateway credential is configured, so transport/privacy qualification and model auditions have not run. |
+| Missing rendered review/export | Real H264/AAC chapter renderer, captions, content-keyed reuse, strict decode and track-clock checks; revisioned browser controls and verified per-chapter video/caption downloads | Actual NTSC/VFR, signed-start, delayed-audio, rotation, odd-size, corruption and process-cleanup tests pass. The complete chapter browser journey passes, including accepted export, retained output after edits/cancellation, approval without further model calls and a second run. Retrying an actual failed export also reached ready on revision 13 with dispatch count unchanged at nine. Production-image coverage is recorded by the exact-commit gate. |
 | I16 — quality and economics | Scoped `export-bundle` and artifact-based reporting CLIs, human boundary tasks and scoped cost reconciliation; exact artifact/revision/check validation and complete attempt facts | Exporting an actual browser run captured ten synthetic attempts, current revision 14 and accepted revision 13 separately. A pre-evidence failed run reports an unmeasured source fingerprint. Human boundary labels, correction time, held-out recordings, actual invoices and matched-budget model comparisons remain unmeasured. |
 
-The latest focused harness/evaluation batch passed 102 tests, including actual PostgreSQL
+The earlier focused harness/evaluation batch passed 102 tests, including actual PostgreSQL
 roles/races and Temporal workflows. The web tranche separately passed 170 unit tests; the
 database isolation suite passed 41. These counts are not a combined final-suite total. The
 [probe record](harness-foundation-probes-2026-09-08.json) preserves real service/detector evidence;
@@ -132,7 +141,7 @@ Returned smoke report:
 
 `gpuSeconds` measures elapsed time inside the GPU function; it is not a retrieved Modal invoice or full billed-container lifetime. `wallSeconds` measures the deployed smoke helper after its initial setup. Neither number establishes cost per audio-hour.
 
-## Completion order
+## Historical completion order from the PR #23 audit
 
 The [follow-up plan](../plans/chapter-workflow-followup-360-view.md) starts with remaining S2 qualification and reliability, then builds the shared foundation and chapter path. Within that work:
 
@@ -142,4 +151,6 @@ The [follow-up plan](../plans/chapter-workflow-followup-360-view.md) starts with
 4. Qualify recognition completeness, language routing, long-source memory/recovery and economics on annotated recordings; add the remaining transcript editing tools.
 5. Extend the proven evidence, compiler and review operations across the other editing lanes.
 
-These are unfinished product and architecture work, independent of sprint labels. A passed S2 smoke does not close them.
+This was the remaining work when PR #23 was audited. The PR #24 table at the top records subsequent
+implementation and the qualification still outstanding, independent of sprint labels. A passed S2
+smoke alone does not close those items.

@@ -1,6 +1,11 @@
 # Checkpointed speech qualification — 2026-09-09
 
 PR #24, isolated Modal staging application `temnia-speech`, protocol `temnia-speech/1`.
+
+This is the earlier protocol-1 record. The subsequent
+[controlled performance comparison](checkpointed-speech-optimization-2026-09-09.md) measures
+progress publishing, CPU limits and parallel scheduling with frozen model assets. Its results do
+not replace or retroactively change the failures, timings and accounting retained here.
 Shared staging and its existing `temnia-media` application were not replaced. The tests use a
 dedicated database, Temporal namespace and owned R2 prefixes. Results below are live observations,
 separate from the recorded-provider chapter browser tests.

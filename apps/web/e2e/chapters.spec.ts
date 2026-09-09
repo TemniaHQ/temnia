@@ -2,8 +2,10 @@
  * The database, Temporal workflows, evidence, ffmpeg files and browser are real.
  * These assertions establish recovery and edit mechanics, not editorial quality.
  */
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import {
   ChapterChecksSchema,
   type ChapterEditSpec,
@@ -19,8 +21,32 @@ const PROJECT_URL = /\/projects\/[0-9a-f-]{36}$/;
 const SOURCE_URL = /\/sources\/([0-9a-f-]{36})/;
 const HYDRATION =
   /Minified React error #(418|423|425)|Hydration failed|validateDOMNesting/;
+const JSON_DOWNLOAD = /\.json$/;
 const JOURNEY_TIMEOUT = 480_000;
 const STAGE_TIMEOUT = 120_000;
+
+function deferred() {
+  let resolvePromise: () => void = () => undefined;
+  const promise = new Promise<void>((fulfill) => {
+    resolvePromise = fulfill;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
+async function downloadedArtifact(page: Page, link: Locator) {
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    link.click(),
+  ]);
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  const bytes = await readFile(path ?? "");
+  return {
+    filename: download.suggestedFilename(),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sizeBytes: bytes.byteLength,
+  };
+}
 
 async function readView(page: Page, sourceId: string): Promise<ChapterView> {
   const response = await page.request.get(`/api/sources/${sourceId}/chapters`);
@@ -213,6 +239,27 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
 }) => {
   test.setTimeout(JOURNEY_TIMEOUT);
   const complaints: string[] = [];
+  const delayedManifestStarted = deferred();
+  const delayedManifest = deferred();
+  let delayedManifestFinished = false;
+  let manifestRequestCount = 0;
+  await page.route("**/api/media/**/harness/export/**", async (route) => {
+    manifestRequestCount += 1;
+    if (manifestRequestCount === 1) {
+      await route.fulfill({ status: 503 });
+      return;
+    }
+    if (manifestRequestCount === 2) {
+      delayedManifestStarted.resolve();
+      await delayedManifest.promise;
+      const response = await route.fetch();
+      const body = await response.body();
+      await route.fulfill({ body, response });
+      delayedManifestFinished = true;
+      return;
+    }
+    await route.continue();
+  });
   page.on("pageerror", (error) => complaints.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error" && HYDRATION.test(message.text())) {
@@ -356,9 +403,7 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   state = await undoToFirst(page, sourceId, state.revision);
 
   // No export is ready until every keep and deliberate omission is acknowledged.
-  await expect(
-    page.getByRole("link", { exact: true, name: "Export accepted files" })
-  ).toHaveCount(0);
+  await expect(page.getByTestId("accepted-downloads")).toHaveCount(0);
   const dispatchesBeforeAcceptance = state.view.run?.dispatchCount;
   for (const section of initial.sections) {
     const card = page.getByTestId(`chapter-${section.id}`);
@@ -377,12 +422,34 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
       timeout: STAGE_TIMEOUT,
     })
     .toBe(state.revision);
-  const exportLink = page.getByRole("link", {
-    exact: true,
-    name: "Export accepted files",
+  await expect(page.getByTestId("accepted-downloads-error")).toBeVisible({
+    timeout: STAGE_TIMEOUT,
   });
-  await expect(exportLink).toBeVisible({ timeout: STAGE_TIMEOUT });
-  const exportUrl = await exportLink.getAttribute("href");
+  await page
+    .getByRole("button", { exact: true, name: "Retry accepted files" })
+    .click();
+  await delayedManifestStarted.promise;
+  await page.getByRole("button", { exact: true, name: "New run" }).click();
+  await expect(page.getByTestId("chapters-new-run")).toBeVisible();
+  delayedManifest.resolve();
+  await expect
+    .poll(() => delayedManifestFinished, { timeout: 15_000 })
+    .toBe(true);
+  await expect(page.getByTestId("accepted-downloads")).toHaveCount(0);
+  await page
+    .getByRole("button", { exact: true, name: "Cancel new run" })
+    .click();
+  const acceptedDownloads = page.getByTestId("accepted-downloads");
+  await expect(acceptedDownloads).toBeVisible({ timeout: STAGE_TIMEOUT });
+  expect(manifestRequestCount).toBe(2);
+  await page.unroute("**/api/media/**/harness/export/**");
+
+  const manifestLink = acceptedDownloads.getByRole("link", {
+    exact: true,
+    name: "Download manifest",
+  });
+  await expect(manifestLink).toHaveAttribute("download", JSON_DOWNLOAD);
+  const exportUrl = await manifestLink.getAttribute("href");
   expect(exportUrl).toBeTruthy();
   const exported = ChapterExportSchema.parse(
     await (await page.request.get(exportUrl ?? "")).json()
@@ -392,6 +459,28 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     initial.sections.filter((section) => section.kind === "keep").length
   );
   expect(exported.editSha256).toBe(state.view.currentEdit?.sha256);
+  const [firstAccepted] = exported.chapters;
+  expect(firstAccepted).toBeDefined();
+  const videoLink = acceptedDownloads.getByTestId(
+    `accepted-download-video-${firstAccepted?.sectionId}`
+  );
+  const captionsLink = acceptedDownloads.getByTestId(
+    `accepted-download-captions-${firstAccepted?.sectionId}`
+  );
+  const videoHref = await videoLink.getAttribute("href");
+  const captionsHref = await captionsLink.getAttribute("href");
+  const videoDownload = await downloadedArtifact(page, videoLink);
+  expect(videoDownload).toEqual({
+    filename: `chapter-r${state.revision}-01.mp4`,
+    sha256: firstAccepted?.media.sha256,
+    sizeBytes: firstAccepted?.media.sizeBytes,
+  });
+  const captionsDownload = await downloadedArtifact(page, captionsLink);
+  expect(captionsDownload).toEqual({
+    filename: `chapter-r${state.revision}-01.vtt`,
+    sha256: firstAccepted?.captions?.sha256,
+    sizeBytes: firstAccepted?.captions?.sizeBytes,
+  });
   const renderedVideo = page
     .getByTestId("chapters-panel")
     .locator("video")
@@ -429,6 +518,12 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByText("Last accepted output", { exact: true })
   ).toBeVisible();
+  await expect(
+    page.getByTestId(`accepted-download-video-${firstAccepted?.sectionId}`)
+  ).toHaveAttribute("href", videoHref ?? "");
+  await expect(
+    page.getByTestId(`accepted-download-captions-${firstAccepted?.sectionId}`)
+  ).toHaveAttribute("href", captionsHref ?? "");
   expect((await page.request.get(exportUrl ?? "")).ok()).toBe(true);
 
   // Increasing a ceiling must preserve a checked review and its accepted export.
@@ -463,6 +558,12 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     page.getByRole("button", { exact: true, name: "Retry" })
   ).toBeDisabled();
   expect((await page.request.get(exportUrl ?? "")).ok()).toBe(true);
+  await expect(
+    page.getByTestId(`accepted-download-video-${firstAccepted?.sectionId}`)
+  ).toHaveAttribute("href", videoHref ?? "");
+  await expect(
+    page.getByTestId(`accepted-download-captions-${firstAccepted?.sectionId}`)
+  ).toHaveAttribute("href", captionsHref ?? "");
 
   await page.getByRole("button", { exact: true, name: "New run" }).click();
   const newBrief = page.getByLabel("Editorial brief", { exact: true });

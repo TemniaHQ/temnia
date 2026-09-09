@@ -1,0 +1,2408 @@
+{
+  "format": "temnia-speech-optimization-results/1",
+  "date": "2026-09-09",
+  "outcome": "complete_matrix_no_selected_configuration",
+  "recordingCount": 1,
+  "longInput": {
+    "durationSeconds": 9060.473,
+    "sizeBytes": 110024458,
+    "sha256": "85615a2b6e04512cb333b80c4af6080a0f2017b355146b289303ed57bacc0c91"
+  },
+  "physicalAttempts": 36,
+  "reservedExposureMicros": 13770018,
+  "exposureLimitMicros": 14000000,
+  "legacyProtocolOneUnresolvedExposureMicros": 11625003,
+  "allPhysicalAttemptsTerminalSucceeded": true,
+  "sharedStagingChanged": false,
+  "shortRecoveryCases": [
+    {
+      "block": null,
+      "case": "preflight-a",
+      "kind": "preflight",
+      "outputFacts": {
+        "firstWordStartMs": 543,
+        "language": "en",
+        "lastWordEndMs": 38977,
+        "speakerCount": 2,
+        "speakerSha256": "3c475e7224c2fe41a4c977ed87a774ba09c04c643114b059abd401c124373741",
+        "timingSha256": "44d27aa105631c4cdc882a91ef356eb90d761d4bc8d0515470d72b1b30c5b6f4",
+        "tokenSha256": "646a72772d0c6659a1f976ad251d062aa07c7d02617935784b85c7dbc1fe8fcb",
+        "wordCount": 93
+      },
+      "resultSha256": "01f88827be75f959788dd5a377f7d5c2d293dc51f47f6caf2dd92f071c90790a",
+      "transcriptSha256": "1764a9a8ab070588189285a608002d4b81c95c23c26e37686b0ddb293cbdac10",
+      "variant": "A",
+      "latencySelectionEligible": false,
+      "latencyExclusionReason": "Short cases exercise recovery and are excluded from long-source performance selection.",
+      "originalGpuExecution": {
+        "runId": "7dbbe31c-054d-5bf1-8d41-2e73d199ba49",
+        "workflowRunId": "01a083fc-13b2-734a-8760-94ea81ca6521",
+        "status": "failed_after_three_successful_gpu_stages",
+        "physicalAttemptCount": 3,
+        "reservedExposureMicros": 1062501,
+        "costFacts": [
+          {
+            "actualCostMicros": null,
+            "attemptId": "01a083fc-1965-72c8-acb5-48810e32b567",
+            "configuredExposureMicros": 354167,
+            "costStatus": "unknown",
+            "elapsedSeconds": 36.71843724,
+            "measuredResourceEstimateMicros": 11380,
+            "telemetryComplete": true
+          },
+          {
+            "actualCostMicros": null,
+            "attemptId": "01a083fc-dfa7-792b-8ed4-0515ce27f9ff",
+            "configuredExposureMicros": 354167,
+            "costStatus": "unknown",
+            "elapsedSeconds": 31.817251037,
+            "measuredResourceEstimateMicros": 9861,
+            "telemetryComplete": true
+          },
+          {
+            "actualCostMicros": null,
+            "attemptId": "01a083fd-8c23-7893-9af0-a3c7725c9646",
+            "configuredExposureMicros": 354167,
+            "costStatus": "unknown",
+            "elapsedSeconds": 46.026672086000005,
+            "measuredResourceEstimateMicros": 14265,
+            "telemetryComplete": true
+          }
+        ],
+        "summedFunctionSeconds": 114.56236036300001,
+        "wallSeconds": null,
+        "wallTimingStatus": "excluded_original_cpu_persistence_failure"
+      },
+      "cpuOnlyRecoveryExecution": {
+        "runId": "299d9712-671c-59fa-ad66-484def6d0761",
+        "workflowId": "speech-benchmark-20260909-preflight-a",
+        "workflowRunId": "01a08459-0eda-722b-a8ff-bac3b3b8032e",
+        "status": "ready",
+        "budgetMicros": 1,
+        "physicalAttemptCount": 0,
+        "reservedExposureMicros": 0,
+        "spentMicros": 0,
+        "wallSeconds": 12.274329749983735,
+        "functionSeconds": null,
+        "gpuSpawningRefused": true,
+        "reusedOriginalCheckpoints": true
+      },
+      "recoveryReceiptSha256": "b2c59fce8cd1cd01e9d5872b46ea1fe9d21cf1499c46e528e67f00e61f168b92"
+    },
+    {
+      "block": null,
+      "case": "preflight-b",
+      "costFacts": [
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a08459-5ad3-73e2-9e05-255818979dd3",
+          "configuredExposureMicros": 354167,
+          "costStatus": "unknown",
+          "elapsedSeconds": 49.26071908,
+          "measuredResourceEstimateMicros": 15267,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a0845a-4ba3-7ea2-9d13-04253a7a65c1",
+          "configuredExposureMicros": 354167,
+          "costStatus": "unknown",
+          "elapsedSeconds": 40.730504461,
+          "measuredResourceEstimateMicros": 12624,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a0845b-0caf-7509-a10f-db00e63e1b63",
+          "configuredExposureMicros": 354167,
+          "costStatus": "unknown",
+          "elapsedSeconds": 42.165779279999995,
+          "measuredResourceEstimateMicros": 13069,
+          "telemetryComplete": true
+        }
+      ],
+      "functionElapsedSeconds": 132.157002821,
+      "kind": "preflight",
+      "outputFacts": {
+        "firstWordStartMs": 543,
+        "language": "en",
+        "lastWordEndMs": 38977,
+        "speakerCount": 2,
+        "speakerSha256": "3c475e7224c2fe41a4c977ed87a774ba09c04c643114b059abd401c124373741",
+        "timingSha256": "44d27aa105631c4cdc882a91ef356eb90d761d4bc8d0515470d72b1b30c5b6f4",
+        "tokenSha256": "646a72772d0c6659a1f976ad251d062aa07c7d02617935784b85c7dbc1fe8fcb",
+        "wordCount": 93
+      },
+      "resultSha256": "0e2ab24f00823f8fa95d0b58d91a1f3cd021fbe05825e69b22e37b3ed41a98df",
+      "transcriptSha256": "1764a9a8ab070588189285a608002d4b81c95c23c26e37686b0ddb293cbdac10",
+      "variant": "B",
+      "wallSeconds": 205.17932391696377,
+      "wallTimingStatus": "usable",
+      "latencySelectionEligible": false,
+      "latencyExclusionReason": "Short cases exercise recovery and are excluded from long-source performance selection."
+    },
+    {
+      "block": null,
+      "case": "preflight-c",
+      "costFacts": [
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a0845c-ad72-7cc3-a0f2-91276771dbb0",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 41.39409215,
+          "measuredResourceEstimateMicros": 14998,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a0845d-867b-7496-a108-05814e9d2905",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 47.024438204999996,
+          "measuredResourceEstimateMicros": 17038,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a0845e-76f2-710f-b2c9-6fab989bfc10",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 52.277772781,
+          "measuredResourceEstimateMicros": 18942,
+          "telemetryComplete": true
+        }
+      ],
+      "functionElapsedSeconds": 140.69630313599998,
+      "kind": "preflight",
+      "outputFacts": {
+        "firstWordStartMs": 543,
+        "language": "en",
+        "lastWordEndMs": 38977,
+        "speakerCount": 2,
+        "speakerSha256": "3c475e7224c2fe41a4c977ed87a774ba09c04c643114b059abd401c124373741",
+        "timingSha256": "44d27aa105631c4cdc882a91ef356eb90d761d4bc8d0515470d72b1b30c5b6f4",
+        "tokenSha256": "646a72772d0c6659a1f976ad251d062aa07c7d02617935784b85c7dbc1fe8fcb",
+        "wordCount": 93
+      },
+      "resultSha256": "0644e82f48266834bfedf5021cd1877540a98351d806c3a0b02143e7e0f3238b",
+      "transcriptSha256": "1764a9a8ab070588189285a608002d4b81c95c23c26e37686b0ddb293cbdac10",
+      "variant": "C",
+      "wallSeconds": 218.38582691701595,
+      "wallTimingStatus": "usable",
+      "latencySelectionEligible": false,
+      "latencyExclusionReason": "Short cases exercise recovery and are excluded from long-source performance selection."
+    },
+    {
+      "block": null,
+      "case": "preflight-d",
+      "costFacts": [
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a08460-2a6d-7038-be05-560c8335f05d",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 46.730437388000006,
+          "measuredResourceEstimateMicros": 16932,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a08460-2a6f-70d9-9688-edd44335fa1c",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 28.660185236,
+          "measuredResourceEstimateMicros": 10385,
+          "telemetryComplete": true
+        },
+        {
+          "actualCostMicros": null,
+          "attemptId": "01a08461-186f-7e89-9de4-5c1480b66ecb",
+          "configuredExposureMicros": 410834,
+          "costStatus": "unknown",
+          "elapsedSeconds": 25.614927351,
+          "measuredResourceEstimateMicros": 9281,
+          "telemetryComplete": true
+        }
+      ],
+      "functionElapsedSeconds": 101.00554997500001,
+      "kind": "preflight",
+      "outputFacts": {
+        "firstWordStartMs": 543,
+        "language": "en",
+        "lastWordEndMs": 38977,
+        "speakerCount": 2,
+        "speakerSha256": "3c475e7224c2fe41a4c977ed87a774ba09c04c643114b059abd401c124373741",
+        "timingSha256": "44d27aa105631c4cdc882a91ef356eb90d761d4bc8d0515470d72b1b30c5b6f4",
+        "tokenSha256": "646a72772d0c6659a1f976ad251d062aa07c7d02617935784b85c7dbc1fe8fcb",
+        "wordCount": 93
+      },
+      "resultSha256": "666f8087ffac66d472eedbd99f59513fc4a8d2aa14a8ff9af118e7f8d9e78972",
+      "transcriptSha256": "1764a9a8ab070588189285a608002d4b81c95c23c26e37686b0ddb293cbdac10",
+      "variant": "D",
+      "wallSeconds": 131.31821358401794,
+      "wallTimingStatus": "usable",
+      "latencySelectionEligible": false,
+      "latencyExclusionReason": "Short cases exercise recovery and are excluded from long-source performance selection."
+    }
+  ],
+  "analysis": {
+    "cases": [
+      {
+        "case": "long-a-1",
+        "variant": "A",
+        "block": 1,
+        "wallSeconds": null,
+        "observedWallSeconds": 989.9515817500069,
+        "wallEligibility": {
+          "eligible": false,
+          "reasons": [
+            "activity_retry_contaminated"
+          ]
+        },
+        "functionSeconds": 892.007858453,
+        "observedFunctionSeconds": 892.007858453,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "0c64ba401a45f860ae83f0b00911091a7f3177fe2f8387ec352dd3d9d6fb5813",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 276452,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "dd76a242ef368d8a546a59d367bb90df00ac52dc8b758be60f8abd5075f629e7",
+          "timingSha256": "807ad3a1aa51e9c1fb1f800b2ae64a5296541f0fd7ed9375c67d7c6483040f46",
+          "tokenSha256": "207c3419e0f80a37a6265ddc8b59578d280bad58781083757e45e8af678c3144",
+          "wordCount": 20587
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 892.007858453,
+          "phaseSeconds": {
+            "checkpointWrite": 2.555025778999976,
+            "download": 9.342978228000002,
+            "inference": 721.0642307969999,
+            "modelLoad": 114.80282865699999,
+            "modelVerify": 22.593864833999998
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 1903,
+            "publishSuccessCount": 1903,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 221.41827810800083,
+            "publishElapsedSeconds": 221.38901315699968
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a08462-b682-70a3-9790-0491602028c1",
+            "callId": "fc-01M2265ETV7W2SNPQWCVDQ1M23",
+            "elapsedSeconds": 236.07511663100001,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8015514450000012,
+              "download": 2.3397052340000006,
+              "inference": 175.260030353,
+              "modelLoad": 46.43644739,
+              "modelVerify": 7.436581478999999
+            },
+            "processCpuSeconds": 214.11,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 17.44301932600004,
+              "elapsedSeconds": 235.039920512,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 234.15546509700002,
+              "lastError": null,
+              "lastPublishSeconds": 234.22448796400002,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 385,
+              "publishElapsedSeconds": 17.439745919000046,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 385,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a08466-7f3b-73eb-a42d-01f1d9ff1ab3",
+            "callId": "fc-01M226D4TDDF2FM3XGSP7DXMVM",
+            "elapsedSeconds": 202.06102114200002,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8753167589999862,
+              "download": 5.291564185,
+              "inference": 139.84807658399998,
+              "modelLoad": 44.265883194,
+              "modelVerify": 7.811133520999999
+            },
+            "processCpuSeconds": 143.92000000000002,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 43.0361610060002,
+              "elapsedSeconds": 200.98501260999998,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 199.862738622,
+              "lastError": null,
+              "lastPublishSeconds": 199.959363865,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 385,
+              "publishElapsedSeconds": 43.031078695999895,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 385,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a08469-d59b-7722-8a44-97299a27b277",
+            "callId": "fc-01M226KT8VCRYSXDKT8HSR7B34",
+            "elapsedSeconds": 453.87172068,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8781575749999888,
+              "download": 1.711708809,
+              "inference": 405.95612386,
+              "modelLoad": 24.100498072999997,
+              "modelVerify": 7.346149833999999
+            },
+            "processCpuSeconds": 341.40999999999997,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 160.9390977760006,
+              "elapsedSeconds": 452.647684488,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 451.572372489,
+              "lastError": null,
+              "lastPublishSeconds": 451.716538804,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 1133,
+              "publishElapsedSeconds": 160.91818854199974,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 1133,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-a-2",
+        "variant": "A",
+        "block": 2,
+        "wallSeconds": 1077.1776217919542,
+        "observedWallSeconds": 1077.1776217919542,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 1012.409831314,
+        "observedFunctionSeconds": 1012.409831314,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 313767,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "48e764fa23f5d8de851fc54aabdd747e2c3c0c500f7f4f8949b2a80a57d960ca",
+          "timingSha256": "0bd3949ff7508d7708917c1ddc1ac26f28a01abb010c8965b69d2d07e6e01e03",
+          "tokenSha256": "f7b8fd87c51f697710539de29e14e7a24cd845344c15bb7b1de04ef7e6036849",
+          "wordCount": 20588
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 1012.409831314,
+          "phaseSeconds": {
+            "checkpointWrite": 2.34429763899999,
+            "download": 7.025352912999999,
+            "inference": 810.4088913539999,
+            "modelLoad": 99.71733543799999,
+            "modelVerify": 69.593112674
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 1903,
+            "publishSuccessCount": 1903,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 239.6524992990004,
+            "publishElapsedSeconds": 239.60615425699962
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084f5-3025-7cbd-9446-f7f976e618d8",
+            "callId": "fc-01M22FADAYWQ8TRV4RFEKMT8CY",
+            "elapsedSeconds": 299.047765569,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8488695890000031,
+              "download": 2.302498924,
+              "inference": 224.209060644,
+              "modelLoad": 42.665025009,
+              "modelVerify": 23.896921437
+            },
+            "processCpuSeconds": 253.25,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 60.27440314100032,
+              "elapsedSeconds": 297.74110043400003,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 296.731855972,
+              "lastError": null,
+              "lastPublishSeconds": 296.87776341800003,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 385,
+              "publishElapsedSeconds": 60.26888391299997,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 385,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084f9-f075-7728-86f8-e65c017d33bd",
+            "callId": "fc-01M22FM13NY9HP6PYC0GDWFRQ5",
+            "elapsedSeconds": 298.818991199,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8235289259999945,
+              "download": 2.2853000909999994,
+              "inference": 240.28342603,
+              "modelLoad": 28.905564842,
+              "modelVerify": 22.271998556
+            },
+            "processCpuSeconds": 205.42000000000002,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 93.04367914400024,
+              "elapsedSeconds": 298.366426735,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 297.099586427,
+              "lastError": null,
+              "lastPublishSeconds": 297.331807078,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 385,
+              "publishElapsedSeconds": 93.03724379900005,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 385,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084fe-c1b5-739a-a607-a2a14f8a4f1a",
+            "callId": "fc-01M22FXN3Y4N3PRYCZE05S4ZC9",
+            "elapsedSeconds": 414.543074546,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6718991239999923,
+              "download": 2.437553898,
+              "inference": 345.91640467999997,
+              "modelLoad": 28.146745586999998,
+              "modelVerify": 23.424192681
+            },
+            "processCpuSeconds": 374.89,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 86.33441701399984,
+              "elapsedSeconds": 413.52750226,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 412.589897022,
+              "lastError": null,
+              "lastPublishSeconds": 412.664382603,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 1133,
+              "publishElapsedSeconds": 86.30002654499961,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 1133,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-b-1",
+        "variant": "B",
+        "block": 1,
+        "wallSeconds": 776.5558518330217,
+        "observedWallSeconds": 776.5558518330217,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 719.077262399,
+        "observedFunctionSeconds": 719.077262399,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 222858,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "dd76a242ef368d8a546a59d367bb90df00ac52dc8b758be60f8abd5075f629e7",
+          "timingSha256": "807ad3a1aa51e9c1fb1f800b2ae64a5296541f0fd7ed9375c67d7c6483040f46",
+          "tokenSha256": "207c3419e0f80a37a6265ddc8b59578d280bad58781083757e45e8af678c3144",
+          "wordCount": 20587
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 719.077262399,
+          "phaseSeconds": {
+            "checkpointWrite": 4.41406042700001,
+            "download": 8.047004286,
+            "inference": 527.825568084,
+            "modelLoad": 116.238638855,
+            "modelVerify": 38.595734915
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 92,
+            "publishSuccessCount": 92,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.04955630599953054,
+            "publishElapsedSeconds": 3.4877288770000803
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084b2-04b2-7bb9-9d3e-7dbffe92d71b",
+            "callId": "fc-01M22B42EBXV0CZMD3PYSCQ192",
+            "elapsedSeconds": 217.760457385,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6523879460000046,
+              "download": 3.608203286,
+              "inference": 158.056963698,
+              "modelLoad": 44.09946333800001,
+              "modelVerify": 7.642783050999999
+            },
+            "processCpuSeconds": 202.31,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0011208359998988726,
+              "elapsedSeconds": 216.790131594,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 216.127266172,
+              "lastError": null,
+              "lastPublishSeconds": 215.740758676,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 0.7196715019999829,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084b5-78f1-7f2c-baf1-f3f7ecd9aecf",
+            "callId": "fc-01M22BB40CPY6K65T978YAWQ7G",
+            "elapsedSeconds": 160.07340075599998,
+            "phaseSeconds": {
+              "checkpointWrite": 3.0846285819999935,
+              "download": 1.8524076310000002,
+              "inference": 98.44698368,
+              "modelLoad": 44.474454193,
+              "modelVerify": 7.699536543
+            },
+            "processCpuSeconds": 135.4,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.00566809999983775,
+              "elapsedSeconds": 159.02978325,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 155.795108356,
+              "lastError": null,
+              "lastPublishSeconds": 156.240024721,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 17,
+              "publishElapsedSeconds": 0.9451896669999513,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 17,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084b8-1ae6-7152-8004-a04d32d4dec4",
+            "callId": "fc-01M22BGC6P3TGMHT7XH5AQ4TCG",
+            "elapsedSeconds": 341.243404258,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6770438990000116,
+              "download": 2.586393369,
+              "inference": 271.32162070600003,
+              "modelLoad": 27.664721324,
+              "modelVerify": 23.253415321000002
+            },
+            "processCpuSeconds": 356.78000000000003,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.042767369999793914,
+              "elapsedSeconds": 340.25232901299995,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 339.52820343999997,
+              "lastError": null,
+              "lastPublishSeconds": 321.87332711299996,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 51,
+              "publishElapsedSeconds": 1.822867708000146,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 51,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-b-2",
+        "variant": "B",
+        "block": 2,
+        "wallSeconds": 819.8838927500183,
+        "observedWallSeconds": 819.8838927500183,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 756.951508137,
+        "observedFunctionSeconds": 756.951508137,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 234596,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "dd76a242ef368d8a546a59d367bb90df00ac52dc8b758be60f8abd5075f629e7",
+          "timingSha256": "807ad3a1aa51e9c1fb1f800b2ae64a5296541f0fd7ed9375c67d7c6483040f46",
+          "tokenSha256": "207c3419e0f80a37a6265ddc8b59578d280bad58781083757e45e8af678c3144",
+          "wordCount": 20587
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 756.951508137,
+          "phaseSeconds": {
+            "checkpointWrite": 2.7190029870000103,
+            "download": 8.961144959,
+            "inference": 566.71787515,
+            "modelLoad": 102.41345449,
+            "modelVerify": 52.422574245
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 100,
+            "publishSuccessCount": 100,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.04513883100021587,
+            "publishElapsedSeconds": 8.039465490000083
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084e8-37d7-7000-9f47-e77cc0deea51",
+            "callId": "fc-01M22EGF6C3FPEA7CPYTR2D3KX",
+            "elapsedSeconds": 208.792288299,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8277023050000025,
+              "download": 3.0812226610000004,
+              "inference": 160.043361584,
+              "modelLoad": 33.934831976,
+              "modelVerify": 7.170276846
+            },
+            "processCpuSeconds": 204.29000000000002,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0011940410000903512,
+              "elapsedSeconds": 207.71300030100002,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 206.760404536,
+              "lastError": null,
+              "lastPublishSeconds": 207.712596044,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 2.9025949539999942,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084eb-8f8f-7755-a330-faa8e5afd153",
+            "callId": "fc-01M22EQA1ZBPZZ0SWZEAT5B36Z",
+            "elapsedSeconds": 218.977210518,
+            "phaseSeconds": {
+              "checkpointWrite": 1.1937163609999857,
+              "download": 2.4239061379999995,
+              "inference": 148.8494926,
+              "modelLoad": 39.039145695,
+              "modelVerify": 22.666844449
+            },
+            "processCpuSeconds": 201.12,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0072596969996396865,
+              "elapsedSeconds": 217.972047836,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 216.55266056,
+              "lastError": null,
+              "lastPublishSeconds": 217.245967668,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 27,
+              "publishElapsedSeconds": 2.07982826000017,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 27,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084ef-2843-7450-8779-418853b5f439",
+            "callId": "fc-01M22EYGGGMC6348WG5RAFGV4P",
+            "elapsedSeconds": 329.18200932,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6975843210000221,
+              "download": 3.4560161600000003,
+              "inference": 257.825020966,
+              "modelLoad": 29.439476819000006,
+              "modelVerify": 22.58545295
+            },
+            "processCpuSeconds": 334.68,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.036685093000485836,
+              "elapsedSeconds": 327.857129254,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 327.110700979,
+              "lastError": null,
+              "lastPublishSeconds": 313.107112184,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 49,
+              "publishElapsedSeconds": 3.057042275999919,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 49,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-c-1",
+        "variant": "C",
+        "block": 1,
+        "wallSeconds": 777.2029946669936,
+        "observedWallSeconds": 777.2029946669936,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 688.369296665,
+        "observedFunctionSeconds": 688.369296665,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 249411,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "dd76a242ef368d8a546a59d367bb90df00ac52dc8b758be60f8abd5075f629e7",
+          "timingSha256": "807ad3a1aa51e9c1fb1f800b2ae64a5296541f0fd7ed9375c67d7c6483040f46",
+          "tokenSha256": "207c3419e0f80a37a6265ddc8b59578d280bad58781083757e45e8af678c3144",
+          "wordCount": 20587
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 688.369296665,
+          "phaseSeconds": {
+            "checkpointWrite": 3.8373053679999884,
+            "download": 8.41237665,
+            "inference": 517.649981553,
+            "modelLoad": 96.990743418,
+            "modelVerify": 37.77313903
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 89,
+            "publishSuccessCount": 89,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.04276291499967044,
+            "publishElapsedSeconds": 10.897162920999918
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084be-530f-7cd0-bc7b-873892709c3e",
+            "callId": "fc-01M22BWP0XMQQF134PM3AEWZVN",
+            "elapsedSeconds": 216.609998145,
+            "phaseSeconds": {
+              "checkpointWrite": 0.44730183800001555,
+              "download": 3.1604107900000002,
+              "inference": 159.857275263,
+              "modelLoad": 41.73690086,
+              "modelVerify": 7.544236420000001
+            },
+            "processCpuSeconds": 231.76999999999998,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.001126450999691997,
+              "elapsedSeconds": 215.77749866399998,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 215.215398459,
+              "lastError": null,
+              "lastPublishSeconds": 215.77704977399998,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 2.5205408169999544,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084c1-dd04-7a30-a899-0077e3b74a68",
+            "callId": "fc-01M22C3VXHE3YDJPEMDWP3C6XZ",
+            "elapsedSeconds": 146.51135509199997,
+            "phaseSeconds": {
+              "checkpointWrite": 1.550286887999988,
+              "download": 2.9586898280000007,
+              "inference": 99.13259989999999,
+              "modelLoad": 30.086515390000002,
+              "modelVerify": 7.787257283
+            },
+            "processCpuSeconds": 144.87,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.004136714999845026,
+              "elapsedSeconds": 145.029167985,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 143.326464609,
+              "lastError": null,
+              "lastPublishSeconds": 142.88911850899999,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 17,
+              "publishElapsedSeconds": 2.855874285000013,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 17,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084c4-9046-75e9-b651-52601ed9562d",
+            "callId": "fc-01M22C999Q26DE2X51DRDB29PM",
+            "elapsedSeconds": 325.247943428,
+            "phaseSeconds": {
+              "checkpointWrite": 1.8397166419999849,
+              "download": 2.2932760319999996,
+              "inference": 258.66010639,
+              "modelLoad": 25.167327168,
+              "modelVerify": 22.441645327
+            },
+            "processCpuSeconds": 379.26,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.03749974900013342,
+              "elapsedSeconds": 323.975599041,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 322.027929381,
+              "lastError": null,
+              "lastPublishSeconds": 305.564371163,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 48,
+              "publishElapsedSeconds": 5.520747818999951,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 48,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-c-2",
+        "variant": "C",
+        "block": 2,
+        "wallSeconds": 762.1042468330124,
+        "observedWallSeconds": 762.1042468330124,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 695.021765942,
+        "observedFunctionSeconds": 695.021765942,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 251821,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "48e764fa23f5d8de851fc54aabdd747e2c3c0c500f7f4f8949b2a80a57d960ca",
+          "timingSha256": "0bd3949ff7508d7708917c1ddc1ac26f28a01abb010c8965b69d2d07e6e01e03",
+          "tokenSha256": "f7b8fd87c51f697710539de29e14e7a24cd845344c15bb7b1de04ef7e6036849",
+          "wordCount": 20588
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 695.021765942,
+          "phaseSeconds": {
+            "checkpointWrite": 2.4878246419999925,
+            "download": 7.030235524000001,
+            "inference": 524.753033508,
+            "modelLoad": 88.31041609100001,
+            "modelVerify": 51.152219794000004
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 88,
+            "publishSuccessCount": 88,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.02850647800032391,
+            "publishElapsedSeconds": 14.978243558999914
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084dc-1aef-73fc-893d-861cd8e515d5",
+            "callId": "fc-01M22DR7WTBYY3DVCJZQVGCZEB",
+            "elapsedSeconds": 234.15939506200002,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6233678060000045,
+              "download": 2.8253565550000004,
+              "inference": 164.415031403,
+              "modelLoad": 39.65835118,
+              "modelVerify": 22.445882999000002
+            },
+            "processCpuSeconds": 245.12,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.001444932999845605,
+              "elapsedSeconds": 233.25089718599997,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 232.53863973999998,
+              "lastError": null,
+              "lastPublishSeconds": 233.247091365,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 1.3386256839999646,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084df-e745-7eb8-a39f-8581e423800c",
+            "callId": "fc-01M22DZYN7YEZGQA22NYYPPKDY",
+            "elapsedSeconds": 142.50322352900002,
+            "phaseSeconds": {
+              "checkpointWrite": 1.5536014749999936,
+              "download": 1.9497666830000004,
+              "inference": 97.79705718800001,
+              "modelLoad": 29.332492765,
+              "modelVerify": 7.023418922
+            },
+            "processCpuSeconds": 143.48,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0040413700000172526,
+              "elapsedSeconds": 141.190871324,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 139.33053067,
+              "lastError": null,
+              "lastPublishSeconds": 141.190321213,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 17,
+              "publishElapsedSeconds": 2.9010823370000125,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 17,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084e2-5413-7657-bcdc-8613c7cc835a",
+            "callId": "fc-01M22E4T1YSE7VS6BWZTPXKD52",
+            "elapsedSeconds": 318.359147351,
+            "phaseSeconds": {
+              "checkpointWrite": 0.31085536099999445,
+              "download": 2.255112286,
+              "inference": 262.540944917,
+              "modelLoad": 19.319572146000006,
+              "modelVerify": 21.682917873
+            },
+            "processCpuSeconds": 385.63,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.02302017500046105,
+              "elapsedSeconds": 317.549552158,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 317.191166486,
+              "lastError": null,
+              "lastPublishSeconds": 300.78525405,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 47,
+              "publishElapsedSeconds": 10.738535537999937,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 47,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-d-1",
+        "variant": "D",
+        "block": 1,
+        "wallSeconds": 523.5175207499997,
+        "observedWallSeconds": 523.5175207499997,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 824.701674526,
+        "observedFunctionSeconds": 824.701674526,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 298807,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "48e764fa23f5d8de851fc54aabdd747e2c3c0c500f7f4f8949b2a80a57d960ca",
+          "timingSha256": "0bd3949ff7508d7708917c1ddc1ac26f28a01abb010c8965b69d2d07e6e01e03",
+          "tokenSha256": "f7b8fd87c51f697710539de29e14e7a24cd845344c15bb7b1de04ef7e6036849",
+          "wordCount": 20588
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 824.701674526,
+          "phaseSeconds": {
+            "checkpointWrite": 3.032538208000034,
+            "download": 8.776695787,
+            "inference": 572.561874063,
+            "modelLoad": 140.34490621499998,
+            "modelVerify": 57.097448383
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 99,
+            "publishSuccessCount": 99,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.0482261039990135,
+            "publishElapsedSeconds": 6.974779847000093
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084ca-b43b-7b5a-ab83-9d053c7b6162",
+            "callId": "fc-01M22CNE8PVK5B5FYY7CR2Y6WV",
+            "elapsedSeconds": 234.808297621,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6604792759999896,
+              "download": 3.1911503059999995,
+              "inference": 164.949051902,
+              "modelLoad": 38.823989676000004,
+              "modelVerify": 22.886626312
+            },
+            "processCpuSeconds": 247.73000000000002,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0015905089995129629,
+              "elapsedSeconds": 233.75316494100002,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 233.030024561,
+              "lastError": null,
+              "lastPublishSeconds": 233.752467354,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 1.3046446000000174,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084ca-b43d-7bc2-bca8-0a16ee31119d",
+            "callId": "fc-01M22CNFRAEEZ9E47R1AA05482",
+            "elapsedSeconds": 371.742615764,
+            "phaseSeconds": {
+              "checkpointWrite": 0.6701318910000396,
+              "download": 2.695979393,
+              "inference": 259.347457458,
+              "modelLoad": 64.253477436,
+              "modelVerify": 11.508107547
+            },
+            "processCpuSeconds": 456.33,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.04022358599976883,
+              "elapsedSeconds": 370.67687740499997,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 369.950137972,
+              "lastError": null,
+              "lastPublishSeconds": 356.796333215,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 49,
+              "publishElapsedSeconds": 1.7155060240001205,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 49,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084ce-9c6b-7fab-8657-4fce4384125f",
+            "callId": "fc-01M22CXC2Z8V29PMJJ551C0VTB",
+            "elapsedSeconds": 218.150761141,
+            "phaseSeconds": {
+              "checkpointWrite": 1.7019270410000047,
+              "download": 2.889566088,
+              "inference": 148.265364703,
+              "modelLoad": 37.267439102999994,
+              "modelVerify": 22.702714524
+            },
+            "processCpuSeconds": 213.82,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.006412008999731711,
+              "elapsedSeconds": 216.79690154699998,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 214.871452218,
+              "lastError": null,
+              "lastPublishSeconds": 214.04065027299998,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 26,
+              "publishElapsedSeconds": 3.954629222999955,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 26,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      },
+      {
+        "case": "long-d-2",
+        "variant": "D",
+        "block": 2,
+        "wallSeconds": 533.6823556669988,
+        "observedWallSeconds": 533.6823556669988,
+        "wallEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "functionSeconds": 828.5409917009999,
+        "observedFunctionSeconds": 828.5409917009999,
+        "gpuFunctionEligibility": {
+          "eligible": true,
+          "reasons": []
+        },
+        "identities": {
+          "workerSourceBuildId": "9f972e6f0e282e4ff504323dd3dacdfb97cc744dc24b42ff35dfc82c19943b22",
+          "gpuSourceBuildId": "2ec251d208c3361b34f86ad1bc0aed86f605f212bdc3d13ab4bc1512abb88b01",
+          "modelManifestSha256": "c8323dcc132fe24d12d0c856e1fa9610f41af6391679d1cdc2999ebdfe99dea4",
+          "imageAssetsSha256": "b67cbb5bb2c5f22ff98be5504b1b309861ea54d59cf970457cc0cf586d249be9"
+        },
+        "resourceEstimateMicros": 300198,
+        "actualCostMicros": null,
+        "costStatuses": {
+          "unknown": 3
+        },
+        "outputFacts": {
+          "firstWordStartMs": 91,
+          "language": "en",
+          "lastWordEndMs": 9044040,
+          "speakerCount": 2,
+          "speakerSha256": "48e764fa23f5d8de851fc54aabdd747e2c3c0c500f7f4f8949b2a80a57d960ca",
+          "timingSha256": "0bd3949ff7508d7708917c1ddc1ac26f28a01abb010c8965b69d2d07e6e01e03",
+          "tokenSha256": "f7b8fd87c51f697710539de29e14e7a24cd845344c15bb7b1de04ef7e6036849",
+          "wordCount": 20588
+        },
+        "gpuTelemetryTotals": {
+          "stageElapsedSeconds": 828.5409917009999,
+          "phaseSeconds": {
+            "checkpointWrite": 3.32361894400006,
+            "download": 35.812617901,
+            "inference": 570.177159755,
+            "modelLoad": 106.005610002,
+            "modelVerify": 76.084428203
+          },
+          "progressTransport": {
+            "callbackCount": 1903,
+            "acceptedCallbackCount": 1903,
+            "invalidCallbackCount": 0,
+            "regressedCallbackCount": 0,
+            "publishAttemptCount": 97,
+            "publishSuccessCount": 97,
+            "publishErrorCount": 0,
+            "publishTimeoutCount": 0,
+            "callbackElapsedSeconds": 0.043230298000139555,
+            "publishElapsedSeconds": 20.597770439999678
+          },
+          "interpretation": "progress callback/publish time is a component of observed GPU function time; it is not an independently subtractable speedup estimate"
+        },
+        "stages": [
+          {
+            "stage": "recognize",
+            "attemptId": "01a084d3-6adb-7a39-bd52-3351f76d83c5",
+            "callId": "fc-01M22D6VZ61DW9FX75BAB88CG7",
+            "elapsedSeconds": 258.359961011,
+            "phaseSeconds": {
+              "checkpointWrite": 1.0146462180000526,
+              "download": 19.170790598,
+              "inference": 162.87925177800003,
+              "modelLoad": 42.887541113999994,
+              "modelVerify": 24.484052977999998
+            },
+            "processCpuSeconds": 254.52999999999997,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0015412499996330098,
+              "elapsedSeconds": 255.442983838,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 254.17719727099998,
+              "lastError": null,
+              "lastPublishSeconds": 255.44252747599998,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 24,
+              "publishElapsedSeconds": 6.30450822899995,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 24,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "speaker_turns",
+            "attemptId": "01a084d3-6adc-7d76-a7d9-ad75867adf4d",
+            "callId": "fc-01M22D6VZ37VENK5WSWJHQZB8D",
+            "elapsedSeconds": 350.802389866,
+            "phaseSeconds": {
+              "checkpointWrite": 0.8915658910000275,
+              "download": 14.133241956000003,
+              "inference": 258.61403813900006,
+              "modelLoad": 26.575679382000004,
+              "modelVerify": 27.236431844000002
+            },
+            "processCpuSeconds": 393.37,
+            "progressTransport": {
+              "acceptedCallbackCount": 1133,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 1133,
+              "callbackElapsedSeconds": 0.03515070600025183,
+              "elapsedSeconds": 347.64076644799997,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 346.700541123,
+              "lastError": null,
+              "lastPublishSeconds": 332.025025041,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 47,
+              "publishElapsedSeconds": 11.978819552999823,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 47,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          },
+          {
+            "stage": "align",
+            "attemptId": "01a084d7-ab3c-7886-9c4a-cd95f16cc3ed",
+            "callId": "fc-01M22DFF80FSJGSC6SJFW7QFT9",
+            "elapsedSeconds": 219.378640824,
+            "phaseSeconds": {
+              "checkpointWrite": 1.41740683499998,
+              "download": 2.5085853470000004,
+              "inference": 148.683869838,
+              "modelLoad": 36.542389506,
+              "modelVerify": 24.363943381
+            },
+            "processCpuSeconds": 214.13,
+            "progressTransport": {
+              "acceptedCallbackCount": 385,
+              "callbackAfterCloseCount": 0,
+              "callbackCount": 385,
+              "callbackElapsedSeconds": 0.0065383420002547155,
+              "elapsedSeconds": 218.434810921,
+              "finalFlushCompleted": true,
+              "invalidCallbackCount": 0,
+              "lastCallbackSeconds": 216.78186880299998,
+              "lastError": null,
+              "lastPublishSeconds": 217.422544954,
+              "lastPublishedPercent": 99,
+              "pendingPercent": null,
+              "publishAttemptCount": 26,
+              "publishElapsedSeconds": 2.314442657999905,
+              "publishErrorCount": 0,
+              "publishSuccessCount": 26,
+              "publishTimeoutCount": 0,
+              "regressedCallbackCount": 0,
+              "shutdownTimedOut": false
+            },
+            "metricsUnavailable": [
+              "cgroup_cpu",
+              "nvidia_smi_pid",
+              "process_rss"
+            ]
+          }
+        ]
+      }
+    ],
+    "excludedCases": [],
+    "metricExclusions": [
+      {
+        "case": "long-a-1",
+        "metric": "wallSeconds",
+        "reasons": [
+          "activity_retry_contaminated"
+        ]
+      }
+    ],
+    "missingCases": [],
+    "completeEightCaseEvidence": true,
+    "allEightWallMetricsEligible": false,
+    "reviewedA1WallExclusion": true,
+    "sevenCleanWallsPlusReviewedA1Exclusion": true,
+    "completeLongMatrix": true,
+    "completeGpuFunctionMatrix": true,
+    "aggregates": {
+      "A": {
+        "count": 2,
+        "wallSeconds": {
+          "count": 1,
+          "mean": 1077.1776217919542,
+          "min": 1077.1776217919542,
+          "max": 1077.1776217919542
+        },
+        "functionSeconds": {
+          "count": 2,
+          "mean": 952.2088448835,
+          "min": 892.007858453,
+          "max": 1012.409831314
+        },
+        "resourceEstimateMicros": {
+          "count": 2,
+          "mean": 295109.5,
+          "min": 276452,
+          "max": 313767
+        }
+      },
+      "B": {
+        "count": 2,
+        "wallSeconds": {
+          "count": 2,
+          "mean": 798.21987229152,
+          "min": 776.5558518330217,
+          "max": 819.8838927500183
+        },
+        "functionSeconds": {
+          "count": 2,
+          "mean": 738.0143852680001,
+          "min": 719.077262399,
+          "max": 756.951508137
+        },
+        "resourceEstimateMicros": {
+          "count": 2,
+          "mean": 228727,
+          "min": 222858,
+          "max": 234596
+        }
+      },
+      "C": {
+        "count": 2,
+        "wallSeconds": {
+          "count": 2,
+          "mean": 769.653620750003,
+          "min": 762.1042468330124,
+          "max": 777.2029946669936
+        },
+        "functionSeconds": {
+          "count": 2,
+          "mean": 691.6955313035,
+          "min": 688.369296665,
+          "max": 695.021765942
+        },
+        "resourceEstimateMicros": {
+          "count": 2,
+          "mean": 250616,
+          "min": 249411,
+          "max": 251821
+        }
+      },
+      "D": {
+        "count": 2,
+        "wallSeconds": {
+          "count": 2,
+          "mean": 528.5999382084992,
+          "min": 523.5175207499997,
+          "max": 533.6823556669988
+        },
+        "functionSeconds": {
+          "count": 2,
+          "mean": 826.6213331135,
+          "min": 824.701674526,
+          "max": 828.5409917009999
+        },
+        "resourceEstimateMicros": {
+          "count": 2,
+          "mean": 299502.5,
+          "min": 298807,
+          "max": 300198
+        }
+      }
+    },
+    "pairedPerformance": [
+      {
+        "baseline": "long-a-1",
+        "candidate": "long-b-1",
+        "block": 1,
+        "workerSourceBuildMatch": false,
+        "gpuIdentityMatch": true,
+        "wallSeconds": null,
+        "wallSecondsExclusionReasons": [
+          "activity_retry_contaminated",
+          "worker_source_build_mismatch"
+        ],
+        "functionSeconds": {
+          "baseline": 892.007858453,
+          "candidate": 719.077262399,
+          "candidateMinusBaseline": -172.93059605400003,
+          "reductionPercent": 19.386667327562762
+        },
+        "resourceEstimateMicros": {
+          "baseline": 276452,
+          "candidate": 222858,
+          "candidateMinusBaseline": -53594,
+          "reductionPercent": 19.386367253628116
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-a-1",
+        "candidate": "long-c-1",
+        "block": 1,
+        "workerSourceBuildMatch": false,
+        "gpuIdentityMatch": true,
+        "wallSeconds": null,
+        "wallSecondsExclusionReasons": [
+          "activity_retry_contaminated",
+          "worker_source_build_mismatch"
+        ],
+        "functionSeconds": {
+          "baseline": 892.007858453,
+          "candidate": 688.369296665,
+          "candidateMinusBaseline": -203.63856178800006,
+          "reductionPercent": 22.829234054189648
+        },
+        "resourceEstimateMicros": {
+          "baseline": 276452,
+          "candidate": 249411,
+          "candidateMinusBaseline": -27041,
+          "reductionPercent": 9.781444880123855
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-a-1",
+        "candidate": "long-d-1",
+        "block": 1,
+        "workerSourceBuildMatch": false,
+        "gpuIdentityMatch": true,
+        "wallSeconds": null,
+        "wallSecondsExclusionReasons": [
+          "activity_retry_contaminated",
+          "worker_source_build_mismatch"
+        ],
+        "functionSeconds": {
+          "baseline": 892.007858453,
+          "candidate": 824.701674526,
+          "candidateMinusBaseline": -67.306183927,
+          "reductionPercent": 7.545469839663567
+        },
+        "resourceEstimateMicros": {
+          "baseline": 276452,
+          "candidate": 298807,
+          "candidateMinusBaseline": 22355,
+          "reductionPercent": -8.086394744838163
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-b-1",
+        "candidate": "long-c-1",
+        "block": 1,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 776.5558518330217,
+          "candidate": 777.2029946669936,
+          "candidateMinusBaseline": 0.6471428339718841,
+          "reductionPercent": -0.0833350019118825
+        },
+        "functionSeconds": {
+          "baseline": 719.077262399,
+          "candidate": 688.369296665,
+          "candidateMinusBaseline": -30.707965734000027,
+          "reductionPercent": 4.270468187458952
+        },
+        "resourceEstimateMicros": {
+          "baseline": 222858,
+          "candidate": 249411,
+          "candidateMinusBaseline": 26553,
+          "reductionPercent": -11.914761866300514
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-b-1",
+        "candidate": "long-d-1",
+        "block": 1,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 776.5558518330217,
+          "candidate": 523.5175207499997,
+          "candidateMinusBaseline": -253.03833108302206,
+          "reductionPercent": 32.58469181395486
+        },
+        "functionSeconds": {
+          "baseline": 719.077262399,
+          "candidate": 824.701674526,
+          "candidateMinusBaseline": 105.62441212700003,
+          "reductionPercent": -14.68888221755389
+        },
+        "resourceEstimateMicros": {
+          "baseline": 222858,
+          "candidate": 298807,
+          "candidateMinusBaseline": 75949,
+          "reductionPercent": -34.07954841199329
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-c-1",
+        "candidate": "long-d-1",
+        "block": 1,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 777.2029946669936,
+          "candidate": 523.5175207499997,
+          "candidateMinusBaseline": -253.68547391699394,
+          "reductionPercent": 32.64082558324289
+        },
+        "functionSeconds": {
+          "baseline": 688.369296665,
+          "candidate": 824.701674526,
+          "candidateMinusBaseline": 136.33237786100005,
+          "reductionPercent": -19.805121832350874
+        },
+        "resourceEstimateMicros": {
+          "baseline": 249411,
+          "candidate": 298807,
+          "candidateMinusBaseline": 49396,
+          "reductionPercent": -19.805060723063537
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-a-2",
+        "candidate": "long-b-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 1077.1776217919542,
+          "candidate": 819.8838927500183,
+          "candidateMinusBaseline": -257.2937290419359,
+          "reductionPercent": 23.885914805202805
+        },
+        "functionSeconds": {
+          "baseline": 1012.409831314,
+          "candidate": 756.951508137,
+          "candidateMinusBaseline": -255.458323177,
+          "reductionPercent": 25.23269878221573
+        },
+        "resourceEstimateMicros": {
+          "baseline": 313767,
+          "candidate": 234596,
+          "candidateMinusBaseline": -79171,
+          "reductionPercent": 25.232417685734955
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-a-2",
+        "candidate": "long-c-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 1077.1776217919542,
+          "candidate": 762.1042468330124,
+          "candidateMinusBaseline": -315.0733749589417,
+          "reductionPercent": 29.249899792273528
+        },
+        "functionSeconds": {
+          "baseline": 1012.409831314,
+          "candidate": 695.021765942,
+          "candidateMinusBaseline": -317.388065372,
+          "reductionPercent": 31.349761287883204
+        },
+        "resourceEstimateMicros": {
+          "baseline": 313767,
+          "candidate": 251821,
+          "candidateMinusBaseline": -61946,
+          "reductionPercent": 19.74267529727473
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-a-2",
+        "candidate": "long-d-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 1077.1776217919542,
+          "candidate": 533.6823556669988,
+          "candidateMinusBaseline": -543.4952661249554,
+          "reductionPercent": 50.45549175268013
+        },
+        "functionSeconds": {
+          "baseline": 1012.409831314,
+          "candidate": 828.5409917009999,
+          "candidateMinusBaseline": -183.8688396130001,
+          "reductionPercent": 18.161502775447957
+        },
+        "resourceEstimateMicros": {
+          "baseline": 313767,
+          "candidate": 300198,
+          "candidateMinusBaseline": -13569,
+          "reductionPercent": 4.324546558433488
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-b-2",
+        "candidate": "long-c-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 819.8838927500183,
+          "candidate": 762.1042468330124,
+          "candidateMinusBaseline": -57.77964591700584,
+          "reductionPercent": 7.047296138872043
+        },
+        "functionSeconds": {
+          "baseline": 756.951508137,
+          "candidate": 695.021765942,
+          "candidateMinusBaseline": -61.92974219500002,
+          "reductionPercent": 8.181467574775134
+        },
+        "resourceEstimateMicros": {
+          "baseline": 234596,
+          "candidate": 251821,
+          "candidateMinusBaseline": 17225,
+          "reductionPercent": -7.3424099302630905
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-b-2",
+        "candidate": "long-d-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 819.8838927500183,
+          "candidate": 533.6823556669988,
+          "candidateMinusBaseline": -286.2015370830195,
+          "reductionPercent": 34.907569183126036
+        },
+        "functionSeconds": {
+          "baseline": 756.951508137,
+          "candidate": 828.5409917009999,
+          "candidateMinusBaseline": 71.58948356399992,
+          "reductionPercent": -9.457604984524716
+        },
+        "resourceEstimateMicros": {
+          "baseline": 234596,
+          "candidate": 300198,
+          "candidateMinusBaseline": 65602,
+          "reductionPercent": -27.963818649934357
+        },
+        "actualCostMicros": null
+      },
+      {
+        "baseline": "long-c-2",
+        "candidate": "long-d-2",
+        "block": 2,
+        "workerSourceBuildMatch": true,
+        "gpuIdentityMatch": true,
+        "wallSeconds": {
+          "baseline": 762.1042468330124,
+          "candidate": 533.6823556669988,
+          "candidateMinusBaseline": -228.42189116601367,
+          "reductionPercent": 29.97252568992232
+        },
+        "functionSeconds": {
+          "baseline": 695.021765942,
+          "candidate": 828.5409917009999,
+          "candidateMinusBaseline": 133.51922575899994,
+          "reductionPercent": -19.21079774789991
+        },
+        "resourceEstimateMicros": {
+          "baseline": 251821,
+          "candidate": 300198,
+          "candidateMinusBaseline": 48377,
+          "reductionPercent": -19.210868037216912
+        },
+        "actualCostMicros": null
+      }
+    ],
+    "outputDifferences": [
+      {
+        "case": "long-a-1",
+        "baseline": "long-a-1",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20587,
+        "candidateWords": 20587,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      },
+      {
+        "case": "long-a-2",
+        "baseline": "long-a-2",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20588,
+        "candidateWords": 20588,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      },
+      {
+        "case": "long-b-1",
+        "baseline": "long-a-1",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20587,
+        "candidateWords": 20587,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      },
+      {
+        "case": "long-b-2",
+        "baseline": "long-a-2",
+        "sameLanguage": true,
+        "sameTokens": false,
+        "referenceWords": 20588,
+        "candidateWords": 20587,
+        "comparisonLimit": "word-index timing and speaker comparison requires identical tokens"
+      },
+      {
+        "case": "long-c-1",
+        "baseline": "long-a-1",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20587,
+        "candidateWords": 20587,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      },
+      {
+        "case": "long-c-2",
+        "baseline": "long-a-2",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20588,
+        "candidateWords": 20588,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      },
+      {
+        "case": "long-d-1",
+        "baseline": "long-a-1",
+        "sameLanguage": true,
+        "sameTokens": false,
+        "referenceWords": 20587,
+        "candidateWords": 20588,
+        "comparisonLimit": "word-index timing and speaker comparison requires identical tokens"
+      },
+      {
+        "case": "long-d-2",
+        "baseline": "long-a-2",
+        "sameLanguage": true,
+        "sameTokens": true,
+        "referenceWords": 20588,
+        "candidateWords": 20588,
+        "changedWordTimingCount": 0,
+        "rawSpeakerDifferenceCount": 0,
+        "speakerDifferencesAfterBestLabelPermutation": 0
+      }
+    ],
+    "exactOutputEquivalenceGate": {
+      "eligible": false,
+      "scope": "language, token sequence, word timing fields, and speaker partition modulo labels",
+      "interpretation": "compatibility gate for this controlled experiment, not transcription accuracy"
+    },
+    "screeningRule": {
+      "allEightTerminalReportsRequired": true,
+      "minimumPairedWallReductionPercent": 10,
+      "maximumResourceEstimateIncreasePercent": 10,
+      "cpuEightMustBreakEvenAgainstCpuFour": true,
+      "aBasedWallEvidence": "block 2 only; any passing A comparison remains provisional",
+      "actualCostSelectionAvailable": false,
+      "automaticDefaultSelected": false,
+      "humanReviewRequired": true
+    },
+    "screeningCandidates": [
+      {
+        "baselineVariant": "A",
+        "candidateVariant": "B",
+        "eligibleBlocks": [
+          2
+        ],
+        "provisionalOneCleanPair": true,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      },
+      {
+        "baselineVariant": "A",
+        "candidateVariant": "C",
+        "eligibleBlocks": [
+          2
+        ],
+        "provisionalOneCleanPair": true,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      },
+      {
+        "baselineVariant": "A",
+        "candidateVariant": "D",
+        "eligibleBlocks": [
+          2
+        ],
+        "provisionalOneCleanPair": true,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      },
+      {
+        "baselineVariant": "B",
+        "candidateVariant": "C",
+        "eligibleBlocks": [
+          1,
+          2
+        ],
+        "provisionalOneCleanPair": false,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "block_1_resource_estimate_exceeds_breakeven",
+          "block_1_wall_reduction_below_10_percent",
+          "block_2_resource_estimate_exceeds_breakeven",
+          "block_2_wall_reduction_below_10_percent",
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      },
+      {
+        "baselineVariant": "B",
+        "candidateVariant": "D",
+        "eligibleBlocks": [
+          1,
+          2
+        ],
+        "provisionalOneCleanPair": false,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "block_1_resource_estimate_exceeds_breakeven",
+          "block_2_resource_estimate_exceeds_breakeven",
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      },
+      {
+        "baselineVariant": "C",
+        "candidateVariant": "D",
+        "eligibleBlocks": [
+          1,
+          2
+        ],
+        "provisionalOneCleanPair": false,
+        "meetsPredeclaredScreeningRule": false,
+        "reasons": [
+          "block_1_resource_estimate_exceeds_10_percent_limit",
+          "block_2_resource_estimate_exceeds_10_percent_limit",
+          "exact_language_token_timing_and_speaker_partition_gate_failed"
+        ]
+      }
+    ],
+    "operationalFacts": {
+      "DPeakConcurrentL4s": 2,
+      "DTotalGpuStageInvocations": 3,
+      "DInterpretation": "parallel wall time must be considered with summed resource estimate; provider app/hour billing cannot separate C from D"
+    },
+    "analysisLimits": [
+      "activity-retry-contaminated wall time is excluded while complete GPU envelopes remain",
+      "worker build mismatches exclude wall pairs and remain explicit in case identities",
+      "progress callback/publish time is not subtracted from function time or treated as speedup",
+      "output equivalence is a compatibility gate and does not prove transcription accuracy",
+      "no actual-cost winner is available without complete per-case provider billing",
+      "no default is selected automatically; a passing screen still requires human review"
+    ]
+  },
+  "billing": {
+    "format": "temnia-speech-billing-summary/1",
+    "date": "2026-09-09",
+    "requestedIntervalStartUtc": "2026-09-09T00:00:00Z",
+    "requestedIntervalEndUtcExclusive": "2026-09-09T07:00:00Z",
+    "rowCount": 41,
+    "byVariantUsd": {
+      "B": "0.51064727",
+      "C+D": "1.22273983",
+      "A": "0.36514462",
+      "preparation/probes": "0.00225997"
+    },
+    "totalReportedUsd": "2.10079169",
+    "rawReportSha256": "758021823b7c7cbd80e6105d9f744aa9cd5d9c70a054df90971dabeac1818ee6",
+    "completeExperimentBilling": false,
+    "perAttemptAttributionAvailable": false,
+    "basis": "Provider reported app/hour/resource usage before credits or reservations; partial interval excludes final A2 work after 07:00 UTC; C and D share an application. No ledger cost reconciled."
+  },
+  "proofSha256": {
+    "analysis-results.json": "453fd9d1ac8b9e4eec188c5a808ed6ffbd6fecb8174e89cb848edd544b9bfb37",
+    "analyze-results.py": "7e3021ea738f45dcf99e1367bd5144d028fd35a6d2a8a9a5040bae93b65bef09",
+    "selection-rules.json": "f5fff07dac38f620752e520fb64a912545d29c80e4ff9115eb824c52c4bfce20",
+    "selection-rules.pre-bd-amendment.json": "aea2c292ea63951e9b4654f32d135c79b7a7d10539916015e03c9140ecd5dbbd",
+    "live/experiment.json": "24280079087db21f9052018af688d318c25839ee9e9c6d0fdf2c95804f07edb5",
+    "live/summary.json": "1d14a85be3d0d04e4717c75c53c40571a4cb26016c61329af30786f16e9988ef",
+    "billing-summary-0700.json": "2f0b052df17de13d117946e78df2813d5640f68a0a89081eb4309ab06266d3b8",
+    "independentOutputComparison": "435d3f515a5dde4314404e8e2a72f908396e2bd60309be7855ccf7b79c6d6b09",
+    "finalEvidenceHelper": "afc1b5ada1ca4bd1623ddf01d8090ea9b8bd345c7b7656efe6d6d17c8dec8c32"
+  },
+  "limits": [
+    "One repeated English recording; no held-out source or language quality claim.",
+    "Short A wall is separate CPU-only recovery, not original physical GPU latency.",
+    "Exact output equality failed; no candidate selected or default promoted.",
+    "Per-attempt actual charges remain unknown and reservations retained.",
+    "Benchmark worker aba6d93 predates separate accepted-download and route-capacity startup fixes."
+  ],
+  "evidenceArchive": {
+    "manifestSha256": "004dccb3b4df3723de6921e49e5058826ba22489108c2e38d0a4096ee3cce953",
+    "fileCount": 159,
+    "objectCount": 132,
+    "physicalAttemptCount": 36,
+    "workflowIdCount": 12,
+    "workflowExecutionCount": 13,
+    "sourcePrefixCount": 12,
+    "retainedUnknownCost": true,
+    "databaseSha256": "9ec92944d2161e584b46bbe87f07bdc2ca4f6dc60d7aa81f605defc48ac0d252",
+    "archiveIncludes": "Exact scoped rows, full terminal Temporal histories, terminal Modal results, admissions/checkpoints/coverage/transcripts; two frozen source-media inputs retained privately and proven by SHA/size instead of duplicated."
+  },
+  "cleanup": {
+    "complete": true,
+    "receiptSha256": "2e2a4d89f093cf75dd6cc9ddbf3487445550e3715acffd7438dc56ac11cd20a5",
+    "evidenceManifestSha256": "004dccb3b4df3723de6921e49e5058826ba22489108c2e38d0a4096ee3cce953",
+    "stoppedGpuApps": 3,
+    "remainingAppTasks": 0,
+    "deletedModelVolumes": 1,
+    "previousModelVolumeStillAbsent": true,
+    "removedExactProgressKeys": 36,
+    "sharedProgressDictionaryPreserved": true,
+    "deletedSourcePrefixes": 12,
+    "deletedObjects": 132,
+    "dedicatedDatabaseAbsent": true,
+    "dedicatedTemporalNamespaceAbsent": true,
+    "temporaryCredentialFilesRemoved": true,
+    "sourceInputsAndEvidenceRetained": true,
+    "unknownCostsRetained": true,
+    "historicalPreparationAppsMutated": false,
+    "sharedStagingChanged": false,
+    "stepReceiptSha256": {
+      "01-apps.json": "ec37e65749114703bd1aa36802d463967f0dc782631a7eb74788449fdab1fcd3",
+      "02-volume.json": "a8eda788d6bf5d7d440fe4df98ae17b92ae9f4c41cdc05305781b63a3a5b2c33",
+      "03-progress.json": "40dd5316214eae7952438383377c16dcfd6c99729b346b3c46c3eb58adab9cd5",
+      "04-prefixes.json": "296c55fbecbee25fa49984856cf8c01c6bc999c7f3f9c7f2f48a593201e4efae",
+      "05-namespace.json": "d19ca846bf2b53e3d5e37f187bad00bd17065017bbaeaf8891c0abd086460e25",
+      "06-database.json": "4b7fbf787ab1f413bc325787e97144e35609b1c1b3d8367d2c4cf87d1d380079"
+    }
+  }
+}

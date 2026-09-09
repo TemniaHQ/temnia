@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,19 +19,21 @@ from temnia_pipeline.harness.routes import (
 )
 from temnia_pipeline.harness.settings import HarnessSettings
 
-if TYPE_CHECKING:
-    from pathlib import Path
 
-
-def route() -> RouteEntry:
+def route(
+    *,
+    route_id: str = "synthetic-route",
+    context_tokens: int = 20_000,
+    max_output_tokens: int = 8192,
+) -> RouteEntry:
     return RouteEntry(
-        id="synthetic-route",
-        gateway_model="synthetic/model",
-        family="synthetic-family",
+        id=route_id,
+        gateway_model=f"synthetic/{route_id}",
+        family=f"synthetic-family-{route_id}",
         provider="synthetic-provider",
         open_weight=True,
-        context_tokens=20_000,
-        max_output_tokens=8192,
+        context_tokens=context_tokens,
+        max_output_tokens=max_output_tokens,
         eligibility=RouteEligibility(
             zero_data_retention=True,
             strict_json_schema=True,
@@ -41,20 +44,24 @@ def route() -> RouteEntry:
     )
 
 
-def snapshot(*, seats: bool = True) -> RouteSnapshot:
-    routes = (route(),)
+def snapshot(
+    *,
+    seats: bool = True,
+    routes: tuple[RouteEntry, ...] | None = None,
+    seat_route_ids: tuple[str, ...] | None = None,
+    synthetic: bool = True,
+) -> RouteSnapshot:
+    routes = routes or (route(),)
+    route_ids = seat_route_ids or tuple(item.id for item in routes)
     seat_map = (
-        {
-            name: SeatRoutePool(route_ids=("synthetic-route",))
-            for name in ("propose", "summary", "verify")
-        }
+        {name: SeatRoutePool(route_ids=route_ids) for name in ("propose", "summary", "verify")}
         if seats
         else {}
     )
     payload: dict[str, Any] = {
         "routes": [item.model_dump(mode="json") for item in routes],
         "seats": {key: value.model_dump(mode="json") for key, value in seat_map.items()},
-        "synthetic": True,
+        "synthetic": synthetic,
         "version": 1,
     }
     digest = hashlib.sha256(
@@ -65,7 +72,7 @@ def snapshot(*, seats: bool = True) -> RouteSnapshot:
         snapshot_id=digest,
         routes=routes,
         seats=seat_map,
-        synthetic=True,
+        synthetic=synthetic,
     )
 
 
@@ -115,3 +122,101 @@ def test_enabled_snapshot_requires_every_workflow_seat(tmp_path: Path) -> None:
     write_snapshot(path, value)
     with pytest.raises(RuntimeError, match="propose, summary, verify"):
         HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
+
+
+@pytest.mark.parametrize(
+    ("routes", "invalid_route_id"),
+    [
+        (
+            (
+                route(route_id="primary", max_output_tokens=4096),
+                route(route_id="failover"),
+            ),
+            "primary",
+        ),
+        (
+            (
+                route(route_id="primary"),
+                route(route_id="failover", max_output_tokens=4096),
+            ),
+            "failover",
+        ),
+    ],
+)
+def test_required_route_output_capacity_is_checked_at_boot(
+    tmp_path: Path,
+    routes: tuple[RouteEntry, ...],
+    invalid_route_id: str,
+) -> None:
+    value = snapshot(routes=routes)
+    path = tmp_path / "routes.json"
+    write_snapshot(path, value)
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"route '{invalid_route_id}'.*HARNESS_MAX_OUTPUT_TOKENS=8192",
+    ):
+        HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
+
+
+def test_gateway_checks_failover_route_output_capacity(tmp_path: Path) -> None:
+    value = snapshot(
+        routes=(
+            route(route_id="primary"),
+            route(route_id="failover", max_output_tokens=4096),
+            route(route_id="third"),
+        ),
+        synthetic=False,
+    )
+    path = tmp_path / "routes.json"
+    write_snapshot(path, value)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"route 'failover'.*HARNESS_MAX_OUTPUT_TOKENS=8192",
+    ):
+        HarnessSettings.from_env(env(path, value, "gateway")).validate_boot()
+
+
+def test_required_route_needs_headroom_for_a_nonempty_request(tmp_path: Path) -> None:
+    value = snapshot(routes=(route(context_tokens=16_384),))
+    path = tmp_path / "routes.json"
+    write_snapshot(path, value)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"route 'synthetic-route'.*HARNESS_MAX_OUTPUT_TOKENS=8192",
+    ):
+        HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
+
+
+def test_exact_minimum_route_capacity_is_valid(tmp_path: Path) -> None:
+    value = snapshot(
+        routes=(
+            route(context_tokens=16_385),
+            route(route_id="unreferenced", max_output_tokens=4096),
+        ),
+        seat_route_ids=("synthetic-route",),
+    )
+    path = tmp_path / "routes.json"
+    write_snapshot(path, value)
+
+    assert HarnessSettings.from_env(env(path, value, "recorded")).validate_boot() == value
+
+
+def test_committed_recorded_snapshot_has_valid_capacity() -> None:
+    fixture_dir = Path(__file__).parent / "fixtures" / "harness"
+    route_path = fixture_dir / "routes.synthetic.json"
+    value = json.loads(route_path.read_text())
+    settings = HarnessSettings.from_env(
+        {
+            "HARNESS_ALLOW_RECORDED": "1",
+            "HARNESS_BACKEND": "recorded",
+            "HARNESS_ENABLED": "1",
+            "HARNESS_RECORDED_FIXTURE_PATH": str(fixture_dir / "chapter.synthetic.json"),
+            "HARNESS_ROUTE_SNAPSHOT_ID": value["snapshot_id"],
+            "HARNESS_ROUTE_SNAPSHOT_PATH": str(route_path),
+        }
+    )
+
+    assert settings.validate_boot() is not None

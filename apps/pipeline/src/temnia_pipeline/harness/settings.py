@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from temnia_pipeline.contracts import Backend, ChapterRunConfig
-from temnia_pipeline.harness.routes import RouteSnapshot, load_route_snapshot
+from temnia_pipeline.harness.routes import (
+    ContextWindowExceeded,
+    RouteSnapshot,
+    estimate_cost,
+    load_route_snapshot,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -163,4 +168,21 @@ class HarnessSettings:
                 "route snapshot is missing required harness seats: "
                 f"{', '.join(sorted(missing_seats))}"
             )
+        required_route_ids = {
+            route_id for seat in REQUIRED_ROUTE_SEATS for route_id in snapshot.seats[seat].route_ids
+        }
+        for route in snapshot.routes:
+            if route.id not in required_route_ids:
+                continue
+            try:
+                estimate_cost(
+                    route,
+                    payload_bytes=1,
+                    max_output_tokens=self.max_output_tokens,
+                )
+            except (ContextWindowExceeded, ValueError) as error:
+                raise RuntimeError(
+                    f"route {route.id!r} cannot honor "
+                    f"HARNESS_MAX_OUTPUT_TOKENS={self.max_output_tokens} with protocol headroom"
+                ) from error
         return snapshot

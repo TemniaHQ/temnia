@@ -23,6 +23,7 @@ import {
   reviewChapterCommand,
   startChapterRun,
 } from "@/app/actions/chapters";
+import { AcceptedChapterDownloads } from "@/components/sources/accepted-chapter-downloads";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -546,17 +547,6 @@ export function ChapterPanel({
       ),
     [view.acceptedEdit, view.artifacts, view.currentEdit]
   );
-  const acceptedArtifacts = useMemo(
-    () =>
-      !view.acceptedEdit || view.currentEdit?.id === view.acceptedEdit.id
-        ? []
-        : view.artifacts.filter(
-            (artifact) =>
-              artifact.metadata.editSha256 === view.acceptedEdit?.sha256
-          ),
-    [view.acceptedEdit, view.artifacts, view.currentEdit?.id]
-  );
-
   useEffect(() => {
     if (descriptorCheckState === "loading") {
       setCheckState("loading");
@@ -1343,22 +1333,17 @@ export function ChapterPanel({
             : "The durable run has not published an edit yet."}
         </p>
       )}
-      {relatedArtifacts.map((artifact) => (
-        <a
-          aria-disabled={checkState !== "pass" && artifact.kind === "export"}
-          className="block text-sm underline aria-disabled:pointer-events-none aria-disabled:opacity-50"
-          href={
-            checkState !== "pass" && artifact.kind === "export"
-              ? undefined
-              : artifact.url
-          }
-          key={artifact.id}
-        >
-          {artifact.kind === "export"
-            ? "Export accepted files"
-            : `Open ${artifact.kind}`}
-        </a>
-      ))}
+      {relatedArtifacts
+        .filter((artifact) => artifact.kind !== "export")
+        .map((artifact) => (
+          <a
+            className="block text-sm underline"
+            href={artifact.url}
+            key={artifact.id}
+          >
+            {`Open ${artifact.kind}`}
+          </a>
+        ))}
       {renders.map((render) => (
         <div className="space-y-2" key={render.sectionId}>
           <p className="font-medium text-sm">
@@ -1385,22 +1370,7 @@ export function ChapterPanel({
           </VideoPlayer>
         </div>
       ))}
-      {acceptedArtifacts.length > 0 ? (
-        <div className="space-y-1">
-          <p className="font-medium text-sm">Last accepted output</p>
-          {acceptedArtifacts.map((artifact) => (
-            <a
-              className="block text-sm underline"
-              href={artifact.url}
-              key={artifact.id}
-            >
-              {artifact.kind === "export"
-                ? "Export accepted files"
-                : `Open accepted ${artifact.kind}`}
-            </a>
-          ))}
-        </div>
-      ) : null}
+      <AcceptedChapterDownloads sourceId={sourceId} view={view} />
       {view.events.slice(0, 5).map((event) => (
         <p className="text-muted-foreground text-xs" key={event.mutationKey}>
           {event.action} · {event.state}

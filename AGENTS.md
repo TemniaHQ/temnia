@@ -507,6 +507,35 @@ retains the failed-validation record and exposure without rerunning that source.
 cases use the corrected worker build and unchanged GPU/model builds; block-one comparisons requiring
 the excluded A wall time remain unavailable. No additional repetition or budget is inferred.
 
+**2026-09-09 — Accepted exports must offer the actual media, with their revision intact.** Manual
+handoff review found that “Export accepted files” opened only the internal JSON manifest. Keep that
+manifest as the durable export contract and present chapter video/caption downloads from its exact
+accepted edit, including after later edits or cancellation. Same-origin downloads through the existing
+scoped streaming proxy avoid buffering multi-hour media into a browser or server ZIP. Validate the
+accepted source/run/revision/hash, complete keep set and required checks before exposing links; titles
+come from the accepted edit, never the current draft. Missing/corrupt evidence gets an explicit read
+retry. The manifest remains separately downloadable; no new rendering or model call is needed.
+The plan is `docs/plans/chapter-downloads-360-view.md`; the local product pass is documented in
+`docs/runbooks/chapter-harness-manual-testing.md`.
+
+**2026-09-09 — Every required-seat route must fit the worker's configured output capacity at boot.**
+A valid snapshot alone did not ensure that every proposal, summary and verifier candidate could
+honor `HARNESS_MAX_OUTPUT_TOKENS`. Reject an enabled worker before it polls if any referenced route
+has a lower maximum or lacks context beyond the output cap plus the shared protocol allowance.
+This includes later failover candidates. Keep dynamic prompt-size checks; do not silently clamp
+the configured cap or remove a candidate from an immutable snapshot. Disabled workers are unchanged.
+Plan: `docs/plans/harness-route-capacity-360-view.md`.
+
+
+**2026-09-09 — The controlled speech screen selects no new configuration.** The twelve-case,
+36-call fixed experiment completed on one 151-minute English recording. Coalesced serial progress
+reduced the one clean synchronous wall comparison by 23.89%; parallel speaker detection reached
+about 8.8 minutes but raised estimated resources versus coalesced serial. The exact-output gate
+failed: two recognized-text families occurred, including different outputs across repeated identical
+serial configuration. Do not relax that predeclared rule or promote a default from these numbers.
+Future selection needs prospective quality tolerances/listening, additional sources and attributable
+billing. The report, exact exclusions and identities are in
+`docs/design/checkpointed-speech-optimization-2026-09-09.md`; shared staging is unchanged.
 
 ## Working rules (S0, 2026-09-06)
 

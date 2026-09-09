@@ -5,6 +5,8 @@ This is an operating procedure, not deployment evidence. The
 [implementation status](../design/harness-implementation-status-2026-09-08.md) records what has
 actually passed. Shared staging remains `main`; merge and deployment are separate from running
 the isolated qualification. Use the [staging runbook](staging.md) for services and access.
+For a local product pass with recorded responses, use the
+[manual-testing walkthrough](chapter-harness-manual-testing.md).
 
 ## Deploy the schema and worker together
 
@@ -173,6 +175,9 @@ set `HARNESS_ROUTE_SNAPSHOT_PATH` and `AI_GATEWAY_API_KEY` only on the worker. T
 that key. Enable `HARNESS_ENABLED=1` only after the worker boots successfully. Config mismatches
 refuse run creation; changing a route requires a new immutable snapshot and deliberate rollout.
 Already persisted runs retain their original configuration rather than silently adopting a new model.
+Every candidate in all three required seats must support `HARNESS_MAX_OUTPUT_TOKENS` and leave context
+space beyond that cap plus the protocol allowance. The worker refuses incompatible snapshots at boot;
+actual prompt sizes still receive their own checks. Match all harness caps on web and worker.
 
 The recorded gate backend requires `HARNESS_BACKEND=recorded`, `HARNESS_ALLOW_RECORDED=1`, an
 explicit synthetic route snapshot and `HARNESS_RECORDED_FIXTURE_PATH`. The UI labels it as a test
@@ -225,3 +230,9 @@ uv run --frozen temnia-harness report --bundle run-bundle.json --output run-repo
 Synthetic and cassette-replayed attempts are separate from live spend. Missing labels, correction
 timing, unknown charges and absent results remain unmeasured. A single run cannot choose a model
 winner. Preserve source-level tuning/test separation when adding human boundary labels.
+
+In the review UI, accepted video and caption downloads are tied to the accepted edit revision. A newer
+draft or cancelled replacement keeps **Last accepted output** available. The separate **Download
+manifest** link is the structured export contract, not a ZIP archive. The UI verifies the accepted
+edit, manifest and required technical checks before offering the files; missing or invalid evidence
+shows a readable failure and an explicit read retry.
