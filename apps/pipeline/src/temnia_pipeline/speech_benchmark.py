@@ -488,6 +488,69 @@ async def database_resume_lease(
         await connection.close()
 
 
+@asynccontextmanager
+async def database_continuation_lease(
+    database_url: str,
+    *,
+    organization_id: UUID,
+    experiment_id: str,
+    cases: Sequence[BenchmarkCase],
+) -> AsyncGenerator[None]:
+    """Hold the experiment lock and bind every admitted transcript to its journal case."""
+    connection = cast(
+        "AsyncConnection[dict[str, Any]]",
+        await AsyncConnection.connect(
+            database_url,
+            row_factory=cast("Any", dict_row),
+            autocommit=True,
+        ),
+    )
+    first_key, second_key = _advisory_keys(experiment_id)
+    acquired = False
+    try:
+        lock = await (
+            await connection.execute(
+                "SELECT pg_try_advisory_lock(%s, %s) AS acquired",
+                (first_key, second_key),
+            )
+        ).fetchone()
+        if lock is None or lock["acquired"] is not True:
+            raise RuntimeError("benchmark experiment is already running against this database")
+        acquired = True
+        workflow_prefix = f"speech-benchmark-{experiment_id}-%"
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.organization_id', %s, true)",
+                (str(organization_id),),
+            )
+            rows = await (
+                await connection.execute(
+                    """
+                    SELECT source_id, workflow_id
+                      FROM transcript
+                     WHERE workflow_id LIKE %s
+                     ORDER BY workflow_id
+                     LIMIT 13
+                    """,
+                    (workflow_prefix,),
+                )
+            ).fetchall()
+        expected = {
+            (case.source_id, case.workflow_id) for case in cases if case.status != "planned"
+        }
+        actual = {(row["source_id"], row["workflow_id"]) for row in rows}
+        if len(rows) > EXPECTED_CASES or actual != expected or len(actual) != len(rows):
+            raise ValueError("benchmark continuation database identities differ from its journal")
+        yield
+    finally:
+        if acquired:
+            with suppress(Exception):
+                await connection.execute(
+                    "SELECT pg_advisory_unlock(%s, %s)", (first_key, second_key)
+                )
+        await connection.close()
+
+
 def build_journal(
     *,
     experiment_id: str,
@@ -613,6 +676,106 @@ def validate_cache_only_recovery_journal(
         expected_prefix = f"org/{organization_id}/source/{case.source_id}/"
         if case.object_prefix != expected_prefix:
             raise ValueError("benchmark recovery object prefix differs from its admitted source")
+
+
+def validate_completed_long_a_journal(
+    journal: BenchmarkJournal,
+    *,
+    organization_id: UUID,
+    manifest: BenchmarkDeploymentManifest,
+    previous_worker_source_build_id: str,
+) -> None:
+    """Validate the one reviewed completed-but-rejected long-A experiment state."""
+    if journal.deployment_manifest_sha256 != manifest.sha256:
+        raise ValueError("completed long-A manifest differs from its admitted journal")
+    expected_statuses: tuple[tuple[CaseStatus, str | None], ...] = (
+        ("completed", "UndefinedColumn"),
+        ("completed", None),
+        ("completed", None),
+        ("completed", None),
+        ("failed", "ValueError"),
+        ("planned", None),
+        ("planned", None),
+        ("planned", None),
+        ("planned", None),
+        ("planned", None),
+        ("planned", None),
+        ("planned", None),
+    )
+    if tuple((case.status, case.error_type) for case in journal.cases) != expected_statuses:
+        raise ValueError("completed long-A journal cases differ from the reviewed failure")
+    if (
+        journal.reserved_exposure_micros != 5_652_507
+        or journal.reserved_dispatches != 15
+        or journal.initial_worker_source_build_id != manifest.source_build_id
+        or journal.worker_source_build_id != previous_worker_source_build_id
+    ):
+        raise ValueError("completed long-A admission counters or build identities changed")
+    variants = {variant.id: variant for variant in manifest.variants}
+    for case in journal.cases:
+        if case.configured_exposure_micros != variants[case.variant_id].case_exposure_micros:
+            raise ValueError("completed long-A case exposure differs from its manifest")
+        if case.workflow_id != f"speech-benchmark-{journal.experiment_id}-{case.key}":
+            raise ValueError("completed long-A workflow id differs from its admitted case")
+        if case.object_prefix != f"org/{organization_id}/source/{case.source_id}/":
+            raise ValueError("completed long-A object prefix differs from its admitted source")
+
+
+def acknowledge_completed_long_a(
+    path: Path,
+    *,
+    expected_journal_sha256: str,
+    previous_worker_source_build_id: str,
+    worker_source_build_id: str,
+    lease: ExperimentLease,
+) -> BenchmarkJournal:
+    """Accept the exact completed long-A evidence without changing prior exposure."""
+    lease.assert_held()
+    body = path.read_bytes()
+    if hashlib.sha256(body).hexdigest() != expected_journal_sha256:
+        raise ValueError("completed long-A journal bytes changed before acknowledgment")
+    journal = BenchmarkJournal.model_validate_json(body, strict=True)
+    if lease.experiment_id != journal.experiment_id:
+        raise ValueError("benchmark lease and journal name different experiments")
+    target = journal.cases[4]
+    if (
+        target.key != "long-a-1"
+        or target.status != "failed"
+        or target.error_type != "ValueError"
+        or journal.worker_source_build_id != previous_worker_source_build_id
+    ):
+        raise ValueError("completed long-A acknowledgment found an unreviewed journal state")
+    cases = tuple(
+        case.model_copy(update={"status": "completed"}) if case.key == target.key else case
+        for case in journal.cases
+    )
+    updated = journal.model_copy(
+        update={"worker_source_build_id": worker_source_build_id, "cases": cases}
+    )
+    _write_private(path, updated.model_dump(mode="json", by_alias=True))
+    return updated
+
+
+def validate_completed_long_a_transform(
+    *,
+    original: BenchmarkJournal,
+    current: BenchmarkJournal,
+    worker_source_build_id: str,
+) -> None:
+    """Permit only the durable completion acknowledgment on reentry."""
+    expected = original.model_copy(
+        update={
+            "worker_source_build_id": worker_source_build_id,
+            "cases": tuple(
+                case.model_copy(update={"status": "completed"}) if case.key == "long-a-1" else case
+                for case in original.cases
+            ),
+        }
+    )
+    if canonical_json(current.model_dump(mode="json", by_alias=True)) != canonical_json(
+        expected.model_dump(mode="json", by_alias=True)
+    ):
+        raise ValueError("completed long-A journal contains an unreviewed mutation")
 
 
 def reserve_case(path: Path, case_key: str, *, lease: ExperimentLease) -> BenchmarkJournal:
@@ -951,9 +1114,38 @@ def benchmark_summary(  # noqa: C901, PLR0912, PLR0915
             after_function = after_case.get("functionElapsedSeconds")
             if not all(
                 isinstance(value, int | float) and not isinstance(value, bool)
-                for value in (before_wall, after_wall, before_function, after_function)
+                for value in (before_function, after_function)
             ):
                 raise ValueError("benchmark summary lacks finite timing facts")
+            before_wall_status = before_case.get("wallTimingStatus", "usable")
+            after_wall_status = after_case.get("wallTimingStatus", "usable")
+            wall_usable = before_wall_status == after_wall_status == "usable"
+            if wall_usable and not all(
+                isinstance(value, int | float) and not isinstance(value, bool)
+                for value in (before_wall, after_wall)
+            ):
+                raise ValueError("benchmark summary lacks finite wall timing facts")
+            if before_wall_status not in {"usable", "activity_retry_contaminated"} or (
+                after_wall_status not in {"usable", "activity_retry_contaminated"}
+            ):
+                raise ValueError("benchmark summary has an unsupported wall timing status")
+            if not wall_usable:
+                latency_staircase.append(
+                    {
+                        "block": block,
+                        "from": before,
+                        "to": after,
+                        "wallSecondsBefore": None,
+                        "wallSecondsAfter": None,
+                        "wallDeltaSeconds": None,
+                        "wallChangePercent": None,
+                        "wallTimingStatus": "unavailable",
+                        "wallTimingReason": "activity_retry_contaminated",
+                        "functionSecondsBefore": float(cast("int | float", before_function)),
+                        "functionSecondsAfter": float(cast("int | float", after_function)),
+                    }
+                )
+                continue
             before_wall_float = float(cast("int | float", before_wall))
             after_wall_float = float(cast("int | float", after_wall))
             latency_staircase.append(
@@ -969,6 +1161,8 @@ def benchmark_summary(  # noqa: C901, PLR0912, PLR0915
                         if before_wall_float > 0
                         else None
                     ),
+                    "wallTimingStatus": "usable",
+                    "wallTimingReason": None,
                     "functionSecondsBefore": float(cast("int | float", before_function)),
                     "functionSecondsAfter": float(cast("int | float", after_function)),
                 }

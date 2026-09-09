@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import uuid
@@ -13,6 +14,7 @@ from temnia_pipeline.speech_benchmark import (
     EXPERIMENT_DISPATCH_CAP,
     BenchmarkDeploymentManifest,
     BenchmarkVariant,
+    acknowledge_completed_long_a,
     assert_benchmark_environment,
     assert_case_completed,
     begin_cache_only_recovery,
@@ -27,6 +29,8 @@ from temnia_pipeline.speech_benchmark import (
     reserve_case,
     resume_experiment_lease,
     validate_cache_only_recovery_journal,
+    validate_completed_long_a_journal,
+    validate_completed_long_a_transform,
 )
 
 if TYPE_CHECKING:
@@ -430,3 +434,119 @@ def test_summary_compares_private_identities_and_withholds_unknown_cost_winner()
     assert len(cast("list[object]", summary["latencyStaircase"])) == 6
     differences = cast("list[dict[str, object]]", summary["outputDifferencesVsA"])
     assert all(all(cast("dict[str, bool]", item["same"]).values()) for item in differences)
+
+
+def test_completed_long_a_acknowledgment_preserves_admission_and_only_advances_case(
+    tmp_path: Path,
+) -> None:
+    manifest = deployment_manifest()
+    organization_id = uuid.uuid4()
+    journal = build_journal(
+        experiment_id="bench-completed-20260909",
+        organization_id=organization_id,
+        manifest=manifest,
+    )
+    cases = tuple(
+        case.model_copy(
+            update={
+                "status": "completed" if index < 4 else "failed",
+                "error_type": (
+                    "UndefinedColumn" if index == 0 else "ValueError" if index == 4 else None
+                ),
+            }
+        )
+        if index <= 4
+        else case
+        for index, case in enumerate(journal.cases)
+    )
+    failed = journal.model_copy(
+        update={
+            "reserved_exposure_micros": 5_652_507,
+            "reserved_dispatches": 15,
+            "worker_source_build_id": "d" * 64,
+            "cases": cases,
+        }
+    )
+    validate_completed_long_a_journal(
+        failed,
+        organization_id=organization_id,
+        manifest=manifest,
+        previous_worker_source_build_id="d" * 64,
+    )
+    path = tmp_path / "experiment.json"
+    lock_root = tmp_path / "locks"
+    with experiment_lease(failed.experiment_id, lock_root=lock_root) as lease:
+        lease.mark_admitted(journal_path=path, manifest_sha256=manifest.sha256)
+        initialize_journal(path, failed, lease=lease)
+    failed_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    with resume_experiment_lease(
+        failed.experiment_id,
+        journal_path=path,
+        manifest_sha256=manifest.sha256,
+        lock_root=lock_root,
+    ) as lease:
+        completed = acknowledge_completed_long_a(
+            path,
+            expected_journal_sha256=failed_sha,
+            previous_worker_source_build_id="d" * 64,
+            worker_source_build_id="e" * 64,
+            lease=lease,
+        )
+    assert completed.reserved_exposure_micros == 5_652_507
+    assert completed.reserved_dispatches == 15
+    assert completed.cases[4].status == "completed"
+    assert completed.cases[4].error_type == "ValueError"
+    assert all(case.status == "planned" for case in completed.cases[5:])
+    validate_completed_long_a_transform(
+        original=failed,
+        current=completed,
+        worker_source_build_id="e" * 64,
+    )
+    with pytest.raises(ValueError, match="unreviewed mutation"):
+        validate_completed_long_a_transform(
+            original=failed,
+            current=completed.model_copy(update={"reserved_dispatches": 16}),
+            worker_source_build_id="e" * 64,
+        )
+
+
+def test_summary_withholds_only_contaminated_wall_comparison() -> None:
+    cases: list[dict[str, object]] = []
+    for index, (kind, variant, block) in enumerate(
+        (
+            ("preflight", "A", None),
+            ("preflight", "B", None),
+            ("preflight", "C", None),
+            ("preflight", "D", None),
+            ("long", "A", 1),
+            ("long", "B", 1),
+            ("long", "C", 1),
+            ("long", "D", 1),
+            ("long", "D", 2),
+            ("long", "C", 2),
+            ("long", "B", 2),
+            ("long", "A", 2),
+        )
+    ):
+        cases.append(
+            {
+                "kind": kind,
+                "variant": variant,
+                "block": block,
+                "wallSeconds": None if (kind, variant, block) == ("long", "A", 1) else 100 - index,
+                "wallTimingStatus": (
+                    "activity_retry_contaminated"
+                    if (kind, variant, block) == ("long", "A", 1)
+                    else "usable"
+                ),
+                "functionElapsedSeconds": 90 - index,
+                "outputFacts": {"language": "en", "wordCount": 1, "speakerCount": 1},
+                "costFacts": [{"actualCostMicros": None}] * 3,
+            }
+        )
+    summary = benchmark_summary(cases)
+    staircase = cast("list[dict[str, object]]", summary["latencyStaircase"])
+    assert staircase[0]["wallTimingStatus"] == "unavailable"
+    assert staircase[0]["wallSecondsBefore"] is None
+    assert staircase[0]["functionSecondsBefore"] == 86.0
+    assert all(row["wallTimingStatus"] == "usable" for row in staircase[1:])

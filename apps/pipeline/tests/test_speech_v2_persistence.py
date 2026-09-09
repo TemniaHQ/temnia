@@ -296,6 +296,11 @@ async def test_real_assignment_publication_reuse_assembly_and_settlement(  # noq
 
     monkeypatch.setattr(activities_v2, "report_speech_progress", no_progress)
 
+    def heartbeat(_details: object) -> None:
+        return None
+
+    monkeypatch.setattr("temnia_pipeline.speech.liveness.activity.heartbeat", heartbeat)
+
     instance = SpeechActivitiesV2.__new__(SpeechActivitiesV2)
     instance.ctx = cast(
         "Any",

@@ -116,8 +116,9 @@ the original journal, refuses a second recovery entry and writes an immutable co
 Verify that the new run is
 ready with zero attempts and zero expense, while the original run retains its unresolved costs.
 Only then may the same locked journal admit its remaining planned cases. Record the frozen GPU
-build separately from the corrected worker build, and keep that worker build fixed for all long
-comparisons. A failed or uncertain recovery stops continuation; it never refunds admission capacity.
+build separately from the corrected worker build. A failed or uncertain recovery stops continuation;
+it never refunds admission capacity. A later worker repair must record a new identity and exclude
+affected wall comparisons; never silently treat different workers as the same frozen execution.
 
 If a read-only preflight failed after the recovery marker was recorded but before any workflow
 started, do not reset that marker. The separate `--acknowledge-unstarted-recovery` option takes
@@ -132,6 +133,20 @@ exception. A missing receipt alone never proves that recovery did not start.
 Immediately before requesting a recovery workflow, the driver durably creates a start-intent
 record. Its presence closes the unstarted exception even if a crash loses the start response and
 the new execution is not yet visible. Preserve that record for reconciliation.
+
+The September 9 `long-a-1` case is a different failure: its workflow and transcript are already
+ready, but an unexpected heartbeat retry invalidated the wall measurement. Do not use CPU recovery
+or rerun that workflow. Preserve the failed-validation journal, report, exact Temporal history,
+ledger and output objects; the bounded completed-case continuation revalidates these facts and
+the three terminal calls under both leases before accepting only that existing result. Retain the
+original validation error, reservations and case IDs. Its wall time stays unavailable for rankings,
+while the original complete GPU function telemetry remains usable. Resume only the seven original
+planned cases with the repaired worker build; a changed or unavailable proof refuses continuation.
+Use the original command with `--acknowledge-completed-long-a-1` set to the reviewed failed
+journal SHA-256 and `--worker-source-build-id` set to the newly verified worker fingerprint.
+This option cannot be combined with the earlier CPU-recovery options or dry-run. It validates
+all five earlier summaries before acknowledgment, and reentry requires the exact receipt plus
+a fresh live proof. A later admitted case changes the journal and closes this narrow reentry.
 
 Save every case report, normalized transcript, stage checkpoint, CPU assignment, coverage
 artifact and physical-attempt record before deleting anything. Cancel through Temporal and

@@ -68,6 +68,7 @@ from temnia_pipeline.speech.contracts_v2 import (
     StageV2,
 )
 from temnia_pipeline.speech.coverage import assess_coverage
+from temnia_pipeline.speech.liveness import run_with_activity_heartbeat
 from temnia_pipeline.speech.progress import report_speech_progress
 from temnia_pipeline.transcription import TranscribeRecord
 from temnia_pipeline.transcription.checkpointed import (
@@ -1278,6 +1279,15 @@ class SpeechActivitiesV2(SpeechActivities):
 
     @activity.defn(name="checkpointed_transcribe_v2")
     async def checkpointed_transcribe_v2(
+        self, request: TranscribeInput, plan: TranscriptionPlan
+    ) -> ParallelCheckpointedTranscription:
+        """Run v2 under liveness that also covers its post-provider tail."""
+        return await run_with_activity_heartbeat(
+            lambda: self._checkpointed_transcribe_v2(request, plan),
+            details={"stage": "checkpointed_transcribe_v2"},
+        )
+
+    async def _checkpointed_transcribe_v2(
         self, request: TranscribeInput, plan: TranscriptionPlan
     ) -> ParallelCheckpointedTranscription:
         """Run v2 recognition/alignment and independent speaker turns."""

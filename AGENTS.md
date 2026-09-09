@@ -464,8 +464,21 @@ limits are `docs/plans/speech-optimization-360-view.md`. The first short compari
 missing `speech_assignment` database enum value after all GPU checkpoints were accepted; Drizzle
 adds that artifact kind. Recovery retains the failed run and its costs and reuses accepted evidence
 in a separate run whose budget cannot admit inference. A benchmark continuation preserves its
-original journal and cap, records GPU and worker builds separately, and uses one worker build for
-all long comparisons. Actual assignment and report SQL are exercised against migrated PostgreSQL.
+original journal and cap and records GPU and worker builds separately. Actual assignment and report
+SQL are exercised against migrated PostgreSQL.
+
+**2026-09-09 — Speech liveness covers the whole activity, including checkpoint publication.**
+The first long protocol-2 comparison completed three GPU calls and a CPU assignment, but Temporal
+reported a heartbeat timeout and retried the activity. The retry reused all three results. The CPU
+join itself measured 0.207 seconds on the preserved actual input; asynchronous storage and ledger
+work after polling also need heartbeats. One owned Temporal-only heartbeat spans the whole activity,
+independent of diagnostic database progress. Its lifecycle follows success, failure and cancellation;
+the ten-second timeout and provider cleanup remain. Increasing the timeout or heartbeating only at
+assignment entry leaves the underlying gap. The original long-A wall timing is excluded, while its
+original complete GPU telemetry remains usable. A narrowly validated completed-case acknowledgment
+retains the failed-validation record and exposure without rerunning that source. Remaining fixed
+cases use the corrected worker build and unchanged GPU/model builds; block-one comparisons requiring
+the excluded A wall time remain unavailable. No additional repetition or budget is inferred.
 
 ## Working rules (S0, 2026-09-06)
 

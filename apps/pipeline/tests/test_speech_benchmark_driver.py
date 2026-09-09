@@ -641,3 +641,257 @@ def test_cost_facts_exclude_incomplete_reused_checkpoint_telemetry() -> None:
     assert facts[0]["elapsedSeconds"] is None
     assert facts[0]["measuredResourceEstimateMicros"] is None
     assert facts[0]["telemetryComplete"] is False
+
+
+def _completed_long_a_journal() -> tuple[Any, Any]:
+    manifest = _manifest()
+    scope = driver.resolve_scope()
+    journal = driver.build_journal(
+        experiment_id="bench-completed-20260909",
+        organization_id=scope.organizationId,
+        manifest=manifest,
+    )
+    cases = tuple(
+        case.model_copy(
+            update={
+                "status": "completed" if index < 4 else "failed",
+                "error_type": (
+                    "UndefinedColumn" if index == 0 else "ValueError" if index == 4 else None
+                ),
+            }
+        )
+        if index <= 4
+        else case
+        for index, case in enumerate(journal.cases)
+    )
+    return (
+        manifest,
+        journal.model_copy(
+            update={
+                "reserved_exposure_micros": 5_652_507,
+                "reserved_dispatches": 15,
+                "worker_source_build_id": driver.PREVIOUS_LONG_A_WORKER_BUILD,
+                "cases": cases,
+            }
+        ),
+    )
+
+
+async def test_completed_long_a_acknowledgment_writes_proof_without_starting_workflow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, journal = _completed_long_a_journal()
+    journal_path = tmp_path / "live" / "experiment.json"
+    lock_root = tmp_path / "locks"
+    with driver.experiment_lease(journal.experiment_id, lock_root=lock_root) as lease:
+        lease.mark_admitted(journal_path=journal_path, manifest_sha256=manifest.sha256)
+        driver.initialize_journal(journal_path, journal, lease=lease)
+    admitted_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+    monkeypatch.setattr(driver, "REVIEWED_LONG_A_JOURNAL_SHA256", admitted_sha)
+
+    async def proof(**_kwargs: object) -> dict[str, object]:
+        return {"modalCalls": [{"stage": "recognize"}], "noWorkflowStarted": True}
+
+    monkeypatch.setattr(driver, "_prove_completed_long_a", proof)
+    with driver.resume_experiment_lease(
+        journal.experiment_id,
+        journal_path=journal_path,
+        manifest_sha256=manifest.sha256,
+        lock_root=lock_root,
+    ) as lease:
+        updated = await driver._acknowledge_completed_long_a_case(  # noqa: SLF001
+            base=SimpleNamespace(),
+            temporal=SimpleNamespace(),
+            manifest=manifest,
+            journal_path=journal_path,
+            journal=journal,
+            output_dir=tmp_path / "live",
+            source=SimpleNamespace(),
+            worker_source_build_id="e" * 64,
+            lease=lease,
+        )
+    assert updated.cases[4].status == "completed"
+    assert updated.cases[4].error_type == "ValueError"
+    intent_path, receipt_path = driver._continuation_paths(tmp_path / "live")  # noqa: SLF001
+    assert json.loads(intent_path.read_bytes())["noWorkflowOrGpuStartAuthorized"] is True
+    assert json.loads(receipt_path.read_bytes())["noWorkflowOrGpuStarted"] is True
+    receipt = driver._validate_continuation_receipt(  # noqa: SLF001
+        output_dir=tmp_path / "live",
+        original=journal,
+        current=updated,
+        worker_source_build_id="e" * 64,
+    )
+    assert receipt["wallTimingStatus"] == "activity_retry_contaminated"
+    with (
+        pytest.raises(driver.BenchmarkExecutionError, match="already has durable intent"),
+        driver.resume_experiment_lease(
+            journal.experiment_id,
+            journal_path=journal_path,
+            manifest_sha256=manifest.sha256,
+            lock_root=lock_root,
+        ) as lease,
+    ):
+        await driver._acknowledge_completed_long_a_case(  # noqa: SLF001
+            base=SimpleNamespace(),
+            temporal=SimpleNamespace(),
+            manifest=manifest,
+            journal_path=journal_path,
+            journal=journal,
+            output_dir=tmp_path / "live",
+            source=SimpleNamespace(),
+            worker_source_build_id="e" * 64,
+            lease=lease,
+        )
+
+
+def test_long_a_history_requires_exact_heartbeat_retry_and_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict[str, object]] = [
+        {"eventId": str(index), "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"}
+        for index in range(1, 64)
+    ]
+    events[21] = {
+        "eventId": "22",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+        "activityTaskScheduledEventAttributes": {
+            "activityType": {"name": "checkpointed_transcribe_v2"},
+            "heartbeatTimeout": "10s",
+            "retryPolicy": {"maximumAttempts": 4},
+        },
+    }
+    events[27] = {
+        "eventId": "28",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+        "activityTaskStartedEventAttributes": {
+            "scheduledEventId": "22",
+            "attempt": 2,
+            "lastFailure": {
+                "message": "activity Heartbeat timeout",
+                "timeoutFailureInfo": {"timeoutType": "TIMEOUT_TYPE_HEARTBEAT"},
+            },
+        },
+    }
+    events[28] = {
+        "eventId": "29",
+        "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+        "activityTaskCompletedEventAttributes": {
+            "scheduledEventId": "22",
+            "startedEventId": "28",
+        },
+    }
+    events[62] = {
+        "eventId": "63",
+        "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+    }
+    history = {"events": events}
+    monkeypatch.setattr(
+        driver,
+        "REVIEWED_LONG_A_HISTORY_SHA256",
+        hashlib.sha256(driver.canonical_json(history)).hexdigest(),
+    )
+    facts = driver._validate_long_a_history(history)  # noqa: SLF001
+    assert facts["retryCause"] == "TIMEOUT_TYPE_HEARTBEAT"
+    cast("dict[str, object]", events[27]["activityTaskStartedEventAttributes"])["attempt"] = 3
+    monkeypatch.setattr(
+        driver,
+        "REVIEWED_LONG_A_HISTORY_SHA256",
+        hashlib.sha256(driver.canonical_json(history)).hexdigest(),
+    )
+    with pytest.raises(driver.BenchmarkExecutionError, match="heartbeat history proof"):
+        driver._validate_long_a_history(history)  # noqa: SLF001
+
+
+def test_completed_summary_reconstruction_keeps_function_time_and_excludes_wall(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest, journal = _completed_long_a_journal()
+    completed = journal.model_copy(
+        update={
+            "cases": tuple(
+                case.model_copy(update={"status": "completed"}) if case.key == "long-a-1" else case
+                for case in journal.cases
+            )
+        }
+    )
+    output = tmp_path / "live"
+    for case in completed.cases[1:5]:
+        report = {
+            "format": "temnia-speech-benchmark-case/1",
+            "case": case.model_dump(mode="json", by_alias=True),
+            "variant": manifest.variants[
+                {"B": 1, "C": 2, "D": 3, "A": 0}[case.variant_id]
+            ].model_dump(mode="json", by_alias=True),
+            "workflow": {
+                "resultSha256": "a" * 64,
+                "transcriptSha256": "b" * 64,
+                "wallSeconds": 10.0,
+                "functionElapsedSeconds": 9.0 if case.key != "long-a-1" else 892.007858453,
+            },
+            "outputFacts": {"wordCount": 20_587},
+            "costFacts": [{"actualCostMicros": None}] * 3,
+        }
+        path = output / "cases" / case.key / "report.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report))
+        monkeypatch.setitem(
+            driver.REVIEWED_CASE_REPORT_SHA256,
+            case.key,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+    first = completed.cases[0]
+    recovery = output / "cases" / first.key / "recovery" / "continuation-receipt.json"
+    recovery.parent.mkdir(parents=True)
+    attempts = [
+        {
+            "id": str(uuid4()),
+            "estimated_cost_micros": manifest.variants[0].reservation_micros,
+            "actual_cost_micros": None,
+            "cost_status": "unknown",
+            "usage": {"telemetry": {"complete": True, "elapsedSeconds": 1.0}},
+        }
+        for _ in range(3)
+    ]
+    recovery.write_text(
+        json.dumps(
+            {
+                "format": "temnia-speech-benchmark-cache-recovery/1",
+                "original": {"immutableLedger": {"attempts": attempts}},
+                "recovery": {
+                    "resultSha256": "a" * 64,
+                    "wallSeconds": 4.0,
+                    "outputFacts": {"wordCount": 93},
+                    "transcriptRevisions": [{"storage_key": "revision"}],
+                    "objects": [{"key": "revision", "sha256": "b" * 64}],
+                },
+            }
+        )
+    )
+    receipt_sha = hashlib.sha256(recovery.read_bytes()).hexdigest()
+    completed = completed.model_copy(
+        update={
+            "cases": (
+                completed.cases[0].model_copy(update={"recovery_receipt_sha256": receipt_sha}),
+                *completed.cases[1:],
+            )
+        }
+    )
+    monkeypatch.setitem(driver.REVIEWED_CASE_REPORT_SHA256, "preflight-a", receipt_sha)
+
+    def completed_report(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(driver, "assert_case_completed", completed_report)
+    summaries = driver._load_completed_summaries(output, completed, manifest)  # noqa: SLF001
+    assert [item["case"] for item in summaries] == [
+        "preflight-a",
+        "preflight-b",
+        "preflight-c",
+        "preflight-d",
+        "long-a-1",
+    ]
+    long_a = summaries[-1]
+    assert long_a["wallSeconds"] is None
+    assert long_a["wallTimingStatus"] == "activity_retry_contaminated"
+    assert long_a["functionElapsedSeconds"] == 892.007858453

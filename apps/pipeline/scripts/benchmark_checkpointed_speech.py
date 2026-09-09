@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import contextlib
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -34,7 +35,12 @@ from temnia_pipeline.scope import resolve_scope
 from temnia_pipeline.settings import TemporalSettings
 from temnia_pipeline.speech.activities_v2 import SpeechActivitiesV2
 from temnia_pipeline.speech.assets import SIZE_BYTES, verify_asset
-from temnia_pipeline.speech.client import SpeechModalClient, assert_checkpointed_deployment
+from temnia_pipeline.speech.client import (
+    CallFinished,
+    SpeechModalClient,
+    assert_checkpointed_deployment,
+)
+from temnia_pipeline.speech.contracts_v2 import SpeechStageResultV2
 from temnia_pipeline.speech.qualification import wire_report
 from temnia_pipeline.speech_benchmark import (
     CALLS_PER_CASE,
@@ -52,11 +58,13 @@ from temnia_pipeline.speech_benchmark import (
     BenchmarkVariant,
     ExperimentLease,
     FrozenSource,
+    acknowledge_completed_long_a,
     assert_benchmark_environment,
     assert_case_completed,
     begin_cache_only_recovery,
     benchmark_summary,
     build_journal,
+    database_continuation_lease,
     database_experiment_lease,
     database_resume_lease,
     experiment_lease,
@@ -68,6 +76,8 @@ from temnia_pipeline.speech_benchmark import (
     reserve_case,
     resume_experiment_lease,
     validate_cache_only_recovery_journal,
+    validate_completed_long_a_journal,
+    validate_completed_long_a_transform,
     write_private_bytes,
     write_private_json,
 )
@@ -91,6 +101,30 @@ REVIEWED_ORIGINAL_JOURNAL_SHA256 = (
     "8e52c6a204164c314dc9d9fc58841f732431edd84edc5f842b465828318bdc47"
 )
 REVIEWED_ORIGINAL_LEDGER_SHA256 = "e9148ac523671cb8b055e1395b867f44f9959f9812cea1622b0e6e8a9ac02f4c"
+REVIEWED_LONG_A_JOURNAL_SHA256 = "4ac10d0791111c6c461327f8ecc8a30f66a2af0bcdcfab3092c6cb8824befac1"
+REVIEWED_LONG_A_REPORT_SHA256 = "77a8a4988cf4f299ea6515d10cc14eee479cd08eb3aca1a22853b91e43accec1"
+REVIEWED_LONG_A_DATABASE_SHA256 = "66a1c0a5e60d08882bde61bbccb8670cab9217709d25c2dae91246ed3706848a"
+REVIEWED_LONG_A_ARTIFACTS_SHA256 = (
+    "90b6677cd63b298116ed92bcc34d036ac0e3d455b9ad7894ac5873d48e2fc327"
+)
+REVIEWED_LONG_A_SOURCE_SHA256 = "74dd3c9932e1deda731c0b13014a517380156bc8c56200ff21834054c5d6d79a"
+REVIEWED_LONG_A_HISTORY_SHA256 = "9908fa12b34f336344c4f4b174978561aa2f16e971f5d4e410741981199bf020"
+REVIEWED_LONG_A_EVIDENCE_SHA256 = "b09618a160700148d061d78848927cf6e1d8b236baa0470a2ae74dfa40763790"
+PREVIOUS_LONG_A_WORKER_BUILD = "0c64ba401a45f860ae83f0b00911091a7f3177fe2f8387ec352dd3d9d6fb5813"
+REVIEWED_LONG_A_WORKFLOW_RUN_ID = "01a08462-8207-7c08-9e8e-27f6e9817a64"
+REVIEWED_LONG_A_HARNESS_RUN_ID = "85137441-75f0-5293-a1d8-413a05bcd6d0"
+LONG_A_EVIDENCE_FORMAT = "temnia-speech-benchmark-long-a-completed-recovery-evidence/1"
+LONG_A_EVIDENCE_FILES = 19
+LONG_A_HISTORY_EVENTS = 63
+LONG_A_TEMPORAL_MAX_ATTEMPTS = 4
+LONG_A_RETRY_ATTEMPT = 2
+REVIEWED_CASE_REPORT_SHA256 = {
+    "preflight-a": "b2c59fce8cd1cd01e9d5872b46ea1fe9d21cf1499c46e528e67f00e61f168b92",
+    "preflight-b": "d253bc00e13dc586797063abad3f308efc44d37162e29d021ff8c68ae05a93fd",
+    "preflight-c": "ccef41b4f9035075999a51d7c0d6d69b55b1a98aa5035128185be7ae31e76500",
+    "preflight-d": "d3b81a0aceaada969d6cc5e20d39ce86dd5a0f0b2f2a21653bf345fb803b6c16",
+    "long-a-1": REVIEWED_LONG_A_REPORT_SHA256,
+}
 
 
 class BenchmarkExecutionError(RuntimeError):
@@ -1054,6 +1088,514 @@ async def _assert_latest_original_failed(
     }
 
 
+def _sha256_bytes(body: bytes) -> str:
+    return hashlib.sha256(body).hexdigest()
+
+
+def _validate_long_a_evidence(  # noqa: C901
+    output_dir: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Verify every immutable preservation file before trusting the reviewed exception."""
+    evidence_dir = output_dir.parent / "long-a-1-completed-recovery-evidence"
+    manifest_path = evidence_dir / "evidence-manifest.json"
+    if _sha256_bytes(manifest_path.read_bytes()) != REVIEWED_LONG_A_EVIDENCE_SHA256:
+        raise BenchmarkExecutionError("completed long-A preservation manifest bytes changed")
+    manifest_values = cast("dict[str, object]", json.loads(manifest_path.read_bytes()))
+    if (
+        manifest_values.get("format") != LONG_A_EVIDENCE_FORMAT
+        or manifest_values.get("journalSha256") != REVIEWED_LONG_A_JOURNAL_SHA256
+        or manifest_values.get("reportSha256") != REVIEWED_LONG_A_REPORT_SHA256
+        or manifest_values.get("databaseSnapshotSha256") != REVIEWED_LONG_A_DATABASE_SHA256
+        or manifest_values.get("artifactFactsSha256") != REVIEWED_LONG_A_ARTIFACTS_SHA256
+        or manifest_values.get("sourceFactsSha256") != REVIEWED_LONG_A_SOURCE_SHA256
+        or manifest_values.get("workflowRunId") != REVIEWED_LONG_A_WORKFLOW_RUN_ID
+        or manifest_values.get("harnessRunId") != REVIEWED_LONG_A_HARNESS_RUN_ID
+        or manifest_values.get("unknownCostsRetained") is not True
+    ):
+        raise BenchmarkExecutionError("completed long-A preservation manifest changed")
+    files = manifest_values.get("files")
+    if not isinstance(files, list):
+        raise BenchmarkExecutionError("completed long-A preservation file set is incomplete")
+    file_values = cast("list[object]", files)
+    if len(file_values) != LONG_A_EVIDENCE_FILES:
+        raise BenchmarkExecutionError("completed long-A preservation file set is incomplete")
+    for raw in file_values:
+        if not isinstance(raw, dict):
+            raise BenchmarkExecutionError("completed long-A preservation entry is malformed")
+        item = cast("dict[str, object]", raw)
+        relative = item.get("path")
+        size = item.get("sizeBytes")
+        digest = item.get("sha256")
+        if (
+            not isinstance(relative, str)
+            or Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+        ):
+            raise BenchmarkExecutionError("completed long-A preservation path escaped")
+        path = evidence_dir / relative
+        body = path.read_bytes()
+        if size != len(body) or digest != _sha256_bytes(body):
+            raise BenchmarkExecutionError("completed long-A preserved file changed")
+    report_body = (evidence_dir / "case-report.json").read_bytes()
+    database_body = (evidence_dir / "database-snapshot.json").read_bytes()
+    if _sha256_bytes(report_body) != REVIEWED_LONG_A_REPORT_SHA256:
+        raise BenchmarkExecutionError("completed long-A report changed")
+    if _sha256_bytes(database_body) != REVIEWED_LONG_A_DATABASE_SHA256:
+        raise BenchmarkExecutionError("completed long-A database snapshot changed")
+    return (
+        cast("dict[str, object]", json.loads(report_body)),
+        cast("dict[str, object]", json.loads(database_body)),
+    )
+
+
+def _validate_long_a_history(history: dict[str, object]) -> dict[str, object]:
+    """Recognize only the reviewed complete history with one heartbeat retry."""
+    if _sha256_bytes(canonical_json(history)) != REVIEWED_LONG_A_HISTORY_SHA256:
+        raise BenchmarkExecutionError("completed long-A Temporal history changed")
+    raw_events = history.get("events")
+    if not isinstance(raw_events, list):
+        raise BenchmarkExecutionError("completed long-A Temporal history is incomplete")
+    event_values = cast("list[object]", raw_events)
+    if len(event_values) != LONG_A_HISTORY_EVENTS:
+        raise BenchmarkExecutionError("completed long-A Temporal history is incomplete")
+    events = cast("list[dict[str, object]]", event_values)
+    if [event.get("eventId") for event in events] != [str(index) for index in range(1, 64)]:
+        raise BenchmarkExecutionError("completed long-A Temporal history event ids are incomplete")
+    scheduled = cast("dict[str, object]", events[21].get("activityTaskScheduledEventAttributes"))
+    activity_type = cast("dict[str, object]", scheduled.get("activityType"))
+    retry = cast("dict[str, object]", scheduled.get("retryPolicy"))
+    started = cast("dict[str, object]", events[27].get("activityTaskStartedEventAttributes"))
+    failure = cast("dict[str, object]", started.get("lastFailure"))
+    timeout = cast("dict[str, object]", failure.get("timeoutFailureInfo"))
+    completed = cast("dict[str, object]", events[28].get("activityTaskCompletedEventAttributes"))
+    if (
+        events[21].get("eventType") != "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
+        or activity_type.get("name") != "checkpointed_transcribe_v2"
+        or scheduled.get("heartbeatTimeout") != "10s"
+        or retry.get("maximumAttempts") != LONG_A_TEMPORAL_MAX_ATTEMPTS
+        or events[27].get("eventType") != "EVENT_TYPE_ACTIVITY_TASK_STARTED"
+        or started.get("scheduledEventId") != "22"
+        or started.get("attempt") != LONG_A_RETRY_ATTEMPT
+        or failure.get("message") != "activity Heartbeat timeout"
+        or timeout.get("timeoutType") != "TIMEOUT_TYPE_HEARTBEAT"
+        or events[28].get("eventType") != "EVENT_TYPE_ACTIVITY_TASK_COMPLETED"
+        or completed.get("scheduledEventId") != "22"
+        or completed.get("startedEventId") != "28"
+        or events[62].get("eventType") != "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED"
+    ):
+        raise BenchmarkExecutionError("completed long-A heartbeat history proof changed")
+    return {
+        "canonicalSha256": REVIEWED_LONG_A_HISTORY_SHA256,
+        "eventCount": 63,
+        "retryCause": "TIMEOUT_TYPE_HEARTBEAT",
+        "scheduledEventId": "22",
+        "retryStartedEventId": "28",
+        "completionEventId": "63",
+    }
+
+
+async def _verify_long_a_objects(
+    ctx: Context, case: BenchmarkCase, report: dict[str, object]
+) -> list[dict[str, object]]:
+    """Re-hash the exact accepted object inventory without writing local or remote state."""
+    raw_objects = report.get("objects")
+    if not isinstance(raw_objects, list):
+        raise BenchmarkExecutionError("completed long-A report object inventory is invalid")
+    object_values = cast("list[object]", raw_objects)
+    if not 1 <= len(object_values) <= MAX_SNAPSHOT_OBJECTS:
+        raise BenchmarkExecutionError("completed long-A report object inventory is invalid")
+    verified: list[dict[str, object]] = []
+    total = 0
+    for raw in object_values:
+        if not isinstance(raw, dict):
+            raise BenchmarkExecutionError("completed long-A object entry is malformed")
+        item = cast("dict[str, object]", raw)
+        key = item.get("key")
+        expected_sha = item.get("sha256")
+        expected_size = item.get("sizeBytes")
+        if (
+            not isinstance(key, str)
+            or not key.startswith(case.object_prefix)
+            or not isinstance(expected_sha, str)
+            or not isinstance(expected_size, int)
+            or isinstance(expected_size, bool)
+            or expected_size < 0
+        ):
+            raise BenchmarkExecutionError("completed long-A object identity is invalid")
+        total += expected_size
+        if total > MAX_SNAPSHOT_OBJECT_BYTES:
+            raise BenchmarkExecutionError("completed long-A object proof exceeds its byte bound")
+        result = await obs.get_async(ctx.store, key)
+        digest = hashlib.sha256()
+        size = 0
+        async for chunk in result.stream(min_chunk_size=1024 * 1024):
+            size += len(chunk)
+            if size > expected_size:
+                raise BenchmarkExecutionError("completed long-A object grew during proof")
+            digest.update(chunk)
+        if size != expected_size or digest.hexdigest() != expected_sha:
+            raise BenchmarkExecutionError("completed long-A object bytes changed")
+        verified.append({"key": key, "sha256": expected_sha, "sizeBytes": expected_size})
+    return verified
+
+
+async def _verify_long_a_source(
+    ctx: Context, case: BenchmarkCase, source: FrozenSource
+) -> dict[str, object]:
+    """Re-read the scoped source row that binds the frozen long input."""
+    async with db.scoped(ctx.settings.database_url, resolve_scope()) as conn:
+        row = await (
+            await conn.execute(
+                """
+                SELECT id, organization_id, title, original_filename, content_type,
+                       size_bytes, master_key, status, duration_ms, audio_channels, audio_codec,
+                       deletion_requested_at
+                  FROM source WHERE id = %s
+                """,
+                (case.source_id,),
+            )
+        ).fetchone()
+    expected = {
+        "id": case.source_id,
+        "organization_id": resolve_scope().organizationId,
+        "title": f"Speech benchmark {case.key}",
+        "original_filename": source.path.name,
+        "content_type": storage.content_type_for(source.path),
+        "size_bytes": source.size_bytes,
+        "master_key": f"{case.object_prefix}master/{source.path.name}",
+        "status": "ready",
+        "duration_ms": source.duration_ms,
+        "audio_channels": 1,
+        "audio_codec": "aac",
+        "deletion_requested_at": None,
+    }
+    if row is None or dict(row) != expected:
+        raise BenchmarkExecutionError("completed long-A source identity changed")
+    return cast("dict[str, object]", wire_report(expected))
+
+
+async def _verify_long_a_modal_calls(
+    ctx: Context,
+    manifest: BenchmarkDeploymentManifest,
+    variant: BenchmarkVariant,
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    """Confirm all three reviewed handles are terminal successes without dispatching."""
+    attempts = cast("list[dict[str, object]]", snapshot.get("attempts"))
+    artifacts = cast("list[dict[str, object]]", snapshot.get("artifacts"))
+    artifact_by_id = {str(item.get("id")): item for item in artifacts}
+    client = SpeechModalClient(_variant_context(ctx, manifest, variant).settings.transcription)
+    facts: list[dict[str, object]] = []
+    for attempt in attempts:
+        handle = attempt.get("remote_handle")
+        artifact = artifact_by_id.get(str(attempt.get("result_artifact_id")))
+        if not isinstance(handle, str) or artifact is None:
+            raise BenchmarkExecutionError("completed long-A call identity is incomplete")
+        async with asyncio.timeout(30):
+            state = await client.status(handle)
+        if not isinstance(state, CallFinished) or not isinstance(state.result, SpeechStageResultV2):
+            raise BenchmarkExecutionError("completed long-A provider call is not terminal success")
+        result = state.result
+        checkpoint = result.checkpoint
+        if (
+            result.status != "ok"
+            or result.checkpoint_reused
+            or result.build != manifest.source_build_id
+            or str(result.attempt_id) != str(attempt.get("id"))
+            or str(result.operation_id) != str(attempt.get("operation_id"))
+            or result.stage != attempt.get("stage")
+            or result.modal_call_id != handle
+            or result.resource_profile != variant.resource_profile
+            or result.model_manifest != manifest.model_manifest
+            or result.execution_topology != variant.execution_topology
+            or not result.telemetry.complete
+            or checkpoint is None
+            or checkpoint.key != artifact.get("storage_key")
+            or checkpoint.sha256 != artifact.get("sha256")
+            or checkpoint.size_bytes != artifact.get("size_bytes")
+        ):
+            raise BenchmarkExecutionError("completed long-A provider result identity changed")
+        facts.append({"attemptId": str(result.attempt_id), "callId": handle, "stage": result.stage})
+    if len(facts) != CALLS_PER_CASE:
+        raise BenchmarkExecutionError("completed long-A provider proof is incomplete")
+    return facts
+
+
+async def _prove_completed_long_a(
+    *,
+    base: Context,
+    temporal: TemporalSettings,
+    manifest: BenchmarkDeploymentManifest,
+    case: BenchmarkCase,
+    variant: BenchmarkVariant,
+    source: FrozenSource,
+    output_dir: Path,
+) -> dict[str, object]:
+    """Revalidate the exact ready result across preserved and live authorities."""
+    report, preserved_snapshot = _validate_long_a_evidence(output_dir)
+    live_snapshot = cast("dict[str, object]", wire_report(await _database_snapshot(base, case)))
+    live_body = canonical_json(live_snapshot) + b"\n"
+    if (
+        _sha256_bytes(live_body) != REVIEWED_LONG_A_DATABASE_SHA256
+        or live_snapshot != preserved_snapshot
+    ):
+        raise BenchmarkExecutionError("completed long-A live ledger changed")
+    assert_case_completed(report, variant=variant, require_lost_result=True)
+    async with asyncio.timeout(30):
+        objects = await _verify_long_a_objects(base, case, report)
+        source_facts = await _verify_long_a_source(base, case, source)
+    try:
+        async with asyncio.timeout(30):
+            client = await Client.connect(
+                temporal.address,
+                namespace=temporal.namespace,
+                data_converter=pydantic_data_converter,
+            )
+            latest = await client.get_workflow_handle(case.workflow_id).describe()
+            exact = client.get_workflow_handle(
+                case.workflow_id, run_id=REVIEWED_LONG_A_WORKFLOW_RUN_ID
+            )
+            history = await exact.fetch_history()
+    except BenchmarkExecutionError:
+        raise
+    except Exception as error:
+        raise BenchmarkExecutionError("completed long-A Temporal proof is unavailable") from error
+    if (
+        latest.run_id != REVIEWED_LONG_A_WORKFLOW_RUN_ID
+        or latest.status is not WorkflowExecutionStatus.COMPLETED
+        or latest.workflow_type != "TranscribeWorkflow"
+    ):
+        raise BenchmarkExecutionError("completed long-A is not the latest Temporal run")
+    history_facts = _validate_long_a_history(cast("dict[str, object]", history.to_json_dict()))
+    modal = await _verify_long_a_modal_calls(base, manifest, variant, live_snapshot)
+    return {
+        "databaseSnapshotSha256": REVIEWED_LONG_A_DATABASE_SHA256,
+        "reportSha256": REVIEWED_LONG_A_REPORT_SHA256,
+        "history": history_facts,
+        "objects": objects,
+        "source": source_facts,
+        "modalCalls": modal,
+        "harnessRunId": REVIEWED_LONG_A_HARNESS_RUN_ID,
+        "workflowRunId": REVIEWED_LONG_A_WORKFLOW_RUN_ID,
+    }
+
+
+def _summary_from_report(
+    case: BenchmarkCase, report: dict[str, object], *, contaminated_wall: bool = False
+) -> dict[str, object]:
+    workflow = cast("dict[str, object]", report.get("workflow"))
+    return {
+        "case": case.key,
+        "variant": case.variant_id,
+        "kind": case.kind,
+        "block": case.block,
+        "resultSha256": workflow.get("resultSha256"),
+        "transcriptSha256": workflow.get("transcriptSha256"),
+        "wallSeconds": None if contaminated_wall else workflow.get("wallSeconds"),
+        "wallTimingStatus": ("activity_retry_contaminated" if contaminated_wall else "usable"),
+        "functionElapsedSeconds": workflow.get("functionElapsedSeconds"),
+        "outputFacts": report.get("outputFacts"),
+        "costFacts": report.get("costFacts"),
+    }
+
+
+def _summary_from_preflight_recovery(
+    case: BenchmarkCase, variant: BenchmarkVariant, receipt: dict[str, object]
+) -> dict[str, object]:
+    recovery = cast("dict[str, object]", receipt.get("recovery"))
+    original = cast("dict[str, object]", receipt.get("original"))
+    immutable = cast("dict[str, object]", original.get("immutableLedger"))
+    attempts = cast("list[dict[str, object]]", immutable.get("attempts"))
+    revisions = cast("list[dict[str, object]]", recovery.get("transcriptRevisions"))
+    objects = cast("list[dict[str, object]]", recovery.get("objects"))
+    revision_key = str(revisions[-1].get("storage_key")) if revisions else ""
+    transcript_sha = next(
+        (item.get("sha256") for item in objects if item.get("key") == revision_key), None
+    )
+    elapsed = [
+        cast(
+            "dict[str, object]",
+            cast("dict[str, object]", item.get("usage")).get("telemetry"),
+        ).get("elapsedSeconds")
+        for item in attempts
+    ]
+    if transcript_sha is None or not all(
+        isinstance(value, int | float) and not isinstance(value, bool) for value in elapsed
+    ):
+        raise BenchmarkExecutionError("recovered preflight summary evidence is incomplete")
+    return {
+        "case": case.key,
+        "variant": case.variant_id,
+        "kind": case.kind,
+        "block": case.block,
+        "resultSha256": recovery.get("resultSha256"),
+        "transcriptSha256": transcript_sha,
+        "wallSeconds": recovery.get("wallSeconds"),
+        "wallTimingStatus": "usable",
+        "functionElapsedSeconds": sum(float(cast("int | float", value)) for value in elapsed),
+        "outputFacts": recovery.get("outputFacts"),
+        "costFacts": _cost_facts(attempts, variant),
+    }
+
+
+def _load_completed_summaries(
+    output_dir: Path,
+    journal: BenchmarkJournal,
+    manifest: BenchmarkDeploymentManifest,
+) -> list[dict[str, object]]:
+    """Reconstruct every earlier result from its immutable private receipt."""
+    variants = {variant.id: variant for variant in manifest.variants}
+    summaries: list[dict[str, object]] = []
+    for case in journal.cases:
+        if case.status != "completed":
+            continue
+        if case.key == "preflight-a":
+            path = output_dir / "cases" / case.key / "recovery" / "continuation-receipt.json"
+            body = path.read_bytes()
+            receipt = cast("dict[str, object]", json.loads(body))
+            if (
+                _sha256_bytes(body) != case.recovery_receipt_sha256
+                or _sha256_bytes(body) != REVIEWED_CASE_REPORT_SHA256[case.key]
+                or receipt.get("format") != "temnia-speech-benchmark-cache-recovery/1"
+            ):
+                raise BenchmarkExecutionError("recovered preflight receipt format changed")
+            summaries.append(
+                _summary_from_preflight_recovery(case, variants[case.variant_id], receipt)
+            )
+            continue
+        report_path = output_dir / "cases" / case.key / "report.json"
+        report_body = report_path.read_bytes()
+        if _sha256_bytes(report_body) != REVIEWED_CASE_REPORT_SHA256.get(case.key):
+            raise BenchmarkExecutionError("completed benchmark case report changed")
+        report = cast("dict[str, object]", json.loads(report_body))
+        report_case = cast("dict[str, object]", report.get("case"))
+        if (
+            report.get("format") != "temnia-speech-benchmark-case/1"
+            or report_case.get("key") != case.key
+            or report_case.get("sourceId") != str(case.source_id)
+            or report_case.get("workflowId") != case.workflow_id
+            or cast("dict[str, object]", report.get("variant")).get("id") != case.variant_id
+        ):
+            raise BenchmarkExecutionError("completed benchmark report identity changed")
+        assert_case_completed(
+            report,
+            variant=variants[case.variant_id],
+            require_lost_result=case.kind == "preflight" or case.key == "long-a-1",
+        )
+        summaries.append(
+            _summary_from_report(case, report, contaminated_wall=case.key == "long-a-1")
+        )
+    return summaries
+
+
+def _continuation_paths(output_dir: Path) -> tuple[Path, Path]:
+    root = output_dir / "cases" / "long-a-1" / "completed-continuation"
+    return root / "intent.json", root / "receipt.json"
+
+
+def _validate_continuation_receipt(
+    *,
+    output_dir: Path,
+    original: BenchmarkJournal,
+    current: BenchmarkJournal,
+    worker_source_build_id: str,
+) -> dict[str, object]:
+    intent_path, receipt_path = _continuation_paths(output_dir)
+    if not intent_path.exists() or not receipt_path.exists():
+        raise BenchmarkExecutionError("completed long-A continuation receipt is incomplete")
+    intent = cast("dict[str, object]", json.loads(intent_path.read_bytes()))
+    receipt = cast("dict[str, object]", json.loads(receipt_path.read_bytes()))
+    validate_completed_long_a_transform(
+        original=original,
+        current=current,
+        worker_source_build_id=worker_source_build_id,
+    )
+    current_sha = _sha256_bytes(
+        canonical_json(current.model_dump(mode="json", by_alias=True)) + b"\n"
+    )
+    if (
+        intent.get("format") != "temnia-speech-benchmark-completed-long-a-intent/1"
+        or intent.get("journalSha256") != REVIEWED_LONG_A_JOURNAL_SHA256
+        or intent.get("evidenceManifestSha256") != REVIEWED_LONG_A_EVIDENCE_SHA256
+        or receipt.get("format") != "temnia-speech-benchmark-completed-long-a-receipt/1"
+        or receipt.get("intentSha256") != _sha256_bytes(intent_path.read_bytes())
+        or receipt.get("journalSha256Before") != REVIEWED_LONG_A_JOURNAL_SHA256
+        or receipt.get("journalSha256After") != current_sha
+        or receipt.get("workerSourceBuildId") != worker_source_build_id
+        or receipt.get("noWorkflowOrGpuStarted") is not True
+    ):
+        raise BenchmarkExecutionError("completed long-A continuation receipt changed")
+    return receipt
+
+
+async def _acknowledge_completed_long_a_case(
+    *,
+    base: Context,
+    temporal: TemporalSettings,
+    manifest: BenchmarkDeploymentManifest,
+    journal_path: Path,
+    journal: BenchmarkJournal,
+    output_dir: Path,
+    source: FrozenSource,
+    worker_source_build_id: str,
+    lease: ExperimentLease,
+) -> BenchmarkJournal:
+    """Prove and accept only the reviewed completed long-A execution."""
+    case = journal.cases[4]
+    variant = manifest.variants[0]
+    proof = await _prove_completed_long_a(
+        base=base,
+        temporal=temporal,
+        manifest=manifest,
+        case=case,
+        variant=variant,
+        source=source,
+        output_dir=output_dir,
+    )
+    intent_path, receipt_path = _continuation_paths(output_dir)
+    if intent_path.exists() or receipt_path.exists():
+        raise BenchmarkExecutionError("completed long-A continuation already has durable intent")
+    intent = wire_report(
+        {
+            "format": "temnia-speech-benchmark-completed-long-a-intent/1",
+            "case": case.model_dump(mode="json", by_alias=True),
+            "journalSha256": REVIEWED_LONG_A_JOURNAL_SHA256,
+            "evidenceManifestSha256": REVIEWED_LONG_A_EVIDENCE_SHA256,
+            "reportSha256": REVIEWED_LONG_A_REPORT_SHA256,
+            "databaseSnapshotSha256": REVIEWED_LONG_A_DATABASE_SHA256,
+            "temporalHistorySha256": REVIEWED_LONG_A_HISTORY_SHA256,
+            "previousWorkerSourceBuildId": PREVIOUS_LONG_A_WORKER_BUILD,
+            "workerSourceBuildId": worker_source_build_id,
+            "gpuSourceBuildId": manifest.source_build_id,
+            "driverSha256": _sha256_bytes(Path(__file__).read_bytes()),
+            "proof": proof,
+            "noWorkflowOrGpuStartAuthorized": True,
+        }
+    )
+    write_private_bytes(intent_path, canonical_json(intent) + b"\n", refuse_existing=True)
+    updated = acknowledge_completed_long_a(
+        journal_path,
+        expected_journal_sha256=REVIEWED_LONG_A_JOURNAL_SHA256,
+        previous_worker_source_build_id=PREVIOUS_LONG_A_WORKER_BUILD,
+        worker_source_build_id=worker_source_build_id,
+        lease=lease,
+    )
+    receipt = wire_report(
+        {
+            "format": "temnia-speech-benchmark-completed-long-a-receipt/1",
+            "intentSha256": _sha256_bytes(intent_path.read_bytes()),
+            "journalSha256Before": REVIEWED_LONG_A_JOURNAL_SHA256,
+            "journalSha256After": _sha256_bytes(journal_path.read_bytes()),
+            "workerSourceBuildId": worker_source_build_id,
+            "proof": proof,
+            "noWorkflowOrGpuStarted": True,
+            "wallTimingStatus": "activity_retry_contaminated",
+        }
+    )
+    write_private_bytes(receipt_path, canonical_json(receipt) + b"\n", refuse_existing=True)
+    return updated
+
+
 async def _acknowledge_unstarted_recovery(
     *,
     base: Context,
@@ -1431,6 +1973,13 @@ def _validate_recovery_arguments(args: argparse.Namespace) -> None:
     """Reject an acknowledgment that is not paired with the recovery operation."""
     if args.acknowledge_unstarted_recovery is not None and args.resume_failed_case is None:
         raise ValueError("unstarted recovery acknowledgment requires --resume-failed-case")
+    completed = getattr(args, "acknowledge_completed_long_a_1", None)
+    if completed is not None and (
+        args.resume_failed_case is not None
+        or args.acknowledge_unstarted_recovery is not None
+        or args.dry_run
+    ):
+        raise ValueError("completed long-A acknowledgment is a separate live continuation")
 
 
 async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
@@ -1449,6 +1998,117 @@ async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     scope = resolve_scope()
     output_dir = args.output_dir.resolve()
     journal_path = output_dir / "experiment.json"
+    completed_long_a_ack = getattr(args, "acknowledge_completed_long_a_1", None)
+    if completed_long_a_ack is not None:
+        if completed_long_a_ack != REVIEWED_LONG_A_JOURNAL_SHA256:
+            raise ValueError("completed long-A acknowledgment differs from reviewed journal bytes")
+        if args.worker_source_build_id != current_worker_build:
+            raise ValueError("completed long-A continuation requires the current worker build id")
+        current_bytes = journal_path.read_bytes()
+        current = BenchmarkJournal.model_validate_json(current_bytes, strict=True)
+        evidence_journal = (
+            output_dir.parent / "long-a-1-completed-recovery-evidence" / "journal.json"
+        ).read_bytes()
+        if _sha256_bytes(evidence_journal) != REVIEWED_LONG_A_JOURNAL_SHA256:
+            raise ValueError("preserved completed long-A journal identity changed")
+        original = BenchmarkJournal.model_validate_json(evidence_journal, strict=True)
+        validate_completed_long_a_journal(
+            original,
+            organization_id=scope.organizationId,
+            manifest=manifest,
+            previous_worker_source_build_id=PREVIOUS_LONG_A_WORKER_BUILD,
+        )
+        current_is_original = current_bytes == evidence_journal
+        if not current_is_original:
+            validate_completed_long_a_transform(
+                original=original,
+                current=current,
+                worker_source_build_id=current_worker_build,
+            )
+        with resume_experiment_lease(
+            args.experiment_id,
+            journal_path=journal_path,
+            manifest_sha256=manifest.sha256,
+        ) as lease:
+            async with database_continuation_lease(
+                database_url,
+                organization_id=scope.organizationId,
+                experiment_id=args.experiment_id,
+                cases=current.cases,
+            ):
+                if (
+                    journal_path.read_bytes() != current_bytes
+                    or (
+                        output_dir.parent / "long-a-1-completed-recovery-evidence" / "journal.json"
+                    ).read_bytes()
+                    != evidence_journal
+                ):
+                    raise ValueError("completed long-A evidence changed after lease acquisition")
+                base = Context.from_env()
+                summary_journal = current
+                if current_is_original:
+                    summary_journal = original.model_copy(
+                        update={
+                            "worker_source_build_id": current_worker_build,
+                            "cases": tuple(
+                                case.model_copy(update={"status": "completed"})
+                                if case.key == "long-a-1"
+                                else case
+                                for case in original.cases
+                            ),
+                        }
+                    )
+                summaries = _load_completed_summaries(output_dir, summary_journal, manifest)
+                if current_is_original:
+                    current = await _acknowledge_completed_long_a_case(
+                        base=base,
+                        temporal=temporal,
+                        manifest=manifest,
+                        journal_path=journal_path,
+                        journal=original,
+                        output_dir=output_dir,
+                        source=sources["long"],
+                        worker_source_build_id=current_worker_build,
+                        lease=lease,
+                    )
+                else:
+                    await _prove_completed_long_a(
+                        base=base,
+                        temporal=temporal,
+                        manifest=manifest,
+                        case=current.cases[4],
+                        variant=manifest.variants[0],
+                        source=sources["long"],
+                        output_dir=output_dir,
+                    )
+                    _validate_continuation_receipt(
+                        output_dir=output_dir,
+                        original=original,
+                        current=current,
+                        worker_source_build_id=current_worker_build,
+                    )
+                if [summary["case"] for summary in summaries] != [
+                    "preflight-a",
+                    "preflight-b",
+                    "preflight-c",
+                    "preflight-d",
+                    "long-a-1",
+                ]:
+                    raise BenchmarkExecutionError("completed benchmark summaries are incomplete")
+                await _execute_cases(
+                    args=args,
+                    database_url=database_url,
+                    temporal=temporal,
+                    manifest=manifest,
+                    journal=current,
+                    journal_path=journal_path,
+                    sources=sources,
+                    lease=lease,
+                    worker_source_build_id=current_worker_build,
+                    initial_summaries=summaries,
+                )
+        print(f"wrote private benchmark evidence under {output_dir}")
+        return
     if args.resume_failed_case is not None:
         if args.dry_run:
             raise ValueError("cache-only recovery cannot be combined with dry-run")
@@ -1684,6 +2344,7 @@ async def _execute_cases(
                         "resultSha256": workflow["resultSha256"],
                         "transcriptSha256": workflow["transcriptSha256"],
                         "wallSeconds": workflow["wallSeconds"],
+                        "wallTimingStatus": "usable",
                         "functionElapsedSeconds": workflow["functionElapsedSeconds"],
                         "outputFacts": report["outputFacts"],
                         "costFacts": report["costFacts"],
@@ -1744,6 +2405,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--resume-failed-case", choices=("preflight-a",))
     result.add_argument("--worker-source-build-id")
     result.add_argument("--acknowledge-unstarted-recovery")
+    result.add_argument("--acknowledge-completed-long-a-1")
     return result
 
 
