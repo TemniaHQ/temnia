@@ -119,6 +119,20 @@ Only then may the same locked journal admit its remaining planned cases. Record 
 build separately from the corrected worker build, and keep that worker build fixed for all long
 comparisons. A failed or uncertain recovery stops continuation; it never refunds admission capacity.
 
+If a read-only preflight failed after the recovery marker was recorded but before any workflow
+started, do not reset that marker. The separate `--acknowledge-unstarted-recovery` option takes
+the exact current journal byte SHA-256 alongside the original resume/build arguments. Under both
+leases, the driver requires the preserved failed journal and only its permitted recovery/build
+transformation, unchanged accounting and planned cases, no recovery receipt or database run, and
+a successful Temporal description proving the latest execution is still the original failed run.
+This exception is pinned to the reviewed September 9 experiment's original journal and GPU ledger.
+It preserves an immutable acknowledgment before proceeding without another admission or marker.
+A newer execution, changed ledger, missing evidence or uncertain Temporal response refuses this
+exception. A missing receipt alone never proves that recovery did not start.
+Immediately before requesting a recovery workflow, the driver durably creates a start-intent
+record. Its presence closes the unstarted exception even if a crash loses the start response and
+the new execution is not yet visible. Preserve that record for reconciliation.
+
 Save every case report, normalized transcript, stage checkpoint, CPU assignment, coverage
 artifact and physical-attempt record before deleting anything. Cancel through Temporal and
 keep the worker alive until owned remote cleanup completes. If completion cannot be confirmed,

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
+import json
 import stat
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,6 +17,8 @@ from temporalio import workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+
+from temnia_pipeline.speech.resources import SpeechModelManifest, SpeechResourceProfile
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -27,6 +30,125 @@ if SPEC is None or SPEC.loader is None:  # pragma: no cover - broken test instal
     raise RuntimeError(message)
 driver = cast("Any", importlib.util.module_from_spec(SPEC))
 SPEC.loader.exec_module(driver)
+
+
+def _manifest() -> Any:  # noqa: ANN401
+    model = SpeechModelManifest(
+        sha256="a" * 64,
+        file_count=1,
+        total_bytes=1,
+        model_root=f"/models/frozen/{'a' * 64}",
+        image_assets_sha256="b" * 64,
+    )
+    variants: list[Any] = []
+    for identity, cpu, progress, topology, rate, app in (
+        ("A", 4, "synchronous_control", "serial", 1_250_000, "benchmark-a"),
+        ("B", 4, "coalesced", "serial", 1_250_000, "benchmark-b"),
+        ("C", 8, "coalesced", "serial", 1_450_000, "benchmark-c"),
+        ("D", 8, "coalesced", "parallel", 1_450_000, "benchmark-c"),
+    ):
+        variants.append(
+            driver.BenchmarkVariant(
+                id=identity,
+                app=app,
+                resource_profile=SpeechResourceProfile(
+                    cpu_cores=cast("Any", cpu),
+                    stage_timeout_seconds=900,
+                    progress_mode=cast("Any", progress),
+                ),
+                execution_topology=cast("Any", topology),
+                rate_micros_per_hour=rate,
+            )
+        )
+    return driver.BenchmarkDeploymentManifest(
+        source_build_id="c" * 64,
+        model_manifest=model,
+        variants=tuple(variants),
+    )
+
+
+def _original_snapshot() -> tuple[dict[str, object], Any]:
+    variant = _manifest().variants[0]
+    operations: list[dict[str, object]] = []
+    artifacts: list[dict[str, object]] = []
+    checkpoint_ids: dict[str, UUID] = {}
+    for stage in ("recognize", "align", "speaker_turns"):
+        operation_id = uuid4()
+        artifact_id = uuid4()
+        checkpoint_ids[stage] = artifact_id
+        operations.append(
+            {
+                "id": operation_id,
+                "stage": stage,
+                "status": "succeeded",
+                "result_artifact_id": artifact_id,
+            }
+        )
+        artifacts.append(
+            {
+                "id": artifact_id,
+                "kind": "speech_checkpoint",
+                "metadata": {
+                    "format": "speech-checkpoint/2",
+                    "stage": stage,
+                    "operationId": str(operation_id),
+                },
+            }
+        )
+    operations.append(
+        {
+            "id": uuid4(),
+            "stage": "assign_speakers",
+            "status": "pending",
+            "result_artifact_id": None,
+        }
+    )
+    evidence_id = uuid4()
+    artifacts.append(
+        {
+            "id": evidence_id,
+            "kind": "speech_checkpoint",
+            "metadata": {"format": "speech-evidence/1"},
+        }
+    )
+    attempts = [
+        {
+            "id": uuid4(),
+            "stage": stage,
+            "state": "succeeded",
+            "dispatched_at": "2026-09-09T00:00:00Z",
+            "estimated_cost_micros": variant.reservation_micros,
+            "actual_cost_micros": None,
+            "cost_status": "unknown",
+            "reservation_state": "active",
+            "reservation_amount_micros": variant.reservation_micros,
+        }
+        for stage in ("recognize", "align", "speaker_turns")
+    ]
+    snapshot: dict[str, object] = {
+        "run": {
+            "id": uuid4(),
+            "status": "failed",
+            "budget_micros": variant.case_exposure_micros,
+            "dispatch_count": 3,
+            "spent_micros": 0,
+            "reserved_micros": variant.case_exposure_micros,
+            "workflow_run_id": str(uuid4()),
+        },
+        "transcript": {"status": "failed"},
+        "attempts": attempts,
+        "operations": operations,
+        "artifacts": artifacts,
+        "dependencies": [
+            {
+                "artifact_id": checkpoint_ids["align"],
+                "input_artifact_id": checkpoint_ids["recognize"],
+            },
+            {"artifact_id": evidence_id, "input_artifact_id": uuid4()},
+        ],
+        "transcriptRevisions": [],
+    }
+    return snapshot, variant
 
 
 @workflow.defn(sandboxed=False)
@@ -227,6 +349,272 @@ async def test_cache_only_client_refuses_the_provider_spawn_boundary() -> None:
 
     with pytest.raises(driver.BenchmarkExecutionError, match="spawn boundary"):
         await client.spawn(object(), object())
+
+
+def test_unstarted_acknowledgment_requires_the_resume_flag() -> None:
+    with pytest.raises(ValueError, match="requires --resume-failed-case"):
+        driver._validate_recovery_arguments(  # noqa: SLF001
+            SimpleNamespace(
+                acknowledge_unstarted_recovery="a" * 64,
+                resume_failed_case=None,
+            )
+        )
+
+
+def test_original_gpu_selector_allows_source_evidence_and_unrelated_lineage() -> None:
+    snapshot, variant = _original_snapshot()
+
+    facts = driver._original_recovery_facts(  # noqa: SLF001
+        snapshot, variant=variant, require_failed_transcript=True
+    )
+
+    assert set(facts["checkpointArtifactIdsByStage"]) == {
+        "recognize",
+        "align",
+        "speaker_turns",
+    }
+    artifacts = cast("list[dict[str, object]]", snapshot["artifacts"])
+    checkpoint = next(
+        artifact
+        for artifact in artifacts
+        if cast("dict[str, object]", artifact["metadata"]).get("stage") == "recognize"
+    )
+    cast("dict[str, object]", checkpoint["metadata"])["operationId"] = str(uuid4())
+    with pytest.raises(driver.BenchmarkExecutionError, match="artifact identity"):
+        driver._original_recovery_facts(  # noqa: SLF001
+            snapshot, variant=variant, require_failed_transcript=True
+        )
+
+
+def test_recovering_journal_allows_only_the_recorded_transform() -> None:
+    manifest = _manifest()
+    organization_id = uuid4()
+    built = driver.build_journal(
+        experiment_id="bench-recovery-20260909",
+        organization_id=organization_id,
+        manifest=manifest,
+    )
+    first = built.cases[0].model_copy(update={"status": "failed", "error_type": "UndefinedColumn"})
+    original = built.model_copy(
+        update={
+            "initial_worker_source_build_id": None,
+            "worker_source_build_id": None,
+            "reserved_exposure_micros": first.configured_exposure_micros,
+            "reserved_dispatches": 3,
+            "cases": (first, *built.cases[1:]),
+        }
+    )
+    current = original.model_copy(
+        update={
+            "initial_worker_source_build_id": manifest.source_build_id,
+            "worker_source_build_id": "d" * 64,
+            "cases": (
+                first.model_copy(update={"status": "recovering"}),
+                *original.cases[1:],
+            ),
+        }
+    )
+
+    driver._validate_permitted_recovering_journal(  # noqa: SLF001
+        original=original,
+        current=current,
+        worker_source_build_id="d" * 64,
+        deployment_source_build_id=manifest.source_build_id,
+    )
+    changed = current.model_copy(update={"reserved_dispatches": 4})
+    with pytest.raises(ValueError, match="unreviewed mutation"):
+        driver._validate_permitted_recovering_journal(  # noqa: SLF001
+            original=original,
+            current=changed,
+            worker_source_build_id="d" * 64,
+            deployment_source_build_id=manifest.source_build_id,
+        )
+
+
+async def test_unstarted_acknowledgment_is_immutable_and_refuses_ledger_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot, variant = _original_snapshot()
+    manifest = _manifest()
+    organization_id = uuid4()
+    case = driver.build_journal(
+        experiment_id="bench-recovery-20260909",
+        organization_id=organization_id,
+        manifest=manifest,
+    ).cases[0]
+    facts = driver._original_recovery_facts(  # noqa: SLF001
+        snapshot, variant=variant, require_failed_transcript=True
+    )
+
+    async def snapshot_result(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return snapshot
+
+    async def one_run(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def connect(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    async def latest(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {
+            "workflowId": case.workflow_id,
+            "runId": facts["workflowRunId"],
+            "status": "FAILED",
+        }
+
+    monkeypatch.setattr(driver, "_database_snapshot", snapshot_result)
+    monkeypatch.setattr(driver, "_assert_one_original_database_run", one_run)
+    monkeypatch.setattr(driver.Client, "connect", connect)
+    monkeypatch.setattr(driver, "_assert_latest_original_failed", latest)
+    monkeypatch.setattr(driver, "REVIEWED_ORIGINAL_LEDGER_SHA256", facts["immutableLedgerSha256"])
+    kwargs = {
+        "base": SimpleNamespace(),
+        "temporal": SimpleNamespace(address="temporal", namespace="benchmark"),
+        "case": case,
+        "variant": variant,
+        "output_dir": tmp_path,
+        "current_journal_sha256": "c" * 64,
+        "original_journal_sha256": "o" * 64,
+        "worker_source_build_id": "w" * 64,
+    }
+    await driver._acknowledge_unstarted_recovery(**kwargs)  # noqa: SLF001
+    receipt = tmp_path / "cases" / case.key / "recovery" / "unstarted-recovery-acknowledgment.json"
+    original_receipt = receipt.read_bytes()
+    await driver._acknowledge_unstarted_recovery(**kwargs)  # noqa: SLF001
+    assert receipt.read_bytes() == original_receipt
+
+    cast("dict[str, object]", snapshot["run"])["reserved_micros"] = 1
+    with pytest.raises(driver.BenchmarkExecutionError, match="failed admission"):
+        await driver._acknowledge_unstarted_recovery(**kwargs)  # noqa: SLF001
+
+
+async def test_recovery_start_failure_preserves_intent_and_total_failure_receipt(  # noqa: C901
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot, variant = _original_snapshot()
+    manifest = _manifest()
+    scope = driver.resolve_scope()
+    case = driver.build_journal(
+        experiment_id="bench-recovery-20260909",
+        organization_id=scope.organizationId,
+        manifest=manifest,
+    ).cases[0]
+    facts = driver._original_recovery_facts(  # noqa: SLF001
+        snapshot, variant=variant, require_failed_transcript=True
+    )
+
+    class ClientStub:
+        async def start_workflow(self, *_args: object, **_kwargs: object) -> object:
+            message = "start acceptance was not observed"
+            raise OSError(message)
+
+    class ActivitiesStub:
+        def __init__(self) -> None:
+            self.observed_run_ids: list[object] = []
+
+        def activities(self) -> list[object]:
+            return []
+
+    class WorkerStub:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    async def snapshot_result(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return snapshot
+
+    async def preserve(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        return []
+
+    async def deployment(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def connect(*_args: object, **_kwargs: object) -> ClientStub:
+        return ClientStub()
+
+    async def latest(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {
+            "workflowId": case.workflow_id,
+            "runId": facts["workflowRunId"],
+            "status": "FAILED",
+        }
+
+    def context_factory(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(settings=SimpleNamespace(transcription=object()))
+
+    def speech_client_factory(_settings: object) -> object:
+        return object()
+
+    def transcribe_factory(_ctx: object) -> ActivitiesStub:
+        return ActivitiesStub()
+
+    def qualifier_factory(*_args: object, **_kwargs: object) -> ActivitiesStub:
+        return ActivitiesStub()
+
+    monkeypatch.setattr(driver, "_database_snapshot", snapshot_result)
+    monkeypatch.setattr(driver, "_preserve_objects", preserve)
+    monkeypatch.setattr(driver, "_variant_context", context_factory)
+    monkeypatch.setattr(driver, "assert_checkpointed_deployment", deployment)
+    monkeypatch.setattr(driver, "SpeechModalClient", speech_client_factory)
+    monkeypatch.setattr(driver.Client, "connect", connect)
+    monkeypatch.setattr(driver, "Transcribe", transcribe_factory)
+    monkeypatch.setattr(driver, "V2QualificationSpeechActivities", qualifier_factory)
+    monkeypatch.setattr(driver, "Worker", WorkerStub)
+    monkeypatch.setattr(driver, "_assert_latest_original_failed", latest)
+
+    with pytest.raises(driver.BenchmarkExecutionError, match="did not finish ready"):
+        await driver._recover_failed_case(  # noqa: SLF001
+            base=SimpleNamespace(),
+            temporal=SimpleNamespace(address="temporal", namespace="benchmark"),
+            manifest=manifest,
+            variant=variant,
+            case=case,
+            source=SimpleNamespace(duration_ms=1_000),
+            output_dir=tmp_path,
+            task_queue_prefix="benchmark",
+            worker_source_build_id="w" * 64,
+            current_journal_sha256="c" * 64,
+            original_journal_sha256="o" * 64,
+            expected_original_ledger_sha256=cast("str", facts["immutableLedgerSha256"]),
+        )
+
+    recovery_dir = tmp_path / "cases" / case.key / "recovery"
+    intent = json.loads((recovery_dir / "recovery-start-intent.json").read_bytes())
+    attempt = json.loads((recovery_dir / "recovery-attempt.json").read_bytes())
+    assert intent["originalImmutableLedgerSha256"] == facts["immutableLedgerSha256"]
+    assert intent["currentJournalSha256"] == "c" * 64
+    assert attempt["errorType"] == "OSError"
+    assert attempt["recoveryRunId"] is None
+    assert attempt["recovery"]["run"] is None
+    assert attempt["noAdditionalExposure"] is False
+    assert attempt["originalImmutableLedgerSha256"] == facts["immutableLedgerSha256"]
+    for path in (
+        recovery_dir / "recovery-start-intent.json",
+        recovery_dir / "recovery-attempt.json",
+    ):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    async def one_run(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(driver, "_assert_one_original_database_run", one_run)
+    monkeypatch.setattr(driver, "REVIEWED_ORIGINAL_LEDGER_SHA256", facts["immutableLedgerSha256"])
+    with pytest.raises(driver.BenchmarkExecutionError, match="already has an execution receipt"):
+        await driver._acknowledge_unstarted_recovery(  # noqa: SLF001
+            base=SimpleNamespace(),
+            temporal=SimpleNamespace(address="temporal", namespace="benchmark"),
+            case=case,
+            variant=variant,
+            output_dir=tmp_path,
+            current_journal_sha256="c" * 64,
+            original_journal_sha256="o" * 64,
+            worker_source_build_id="w" * 64,
+        )
 
 
 def test_cost_facts_exclude_incomplete_reused_checkpoint_telemetry() -> None:

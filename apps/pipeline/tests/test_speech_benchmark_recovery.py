@@ -1,9 +1,11 @@
 """Actual Temporal and Postgres proof for speech benchmark cache recovery."""
 
-# ruff: noqa: EM101, PLR0913, PLR0917, SLF001, TRY003
+# ruff: noqa: EM101, FBT003, PLR0913, PLR0915, PLR0917, SLF001, TRY003
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import hashlib
 import importlib.util
 import os
@@ -14,10 +16,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from obstore.store import MemoryStore
-from temporalio import activity
+from temporalio import activity, workflow
+from temporalio.client import WorkflowFailureError
+from temporalio.common import WorkflowIDReusePolicy
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
+from temporalio.exceptions import ApplicationError
+from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
+from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from temnia_pipeline import db, storage
 from temnia_pipeline.contracts import TranscribeInput
@@ -68,6 +73,21 @@ if DRIVER_SPEC is None or DRIVER_SPEC.loader is None:
     raise RuntimeError("could not load checkpointed speech benchmark driver")
 driver = cast("Any", importlib.util.module_from_spec(DRIVER_SPEC))
 DRIVER_SPEC.loader.exec_module(driver)
+
+
+@workflow.defn(name="TranscribeWorkflow")
+class _RecoveryGuardWorkflow:
+    """A real Temporal execution with the production workflow type name."""
+
+    @workflow.run
+    async def run(self, fail: bool) -> None:  # noqa: FBT001
+        if fail:
+            raise ApplicationError(
+                "deliberate recovery guard failure",
+                non_retryable=True,
+                type="RecoveryGuardFailure",
+            )
+        await workflow.wait_condition(lambda: False)
 
 
 def _pipeline_url() -> str:
@@ -365,7 +385,7 @@ async def _original_ledger(
     request: TranscribeInput,
     plan: TranscriptionPlan,
     workflow_id: str,
-) -> tuple[UUID, Mapping[StageV2, AcceptedSpeechStageV2]]:
+) -> tuple[UUID, str, Mapping[StageV2, AcceptedSpeechStageV2]]:
     temporal_run_id = f"failed-{uuid.uuid4()}"
     with monkeypatch.context() as patch:
         patch.setattr(
@@ -446,7 +466,11 @@ async def _original_ledger(
         temporal_run_id=temporal_run_id,
         outcome="failed",
     )
-    return run_id, {"recognize": recognized, "align": aligned, "speaker_turns": turns}
+    return (
+        run_id,
+        temporal_run_id,
+        {"recognize": recognized, "align": aligned, "speaker_turns": turns},
+    )
 
 
 async def test_actual_temporal_cache_only_recovery_preserves_original_gpu_ledger(
@@ -481,13 +505,97 @@ async def test_actual_temporal_cache_only_recovery_preserves_original_gpu_ledger
         error_type="UndefinedColumn",
     )
     await _seed_source(url, request)
-    original_run_id, checkpoints = await _original_ledger(
+    original_run_id, original_temporal_run_id, checkpoints = await _original_ledger(
         monkeypatch, speech, request, producer_plan, workflow_id
     )
+    coverage_environment = ActivityEnvironment()
+    coverage_environment.info = dataclasses.replace(
+        coverage_environment.info,
+        workflow_id=workflow_id,
+        workflow_run_id=original_temporal_run_id,
+    )
+    coverage_record = await coverage_environment.run(speech.speech_coverage, request, producer_plan)
+    assert coverage_record.artifact_id is not None
+    unrelated = await artifacts.publish_json(
+        url,
+        scope=scope,
+        source_id=source_id,
+        store=cast("Any", store),
+        identity=artifacts.ArtifactIdentity(
+            kind="export",
+            fingerprint=artifacts.fingerprint_for(
+                kind="recovery_test_unrelated",
+                inputs={"sourceId": str(source_id)},
+                config={"version": 1},
+            ),
+        ),
+        content={"format": "recovery-test-unrelated/1"},
+        metadata={"format": "recovery-test-unrelated/1"},
+        dependency_ids=[coverage_record.artifact_id],
+    )
     original_snapshot = await driver._database_snapshot(ctx, case, run_id=original_run_id)
+    source_artifacts = cast("list[dict[str, object]]", original_snapshot["artifacts"])
+    same_kind = [row for row in source_artifacts if row["kind"] == "speech_checkpoint"]
+    assert len(same_kind) == 4
+    coverage_artifact = next(
+        row
+        for row in same_kind
+        if cast("dict[str, object]", row["metadata"])["format"] == "speech-evidence/1"
+    )
+    assert coverage_artifact["id"] == coverage_record.artifact_id
+    original_dependencies = cast("list[dict[str, object]]", original_snapshot["dependencies"])
+    assert {(row["artifact_id"], row["input_artifact_id"]) for row in original_dependencies} >= {
+        (unrelated.id, coverage_record.artifact_id)
+    }
     original = driver._original_recovery_facts(
         original_snapshot, variant=variant, require_failed_transcript=True
     )
+    await driver._assert_one_original_database_run(ctx, case, str(original_run_id))
+    preserved = await driver._preserve_objects(
+        ctx, case, tmp_path / "preserved-original", source_artifacts
+    )
+    assert any(str(coverage_record.artifact_id) in row["artifactIds"] for row in preserved)
+    malformed_duplicate_stage = copy.deepcopy(original_snapshot)
+    duplicate_operations = cast("list[dict[str, object]]", malformed_duplicate_stage["operations"])
+    duplicate = copy.deepcopy(
+        next(row for row in duplicate_operations if row["stage"] == "recognize")
+    )
+    duplicate["id"] = uuid.uuid4()
+    duplicate_operations.append(duplicate)
+    with pytest.raises(driver.BenchmarkExecutionError):
+        driver._original_recovery_facts(
+            malformed_duplicate_stage,
+            variant=variant,
+            require_failed_transcript=True,
+        )
+    malformed_duplicate_result = copy.deepcopy(original_snapshot)
+    duplicate_result_operations = cast(
+        "list[dict[str, object]]", malformed_duplicate_result["operations"]
+    )
+    recognized_operation = next(
+        row for row in duplicate_result_operations if row["stage"] == "recognize"
+    )
+    aligned_operation = next(row for row in duplicate_result_operations if row["stage"] == "align")
+    aligned_operation["result_artifact_id"] = recognized_operation["result_artifact_id"]
+    with pytest.raises(driver.BenchmarkExecutionError):
+        driver._original_recovery_facts(
+            malformed_duplicate_result,
+            variant=variant,
+            require_failed_transcript=True,
+        )
+    malformed_metadata = copy.deepcopy(original_snapshot)
+    metadata_artifacts = cast("list[dict[str, object]]", malformed_metadata["artifacts"])
+    recognize_artifact_id = checkpoints["recognize"].artifact_id
+    recognize_artifact = next(
+        row for row in metadata_artifacts if row["id"] == recognize_artifact_id
+    )
+    cast("dict[str, object]", recognize_artifact["metadata"])["stage"] = "align"
+    with pytest.raises(driver.BenchmarkExecutionError):
+        driver._original_recovery_facts(
+            malformed_metadata,
+            variant=variant,
+            require_failed_transcript=True,
+        )
     original_hash = original["immutableLedgerSha256"]
     recovery_plan = producer_plan.model_copy(update={"budget_micros": 1})
 
@@ -497,7 +605,7 @@ async def test_actual_temporal_cache_only_recovery_preserves_original_gpu_ledger
 
     @activity.defn(name="speech_coverage")
     async def coverage(_request: TranscribeInput, _plan: TranscriptionPlan) -> CoverageRecord:
-        return CoverageRecord(error="detector deliberately unavailable in recovery test")
+        return coverage_record
 
     def forbidden_client(_plan: TranscriptionPlan) -> object:
         pytest.fail("cache-only recovery attempted to construct a provider client")
@@ -565,4 +673,75 @@ async def test_actual_temporal_cache_only_recovery_preserves_original_gpu_ledger
     assert cast("dict[str, object]", recovery_snapshot["run"])["spent_micros"] == 0
     assert cast("dict[str, object]", original_after["run"])["status"] == "failed"
     assert len(cast("list[object]", original_after["attempts"])) == 3
+    with pytest.raises(driver.BenchmarkExecutionError):
+        await driver._assert_one_original_database_run(ctx, case, str(original_run_id))
     await db.close_pool()
+
+
+async def test_real_temporal_guard_refuses_newer_running_and_failed_executions() -> None:
+    scope = resolve_scope()
+    source_id = uuid.uuid4()
+    workflow_id = f"speech-benchmark-guard-{uuid.uuid4()}"
+    case = BenchmarkCase(
+        key="preflight-a",
+        variant_id="A",
+        kind="preflight",
+        source_id=source_id,
+        workflow_id=workflow_id,
+        object_prefix=f"org/{scope.organizationId}/source/{source_id}/",
+        configured_exposure_micros=_variant().case_exposure_micros,
+        status="failed",
+        error_type="UndefinedColumn",
+    )
+    queue = f"speech-benchmark-guard-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_time_skipping(
+            data_converter=pydantic_data_converter
+        ) as environment,
+        Worker(
+            environment.client,
+            task_queue=queue,
+            workflows=[_RecoveryGuardWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ),
+    ):
+        original = await environment.client.start_workflow(
+            _RecoveryGuardWorkflow.run,
+            True,
+            id=workflow_id,
+            task_queue=queue,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        )
+        with pytest.raises(WorkflowFailureError):
+            await original.result()
+        original_run_id = original.first_execution_run_id
+        facts = await driver._assert_latest_original_failed(
+            environment.client, case, original_run_id
+        )
+        assert facts["status"] == "FAILED"
+        assert facts["runId"] == original_run_id
+
+        running = await environment.client.start_workflow(
+            _RecoveryGuardWorkflow.run,
+            False,
+            id=workflow_id,
+            task_queue=queue,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        )
+        with pytest.raises(driver.BenchmarkExecutionError):
+            await driver._assert_latest_original_failed(environment.client, case, original_run_id)
+        await running.cancel()
+        with pytest.raises(WorkflowFailureError):
+            await running.result()
+
+        newer_failed = await environment.client.start_workflow(
+            _RecoveryGuardWorkflow.run,
+            True,
+            id=workflow_id,
+            task_queue=queue,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        )
+        with pytest.raises(WorkflowFailureError):
+            await newer_failed.result()
+        with pytest.raises(driver.BenchmarkExecutionError):
+            await driver._assert_latest_original_failed(environment.client, case, original_run_id)

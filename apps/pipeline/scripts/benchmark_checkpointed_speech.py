@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import obstore as obs
 from temporalio import activity
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker
@@ -86,6 +86,11 @@ if TYPE_CHECKING:
 MAX_SNAPSHOT_ROWS = 64
 MAX_SNAPSHOT_OBJECTS = 128
 MAX_SNAPSHOT_OBJECT_BYTES = 128 * 1024 * 1024
+EXPECTED_SPEECH_OPERATIONS = 4
+REVIEWED_ORIGINAL_JOURNAL_SHA256 = (
+    "8e52c6a204164c314dc9d9fc58841f732431edd84edc5f842b465828318bdc47"
+)
+REVIEWED_ORIGINAL_LEDGER_SHA256 = "e9148ac523671cb8b055e1395b867f44f9959f9812cea1622b0e6e8a9ac02f4c"
 
 
 class BenchmarkExecutionError(RuntimeError):
@@ -783,7 +788,7 @@ async def _run_case(  # noqa: PLR0915
     return report
 
 
-def _original_recovery_facts(
+def _original_recovery_facts(  # noqa: C901
     snapshot: dict[str, object], *, variant: BenchmarkVariant, require_failed_transcript: bool
 ) -> dict[str, object]:
     """Prove the failed run contains exactly the three accepted GPU invocations."""
@@ -840,7 +845,7 @@ def _original_recovery_facts(
     ):
         raise BenchmarkExecutionError("original benchmark GPU attempt evidence is incomplete")
     operation_by_stage = {str(operation.get("stage")): operation for operation in operation_values}
-    if set(operation_by_stage) != {
+    if len(operation_values) != EXPECTED_SPEECH_OPERATIONS or set(operation_by_stage) != {
         "recognize",
         "align",
         "speaker_turns",
@@ -857,19 +862,33 @@ def _original_recovery_facts(
     checkpoint_ids = {
         str(operation_by_stage[stage]["result_artifact_id"]): stage for stage in gpu_stages
     }
+    if len(checkpoint_ids) != CALLS_PER_CASE:
+        raise BenchmarkExecutionError("original benchmark GPU result identities are not distinct")
+    artifact_by_id = {str(artifact.get("id")): artifact for artifact in artifact_values}
     checkpoint_artifacts = {
-        str(artifact.get("id")): artifact
-        for artifact in artifact_values
-        if artifact.get("kind") == "speech_checkpoint"
+        artifact_id: artifact_by_id[artifact_id]
+        for artifact_id in checkpoint_ids
+        if artifact_id in artifact_by_id
     }
-    if set(checkpoint_artifacts) != set(checkpoint_ids) or any(
-        cast("dict[str, object]", artifact.get("metadata", {})).get("format")
-        != "speech-checkpoint/2"
-        for artifact in checkpoint_artifacts.values()
-    ):
+    if set(checkpoint_artifacts) != set(checkpoint_ids):
         raise BenchmarkExecutionError(
             "original benchmark checkpoint artifact identity is incomplete"
         )
+    for artifact_id, stage in checkpoint_ids.items():
+        artifact = checkpoint_artifacts[artifact_id]
+        metadata = artifact.get("metadata")
+        operation = operation_by_stage[stage]
+        metadata_values = cast("dict[str, object]", metadata) if isinstance(metadata, dict) else {}
+        if (
+            artifact.get("kind") != "speech_checkpoint"
+            or not isinstance(metadata, dict)
+            or metadata_values.get("format") != "speech-checkpoint/2"
+            or metadata_values.get("stage") != stage
+            or str(metadata_values.get("operationId")) != str(operation.get("id"))
+        ):
+            raise BenchmarkExecutionError(
+                "original benchmark checkpoint artifact identity is incomplete"
+            )
     recognize_id = next(key for key, stage in checkpoint_ids.items() if stage == "recognize")
     align_id = next(key for key, stage in checkpoint_ids.items() if stage == "align")
     checkpoint_dependencies = {
@@ -888,6 +907,7 @@ def _original_recovery_facts(
     }
     return {
         "runId": str(run_values["id"]),
+        "workflowRunId": str(run_values["workflow_run_id"]),
         "checkpointArtifactIdsByStage": {
             stage: artifact_id for artifact_id, stage in checkpoint_ids.items()
         },
@@ -924,9 +944,13 @@ def _assert_cache_only_recovery(
         raise BenchmarkExecutionError("cache-only recovery admitted provider exposure")
     by_stage = {str(operation.get("stage")): operation for operation in operations}
     expected_stages = {"recognize", "align", "speaker_turns", "assign_speakers"}
-    if set(by_stage) != expected_stages or any(
-        operation.get("status") != "succeeded" or operation.get("result_artifact_id") is None
-        for operation in by_stage.values()
+    if (
+        len(operations) != EXPECTED_SPEECH_OPERATIONS
+        or set(by_stage) != expected_stages
+        or any(
+            operation.get("status") != "succeeded" or operation.get("result_artifact_id") is None
+            for operation in by_stage.values()
+        )
     ):
         raise BenchmarkExecutionError("cache-only recovery operation set is incomplete")
     expected_gpu = cast("dict[str, str]", original["checkpointArtifactIdsByStage"])
@@ -951,6 +975,149 @@ def _assert_cache_only_recovery(
         raise BenchmarkExecutionError("cache-only recovery assignment lineage is not exact")
 
 
+def _validate_permitted_recovering_journal(
+    *,
+    original: BenchmarkJournal,
+    current: BenchmarkJournal,
+    worker_source_build_id: str,
+    deployment_source_build_id: str,
+) -> None:
+    """Allow only the already-recorded failed-to-recovering journal transformation."""
+    first = original.cases[0]
+    expected_cases = tuple(
+        case.model_copy(update={"status": "recovering"}) if case.key == first.key else case
+        for case in original.cases
+    )
+    expected = original.model_copy(
+        update={
+            "initial_worker_source_build_id": original.initial_worker_source_build_id
+            or original.worker_source_build_id
+            or deployment_source_build_id,
+            "worker_source_build_id": worker_source_build_id,
+            "cases": expected_cases,
+        }
+    )
+    if canonical_json(current.model_dump(mode="json", by_alias=True)) != canonical_json(
+        expected.model_dump(mode="json", by_alias=True)
+    ):
+        raise ValueError("recovering benchmark journal contains an unreviewed mutation")
+
+
+async def _assert_one_original_database_run(
+    ctx: Context, case: BenchmarkCase, original_run_id: str
+) -> None:
+    """Refuse continuation if any second transcription harness run was created."""
+    async with db.scoped(ctx.settings.database_url, resolve_scope()) as conn:
+        rows = await (
+            await conn.execute(
+                """
+                SELECT id FROM harness_run
+                 WHERE source_id = %s AND lane = 'transcription'
+                 ORDER BY created_at, id
+                 LIMIT 2
+                """,
+                (case.source_id,),
+            )
+        ).fetchall()
+    if len(rows) != 1 or str(rows[0]["id"]) != original_run_id:
+        raise BenchmarkExecutionError("cache-only recovery has a later database run")
+
+
+async def _assert_latest_original_failed(
+    client: Client, case: BenchmarkCase, expected_run_id: str
+) -> dict[str, object]:
+    """Prove the latest exact Temporal execution is still the original failure."""
+    try:
+        async with asyncio.timeout(30):
+            description = await client.get_workflow_handle(case.workflow_id).describe()
+    except Exception as error:
+        raise BenchmarkExecutionError(
+            "cache-only recovery could not confirm the latest Temporal execution"
+        ) from error
+    if (
+        description.id != case.workflow_id
+        or description.run_id != expected_run_id
+        or description.status is not WorkflowExecutionStatus.FAILED
+        or description.close_time is None
+        or description.workflow_type != "TranscribeWorkflow"
+    ):
+        raise BenchmarkExecutionError(
+            "cache-only recovery found a later or non-failed Temporal execution"
+        )
+    return {
+        "workflowId": description.id,
+        "runId": description.run_id,
+        "status": description.status.name,
+        "workflowType": description.workflow_type,
+        "historyLength": description.history_length,
+        "closeTime": description.close_time.isoformat().replace("+00:00", "Z"),
+    }
+
+
+async def _acknowledge_unstarted_recovery(
+    *,
+    base: Context,
+    temporal: TemporalSettings,
+    case: BenchmarkCase,
+    variant: BenchmarkVariant,
+    output_dir: Path,
+    current_journal_sha256: str,
+    original_journal_sha256: str,
+    worker_source_build_id: str,
+) -> tuple[dict[str, object], str]:
+    """Persist an exact receipt that the earlier continuation never started."""
+    snapshot = await _database_snapshot(base, case)
+    original = _original_recovery_facts(snapshot, variant=variant, require_failed_transcript=True)
+    if original["immutableLedgerSha256"] != REVIEWED_ORIGINAL_LEDGER_SHA256:
+        raise BenchmarkExecutionError("original benchmark GPU/accounting ledger changed")
+    await _assert_one_original_database_run(base, case, cast("str", original["runId"]))
+    try:
+        async with asyncio.timeout(30):
+            client = await Client.connect(
+                temporal.address,
+                namespace=temporal.namespace,
+                data_converter=pydantic_data_converter,
+            )
+    except Exception as error:
+        raise BenchmarkExecutionError(
+            "cache-only recovery could not connect for Temporal proof"
+        ) from error
+    temporal_facts = await _assert_latest_original_failed(
+        client, case, cast("str", original["workflowRunId"])
+    )
+    recovery_dir = output_dir / "cases" / case.key / "recovery"
+    if any(
+        (recovery_dir / name).exists()
+        for name in (
+            "continuation-receipt.json",
+            "recovery-attempt.json",
+            "recovery-start-intent.json",
+        )
+    ):
+        raise BenchmarkExecutionError("cache-only recovery already has an execution receipt")
+    receipt = wire_report(
+        {
+            "format": "temnia-speech-benchmark-unstarted-recovery/1",
+            "case": case.model_dump(mode="json", by_alias=True),
+            "currentJournalSha256": current_journal_sha256,
+            "originalJournalSha256": original_journal_sha256,
+            "workerSourceBuildId": worker_source_build_id,
+            "driverSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "original": original,
+            "latestTemporalExecution": temporal_facts,
+            "noRecoveryExecutionStarted": True,
+        }
+    )
+    body = canonical_json(receipt) + b"\n"
+    path = recovery_dir / "unstarted-recovery-acknowledgment.json"
+    if path.exists():
+        if path.read_bytes() != body:
+            raise BenchmarkExecutionError("unstarted recovery acknowledgment changed")
+    else:
+        write_private_bytes(path, body, refuse_existing=True)
+    return original, cast("str", original["workflowRunId"])
+
+
 async def _recover_failed_case(  # noqa: C901, PLR0915
     *,
     base: Context,
@@ -962,13 +1129,17 @@ async def _recover_failed_case(  # noqa: C901, PLR0915
     output_dir: Path,
     task_queue_prefix: str,
     worker_source_build_id: str,
+    current_journal_sha256: str,
     original_journal_sha256: str,
+    expected_original_ledger_sha256: str,
 ) -> tuple[dict[str, object], UUID, str]:
     """Complete only CPU assignment from the original immutable checkpoint set."""
     original_snapshot = await _database_snapshot(base, case)
     original = _original_recovery_facts(
         original_snapshot, variant=variant, require_failed_transcript=True
     )
+    if original["immutableLedgerSha256"] != expected_original_ledger_sha256:
+        raise BenchmarkExecutionError("original benchmark GPU/accounting ledger changed")
     original_run_id = original["runId"]
     original_dir = output_dir / "cases" / case.key / "recovery" / "original"
     original_objects = await _preserve_objects(
@@ -1015,6 +1186,44 @@ async def _recover_failed_case(  # noqa: C901, PLR0915
     )
     try:
         async with worker:
+            latest_original = _original_recovery_facts(
+                await _database_snapshot(base, case, run_id=original_run_id),
+                variant=variant,
+                require_failed_transcript=True,
+            )
+            if latest_original["immutableLedgerSha256"] != expected_original_ledger_sha256:
+                raise BenchmarkExecutionError(  # noqa: TRY301
+                    "original benchmark GPU/accounting ledger changed before recovery start"
+                )
+            await _assert_latest_original_failed(
+                client, case, cast("str", original["workflowRunId"])
+            )
+            start_intent = wire_report(
+                {
+                    "format": "temnia-speech-benchmark-cache-recovery-start-intent/1",
+                    "case": case.model_dump(mode="json", by_alias=True),
+                    "workflowId": case.workflow_id,
+                    "originalWorkflowRunId": original["workflowRunId"],
+                    "sourceId": str(case.source_id),
+                    "objectPrefix": case.object_prefix,
+                    "taskQueue": task_queue,
+                    "requestSha256": hashlib.sha256(
+                        canonical_json(request.model_dump(mode="json", by_alias=True))
+                    ).hexdigest(),
+                    "currentJournalSha256": current_journal_sha256,
+                    "originalJournalSha256": original_journal_sha256,
+                    "originalImmutableLedgerSha256": expected_original_ledger_sha256,
+                    "gpuSourceBuildId": manifest.source_build_id,
+                    "workerSourceBuildId": worker_source_build_id,
+                    "driverSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    "createdAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                }
+            )
+            write_private_bytes(
+                output_dir / "cases" / case.key / "recovery" / "recovery-start-intent.json",
+                canonical_json(start_intent) + b"\n",
+                refuse_existing=True,
+            )
             handle = cast(
                 "BenchmarkWorkflowHandle",
                 await client.start_workflow(
@@ -1103,6 +1312,15 @@ async def _recover_failed_case(  # noqa: C901, PLR0915
         or output_facts is None
     ):
         final_error = BenchmarkExecutionError("cache-only recovery did not finish ready")
+    recovery_run = recovery_snapshot.get("run")
+    recovery_run_values = (
+        cast("dict[str, object]", recovery_run) if isinstance(recovery_run, dict) else None
+    )
+    no_additional_exposure = (
+        recovery_run_values is not None
+        and recovery_run_values.get("dispatch_count") == 0
+        and recovery_snapshot.get("attempts") == []
+    )
     failure_report = wire_report(
         {
             "format": "temnia-speech-benchmark-cache-recovery-attempt/1",
@@ -1118,11 +1336,7 @@ async def _recover_failed_case(  # noqa: C901, PLR0915
             "originalObjects": original_objects,
             "recovery": recovery_snapshot,
             "objects": recovery_objects,
-            "noAdditionalExposure": (
-                cast("dict[str, object]", recovery_snapshot.get("run", {})).get("dispatch_count")
-                == 0
-                and recovery_snapshot.get("attempts") == []
-            ),
+            "noAdditionalExposure": no_additional_exposure,
         }
     )
     attempt_body = canonical_json(failure_report) + b"\n"
@@ -1213,8 +1427,15 @@ def _sources(args: argparse.Namespace) -> dict[str, FrozenSource]:
     }
 
 
-async def run(args: argparse.Namespace) -> None:  # noqa: PLR0915
+def _validate_recovery_arguments(args: argparse.Namespace) -> None:
+    """Reject an acknowledgment that is not paired with the recovery operation."""
+    if args.acknowledge_unstarted_recovery is not None and args.resume_failed_case is None:
+        raise ValueError("unstarted recovery acknowledgment requires --resume-failed-case")
+
+
+async def run(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     """Validate and then execute the fixed experiment sequentially."""
+    _validate_recovery_arguments(args)
     manifest = _load_manifest(args.deployment_manifest)
     current_worker_build = source_build_id()
     sources = _sources(args)
@@ -1233,20 +1454,47 @@ async def run(args: argparse.Namespace) -> None:  # noqa: PLR0915
             raise ValueError("cache-only recovery cannot be combined with dry-run")
         if args.worker_source_build_id != current_worker_build:
             raise ValueError("cache-only recovery requires the explicit current worker build id")
-        journal = read_journal(journal_path)
-        validate_cache_only_recovery_journal(
-            journal,
-            organization_id=scope.organizationId,
-            manifest=manifest,
-        )
-        original_journal = journal_path.read_bytes()
-        original_journal_sha256 = hashlib.sha256(original_journal).hexdigest()
+        current_journal_bytes = journal_path.read_bytes()
+        current_journal_sha256 = hashlib.sha256(current_journal_bytes).hexdigest()
+        journal = BenchmarkJournal.model_validate_json(current_journal_bytes, strict=True)
         original_journal_path = output_dir / "original-admitted-journal.json"
-        if original_journal_path.exists():
-            if original_journal_path.read_bytes() != original_journal:
-                raise ValueError("preserved original journal differs from the admitted journal")
+        already_recovering = journal.cases[0].status == "recovering"
+        if already_recovering:
+            if args.acknowledge_unstarted_recovery != current_journal_sha256:
+                raise ValueError(
+                    "recovering benchmark requires acknowledgment of its exact current journal"
+                )
+            original_journal = original_journal_path.read_bytes()
+            original_journal_sha256 = hashlib.sha256(original_journal).hexdigest()
+            if original_journal_sha256 != REVIEWED_ORIGINAL_JOURNAL_SHA256:
+                raise ValueError("preserved original admitted journal identity changed")
+            original = BenchmarkJournal.model_validate_json(original_journal, strict=True)
+            validate_cache_only_recovery_journal(
+                original,
+                organization_id=scope.organizationId,
+                manifest=manifest,
+            )
+            _validate_permitted_recovering_journal(
+                original=original,
+                current=journal,
+                worker_source_build_id=current_worker_build,
+                deployment_source_build_id=manifest.source_build_id,
+            )
         else:
-            write_private_bytes(original_journal_path, original_journal, refuse_existing=True)
+            if args.acknowledge_unstarted_recovery is not None:
+                raise ValueError("unstarted acknowledgment applies only to a recovering journal")
+            validate_cache_only_recovery_journal(
+                journal,
+                organization_id=scope.organizationId,
+                manifest=manifest,
+            )
+            original_journal = current_journal_bytes
+            original_journal_sha256 = current_journal_sha256
+            if original_journal_path.exists():
+                if original_journal_path.read_bytes() != original_journal:
+                    raise ValueError("preserved original journal differs from the admitted journal")
+            else:
+                write_private_bytes(original_journal_path, original_journal, refuse_existing=True)
         with resume_experiment_lease(
             args.experiment_id,
             journal_path=journal_path,
@@ -1258,15 +1506,45 @@ async def run(args: argparse.Namespace) -> None:  # noqa: PLR0915
                 experiment_id=args.experiment_id,
                 case=journal.cases[0],
             ):
-                begin_cache_only_recovery(
-                    journal_path,
-                    args.resume_failed_case,
-                    worker_source_build_id=current_worker_build,
-                    deployment_source_build_id=manifest.source_build_id,
-                    lease=lease,
-                )
+                if journal_path.read_bytes() != current_journal_bytes:
+                    raise ValueError("benchmark journal changed after recovery lock acquisition")
+                if original_journal_path.read_bytes() != original_journal:
+                    raise ValueError(
+                        "preserved original journal changed after recovery lock acquisition"
+                    )
                 base = Context.from_env()
                 variant = manifest.variants[0]
+                if already_recovering:
+                    acknowledged, _ = await _acknowledge_unstarted_recovery(
+                        base=base,
+                        temporal=temporal,
+                        case=journal.cases[0],
+                        variant=variant,
+                        output_dir=output_dir,
+                        current_journal_sha256=current_journal_sha256,
+                        original_journal_sha256=original_journal_sha256,
+                        worker_source_build_id=current_worker_build,
+                    )
+                    expected_original_ledger_sha256 = cast(
+                        "str", acknowledged["immutableLedgerSha256"]
+                    )
+                else:
+                    original_snapshot = await _database_snapshot(base, journal.cases[0])
+                    original_facts = _original_recovery_facts(
+                        original_snapshot,
+                        variant=variant,
+                        require_failed_transcript=True,
+                    )
+                    expected_original_ledger_sha256 = cast(
+                        "str", original_facts["immutableLedgerSha256"]
+                    )
+                    begin_cache_only_recovery(
+                        journal_path,
+                        args.resume_failed_case,
+                        worker_source_build_id=current_worker_build,
+                        deployment_source_build_id=manifest.source_build_id,
+                        lease=lease,
+                    )
                 recovery_summary, recovery_run_id, receipt_sha256 = await _recover_failed_case(
                     base=base,
                     temporal=temporal,
@@ -1277,7 +1555,9 @@ async def run(args: argparse.Namespace) -> None:  # noqa: PLR0915
                     output_dir=output_dir,
                     task_queue_prefix=args.task_queue,
                     worker_source_build_id=current_worker_build,
+                    current_journal_sha256=current_journal_sha256,
                     original_journal_sha256=original_journal_sha256,
+                    expected_original_ledger_sha256=expected_original_ledger_sha256,
                 )
                 finish_cache_only_recovery(
                     journal_path,
@@ -1461,6 +1741,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--dry-run", action="store_true")
     result.add_argument("--resume-failed-case", choices=("preflight-a",))
     result.add_argument("--worker-source-build-id")
+    result.add_argument("--acknowledge-unstarted-recovery")
     return result
 
 
