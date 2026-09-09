@@ -34,6 +34,7 @@ export const harnessArtifactKind = pgEnum("harness_artifact_kind", [
   "checks",
   "export",
   "speech_checkpoint",
+  "speech_assignment",
 ]);
 
 export const harnessArtifact = pgTable(

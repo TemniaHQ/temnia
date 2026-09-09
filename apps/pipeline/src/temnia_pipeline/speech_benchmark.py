@@ -29,7 +29,7 @@ from temnia_pipeline.speech.resources import SpeechModelManifest, SpeechResource
 
 VariantId = Literal["A", "B", "C", "D"]
 CaseKind = Literal["preflight", "long"]
-CaseStatus = Literal["planned", "reserved", "completed", "failed"]
+CaseStatus = Literal["planned", "reserved", "recovering", "completed", "failed"]
 
 BENCHMARK_FORMAT = "temnia-speech-benchmark/1"
 JOURNAL_FORMAT = "temnia-speech-benchmark-journal/1"
@@ -197,6 +197,8 @@ class BenchmarkCase(BaseModel):
     max_dispatches: Literal[3] = CALLS_PER_CASE
     status: CaseStatus = "planned"
     error_type: str | None = None
+    recovery_run_id: UUID | None = None
+    recovery_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class BenchmarkJournal(BaseModel):
@@ -211,10 +213,12 @@ class BenchmarkJournal(BaseModel):
     dispatch_cap: Literal[36] = EXPERIMENT_DISPATCH_CAP
     reserved_exposure_micros: int = Field(default=0, ge=0)
     reserved_dispatches: int = Field(default=0, ge=0)
+    initial_worker_source_build_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    worker_source_build_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     cases: tuple[BenchmarkCase, ...]
 
     @model_validator(mode="after")
-    def bounded_unique_plan(self) -> BenchmarkJournal:
+    def bounded_unique_plan(self) -> BenchmarkJournal:  # noqa: C901
         """Refuse a malformed or partially duplicated experiment plan."""
         if len(self.cases) != EXPECTED_CASES:
             raise ValueError("benchmark journal requires exactly twelve cases")
@@ -228,6 +232,19 @@ class BenchmarkJournal(BaseModel):
             raise ValueError("benchmark journal exceeds its exposure cap")
         if self.reserved_dispatches > self.dispatch_cap:
             raise ValueError("benchmark journal exceeds its dispatch cap")
+        recovering = [case for case in self.cases if case.status == "recovering"]
+        if len(recovering) > 1:
+            raise ValueError("benchmark journal contains multiple recovery cases")
+        for case in self.cases:
+            has_recovery_identity = (
+                case.recovery_run_id is not None or case.recovery_receipt_sha256 is not None
+            )
+            if (case.status == "recovering" or has_recovery_identity) and case.key != "preflight-a":
+                raise ValueError("only preflight-a may carry cache-only recovery state")
+            if case.status != "completed" and (has_recovery_identity):
+                raise ValueError("benchmark recovery receipt belongs only to a completed case")
+            if (case.recovery_run_id is None) != (case.recovery_receipt_sha256 is None):
+                raise ValueError("benchmark recovery receipt identity is incomplete")
         return self
 
 
@@ -299,6 +316,56 @@ def experiment_lease(
         os.close(descriptor)
 
 
+def _admission_marker(*, experiment_id: str, journal_path: Path, manifest_sha256: str) -> bytes:
+    return (
+        canonical_json(
+            {
+                "experimentId": experiment_id,
+                "journalPath": str(journal_path),
+                "manifestSha256": manifest_sha256,
+            }
+        )
+        + b"\n"
+    )
+
+
+@contextmanager
+def resume_experiment_lease(
+    experiment_id: str,
+    *,
+    journal_path: Path,
+    manifest_sha256: str,
+    lock_root: Path = EXPERIMENT_LOCK_ROOT,
+) -> Generator[ExperimentLease]:
+    """Reacquire an admitted experiment without replacing its durable marker."""
+    if not experiment_id or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in experiment_id
+    ):
+        raise ValueError("benchmark experiment id must be lowercase kebab case")
+    lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = lock_root / f"{experiment_id}.lock"
+    descriptor = os.open(path, os.O_RDWR)
+    lease = ExperimentLease(experiment_id, path, descriptor)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("benchmark experiment is already running on this host") from error
+        expected = _admission_marker(
+            experiment_id=experiment_id,
+            journal_path=journal_path,
+            manifest_sha256=manifest_sha256,
+        )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        if os.read(descriptor, len(expected) + 1) != expected:
+            raise ValueError("benchmark admission marker does not match the requested recovery")
+        yield lease
+    finally:
+        lease.held = False
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def _advisory_keys(experiment_id: str) -> tuple[int, int]:
     digest = hashlib.sha256(f"temnia:speech-benchmark:{experiment_id}".encode()).digest()
     return (
@@ -360,6 +427,67 @@ async def database_experiment_lease(
         await connection.close()
 
 
+@asynccontextmanager
+async def database_resume_lease(
+    database_url: str,
+    *,
+    organization_id: UUID,
+    experiment_id: str,
+    case: BenchmarkCase,
+) -> AsyncGenerator[None]:
+    """Hold the experiment lock and bind recovery to its one admitted transcript."""
+    connection = cast(
+        "AsyncConnection[dict[str, Any]]",
+        await AsyncConnection.connect(
+            database_url,
+            row_factory=cast("Any", dict_row),
+            autocommit=True,
+        ),
+    )
+    first_key, second_key = _advisory_keys(experiment_id)
+    acquired = False
+    try:
+        lock = await (
+            await connection.execute(
+                "SELECT pg_try_advisory_lock(%s, %s) AS acquired",
+                (first_key, second_key),
+            )
+        ).fetchone()
+        if lock is None or lock["acquired"] is not True:
+            raise RuntimeError("benchmark experiment is already running against this database")
+        acquired = True
+        workflow_prefix = f"speech-benchmark-{experiment_id}-%"
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.organization_id', %s, true)",
+                (str(organization_id),),
+            )
+            rows = await (
+                await connection.execute(
+                    """
+                    SELECT source_id, workflow_id
+                      FROM transcript
+                     WHERE workflow_id LIKE %s
+                     ORDER BY source_id
+                     LIMIT 2
+                    """,
+                    (workflow_prefix,),
+                )
+            ).fetchall()
+        if len(rows) != 1 or rows[0]["source_id"] != case.source_id:
+            raise ValueError("benchmark recovery database identity is not the failed case")
+        if rows[0]["workflow_id"] != case.workflow_id:
+            raise ValueError("benchmark recovery workflow identity differs from the failed case")
+        yield
+    finally:
+        if acquired:
+            with suppress(Exception):
+                await connection.execute(
+                    "SELECT pg_advisory_unlock(%s, %s)", (first_key, second_key)
+                )
+        await connection.close()
+
+
 def build_journal(
     *,
     experiment_id: str,
@@ -387,6 +515,8 @@ def build_journal(
     return BenchmarkJournal(
         experiment_id=experiment_id,
         deployment_manifest_sha256=manifest.sha256,
+        initial_worker_source_build_id=manifest.source_build_id,
+        worker_source_build_id=manifest.source_build_id,
         cases=tuple(cases),
     )
 
@@ -450,6 +580,41 @@ def read_journal(path: Path) -> BenchmarkJournal:
     return BenchmarkJournal.model_validate_json(path.read_bytes(), strict=True)
 
 
+def validate_cache_only_recovery_journal(
+    journal: BenchmarkJournal,
+    *,
+    organization_id: UUID,
+    manifest: BenchmarkDeploymentManifest,
+) -> None:
+    """Validate the exact admitted first-case failure before any journal mutation."""
+    first = journal.cases[0]
+    if journal.deployment_manifest_sha256 != manifest.sha256:
+        raise ValueError("benchmark recovery manifest differs from its admitted journal")
+    if (
+        first.key != "preflight-a"
+        or first.variant_id != "A"
+        or first.kind != "preflight"
+        or first.status != "failed"
+        or first.error_type != "UndefinedColumn"
+    ):
+        raise ValueError("benchmark recovery requires the reviewed preflight-a SQL failure")
+    if (
+        journal.reserved_exposure_micros != 1_062_501
+        or journal.reserved_dispatches != 3
+        or any(case.status != "planned" for case in journal.cases[1:])
+    ):
+        raise ValueError("benchmark recovery admission counters or later cases changed")
+    variants = {variant.id: variant for variant in manifest.variants}
+    for case in journal.cases:
+        if case.configured_exposure_micros != variants[case.variant_id].case_exposure_micros:
+            raise ValueError("benchmark recovery case exposure differs from its manifest")
+        if case.workflow_id != f"speech-benchmark-{journal.experiment_id}-{case.key}":
+            raise ValueError("benchmark recovery workflow id differs from its admitted case")
+        expected_prefix = f"org/{organization_id}/source/{case.source_id}/"
+        if case.object_prefix != expected_prefix:
+            raise ValueError("benchmark recovery object prefix differs from its admitted source")
+
+
 def reserve_case(path: Path, case_key: str, *, lease: ExperimentLease) -> BenchmarkJournal:
     """Consume one case's exposure before its source or workflow is created."""
     lease.assert_held()
@@ -505,6 +670,91 @@ def finish_case(
     cases = tuple(
         case.model_copy(
             update={"status": "failed" if error_type else "completed", "error_type": error_type}
+        )
+        if case.key == case_key
+        else case
+        for case in journal.cases
+    )
+    updated = journal.model_copy(update={"cases": cases})
+    _write_private(path, updated.model_dump(mode="json", by_alias=True))
+    return updated
+
+
+def begin_cache_only_recovery(
+    path: Path,
+    case_key: str,
+    *,
+    worker_source_build_id: str,
+    deployment_source_build_id: str,
+    lease: ExperimentLease,
+) -> BenchmarkJournal:
+    """Bind the one reviewed failed case to a new worker without adding exposure."""
+    lease.assert_held()
+    journal = read_journal(path)
+    if lease.experiment_id != journal.experiment_id:
+        raise ValueError("benchmark lease and journal name different experiments")
+    if case_key != "preflight-a":
+        raise ValueError("only the first failed preflight is eligible for cache-only recovery")
+    target = next((case for case in journal.cases if case.key == case_key), None)
+    if target is None or target.status != "failed" or target.error_type is None:
+        raise ValueError("cache-only recovery requires the terminal failed first case")
+    if journal.cases[0].key != case_key or any(
+        case.status != "planned" for case in journal.cases[1:]
+    ):
+        raise ValueError("cache-only recovery requires exactly one admitted failed first case")
+    if (
+        journal.reserved_exposure_micros != target.configured_exposure_micros
+        or journal.reserved_dispatches != target.max_dispatches
+    ):
+        raise ValueError("cache-only recovery would change prior aggregate admission")
+    initial_build = journal.initial_worker_source_build_id or deployment_source_build_id
+    if initial_build != deployment_source_build_id:
+        raise ValueError("initial benchmark worker build differs from the GPU deployment build")
+    current_build = journal.worker_source_build_id
+    if current_build not in {None, deployment_source_build_id, worker_source_build_id}:
+        raise ValueError("benchmark continuation worker build was already frozen differently")
+    cases = tuple(
+        case.model_copy(update={"status": "recovering"}) if case.key == case_key else case
+        for case in journal.cases
+    )
+    updated = journal.model_copy(
+        update={
+            "initial_worker_source_build_id": initial_build,
+            "worker_source_build_id": worker_source_build_id,
+            "cases": cases,
+        }
+    )
+    _write_private(path, updated.model_dump(mode="json", by_alias=True))
+    return updated
+
+
+def finish_cache_only_recovery(
+    path: Path,
+    case_key: str,
+    *,
+    recovery_run_id: UUID,
+    receipt_sha256: str,
+    lease: ExperimentLease,
+) -> BenchmarkJournal:
+    """Complete recovery only after an immutable private receipt has been written."""
+    lease.assert_held()
+    journal = read_journal(path)
+    if lease.experiment_id != journal.experiment_id:
+        raise ValueError("benchmark lease and journal name different experiments")
+    target = next((case for case in journal.cases if case.key == case_key), None)
+    if target is None or target.status != "recovering":
+        raise ValueError("benchmark case is not in cache-only recovery")
+    if len(receipt_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in receipt_sha256
+    ):
+        raise ValueError("benchmark recovery receipt has an invalid SHA-256")
+    cases = tuple(
+        case.model_copy(
+            update={
+                "status": "completed",
+                "recovery_run_id": recovery_run_id,
+                "recovery_receipt_sha256": receipt_sha256,
+            }
         )
         if case.key == case_key
         else case

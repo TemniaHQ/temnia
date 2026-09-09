@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import os
 import uuid
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
@@ -32,8 +35,6 @@ from temnia_pipeline.harness.routes import RouteEligibility, RouteEntry, RoutePr
 from temnia_pipeline.speech_benchmark import database_experiment_lease
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from obstore.store import S3Store
     from pydantic_ai.messages import ModelMessage
 
@@ -47,6 +48,15 @@ ORIGINAL_OWNER = "original-activity-owner"
 CHARGED_OWNER = "charged-activity-owner"
 WAITING_OWNER = "waiting-activity-owner"
 REPLACEMENT_OWNER = "replacement-activity-owner"
+BENCHMARK_DRIVER_PATH = Path(__file__).parents[1] / "scripts/benchmark_checkpointed_speech.py"
+BENCHMARK_DRIVER_SPEC = importlib.util.spec_from_file_location(
+    "benchmark_checkpointed_speech_pg", BENCHMARK_DRIVER_PATH
+)
+if BENCHMARK_DRIVER_SPEC is None or BENCHMARK_DRIVER_SPEC.loader is None:
+    _driver_error = "could not load checkpointed speech benchmark driver"
+    raise RuntimeError(_driver_error)
+benchmark_driver = cast("Any", importlib.util.module_from_spec(BENCHMARK_DRIVER_SPEC))
+BENCHMARK_DRIVER_SPEC.loader.exec_module(benchmark_driver)
 
 
 @dataclass(frozen=True)
@@ -1582,5 +1592,107 @@ async def test_benchmark_database_lease_refuses_concurrency_and_prior_run() -> N
                 experiment_id=experiment_id,
             ):
                 pytest.fail("prior admitted workflow did not fence the experiment")
+    finally:
+        await db.close_pool()
+
+
+async def test_benchmark_snapshot_and_preservation_use_real_artifact_lineage(
+    tmp_path: Path,
+) -> None:
+    """The driver reads the migrated dependency column and preserves every typed body."""
+    url = pipeline_url()
+    case = await make_case(url)
+    store = cast("S3Store", MemoryStore())
+    prefix = f"org/{SEEDED.organizationId}/source/{case.source_id}/"
+    try:
+        checkpoint_body = {"format": "speech-checkpoint/2", "stage": "recognize"}
+        checkpoint = await artifacts.publish_json(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            store=store,
+            identity=artifacts.ArtifactIdentity(kind="speech_checkpoint", fingerprint="1" * 64),
+            content=checkpoint_body,
+            metadata={"format": "speech-checkpoint/2"},
+        )
+        coverage_body = {"format": "speech-coverage/1", "covered": True}
+        coverage = await artifacts.publish_json(
+            url,
+            scope=SEEDED,
+            source_id=case.source_id,
+            store=store,
+            identity=artifacts.ArtifactIdentity(kind="checks", fingerprint="2" * 64),
+            content=coverage_body,
+            metadata={"format": "speech-coverage/1"},
+            dependency_ids=[checkpoint.id],
+        )
+        benchmark_case = benchmark_driver.BenchmarkCase(
+            key="preflight-a",
+            variant_id="A",
+            kind="preflight",
+            source_id=case.source_id,
+            workflow_id="speech-benchmark-snapshot-preflight-a",
+            object_prefix=prefix,
+            configured_exposure_micros=1,
+        )
+        ctx = SimpleNamespace(
+            settings=SimpleNamespace(database_url=url),
+            store=store,
+        )
+        async with db.scoped(url, SEEDED) as conn:
+            run_ids: list[uuid.UUID] = []
+            for request_key in ("original", "recovery"):
+                row = await (
+                    await conn.execute(
+                        """
+                        INSERT INTO harness_run
+                            (organization_id, source_id, request_key, lane, budget_micros,
+                             config, route_snapshot, workflow_id, workflow_run_id)
+                        VALUES (%s, %s, %s, 'transcription', 1,
+                                '{}'::jsonb, '{}'::jsonb, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            SEEDED.organizationId,
+                            case.source_id,
+                            request_key,
+                            benchmark_case.workflow_id,
+                            f"temporal-{request_key}",
+                        ),
+                    )
+                ).fetchone()
+                assert row is not None
+                run_ids.append(row["id"])
+
+        with pytest.raises(ValueError, match="exact harness run id"):
+            await benchmark_driver._database_snapshot(  # noqa: SLF001
+                ctx, benchmark_case
+            )
+        snapshot = await benchmark_driver._database_snapshot(  # noqa: SLF001
+            ctx, benchmark_case, run_id=run_ids[0]
+        )
+        assert cast("dict[str, object]", snapshot["run"])["id"] == run_ids[0]
+        dependencies = cast("list[dict[str, object]]", snapshot["dependencies"])
+        assert dependencies == [
+            {
+                "artifact_id": coverage.id,
+                "input_artifact_id": checkpoint.id,
+            }
+        ]
+        artifact_rows = cast("list[dict[str, object]]", snapshot["artifacts"])
+        preserved = await benchmark_driver._preserve_objects(  # noqa: SLF001
+            ctx,
+            benchmark_case,
+            tmp_path / "private-case",
+            artifact_rows,
+        )
+        by_key = {row["key"]: row for row in preserved}
+        assert set(by_key) == {checkpoint.storage_key, coverage.storage_key}
+        assert (
+            tmp_path / "private-case" / by_key[checkpoint.storage_key]["localPath"]
+        ).read_bytes() == artifacts.canonical_json(checkpoint_body)
+        assert (
+            tmp_path / "private-case" / by_key[coverage.storage_key]["localPath"]
+        ).read_bytes() == artifacts.canonical_json(coverage_body)
     finally:
         await db.close_pool()

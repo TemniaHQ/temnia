@@ -37,6 +37,7 @@ from temnia_pipeline.speech.assets import SIZE_BYTES, verify_asset
 from temnia_pipeline.speech.client import SpeechModalClient, assert_checkpointed_deployment
 from temnia_pipeline.speech.qualification import wire_report
 from temnia_pipeline.speech_benchmark import (
+    CALLS_PER_CASE,
     EXPECTED_CASES,
     LONG_SOURCE_DURATION_MS,
     LONG_SOURCE_SHA256,
@@ -53,15 +54,21 @@ from temnia_pipeline.speech_benchmark import (
     FrozenSource,
     assert_benchmark_environment,
     assert_case_completed,
+    begin_cache_only_recovery,
     benchmark_summary,
     build_journal,
     database_experiment_lease,
+    database_resume_lease,
     experiment_lease,
+    finish_cache_only_recovery,
     finish_case,
     initialize_journal,
     measured_resource_estimate_micros,
     read_journal,
     reserve_case,
+    resume_experiment_lease,
+    validate_cache_only_recovery_journal,
+    write_private_bytes,
     write_private_json,
 )
 from temnia_pipeline.transcription.activities import Transcribe
@@ -74,6 +81,7 @@ from temnia_pipeline.workflows import TranscribeWorkflow
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from uuid import UUID
 
 MAX_SNAPSHOT_ROWS = 64
 MAX_SNAPSHOT_OBJECTS = 128
@@ -82,6 +90,14 @@ MAX_SNAPSHOT_OBJECT_BYTES = 128 * 1024 * 1024
 
 class BenchmarkExecutionError(RuntimeError):
     """One benchmark case failed after its non-recyclable admission."""
+
+
+class RecoveryNoSpawnSpeechClient(SpeechModalClient):
+    """Allow deployment/cache reads while making a recovery dispatch impossible."""
+
+    async def spawn(self, *_args: object, **_kwargs: object) -> str:
+        """Refuse every physical provider invocation."""
+        raise BenchmarkExecutionError("cache-only recovery reached the provider spawn boundary")
 
 
 class BenchmarkWorkflowHandle(Protocol):
@@ -97,12 +113,15 @@ class BenchmarkWorkflowHandle(Protocol):
 class V2QualificationSpeechActivities(SpeechActivitiesV2):
     """Lose the preflight activity result only after all GPU facts are accepted."""
 
-    def __init__(self, ctx: Context, *, inject_lost_result: bool) -> None:
-        super().__init__(ctx)
+    def __init__(
+        self, ctx: Context, *, inject_lost_result: bool, refuse_spawn: bool = False
+    ) -> None:
+        super().__init__(ctx, RecoveryNoSpawnSpeechClient if refuse_spawn else SpeechModalClient)
         self.inject_lost_result = inject_lost_result
         self.injected = False
         self.observed_attempts: list[int] = []
         self.observed_dispatch_counts: list[int] = []
+        self.observed_run_ids: list[object] = []
 
     @activity.defn(name="choose_transcription_plan")
     async def choose_transcription_plan(self, request: TranscribeInput) -> TranscriptionPlan:
@@ -118,6 +137,7 @@ class V2QualificationSpeechActivities(SpeechActivitiesV2):
     ) -> ParallelCheckpointedTranscription:
         """Delegate to v2, then inject one retryable lost preflight result."""
         result = await super().checkpointed_transcribe_v2(request, plan)
+        self.observed_run_ids.append(result.run_id)
         attempt_number = activity.info().attempt
         self.observed_attempts.append(attempt_number)
         async with db.scoped(self.ctx.settings.database_url, request.scope) as conn:
@@ -140,7 +160,11 @@ class V2QualificationSpeechActivities(SpeechActivitiesV2):
 
 
 def _variant_context(
-    base: Context, manifest: BenchmarkDeploymentManifest, variant: BenchmarkVariant
+    base: Context,
+    manifest: BenchmarkDeploymentManifest,
+    variant: BenchmarkVariant,
+    *,
+    budget_micros: int | None = None,
 ) -> Context:
     transcription_settings = replace(
         base.settings.transcription,
@@ -148,7 +172,9 @@ def _variant_context(
         speech_modal_app=variant.app,
         speech_protocol="temnia-speech/2",
         speech_expected_build=manifest.source_build_id,
-        speech_budget_micros=variant.case_exposure_micros,
+        speech_budget_micros=(
+            variant.case_exposure_micros if budget_micros is None else budget_micros
+        ),
         speech_rate_micros_per_hour=variant.rate_micros_per_hour,
         speech_stage_timeout_seconds=variant.resource_profile.stage_timeout_seconds,
         speech_startup_timeout_seconds=variant.resource_profile.startup_timeout_seconds,
@@ -211,19 +237,31 @@ async def _seed_source(ctx: Context, case: BenchmarkCase, source: FrozenSource) 
         raise OSError("benchmark audio upload did not preserve the frozen source size")
 
 
-async def _database_snapshot(ctx: Context, case: BenchmarkCase) -> dict[str, object]:
+async def _database_snapshot(
+    ctx: Context, case: BenchmarkCase, *, run_id: object | None = None
+) -> dict[str, object]:
     scope = resolve_scope()
     async with db.scoped(ctx.settings.database_url, scope) as conn:
-        run = await (
+        runs = await (
             await conn.execute(
                 """
                 SELECT id, status, budget_micros, spent_micros, reserved_micros,
-                       dispatch_count, config, route_snapshot, created_at, updated_at
-                  FROM harness_run WHERE source_id = %s AND lane = 'transcription'
+                       dispatch_count, config, route_snapshot, workflow_id,
+                       workflow_run_id, created_at, updated_at
+                  FROM harness_run
+                 WHERE source_id = %s AND lane = 'transcription' AND workflow_id = %s
+                   AND (%s::uuid IS NULL OR id = %s::uuid)
+                 ORDER BY created_at, id
+                 LIMIT %s
                 """,
-                (case.source_id,),
+                (case.source_id, case.workflow_id, run_id, run_id, MAX_SNAPSHOT_ROWS + 1),
             )
-        ).fetchone()
+        ).fetchall()
+        if len(runs) > MAX_SNAPSHOT_ROWS:
+            raise ValueError("benchmark run snapshot exceeds its bounded row count")
+        if len(runs) > 1:
+            raise ValueError("benchmark snapshot requires an exact harness run id")
+        run = runs[0] if runs else None
         attempts = await (
             await conn.execute(
                 """
@@ -267,10 +305,10 @@ async def _database_snapshot(ctx: Context, case: BenchmarkCase) -> dict[str, obj
         dependencies = await (
             await conn.execute(
                 """
-                SELECT d.artifact_id, d.depends_on_artifact_id
+                SELECT d.artifact_id, d.input_artifact_id
                   FROM harness_artifact_dependency d
                   JOIN harness_artifact a ON a.id = d.artifact_id
-                 WHERE a.source_id = %s ORDER BY d.artifact_id, d.depends_on_artifact_id
+                 WHERE a.source_id = %s ORDER BY d.artifact_id, d.input_artifact_id
                  LIMIT %s
                 """,
                 (case.source_id, MAX_SNAPSHOT_ROWS + 1),
@@ -280,7 +318,7 @@ async def _database_snapshot(ctx: Context, case: BenchmarkCase) -> dict[str, obj
             await conn.execute(
                 """
                 SELECT id, status, current_revision, language, provider, model,
-                       attempts, ready_at, created_at, updated_at
+                       attempts, workflow_id, ready_at, created_at, updated_at
                   FROM transcript WHERE source_id = %s
                 """,
                 (case.source_id,),
@@ -316,6 +354,26 @@ async def _database_snapshot(ctx: Context, case: BenchmarkCase) -> dict[str, obj
         "transcript": dict(transcript) if transcript else None,
         "transcriptRevisions": [dict(row) for row in revisions],
     }
+
+
+async def _harness_run_id_for_workflow_execution(
+    ctx: Context, case: BenchmarkCase, temporal_run_id: str
+) -> object | None:
+    """Resolve one recovery run by the exact Temporal execution identity."""
+    async with db.scoped(ctx.settings.database_url, resolve_scope()) as conn:
+        rows = await (
+            await conn.execute(
+                """
+                SELECT id FROM harness_run
+                 WHERE source_id = %s AND workflow_id = %s AND workflow_run_id = %s
+                 LIMIT 2
+                """,
+                (case.source_id, case.workflow_id, temporal_run_id),
+            )
+        ).fetchall()
+    if len(rows) > 1:
+        raise BenchmarkExecutionError("Temporal recovery identity matched multiple harness runs")
+    return rows[0]["id"] if rows else None
 
 
 async def _preserve_objects(  # noqa: C901, PLR0912
@@ -552,6 +610,7 @@ async def _run_case(  # noqa: PLR0915
     source: FrozenSource,
     output_dir: Path,
     task_queue_prefix: str,
+    worker_source_build_id: str,
 ) -> dict[str, object]:
     ctx = _variant_context(base, manifest, variant)
     await assert_checkpointed_deployment(
@@ -678,7 +737,8 @@ async def _run_case(  # noqa: PLR0915
         "deployment": {
             "app": variant.app,
             "protocol": "temnia-speech/2",
-            "sourceBuildId": manifest.source_build_id,
+            "gpuSourceBuildId": manifest.source_build_id,
+            "workerSourceBuildId": worker_source_build_id,
             "modelManifest": manifest.model_manifest.model_dump(mode="json", by_alias=True),
         },
         "workflow": {
@@ -723,6 +783,411 @@ async def _run_case(  # noqa: PLR0915
     return report
 
 
+def _original_recovery_facts(
+    snapshot: dict[str, object], *, variant: BenchmarkVariant, require_failed_transcript: bool
+) -> dict[str, object]:
+    """Prove the failed run contains exactly the three accepted GPU invocations."""
+    run = snapshot.get("run")
+    transcript = snapshot.get("transcript")
+    attempts = snapshot.get("attempts")
+    operations = snapshot.get("operations")
+    artifacts = snapshot.get("artifacts")
+    dependencies = snapshot.get("dependencies")
+    if not all(
+        isinstance(value, expected)
+        for value, expected in (
+            (run, dict),
+            (transcript, dict),
+            (attempts, list),
+            (operations, list),
+            (artifacts, list),
+            (dependencies, list),
+        )
+    ):
+        raise BenchmarkExecutionError("cache-only recovery lacks complete original ledger evidence")
+    run_values = cast("dict[str, object]", run)
+    attempt_values = cast("list[dict[str, object]]", attempts)
+    operation_values = cast("list[dict[str, object]]", operations)
+    artifact_values = cast("list[dict[str, object]]", artifacts)
+    dependency_values = cast("list[dict[str, object]]", dependencies)
+    transcript_values = cast("dict[str, object]", transcript)
+    if (
+        run_values.get("status") != "failed"
+        or run_values.get("budget_micros") != variant.case_exposure_micros
+        or run_values.get("dispatch_count") != CALLS_PER_CASE
+        or run_values.get("spent_micros") != 0
+        or run_values.get("reserved_micros") != variant.case_exposure_micros
+        or (require_failed_transcript and transcript_values.get("status") != "failed")
+    ):
+        raise BenchmarkExecutionError("original benchmark run is not the exact failed admission")
+    if len(attempt_values) != CALLS_PER_CASE or {
+        attempt.get("stage") for attempt in attempt_values
+    } != {
+        "recognize",
+        "align",
+        "speaker_turns",
+    }:
+        raise BenchmarkExecutionError("original benchmark run lacks its exact three GPU attempts")
+    if any(
+        attempt.get("state") != "succeeded"
+        or attempt.get("dispatched_at") is None
+        or attempt.get("estimated_cost_micros") != variant.reservation_micros
+        or attempt.get("actual_cost_micros") is not None
+        or attempt.get("cost_status") != "unknown"
+        or attempt.get("reservation_state") != "active"
+        or attempt.get("reservation_amount_micros") != variant.reservation_micros
+        for attempt in attempt_values
+    ):
+        raise BenchmarkExecutionError("original benchmark GPU attempt evidence is incomplete")
+    operation_by_stage = {str(operation.get("stage")): operation for operation in operation_values}
+    if set(operation_by_stage) != {
+        "recognize",
+        "align",
+        "speaker_turns",
+        "assign_speakers",
+    }:
+        raise BenchmarkExecutionError("original benchmark operation set is not exact")
+    gpu_stages = ("recognize", "align", "speaker_turns")
+    if any(
+        operation_by_stage[stage].get("status") != "succeeded"
+        or operation_by_stage[stage].get("result_artifact_id") is None
+        for stage in gpu_stages
+    ):
+        raise BenchmarkExecutionError("original benchmark GPU operations are not terminal")
+    checkpoint_ids = {
+        str(operation_by_stage[stage]["result_artifact_id"]): stage for stage in gpu_stages
+    }
+    checkpoint_artifacts = {
+        str(artifact.get("id")): artifact
+        for artifact in artifact_values
+        if artifact.get("kind") == "speech_checkpoint"
+    }
+    if set(checkpoint_artifacts) != set(checkpoint_ids) or any(
+        cast("dict[str, object]", artifact.get("metadata", {})).get("format")
+        != "speech-checkpoint/2"
+        for artifact in checkpoint_artifacts.values()
+    ):
+        raise BenchmarkExecutionError(
+            "original benchmark checkpoint artifact identity is incomplete"
+        )
+    recognize_id = next(key for key, stage in checkpoint_ids.items() if stage == "recognize")
+    align_id = next(key for key, stage in checkpoint_ids.items() if stage == "align")
+    checkpoint_dependencies = {
+        (str(value.get("artifact_id")), str(value.get("input_artifact_id")))
+        for value in dependency_values
+        if str(value.get("artifact_id")) in checkpoint_ids
+    }
+    if checkpoint_dependencies != {(align_id, recognize_id)}:
+        raise BenchmarkExecutionError("original benchmark checkpoint lineage is not exact")
+    immutable_ledger = {
+        "run": run_values,
+        "attempts": attempt_values,
+        "operations": operation_values,
+        "checkpointArtifacts": [checkpoint_artifacts[key] for key in sorted(checkpoint_artifacts)],
+        "checkpointDependencies": sorted(checkpoint_dependencies),
+    }
+    return {
+        "runId": str(run_values["id"]),
+        "checkpointArtifactIdsByStage": {
+            stage: artifact_id for artifact_id, stage in checkpoint_ids.items()
+        },
+        "immutableLedgerSha256": hashlib.sha256(
+            canonical_json(wire_report(immutable_ledger))
+        ).hexdigest(),
+        "immutableLedger": immutable_ledger,
+    }
+
+
+def _assert_cache_only_recovery(
+    snapshot: dict[str, object], *, original: dict[str, object]
+) -> None:
+    """Prove the continuation reused every GPU result and admitted no invocation."""
+    run_value = snapshot.get("run")
+    transcript_value = snapshot.get("transcript")
+    attempts = cast("list[dict[str, object]]", snapshot.get("attempts"))
+    operations = cast("list[dict[str, object]]", snapshot.get("operations"))
+    artifacts = cast("list[dict[str, object]]", snapshot.get("artifacts"))
+    dependencies = cast("list[dict[str, object]]", snapshot.get("dependencies"))
+    if not isinstance(run_value, dict) or not isinstance(transcript_value, dict):
+        raise BenchmarkExecutionError("cache-only recovery lacks run or transcript evidence")
+    run = cast("dict[str, object]", run_value)
+    transcript = cast("dict[str, object]", transcript_value)
+    if (
+        run.get("status") != "ready"
+        or run.get("budget_micros") != 1
+        or run.get("dispatch_count") != 0
+        or run.get("spent_micros") != 0
+        or run.get("reserved_micros") != 0
+        or attempts != []
+        or transcript.get("status") != "ready"
+    ):
+        raise BenchmarkExecutionError("cache-only recovery admitted provider exposure")
+    by_stage = {str(operation.get("stage")): operation for operation in operations}
+    expected_stages = {"recognize", "align", "speaker_turns", "assign_speakers"}
+    if set(by_stage) != expected_stages or any(
+        operation.get("status") != "succeeded" or operation.get("result_artifact_id") is None
+        for operation in by_stage.values()
+    ):
+        raise BenchmarkExecutionError("cache-only recovery operation set is incomplete")
+    expected_gpu = cast("dict[str, str]", original["checkpointArtifactIdsByStage"])
+    if any(
+        str(by_stage[stage]["result_artifact_id"]) != expected_gpu[stage] for stage in expected_gpu
+    ):
+        raise BenchmarkExecutionError("cache-only recovery changed a GPU checkpoint identity")
+    artifact_by_id = {str(artifact.get("id")): artifact for artifact in artifacts}
+    assignment_id = str(by_stage["assign_speakers"]["result_artifact_id"])
+    if artifact_by_id.get(assignment_id, {}).get("kind") != "speech_assignment":
+        raise BenchmarkExecutionError("cache-only recovery lacks the typed CPU assignment artifact")
+    expected_assignment_dependencies = {
+        expected_gpu["align"],
+        expected_gpu["speaker_turns"],
+    }
+    actual_assignment_dependencies = {
+        str(value.get("input_artifact_id"))
+        for value in dependencies
+        if str(value.get("artifact_id")) == assignment_id
+    }
+    if actual_assignment_dependencies != expected_assignment_dependencies:
+        raise BenchmarkExecutionError("cache-only recovery assignment lineage is not exact")
+
+
+async def _recover_failed_case(  # noqa: C901, PLR0915
+    *,
+    base: Context,
+    temporal: TemporalSettings,
+    manifest: BenchmarkDeploymentManifest,
+    variant: BenchmarkVariant,
+    case: BenchmarkCase,
+    source: FrozenSource,
+    output_dir: Path,
+    task_queue_prefix: str,
+    worker_source_build_id: str,
+    original_journal_sha256: str,
+) -> tuple[dict[str, object], UUID, str]:
+    """Complete only CPU assignment from the original immutable checkpoint set."""
+    original_snapshot = await _database_snapshot(base, case)
+    original = _original_recovery_facts(
+        original_snapshot, variant=variant, require_failed_transcript=True
+    )
+    original_run_id = original["runId"]
+    original_dir = output_dir / "cases" / case.key / "recovery" / "original"
+    original_objects = await _preserve_objects(
+        base,
+        case,
+        original_dir,
+        cast("list[dict[str, object]]", original_snapshot["artifacts"]),
+    )
+    ctx = _variant_context(base, manifest, variant, budget_micros=1)
+    await assert_checkpointed_deployment(
+        SpeechModalClient(ctx.settings.transcription), ctx.settings.transcription
+    )
+    scope = resolve_scope()
+    request = TranscribeInput(
+        artifactPrefix=case.object_prefix,
+        audioKey=f"{case.object_prefix}audio/audio.m4a",
+        durationMs=source.duration_ms,
+        scope=scope,
+        sourceId=case.source_id,
+    )
+    client = await Client.connect(
+        temporal.address,
+        namespace=temporal.namespace,
+        data_converter=pydantic_data_converter,
+    )
+    transcribe = Transcribe(ctx)
+    qualifier = V2QualificationSpeechActivities(ctx, inject_lost_result=False, refuse_spawn=True)
+    task_queue = f"{task_queue_prefix}-{case.key}-cache-recovery"
+    result: object | None = None
+    execution_error: BaseException | None = None
+    temporal_run_id: str | None = None
+    started_at = datetime.now(UTC)
+    started_monotonic = time.monotonic()
+    worker = Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[TranscribeWorkflow],
+        activities=[*transcribe.activities(), *qualifier.activities()],
+        workflow_runner=SandboxedWorkflowRunner(
+            restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                "pydantic", "pydantic_core"
+            )
+        ),
+    )
+    try:
+        async with worker:
+            handle = cast(
+                "BenchmarkWorkflowHandle",
+                await client.start_workflow(
+                    TranscribeWorkflow.run,
+                    request,
+                    id=case.workflow_id,
+                    task_queue=task_queue,
+                ),
+            )
+            temporal_run_id = cast("str | None", cast("Any", handle).first_execution_run_id)
+            try:
+                async with asyncio.timeout(600):
+                    result = await handle.result(follow_runs=False)
+            except (TimeoutError, asyncio.CancelledError):
+                await _cancel_and_drain(handle)
+                raise
+    except BaseException as error:
+        execution_error = error
+    case_dir = output_dir / "cases" / case.key / "recovery"
+    recovery_run_id: object | None = None
+    recovery_snapshot: dict[str, object] = {
+        "run": None,
+        "attempts": [],
+        "operations": [],
+        "artifacts": cast("list[dict[str, object]]", original_snapshot["artifacts"]),
+        "dependencies": cast("list[dict[str, object]]", original_snapshot["dependencies"]),
+        "transcript": original_snapshot["transcript"],
+        "transcriptRevisions": original_snapshot["transcriptRevisions"],
+    }
+    recovery_objects: list[dict[str, object]] = []
+    result_body: dict[str, object] | None = None
+    revision_object: dict[str, object] | None = None
+    output_facts: dict[str, object] | None = None
+    reconciliation_error: BaseException | None = None
+    try:
+        recovery_run_id = (
+            qualifier.observed_run_ids[-1]
+            if qualifier.observed_run_ids
+            else (
+                await _harness_run_id_for_workflow_execution(base, case, temporal_run_id)
+                if temporal_run_id is not None
+                else None
+            )
+        )
+        if recovery_run_id is not None:
+            recovery_snapshot = await _database_snapshot(base, case, run_id=recovery_run_id)
+        original_after = await _database_snapshot(base, case, run_id=original_run_id)
+        original_after_facts = _original_recovery_facts(
+            original_after, variant=variant, require_failed_transcript=False
+        )
+        if original_after_facts["immutableLedgerSha256"] != original["immutableLedgerSha256"]:
+            raise BenchmarkExecutionError(  # noqa: TRY301
+                "cache-only recovery mutated the original run accounting"
+            )
+        recovery_objects = await _preserve_objects(
+            base,
+            case,
+            case_dir / "completed",
+            cast("list[dict[str, object]]", recovery_snapshot["artifacts"]),
+        )
+        if execution_error is None and recovery_run_id is not None and result is not None:
+            _assert_cache_only_recovery(recovery_snapshot, original=original)
+            result_body = cast(
+                "dict[str, object]",
+                cast("Any", result).model_dump(mode="json", by_alias=True),
+            )
+            revisions = cast("list[dict[str, object]]", recovery_snapshot["transcriptRevisions"])
+            revision_key = str(revisions[-1]["storage_key"]) if revisions else None
+            revision_object = next(
+                (item for item in recovery_objects if item["key"] == revision_key),
+                None,
+            )
+            if revision_object is None:
+                raise BenchmarkExecutionError(  # noqa: TRY301
+                    "cache-only recovery did not preserve its transcript body"
+                )
+            revision_path = case_dir / "completed" / cast("str", revision_object["localPath"])
+            output_facts = _transcript_output_facts(revision_path.read_bytes())
+    except BaseException as error:
+        reconciliation_error = error
+    final_error = execution_error or reconciliation_error
+    if final_error is None and (
+        recovery_run_id is None
+        or result_body is None
+        or revision_object is None
+        or output_facts is None
+    ):
+        final_error = BenchmarkExecutionError("cache-only recovery did not finish ready")
+    failure_report = wire_report(
+        {
+            "format": "temnia-speech-benchmark-cache-recovery-attempt/1",
+            "case": case.model_dump(mode="json", by_alias=True),
+            "temporalRunId": temporal_run_id,
+            "recoveryRunId": str(recovery_run_id) if recovery_run_id is not None else None,
+            "errorType": type(final_error).__name__ if final_error else None,
+            "gpuSourceBuildId": manifest.source_build_id,
+            "workerSourceBuildId": worker_source_build_id,
+            "originalJournalSha256": original_journal_sha256,
+            "originalImmutableLedgerSha256": original["immutableLedgerSha256"],
+            "original": original,
+            "originalObjects": original_objects,
+            "recovery": recovery_snapshot,
+            "objects": recovery_objects,
+            "noAdditionalExposure": (
+                cast("dict[str, object]", recovery_snapshot.get("run", {})).get("dispatch_count")
+                == 0
+                and recovery_snapshot.get("attempts") == []
+            ),
+        }
+    )
+    attempt_body = canonical_json(failure_report) + b"\n"
+    write_private_bytes(case_dir / "recovery-attempt.json", attempt_body, refuse_existing=True)
+    if final_error is not None:
+        raise BenchmarkExecutionError("cache-only recovery did not finish ready") from final_error
+    if result_body is None or revision_object is None or output_facts is None:
+        raise AssertionError("validated cache-only recovery facts were not retained")
+    finished_at = datetime.now(UTC)
+    wall_seconds = time.monotonic() - started_monotonic
+    result_sha256 = hashlib.sha256(canonical_json(result_body)).hexdigest()
+    report = wire_report(
+        {
+            "format": "temnia-speech-benchmark-cache-recovery/1",
+            "case": case.model_dump(mode="json", by_alias=True),
+            "deployment": {
+                "app": variant.app,
+                "protocol": "temnia-speech/2",
+                "gpuSourceBuildId": manifest.source_build_id,
+                "initialWorkerSourceBuildId": manifest.source_build_id,
+                "workerSourceBuildId": worker_source_build_id,
+                "originalJournalSha256": original_journal_sha256,
+                "modelManifest": manifest.model_manifest.model_dump(mode="json", by_alias=True),
+            },
+            "original": {
+                **original,
+                "objects": original_objects,
+                "reservedExposureMicros": variant.case_exposure_micros,
+                "reservedDispatches": 3,
+            },
+            "recovery": {
+                **recovery_snapshot,
+                "objects": recovery_objects,
+                "resultSha256": result_sha256,
+                "outputFacts": output_facts,
+                "startedAt": started_at.isoformat().replace("+00:00", "Z"),
+                "finishedAt": finished_at.isoformat().replace("+00:00", "Z"),
+                "wallSeconds": wall_seconds,
+                "budgetMicros": 1,
+            },
+            "noAdditionalExposure": True,
+            "cleanupRequired": True,
+        }
+    )
+    body = canonical_json(report) + b"\n"
+    receipt_path = case_dir / "continuation-receipt.json"
+    write_private_bytes(receipt_path, body, refuse_existing=True)
+    receipt_sha256 = hashlib.sha256(body).hexdigest()
+    summary: dict[str, object] = {
+        "case": case.key,
+        "variant": case.variant_id,
+        "kind": case.kind,
+        "block": case.block,
+        "resultSha256": result_sha256,
+        "transcriptSha256": revision_object["sha256"],
+        "wallSeconds": wall_seconds,
+        "functionElapsedSeconds": None,
+        "outputFacts": output_facts,
+        "costFacts": _cost_facts(
+            cast("list[dict[str, object]]", original_snapshot["attempts"]), variant
+        ),
+    }
+    return summary, cast("UUID", recovery_run_id), receipt_sha256
+
+
 def _load_manifest(path: Path) -> BenchmarkDeploymentManifest:
     return BenchmarkDeploymentManifest.model_validate_json(
         path.resolve(strict=True).read_bytes(), strict=True
@@ -748,11 +1213,10 @@ def _sources(args: argparse.Namespace) -> dict[str, FrozenSource]:
     }
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run(args: argparse.Namespace) -> None:  # noqa: PLR0915
     """Validate and then execute the fixed experiment sequentially."""
     manifest = _load_manifest(args.deployment_manifest)
-    if source_build_id() != manifest.source_build_id:
-        raise ValueError("benchmark driver source build differs from every deployment")
+    current_worker_build = source_build_id()
     sources = _sources(args)
     for source in sources.values():
         source.verify()
@@ -764,6 +1228,80 @@ async def run(args: argparse.Namespace) -> None:
     scope = resolve_scope()
     output_dir = args.output_dir.resolve()
     journal_path = output_dir / "experiment.json"
+    if args.resume_failed_case is not None:
+        if args.dry_run:
+            raise ValueError("cache-only recovery cannot be combined with dry-run")
+        if args.worker_source_build_id != current_worker_build:
+            raise ValueError("cache-only recovery requires the explicit current worker build id")
+        journal = read_journal(journal_path)
+        validate_cache_only_recovery_journal(
+            journal,
+            organization_id=scope.organizationId,
+            manifest=manifest,
+        )
+        original_journal = journal_path.read_bytes()
+        original_journal_sha256 = hashlib.sha256(original_journal).hexdigest()
+        original_journal_path = output_dir / "original-admitted-journal.json"
+        if original_journal_path.exists():
+            if original_journal_path.read_bytes() != original_journal:
+                raise ValueError("preserved original journal differs from the admitted journal")
+        else:
+            write_private_bytes(original_journal_path, original_journal, refuse_existing=True)
+        with resume_experiment_lease(
+            args.experiment_id,
+            journal_path=journal_path,
+            manifest_sha256=manifest.sha256,
+        ) as lease:
+            async with database_resume_lease(
+                database_url,
+                organization_id=scope.organizationId,
+                experiment_id=args.experiment_id,
+                case=journal.cases[0],
+            ):
+                begin_cache_only_recovery(
+                    journal_path,
+                    args.resume_failed_case,
+                    worker_source_build_id=current_worker_build,
+                    deployment_source_build_id=manifest.source_build_id,
+                    lease=lease,
+                )
+                base = Context.from_env()
+                variant = manifest.variants[0]
+                recovery_summary, recovery_run_id, receipt_sha256 = await _recover_failed_case(
+                    base=base,
+                    temporal=temporal,
+                    manifest=manifest,
+                    variant=variant,
+                    case=journal.cases[0],
+                    source=sources["preflight"],
+                    output_dir=output_dir,
+                    task_queue_prefix=args.task_queue,
+                    worker_source_build_id=current_worker_build,
+                    original_journal_sha256=original_journal_sha256,
+                )
+                finish_cache_only_recovery(
+                    journal_path,
+                    args.resume_failed_case,
+                    recovery_run_id=recovery_run_id,
+                    receipt_sha256=receipt_sha256,
+                    lease=lease,
+                )
+                await _execute_cases(
+                    args=args,
+                    database_url=database_url,
+                    temporal=temporal,
+                    manifest=manifest,
+                    journal=read_journal(journal_path),
+                    journal_path=journal_path,
+                    sources=sources,
+                    lease=lease,
+                    worker_source_build_id=current_worker_build,
+                    initial_summaries=[recovery_summary],
+                )
+        print(f"wrote private benchmark evidence under {output_dir}")
+        return
+    if current_worker_build != manifest.source_build_id:
+        raise ValueError("fresh benchmark worker build differs from every deployment")
     journal = build_journal(
         experiment_id=args.experiment_id,
         organization_id=scope.organizationId,
@@ -798,6 +1336,8 @@ async def run(args: argparse.Namespace) -> None:
                 journal_path=journal_path,
                 sources=sources,
                 lease=lease,
+                worker_source_build_id=current_worker_build,
+                initial_summaries=[],
             )
     print(f"wrote private benchmark evidence under {output_dir}")
 
@@ -812,6 +1352,8 @@ async def _execute_cases(
     journal_path: Path,
     sources: dict[str, FrozenSource],
     lease: ExperimentLease,
+    worker_source_build_id: str,
+    initial_summaries: list[dict[str, object]],
 ) -> None:
     """Run every admitted case in order while retaining evidence on failure."""
     base = Context.from_env()
@@ -822,9 +1364,13 @@ async def _execute_cases(
     with base.settings.transcription.speech_vad_model_path.open("rb") as model:
         verify_asset(model.read(SIZE_BYTES + 1))
     variants = {variant.id: variant for variant in manifest.variants}
-    summaries: list[dict[str, object]] = []
+    summaries = list(initial_summaries)
     try:
         for case in journal.cases:
+            if case.status == "completed":
+                continue
+            if case.status != "planned":
+                raise ValueError("benchmark continuation found a nonterminal admitted case")
             reserve_case(journal_path, case.key, lease=lease)
             print(f"benchmark case start key={case.key}")
             case_started = time.monotonic()
@@ -841,6 +1387,7 @@ async def _execute_cases(
                     sources[case.kind],
                     args.output_dir.resolve(),
                     args.task_queue,
+                    worker_source_build_id,
                 )
                 workflow = cast("dict[str, object]", report["workflow"])
                 run_values = cast("dict[str, object]", report["run"])
@@ -912,6 +1459,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--task-queue", required=True)
     result.add_argument("--output-dir", required=True, type=Path)
     result.add_argument("--dry-run", action="store_true")
+    result.add_argument("--resume-failed-case", choices=("preflight-a",))
+    result.add_argument("--worker-source-build-id")
     return result
 
 

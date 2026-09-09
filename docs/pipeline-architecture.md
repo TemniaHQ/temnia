@@ -306,7 +306,8 @@ admission locks the source, run and operations in a stable order and books their
 exposure atomically. Any failure drains the sibling; repeated cancellation cannot detach an
 owned remote finalizer. Unknown outcomes retain their physical-attempt reservation. Production
 can use the existing bounded known-OOM ladder; the fixed benchmark explicitly disables it.
-The logical stages use the existing ledger kinds, so this topology adds no DDL owner or migration.
+The logical stages use the existing ledger kinds. The CPU join adds the `speech_assignment`
+artifact kind through an additive Drizzle enum migration; Drizzle remains the sole DDL owner.
 
 Progress callbacks hand a latest value to a dedicated publisher with one pending value and one
 RPC. Five-second coalescing, a two-second RPC timeout and a five-second shutdown bound keep
@@ -329,6 +330,11 @@ recovery preflights. A durable one-time experiment journal and database lease pr
 launches from resetting the 36-call admission limit or reusing its exposure budget. Record phase
 time, workflow time, CPU utilization/throttling, GPU utilization, output differences and unresolved
 costs. A faster wall clock alone does not establish lower cost or greater transcript accuracy.
+An investigated CPU persistence failure may use an explicit, locked continuation: retain the failed
+run and its charges, recover accepted GPU checkpoints into a separate run with a budget too small
+to admit inference, and prove zero additional GPU attempts before proceeding. The journal keeps
+its original reservations. GPU and corrected worker builds are recorded separately; all long
+comparisons use one worker build.
 Same-container model cleanup and snapshots remain deferred until these measurements justify
 another comparison. See the [v2 rollout procedure](runbooks/chapter-harness.md#opt-into-the-versioned-parallel-speech-path).
 

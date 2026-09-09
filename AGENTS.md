@@ -460,7 +460,12 @@ scheduling are measured on one frozen source/model set before selecting a defaul
 containers and create-only admission remain; co-location and snapshots are later candidates.
 Atomic batch reservation precedes fan-out, cancellation drains siblings, and unknown outcomes or
 charges retain their exposure. Faster wall time alone is not a cost win. The comparison plan and
-limits are `docs/plans/speech-optimization-360-view.md`.
+limits are `docs/plans/speech-optimization-360-view.md`. The first short comparison exposed a
+missing `speech_assignment` database enum value after all GPU checkpoints were accepted; Drizzle
+adds that artifact kind. Recovery retains the failed run and its costs and reuses accepted evidence
+in a separate run whose budget cannot admit inference. A benchmark continuation preserves its
+original journal and cap, records GPU and worker builds separately, and uses one worker build for
+all long comparisons. Actual assignment and report SQL are exercised against migrated PostgreSQL.
 
 ## Working rules (S0, 2026-09-06)
 

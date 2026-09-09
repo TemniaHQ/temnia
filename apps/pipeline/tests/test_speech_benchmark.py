@@ -15,14 +15,18 @@ from temnia_pipeline.speech_benchmark import (
     BenchmarkVariant,
     assert_benchmark_environment,
     assert_case_completed,
+    begin_cache_only_recovery,
     benchmark_summary,
     build_journal,
     experiment_lease,
+    finish_cache_only_recovery,
     finish_case,
     initialize_journal,
     measured_resource_estimate_micros,
     read_journal,
     reserve_case,
+    resume_experiment_lease,
+    validate_cache_only_recovery_journal,
 )
 
 if TYPE_CHECKING:
@@ -173,6 +177,80 @@ def test_journal_persists_fixed_order_and_never_recycles_exposure(tmp_path: Path
         experiment_lease(journal.experiment_id, lock_root=lock_root),
     ):
         pass
+
+
+def test_failed_first_case_resumes_once_without_recycling_exposure(tmp_path: Path) -> None:
+    manifest = deployment_manifest()
+    path = tmp_path / "private" / "experiment.json"
+    lock_root = tmp_path / "locks"
+    organization_id = uuid.uuid4()
+    journal = build_journal(
+        experiment_id="bench-recovery-20260909",
+        organization_id=organization_id,
+        manifest=manifest,
+    )
+    with experiment_lease(journal.experiment_id, lock_root=lock_root) as lease:
+        lease.mark_admitted(journal_path=path, manifest_sha256=manifest.sha256)
+        initialize_journal(path, journal, lease=lease)
+        reserve_case(path, "preflight-a", lease=lease)
+        finish_case(path, "preflight-a", error_type="UndefinedColumn", lease=lease)
+    original = path.read_bytes()
+
+    with resume_experiment_lease(
+        journal.experiment_id,
+        journal_path=path,
+        manifest_sha256=manifest.sha256,
+        lock_root=lock_root,
+    ) as lease:
+        admitted = read_journal(path)
+        validate_cache_only_recovery_journal(
+            admitted, organization_id=organization_id, manifest=manifest
+        )
+        recovering = begin_cache_only_recovery(
+            path,
+            "preflight-a",
+            worker_source_build_id="d" * 64,
+            deployment_source_build_id=manifest.source_build_id,
+            lease=lease,
+        )
+        assert recovering.reserved_exposure_micros == 1_062_501
+        assert recovering.reserved_dispatches == 3
+        assert recovering.initial_worker_source_build_id == manifest.source_build_id
+        assert recovering.worker_source_build_id == "d" * 64
+        assert recovering.cases[0].error_type == "UndefinedColumn"
+        with pytest.raises(ValueError, match="terminal failed"):
+            begin_cache_only_recovery(
+                path,
+                "preflight-a",
+                worker_source_build_id="d" * 64,
+                deployment_source_build_id=manifest.source_build_id,
+                lease=lease,
+            )
+        recovery_run_id = uuid.uuid4()
+        completed = finish_cache_only_recovery(
+            path,
+            "preflight-a",
+            recovery_run_id=recovery_run_id,
+            receipt_sha256="e" * 64,
+            lease=lease,
+        )
+        assert completed.cases[0].status == "completed"
+        assert completed.cases[0].error_type == "UndefinedColumn"
+        assert completed.cases[0].recovery_run_id == recovery_run_id
+        next_case = reserve_case(path, "preflight-b", lease=lease)
+        assert next_case.reserved_dispatches == 6
+
+    assert original != path.read_bytes()
+    with (
+        pytest.raises(ValueError, match="admission marker"),
+        resume_experiment_lease(
+            journal.experiment_id,
+            journal_path=tmp_path / "different.json",
+            manifest_sha256=manifest.sha256,
+            lock_root=lock_root,
+        ),
+    ):
+        pytest.fail("mismatched journal unexpectedly acquired recovery lease")
 
 
 def test_environment_guard_binds_database_namespace_and_experiment() -> None:

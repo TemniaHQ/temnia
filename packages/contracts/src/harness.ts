@@ -48,6 +48,7 @@ export const HarnessArtifactKindSchema = z
     "checks",
     "export",
     "speech_checkpoint",
+    "speech_assignment",
   ])
   .meta({ id: "HarnessArtifactKind", title: "HarnessArtifactKind" });
 

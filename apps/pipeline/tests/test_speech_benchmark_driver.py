@@ -222,6 +222,13 @@ async def test_benchmark_plan_disables_oom_recovery(
     assert plan.allow_oom_recovery is False
 
 
+async def test_cache_only_client_refuses_the_provider_spawn_boundary() -> None:
+    client = driver.RecoveryNoSpawnSpeechClient(SimpleNamespace())
+
+    with pytest.raises(driver.BenchmarkExecutionError, match="spawn boundary"):
+        await client.spawn(object(), object())
+
+
 def test_cost_facts_exclude_incomplete_reused_checkpoint_telemetry() -> None:
     profile = SimpleNamespace()
     benchmark_variant = SimpleNamespace(resource_profile=profile)

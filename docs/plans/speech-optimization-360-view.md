@@ -20,3 +20,22 @@ Verification: focused tests for progress lifecycle, deployment/profile mismatch,
 ### Controlled experiment limits
 
 The reviewed benchmark profile narrows the GPU deadline to 900 seconds plus 120 seconds startup (the longest previously observed stage was 479.815 seconds). Production remains 3,600 plus 120. Four variants run one 40-second preflight and two long repetitions each: synchronous/4-core/serial, coalesced/4-core/serial, coalesced/8-core/serial, coalesced/8-core/parallel. Blocks use reversed order. No OOM fallback or extra repetition is admitted inside this experiment. The fixed rates are 1,250,000 and 1,450,000 micros/hour, above the September 9 published resource floors of 1,115,712 and 1,304,352. Thirty-six calls reserve at most 13,770,018 micros under a non-recyclable 14,000,000-micro ($14) new experiment ceiling. Existing 11,625,003 micros of unresolved prior exposure remain separate and retained. Model preparation CPU usage is separately capped and reported. Resource estimates are not invoices. Any unknown execution, identity mismatch, malformed output, OOM or deadline stops subsequent long dispatches until investigated; no cap is silently raised.
+
+### Investigated CPU failure and bounded continuation
+
+The first short case accepted all three GPU checkpoints, then its CPU join failed because
+`speech_assignment` was absent from the database artifact enum. Its report also used an incorrect
+dependency column. Add the enum through Drizzle and cover the actual assignment/publication/reuse,
+settlement and report queries against real PostgreSQL. Preserve the original failed run, its three
+attempts, all evidence and 1,062,501 micros of unresolved exposure.
+
+Recovery uses a separate workflow run on the same source and immutable GPU configuration with a
+one-micro budget. Every GPU checkpoint must reuse; a cache miss must refuse dispatch. Prove a ready
+recovery run with zero physical attempts and expense before continuing. The original failed run is
+never rewritten as successful. Resume only the remaining eleven planned cases through the existing
+host/database locks and journal, retaining case IDs, reservations, cap and original manifest.
+
+The GPU applications stay on their original frozen build. Record the corrected worker build
+separately and use it for every long comparison. Exclude short recovery time from performance
+comparisons. A failed or uncertain recovery stops continuation. The full exact-commit gate precedes
+recovery and remaining live dispatches; this amendment adds no repetitions or budget.

@@ -67,6 +67,8 @@ Protocol `temnia-speech/2` adds independent recognition/alignment and raw speake
 branches. A CPU operation joins the two immutable inputs; it makes no fourth GPU call.
 The v1 activities, checkpoints and workflow history remain supported. Select v2 only after
 the exact deployment has passed qualification; the worker does not silently upgrade a saved run.
+Apply Drizzle migration `0004_speech_assignment.sql` before starting v2 work. It adds the CPU
+assignment artifact kind; an older database can complete GPU inference and then reject the join.
 
 Prepare a dedicated model volume and record every file's size and SHA-256. The benchmark
 preparation script copies the existing cache through a read-only mount, strips cache locks,
@@ -103,6 +105,19 @@ Live admission is one-time per experiment ID, with a process-held local lock and
 advisory lock. The journal reserves each case before source creation; failed and unknown
 cases halt the sequence and never return spending capacity. Do not delete its lock/journal
 to restart an experiment.
+
+An explicit continuation is reserved for an investigated CPU-only failure after all three GPU
+checkpoints were accepted. Preserve the original failed run, physical attempts, source prefix,
+manifest and journal first. Recovery starts a separate run against those exact checkpoints with
+a one-micro budget and a client that refuses GPU launches: any missing checkpoint must fail.
+Use the original command and output directory with `--resume-failed-case preflight-a` and
+`--worker-source-build-id` set to the verified corrected worker fingerprint. The driver archives
+the original journal, refuses a second recovery entry and writes an immutable continuation receipt.
+Verify that the new run is
+ready with zero attempts and zero expense, while the original run retains its unresolved costs.
+Only then may the same locked journal admit its remaining planned cases. Record the frozen GPU
+build separately from the corrected worker build, and keep that worker build fixed for all long
+comparisons. A failed or uncertain recovery stops continuation; it never refunds admission capacity.
 
 Save every case report, normalized transcript, stage checkpoint, CPU assignment, coverage
 artifact and physical-attempt record before deleting anything. Cancel through Temporal and

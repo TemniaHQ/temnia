@@ -11,7 +11,8 @@
         "render",
         "checks",
         "export",
-        "speech_checkpoint"
+        "speech_checkpoint",
+        "speech_assignment"
       ],
       "title": "HarnessArtifactKind"
     }

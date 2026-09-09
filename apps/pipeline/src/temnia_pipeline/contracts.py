@@ -174,6 +174,7 @@ class HarnessArtifactKind(StrEnum):
     checks = "checks"
     export = "export"
     speech_checkpoint = "speech_checkpoint"
+    speech_assignment = "speech_assignment"
 
 
 class HarnessArtifactRef(BaseModel):
