@@ -8,6 +8,7 @@ import json
 import os
 import uuid
 from contextlib import AsyncExitStack
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -71,6 +72,8 @@ from temnia_pipeline.harness.workflows import ChapterReviewWorkflow
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+    from temnia_pipeline.harness.settings import TopicShotDetector
 
 SEEDED = Scope(
     organizationId=uuid.UUID("0192e8a0-0000-7000-8000-000000000001"),
@@ -405,6 +408,60 @@ async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) 
         assert created.run.config == resumed.run.config == start.request.config
         assert created.run.brief == resumed.run.brief == start.request.brief
         assert created.run.request_key == resumed.run.request_key
+    finally:
+        await db.close_pool()
+
+
+@pytest.mark.parametrize(
+    ("policy", "initial_detector"),
+    [
+        ("standalone-topics/1", "pyscenedetect-adaptive"),
+        ("standalone-topics/1", "scdet"),
+        ("legacy", "pyscenedetect-adaptive"),
+        ("chapter-editorial/1", "pyscenedetect-adaptive"),
+    ],
+)
+async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scdet(
+    policy: str, initial_detector: TopicShotDetector
+) -> None:
+    """New worker settings cannot reinterpret the detector chosen by an existing run."""
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value).model_copy(update={"editorial_policy": policy})
+    initial_settings = replace(settings(value), topic_shot_detector=initial_detector)
+    changed_settings = replace(
+        initial_settings,
+        topic_shot_detector="scdet"
+        if initial_detector == "pyscenedetect-adaptive"
+        else "pyscenedetect-adaptive",
+    )
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=initial_settings, route_snapshot=value
+        )
+        resumed = await start_or_refetch_run(
+            url, start=start, settings=changed_settings, route_snapshot=value
+        )
+        loaded = await get_run(url, scope=SEEDED, source_id=source_id, run_id=start.request.runId)
+        expected = initial_detector if policy == "standalone-topics/1" else "scdet"
+        assert created.run.topic_shot_detector == resumed.run.topic_shot_detector == expected
+        assert loaded.topic_shot_detector == expected
+        assert resumed.created is False
+        assert resumed.run.editorial_policy == created.run.editorial_policy == policy
+        assert resumed.run.config == created.run.config == start.request.config
+        async with db.scoped(url, SEEDED) as conn:
+            retained = await (
+                await conn.execute(
+                    "SELECT route_snapshot FROM harness_run WHERE id = %s",
+                    (start.request.runId,),
+                )
+            ).fetchone()
+        assert retained is not None
+        if policy == "standalone-topics/1":
+            assert retained["route_snapshot"]["topicShotDetector"] == initial_detector
+        else:
+            assert "topicShotDetector" not in retained["route_snapshot"]
     finally:
         await db.close_pool()
 

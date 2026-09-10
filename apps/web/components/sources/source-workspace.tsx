@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
 import { ChapterPanel } from "@/components/sources/chapter-panel";
 import { SourceTimestamp } from "@/components/sources/source-timestamp";
+import { TopicPanel } from "@/components/sources/topic-panel";
 import { TranscriptPanel } from "@/components/sources/transcript-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -70,6 +71,7 @@ interface SourceWorkspaceProps {
   posterUrl: string | null;
   source: SourceSummary;
   speakerLabels: Record<string, string>;
+  topics: ChapterView;
   transcript: TranscriptRowSummary | null;
   transcriptAnnotationsUrl: string | null;
   transcriptRevisions: Array<{
@@ -102,6 +104,7 @@ export function SourceWorkspace({
   transcriptUrl,
   chapterAvailability,
   chapters,
+  topics,
 }: SourceWorkspaceProps) {
   // The one row that is not a string: an absolute instant belongs to the
   // reader's time zone, which only the browser knows, so it renders itself in
@@ -151,6 +154,9 @@ export function SourceWorkspace({
             <TabsList>
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="transcript">Transcript</TabsTrigger>
+              <TabsTrigger data-testid="topics-tab" value="topics">
+                Topic videos
+              </TabsTrigger>
               <TabsTrigger data-testid="chapters-tab" value="chapters">
                 Chapters
               </TabsTrigger>
@@ -185,6 +191,13 @@ export function SourceWorkspace({
               <ChapterPanel
                 availability={chapterAvailability}
                 initialView={chapters}
+                sourceId={source.id}
+              />
+            </TabsContent>
+            <TabsContent value="topics">
+              <TopicPanel
+                availability={chapterAvailability}
+                initialView={topics}
                 sourceId={source.id}
               />
             </TabsContent>

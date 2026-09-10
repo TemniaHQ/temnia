@@ -45,6 +45,9 @@ from temnia_pipeline.contracts import (
     Kind,
     QuoteWordId,
     Scope,
+    TopicColdReview,
+    TopicProposal,
+    TopicSourceReview,
 )
 from temnia_pipeline.harness import artifacts, ledger
 from temnia_pipeline.harness.cassettes import (
@@ -1041,6 +1044,9 @@ chapter_verify_v1 = _agent("chapter_verify_v1", EditorialVerdictV1)
 chapter_summarize_v1 = _agent("chapter_summarize_v1", HierarchicalSummaryV1)
 chapter_editorial_assess_v1 = _agent("chapter_editorial_assess_v1", EditorialVerdictV2)
 chapter_editorial_repair_v1 = _agent("chapter_editorial_repair_v1", EditorialRepairV1)
+topic_propose_v1 = _agent("topic_propose_v1", TopicProposal)
+topic_cold_review_v1 = _agent("topic_cold_review_v1", TopicColdReview)
+topic_source_review_v1 = _agent("topic_source_review_v1", TopicSourceReview)
 HARNESS_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     chapter_propose_v1,
     chapter_propose_v2,
@@ -1048,6 +1054,9 @@ HARNESS_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     chapter_summarize_v1,
     chapter_editorial_assess_v1,
     chapter_editorial_repair_v1,
+    topic_propose_v1,
+    topic_cold_review_v1,
+    topic_source_review_v1,
 )
 
 

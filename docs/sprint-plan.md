@@ -33,6 +33,12 @@ source, not fresh acceptance gold. Do not advance to SaaS work or incidental bug
 editorial result remains unproven; the separate [backlog](plans/editorial-research-deferred-backlog.md)
 records those findings. This amendment is direction and evaluation design, not an M1 pass.
 
+**Implementation follow-up (2026-09-10):** the generic topic action, independent-span program,
+reserved reviewer, grounded repair, per-video rendering and human acceptance path are implemented
+on the PR branch. The [implementation record](design/standalone-topic-implementation-2026-09-10.md)
+separates local test evidence from the pending full-source editorial audition. Rajesh requested
+PySceneDetect AdaptiveDetector for the next harness trial. M1 remains open.
+
 ## 1. How to read this plan
 
 - **A sprint is a scope unit with an exit test, not a calendar block.** The legacy sized two-week sprints for a three-person team and then shipped its first six in three calendar weeks with one founder working AI-assisted. This plan is sized for that team: one founder, coding agents doing most of the implementation. The working assumption is about a week per sprint; the exit test, not the date, decides when a sprint ends. Sequence is the commitment.

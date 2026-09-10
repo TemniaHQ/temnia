@@ -22,6 +22,17 @@ from temnia_pipeline.harness.routes import (
 from temnia_pipeline.harness.settings import HarnessSettings
 
 
+def test_topic_scene_trial_selects_pyscenedetect_and_keeps_explicit_ffmpeg_comparison() -> None:
+    assert HarnessSettings.from_env({}).topic_shot_detector == "pyscenedetect-adaptive"
+    assert (
+        HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": "scdet"}).topic_shot_detector
+        == "scdet"
+    )
+    for invalid in ("", "auto", "opencv", "pyscenedetect"):
+        with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
+            HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": invalid})
+
+
 def test_chapter_llama_is_explicit_and_cannot_dispatch_from_recorded_mode() -> None:
     assert HarnessSettings.from_env({}).chapter_llama_config is None
     candidate = ChapterLlamaConfig(

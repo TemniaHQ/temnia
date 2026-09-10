@@ -1,11 +1,12 @@
 # Temnia pipeline architecture
 
 **September 10 editorial direction:** Rajesh clarified that the current output goal is interesting,
-independently publishable topic videos, with reused context permitted. The partition compiler
-described here remains the implemented architecture. The [diagnosis](design/standalone-topic-intelligence-2026-09-10.md)
-and [focused plan](plans/standalone-topic-intelligence.md) propose a distinct independent-span
-contract over the existing evidence/runtime/ledger/media foundations. They do not silently change
-old artifacts or establish that the new behavior is implemented or qualified.
+independently publishable topic videos, with reused context permitted. A separate `TopicRunWorkflow`
+and independent-span portfolio now implement that contract over the existing evidence, ledger,
+compiler and media foundations. The [implementation record](design/standalone-topic-implementation-2026-09-10.md)
+describes the new path and validation limits. The historical partition architecture below remains
+valid for old chapter runs; old artifacts are not reinterpreted. Implementation does not establish
+human acceptance or live deployment qualification.
 
 2026-09-08. This is the implementation design for PR #24, following the merged S2 baseline
 in PR #23. The chapter runtime is implemented on PR #24; implementation does not establish

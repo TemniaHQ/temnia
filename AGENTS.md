@@ -17,10 +17,15 @@ Reconciler and Publisher and must not be treated as their acceptance measurement
 and schema qualification are not publication-readiness evidence. The research did not identify a
 winning model or establish that competitors solved unattended extraction.
 
-`docs/plans/standalone-topic-intelligence.md` proposes the focused next implementation and measured
+`docs/plans/standalone-topic-intelligence.md` defines the focused implementation and measured
 comparisons: independent contiguous spans, completion and faithfulness judgments, an available
-independent reviewer, and acceptance on fresh full sources. These proposed changes are not yet
-implemented by the research PR. Keep the existing runtime/evidence/ledger/media foundations; do not
+independent reviewer, and acceptance on fresh full sources. The initial program, generic action,
+independent renderer and human review are now implemented on the PR branch, recorded in
+`docs/design/standalone-topic-implementation-2026-09-10.md`; real editorial acceptance remains
+unmeasured. Rajesh requested that the harness try PySceneDetect AdaptiveDetector before deciding
+between scene detectors. Use it for the new topic-policy trial, retain FFmpeg as an explicit
+comparison, and freeze detector identity in run configuration and evidence. Package tests and
+detector agreement do not establish superiority. Keep the existing runtime/evidence/ledger/media foundations; do not
 broaden into an orchestration rewrite. Incidental findings are recorded in
 `docs/plans/editorial-research-deferred-backlog.md` and stay deferred unless they prevent a valid
 editorial experiment. Rajesh explicitly asked to stop the minor-bug fix loop and target harness

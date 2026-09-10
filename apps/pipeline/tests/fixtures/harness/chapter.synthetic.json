@@ -102,6 +102,124 @@
       },
       "providerResponseId": "synthetic-verifier-speech-40s-v1",
       "synthetic": true
+    },
+    "topic_propose": {
+      "synthetic": true,
+      "output": {
+        "version": 1,
+        "summary": "One deterministic topic candidate for testing independent output wiring.",
+        "candidates": [
+          {
+            "id": "timestamp-search",
+            "title": "Timestamps turn editing into search",
+            "purpose": "Explain why aligned words make editing searchable.",
+            "firstSentenceId": "s000005",
+            "lastSentenceId": "s000008",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "meaningChangingFollowups": [],
+            "reason": "Explicit deterministic fixture, not an editorial quality measurement."
+          }
+        ]
+      }
+    },
+    "topic_cold": {
+      "synthetic": true,
+      "output": {
+        "candidateId": "timestamp-search",
+        "intelligibleBeginning": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "coherentTopic": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "completeDiscussion": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "titleFaithful": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        }
+      }
+    },
+    "topic_source": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic source review, not a measured editorial result.",
+        "candidates": [
+          {
+            "candidateId": "timestamp-search",
+            "faithfulMeaning": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            },
+            "completeContext": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            },
+            "distinctPurpose": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            }
+          }
+        ]
+      }
     }
   },
   "synthetic": true

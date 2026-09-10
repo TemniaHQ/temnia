@@ -377,6 +377,65 @@ class SpeechCoverageInterval(BaseModel):
     startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
 
 
+class Status2(StrEnum):
+    passed = "passed"
+    needs_review = "needs_review"
+    rejected = "rejected"
+
+
+class Edge(StrEnum):
+    opening = "opening"
+    ending = "ending"
+    execution = "execution"
+
+
+class SupportingSentenceId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicBoundaryIssue(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no-safe-cut"]
+    edge: Edge
+    reason: Annotated[str, Field(min_length=1)]
+    supportingSentenceIds: Annotated[list[SupportingSentenceId], Field(min_length=1)]
+
+
+class Status3(StrEnum):
+    pass_ = "pass"
+    fail = "fail"
+    unknown = "unknown"
+
+
+class TopicRenderedVideo(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    descriptor: HarnessArtifactRef
+    execution: HarnessArtifactRef
+
+
+class TopicRenders(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    editSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-renders/1"]
+    runId: UUID
+    videos: list[TopicRenderedVideo]
+
+
+class TopicSentenceSpan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class TranscribeInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -787,6 +846,92 @@ class SpeechCoverage(BaseModel):
     warnings: list[str]
 
 
+class TopicCandidate(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    completionSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    coreSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    meaningChangingFollowups: list[TopicSentenceSpan]
+    purpose: Annotated[str, Field(min_length=1)]
+    reason: Annotated[str, Field(min_length=1)]
+    requiredContextSpans: list[TopicSentenceSpan]
+    title: Annotated[str, Field(min_length=1)]
+
+
+class TopicCompiledVideo(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidate: TopicCandidate
+    edit: ChapterEditSpec
+    keptSectionId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicCriterion(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    evidenceSpans: list[TopicSentenceSpan]
+    reason: Annotated[str, Field(min_length=1)]
+    status: Status3
+
+
+class TopicEditSpec(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    compilerVersion: Annotated[str, Field(min_length=1)]
+    durationMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    evidenceArtifactId: UUID
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    sourceId: UUID
+    summary: Annotated[str, Field(min_length=1)]
+    version: Literal[1]
+    videos: list[TopicCompiledVideo]
+
+
+class TopicExport(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    editSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-export/1"]
+    revision: Annotated[int, Field(gt=0, le=9007199254740991)]
+    runId: UUID
+    videos: list[TopicRenderedVideo]
+
+
+class TopicProposal(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicCandidate]
+    summary: Annotated[str, Field(min_length=1)]
+    version: Literal[1]
+
+
+class TopicSourceJudgment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    completeContext: TopicCriterion
+    distinctPurpose: TopicCriterion
+    faithfulMeaning: TopicCriterion
+
+
+class TopicSourceReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicSourceJudgment]
+    summary: Annotated[str, Field(min_length=1)]
+
+
 class TranscribeOutput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -872,6 +1017,17 @@ class HarnessEvidence(BaseModel):
     words: list[HarnessEvidenceWord]
 
 
+class TopicColdReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    coherentTopic: TopicCriterion
+    completeDiscussion: TopicCriterion
+    intelligibleBeginning: TopicCriterion
+    titleFaithful: TopicCriterion
+
+
 class TranscriptCorrectionMetadata(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -918,6 +1074,32 @@ class TranscriptV1(BaseModel):
     utterances: list[TranscriptUtterance]
     version: Literal[1]
     words: list[TranscriptWord]
+
+
+class TopicAssessmentCandidate(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    coldReview: TopicColdReview | None
+    physicalBoundaryIssues: list[TopicBoundaryIssue]
+    reasons: list[str]
+    sourceReview: TopicSourceJudgment | None
+    status: Status2
+
+
+class TopicAssessment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicAssessmentCandidate]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-assessment/1"]
+    proposalSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    proposerFamily: Annotated[str, Field(min_length=1)]
+    runId: UUID
+    summary: Annotated[str, Field(min_length=1)]
+    verifierFamily: str | None
 
 SEEDED_SCOPE = Scope(
     organizationId=UUID("0192e8a0-0000-7000-8000-000000000001"),

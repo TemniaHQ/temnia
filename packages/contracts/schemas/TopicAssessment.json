@@ -1,0 +1,275 @@
+{
+  "$defs": {
+    "TopicAssessment": {
+      "$id": "#/$defs/TopicAssessment",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicAssessmentCandidate"
+          }
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-assessment/1"
+        },
+        "proposalSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "proposerFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verifierFamily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "candidates",
+        "evidenceSha256",
+        "format",
+        "proposalSha256",
+        "proposerFamily",
+        "runId",
+        "summary",
+        "verifierFamily"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAssessment"
+    },
+    "TopicAssessmentCandidate": {
+      "$id": "#/$defs/TopicAssessmentCandidate",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coldReview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicColdReview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "physicalBoundaryIssues": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicBoundaryIssue"
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceReview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicSourceJudgment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "needs_review",
+            "rejected"
+          ]
+        }
+      },
+      "required": [
+        "candidateId",
+        "coldReview",
+        "physicalBoundaryIssues",
+        "reasons",
+        "sourceReview",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAssessmentCandidate"
+    },
+    "TopicBoundaryIssue": {
+      "$id": "#/$defs/TopicBoundaryIssue",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "const": "no-safe-cut"
+        },
+        "edge": {
+          "type": "string",
+          "enum": [
+            "opening",
+            "ending",
+            "execution"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportingSentenceIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "code",
+        "edge",
+        "reason",
+        "supportingSentenceIds"
+      ],
+      "additionalProperties": false,
+      "title": "TopicBoundaryIssue"
+    },
+    "TopicColdReview": {
+      "$id": "#/$defs/TopicColdReview",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coherentTopic": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "completeDiscussion": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "intelligibleBeginning": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "titleFaithful": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "coherentTopic",
+        "completeDiscussion",
+        "intelligibleBeginning",
+        "titleFaithful"
+      ],
+      "additionalProperties": false,
+      "title": "TopicColdReview"
+    },
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceJudgment": {
+      "$id": "#/$defs/TopicSourceJudgment",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "completeContext": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "distinctPurpose": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "faithfulMeaning": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "completeContext",
+        "distinctPurpose",
+        "faithfulMeaning"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceJudgment"
+    }
+  },
+  "$id": "TopicAssessment.json",
+  "$ref": "#/$defs/TopicAssessment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

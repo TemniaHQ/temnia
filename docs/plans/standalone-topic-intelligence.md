@@ -1,9 +1,12 @@
 # Focused plan: standalone topic intelligence
 
-September 10, 2026. Proposed implementation sequence following the
+September 10, 2026. Implementation and evaluation sequence following the
 [research and code audit](../design/standalone-topic-intelligence-2026-09-10.md).
 The user-approved output goal and permission to reuse context are binding. The implementation
-choices below are recommendations to test, not a claim that the architecture has already shipped.
+choices below remain hypotheses to evaluate. The initial independent-topic program, generic action,
+reviewer reservation, cold/source review, speech-safe compilation and scene adapters are implemented;
+see the [implementation record](../design/standalone-topic-implementation-2026-09-10.md). Live quality
+and deployment are separate gates, and the matched comparisons below are not yet reported as done.
 
 ## Product contract
 
@@ -118,6 +121,8 @@ paid diagnostic run is active. This plan changes no credentials or staging confi
 ## 3a. Add audio and scene evidence as measured support
 
 Rajesh explicitly asked to include audio and scene detectors such as PySceneDetect. The
+subsequent implementation selects AdaptiveDetector for new topic runs at his request and retains
+FFmpeg as an explicit comparison. This is the trial order, not a measured quality ranking. The
 [research extension](../design/standalone-topic-intelligence-2026-09-10.md#8-audio-and-scene-evidence-requested-research-extension)
 verifies that ingest already writes FFmpeg `scdet` candidates, but current chapter evidence does not
 load them; the saved Karma evidence has zero shots. Silero coverage is already connected. Use these

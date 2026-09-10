@@ -1,0 +1,415 @@
+{
+  "$defs": {
+    "ChapterBoundary": {
+      "$id": "#/$defs/ChapterBoundary",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresReview": {
+          "type": "boolean"
+        },
+        "time": {
+          "$ref": "#/$defs/RationalTime"
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "candidateId",
+        "id",
+        "reasons",
+        "requiresReview",
+        "time",
+        "timeMs"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterBoundary"
+    },
+    "ChapterEditSpec": {
+      "$id": "#/$defs/ChapterEditSpec",
+      "type": "object",
+      "properties": {
+        "boundaries": {
+          "minItems": 2,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterBoundary"
+          }
+        },
+        "compilerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "evidenceArtifactId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChapterSection"
+          }
+        },
+        "sourceAudioSampleRate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sourceFrameRate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositiveRational"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "boundaries",
+        "compilerVersion",
+        "durationMs",
+        "evidenceArtifactId",
+        "evidenceSha256",
+        "sections",
+        "sourceAudioSampleRate",
+        "sourceFrameRate",
+        "sourceId",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterEditSpec"
+    },
+    "ChapterSection": {
+      "$id": "#/$defs/ChapterSection",
+      "type": "object",
+      "properties": {
+        "endBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "drop"
+          ]
+        },
+        "quoteWordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reviewState": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "accepted",
+            "rejected"
+          ]
+        },
+        "startBoundaryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endBoundaryId",
+        "flags",
+        "id",
+        "kind",
+        "quoteWordIds",
+        "reason",
+        "reviewState",
+        "startBoundaryId",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "ChapterSection"
+    },
+    "PositiveRational": {
+      "$id": "#/$defs/PositiveRational",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "PositiveRational"
+    },
+    "RationalTime": {
+      "$id": "#/$defs/RationalTime",
+      "type": "object",
+      "properties": {
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator"
+      ],
+      "additionalProperties": false,
+      "title": "RationalTime"
+    },
+    "TopicCandidate": {
+      "$id": "#/$defs/TopicCandidate",
+      "type": "object",
+      "properties": {
+        "completionSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "completionSpans",
+        "coreSpans",
+        "firstSentenceId",
+        "id",
+        "lastSentenceId",
+        "meaningChangingFollowups",
+        "purpose",
+        "reason",
+        "requiredContextSpans",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidate"
+    },
+    "TopicCompiledVideo": {
+      "$id": "#/$defs/TopicCompiledVideo",
+      "type": "object",
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/TopicCandidate"
+        },
+        "edit": {
+          "$ref": "#/$defs/ChapterEditSpec"
+        },
+        "keptSectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "candidate",
+        "edit",
+        "keptSectionId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCompiledVideo"
+    },
+    "TopicEditSpec": {
+      "$id": "#/$defs/TopicEditSpec",
+      "type": "object",
+      "properties": {
+        "compilerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "evidenceArtifactId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCompiledVideo"
+          }
+        }
+      },
+      "required": [
+        "compilerVersion",
+        "durationMs",
+        "evidenceArtifactId",
+        "evidenceSha256",
+        "sourceId",
+        "summary",
+        "version",
+        "videos"
+      ],
+      "additionalProperties": false,
+      "title": "TopicEditSpec"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicEditSpec.json",
+  "$ref": "#/$defs/TopicEditSpec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

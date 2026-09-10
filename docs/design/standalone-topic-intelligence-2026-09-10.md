@@ -4,6 +4,10 @@ Research date: September 10, 2026. Audience: Rajesh and the engineers implementi
 editorial harness. Status: evidence-backed diagnosis and proposed implementation direction;
 **no new editorial implementation or quality win is claimed by this report**.
 
+The subsequent [implementation record](standalone-topic-implementation-2026-09-10.md) describes
+the program now added to this PR. Rajesh requested PySceneDetect AdaptiveDetector for the next
+harness trial; detector superiority and standalone editorial acceptance remain unmeasured.
+
 Rajesh clarified the job: extract interesting discussions from a long recording that can be
 published independently on YouTube or Facebook. Two videos may reuse surrounding source context
 when that improves standalone quality. A custom prompt should be optional. There is no requested
@@ -400,4 +404,5 @@ dependency that text missed; measure that semantic benefit separately from smoot
 The [plan's audiovisual experiment](../plans/standalone-topic-intelligence.md#3a-add-audio-and-scene-evidence-as-measured-support)
 holds semantic spans fixed first, then tests whether audiovisual context improves the semantic
 choices. This keeps the work focused on better standalone outputs rather than a detector-shopping
-or threshold-tuning loop. Neither PySceneDetect nor a new audio detector is installed by this PR.
+or threshold-tuning loop. This research pass installed no detector. The subsequent implementation
+adds pinned PySceneDetect for Rajesh's requested trial, as recorded in the implementation document.

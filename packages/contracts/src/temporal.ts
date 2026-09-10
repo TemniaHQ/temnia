@@ -10,5 +10,7 @@ export const WORKFLOWS = {
   hello: "HelloWorkflow",
   ingest: "IngestWorkflow",
   reaper: "ReaperWorkflow",
+  topicReview: "TopicReviewWorkflow",
+  topicRun: "TopicRunWorkflow",
   transcribe: "TranscribeWorkflow",
 } as const;

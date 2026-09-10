@@ -8,6 +8,7 @@ import {
 } from "@temnia/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { scoped } from "@/lib/db";
+import { TOPIC_POLICY } from "./topic-defaults";
 
 export interface ChapterArtifactRef {
   id: string;
@@ -107,13 +108,37 @@ export function getChapterView(
   selectedRunId?: string,
   pendingMutationKey?: string
 ): Promise<ChapterView> {
+  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, false);
+}
+
+export function getTopicView(
+  sourceId: string,
+  selectedRunId?: string,
+  pendingMutationKey?: string
+): Promise<ChapterView> {
+  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, true);
+}
+
+function getHarnessView(
+  sourceId: string,
+  selectedRunId: string | undefined,
+  pendingMutationKey: string | undefined,
+  topics: boolean
+): Promise<ChapterView> {
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one scoped snapshot keeps run pointers, bounded events, and exact immutable descriptors mutually consistent
   return scoped(async (tx) => {
+    const policy = topics
+      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
+      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`;
     const rows = await tx
       .select()
       .from(harnessRun)
       .where(
-        and(eq(harnessRun.sourceId, sourceId), eq(harnessRun.lane, "chapters"))
+        and(
+          eq(harnessRun.sourceId, sourceId),
+          eq(harnessRun.lane, "chapters"),
+          policy
+        )
       )
       .orderBy(desc(harnessRun.createdAt))
       .limit(20);
@@ -129,7 +154,8 @@ export function getChapterView(
               and(
                 eq(harnessRun.id, selectedRunId),
                 eq(harnessRun.sourceId, sourceId),
-                eq(harnessRun.lane, "chapters")
+                eq(harnessRun.lane, "chapters"),
+                policy
               )
             )
             .limit(1)
@@ -247,8 +273,10 @@ export function getChapterView(
                 sql`${harnessArtifact.metadata}->>'editSha256' = ${editSha256}`,
                 ...(kind === "render"
                   ? [
-                      sql`${harnessArtifact.metadata}->>'format' = 'chapter-renders/1'`,
-                      sql`${harnessArtifact.metadata} ? 'renderCount'`,
+                      sql`${harnessArtifact.metadata}->>'format' = ${topics ? "topic-renders/1" : "chapter-renders/1"}`,
+                      ...(topics
+                        ? []
+                        : [sql`${harnessArtifact.metadata} ? 'renderCount'`]),
                     ]
                   : [])
               )
@@ -335,10 +363,24 @@ export function getChapterView(
         "Chapter run exceeds the summary grounding report limit."
       );
     }
+    const topicAssessments = topics
+      ? await tx
+          .select()
+          .from(harnessArtifact)
+          .where(
+            and(
+              eq(harnessArtifact.sourceId, sourceId),
+              eq(harnessArtifact.kind, "checks"),
+              sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
+              sql`${harnessArtifact.metadata}->>'format' = 'topic-assessment/1'`
+            )
+          )
+      : [];
     const artifacts = [
       ...editArtifacts,
       ...dependencies,
       ...groundingArtifacts,
+      ...topicAssessments,
     ];
     const refs = artifacts.map((artifact) => ({
       id: artifact.id,

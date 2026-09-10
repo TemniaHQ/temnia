@@ -24,6 +24,8 @@ from temnia_pipeline.harness.models import (
 )
 from temnia_pipeline.harness.queues import control_task_queue
 from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
+from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
 from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunWorkflow
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
@@ -148,6 +150,8 @@ async def run_worker(settings: TemporalSettings) -> None:
             TranscribeWorkflow,
             ChapterRunWorkflow,
             ChapterReviewWorkflow,
+            TopicRunWorkflow,
+            TopicReviewWorkflow,
         ],
         activities=[
             say_hello,

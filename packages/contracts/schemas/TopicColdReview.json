@@ -1,0 +1,92 @@
+{
+  "$defs": {
+    "TopicColdReview": {
+      "$id": "#/$defs/TopicColdReview",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coherentTopic": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "completeDiscussion": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "intelligibleBeginning": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "titleFaithful": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "coherentTopic",
+        "completeDiscussion",
+        "intelligibleBeginning",
+        "titleFaithful"
+      ],
+      "additionalProperties": false,
+      "title": "TopicColdReview"
+    },
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicColdReview.json",
+  "$ref": "#/$defs/TopicColdReview",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
