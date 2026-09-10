@@ -2033,20 +2033,29 @@ class HarnessActivities:
     @activity.defn(name="render_chapter_revision")
     async def render_chapter_revision(self, request: RenderRevisionRequest) -> RenderRevisionResult:
         """Lease one run's cache while rendering and clean every revision workspace."""
-        self._require_enabled()
-        run = await self._assert_render_active(request.run, request.revision)
-        workspace = self._render_workspace(run, request)
-        self._cancel_source_cache_expiry(run.id)
-        succeeded = False
-        try:
-            async with self._source_cache_lease(run.id):
-                result = await self._render_chapter_revision_locked(request, run)
+
+        async def operation() -> RenderRevisionResult:
+            self._require_enabled()
+            run = await self._assert_render_active(request.run, request.revision)
+            workspace = self._render_workspace(run, request)
+            self._cancel_source_cache_expiry(run.id)
+            succeeded = False
+            try:
+                async with self._source_cache_lease(run.id):
+                    try:
+                        result = await self._render_chapter_revision_locked(request, run)
+                    finally:
+                        shutil.rmtree(workspace, ignore_errors=True)
                 succeeded = True
                 return result
-        finally:
-            shutil.rmtree(workspace, ignore_errors=True)
-            if not succeeded:
-                self._arm_source_cache_expiry(run.id)
+            finally:
+                if not succeeded:
+                    self._arm_source_cache_expiry(run.id)
+
+        return await run_with_activity_heartbeat(
+            operation,
+            details={"stage": "render-chapter-revision"},
+        )
 
     async def _render_chapter_revision_locked(  # noqa: C901, PLR0915
         self, request: RenderRevisionRequest, run: RunSnapshot

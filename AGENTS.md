@@ -647,6 +647,18 @@ resubmission, silent endpoint adjustment, starting over and a new summary wire i
 `docs/plans/chapter-summary-coverage-recovery-360-view.md`. It does not select a model winner or
 waive independent verification and human acceptance.
 
+**2026-09-10 — Chapter render liveness covers preparation, checks and publication.**
+A pre-resume review found that only fresh encoding reported heartbeats, while full decode,
+cached-source hashing and artifact I/O could exceed the render activity's 30-second heartbeat
+deadline. This was found before the long staging run reached rendering. Extend the existing
+owned speech/evidence heartbeat supervisor across the whole render operation and its cleanup;
+retain the current hard deadlines, revision fences, cache lease, artifact identities and retry
+policy. Workspace deletion stays inside the acquired lease, so a cancelled waiter cannot
+delete the active attempt's files. Progress-only callbacks and a larger heartbeat timeout
+leave quiet phases uncovered; new durable render stages are unnecessary for this correction.
+A heartbeat proves activity
+liveness, not media progress or quality. Plan: `docs/plans/chapter-render-liveness-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)
