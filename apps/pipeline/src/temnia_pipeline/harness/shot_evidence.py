@@ -274,7 +274,9 @@ async def build_source_shot_evidence(
     if detector == "pyscenedetect-adaptive":
         unavailable = binding["detector"]["availability"]["reason"]
     identity = artifacts.ArtifactIdentity(
-        kind="evidence",
+        # This detector record is source-bound; only the assembled editorial
+        # evidence names a transcript revision. Checks permit this sensor identity.
+        kind="checks",
         fingerprint=artifacts.fingerprint_for(
             kind=FORMAT, inputs=binding, config={"format": FORMAT}
         ),
