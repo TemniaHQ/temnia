@@ -166,5 +166,12 @@
   ],
   "portability": "The private local evidence files and media are not committed. Hashes identify retained bytes; they cannot reproduce the run without those inputs.",
   "researchProviderCalls": 0,
-  "manualOutputRecuts": 0
+  "manualOutputRecuts": 0,
+  "observedSensorEvidence": {
+    "shots": 0,
+    "alignedWordGaps": 6202,
+    "speechDetector": "silero-vad-6.2.1-op15-16khz",
+    "speechIntervals": 1059,
+    "interpretation": "Aligned word gaps are not verified acoustic silence. Empty shots here reflect an unwired input, not proof of no visual changes."
+  }
 }

@@ -115,6 +115,51 @@ new run starts choose a frozen policy; cached model responses are reused only fo
 uncertain paid outcomes retain their fences. No deployment or gate restart is performed while a
 paid diagnostic run is active. This plan changes no credentials or staging configuration by itself.
 
+## 3a. Add audio and scene evidence as measured support
+
+Rajesh explicitly asked to include audio and scene detectors such as PySceneDetect. The
+[research extension](../design/standalone-topic-intelligence-2026-09-10.md#8-audio-and-scene-evidence-requested-research-extension)
+verifies that ingest already writes FFmpeg `scdet` candidates, but current chapter evidence does not
+load them; the saved Karma evidence has zero shots. Silero coverage is already connected. Use these
+facts as the baseline, not an assumption that every sensor needs a new implementation.
+
+Connect the source's shot artifact through a provenance-checked adapter into the versioned evidence
+record and relevant candidate inputs. Bind the artifact to the source/proxy identity, detector and
+configuration, with explicit timestamp mapping to the master. A missing or failed detector remains
+unavailable evidence; it is not an empty result meaning “there are no scene changes.” Preserve old
+evidence hashes and revisions. Keep raw native scores and document any normalization used by the
+compiler; neither `scdet` nor PySceneDetect scores are calibrated chapter-quality probabilities.
+
+Audition PySceneDetect 0.7.1 `AdaptiveDetector` against the existing `scdet` producer. Check current
+release/dependency compatibility and exact PTS behavior when implementing; use the existing media
+ownership and pinned execution environment. `ContentDetector` is an optional detector control;
+`ThresholdDetector` targets fades rather than general topic discovery. Do not replace the existing
+renderer with a detector library's splitting command.
+
+For audio, retain the existing aligned word extents and Silero intervals, then compare measured
+silence/local energy and speaker-turn/overlap evidence at proposed edges. The current saved speech
+artifact contains interval endpoints, not probabilities; any added probability summary needs a
+versioned evidence change and must not be attributed to existing Karma artifacts. Word-timing gaps must
+not be relabeled as measured silence. Prosodic completion and targeted local audio review are
+candidates for remaining delivery failures, not a new prerequisite stack to build before the first
+semantic experiment. Review selected frames where slides, actions or visible referents matter.
+
+Run the audiovisual comparisons in two parts:
+
+1. **Edge-only:** freeze identical complete semantic spans and mandatory content. Compare current
+   audio evidence, connected existing shot evidence, and PySceneDetect evidence in the compiler.
+   Measure heard/seen edge acceptance, required human adjustment, timing drift and processing cost.
+   A camera change cannot move an edge past mandatory speech or split the claim/correction case.
+2. **Semantic support:** hold the editorial program and model seats fixed, then add selected audio
+   and visual context to candidate inspection. Measure distinct accepted topics, completeness and
+   missed dependencies. Report this separately from detector accuracy and edge smoothness.
+
+Keep the audiovisual configuration equal across the P/I contract comparison below, so adding shots
+to only one arm cannot masquerade as an output-contract benefit. Include an interview with camera
+switches, continuous delivery with topic changes, and visually dependent material among later fresh
+tests. There is no desired scene count or shot-to-chapter ratio. Promote the detector only if it
+helps actual output quality; a higher number of detected transitions is not a success measure.
+
 ## 4. Compare causes in a controlled order
 
 The saved Karma run is baseline **H**, historical and unverified editorially. The actual legacy

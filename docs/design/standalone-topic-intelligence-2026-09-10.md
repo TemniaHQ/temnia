@@ -326,3 +326,78 @@ The [focused plan](../plans/standalone-topic-intelligence.md) defines implementa
 conditions. A successful small comparison means the design worked on those recordings. Production
 autonomy remains unproven until fresh-source human acceptance, semantic-failure rates and reviewer
 effort support it. Minor unrelated defects remain in the separate backlog.
+
+## 8. Audio and scene evidence: requested research extension
+
+Rajesh asked whether audio and scene detectors, including PySceneDetect, should support chapter
+cuts. **Yes: they should inform both candidate inspection and physical edge selection, with their
+contribution measured separately from discourse completion.** The code audit found a concrete
+integration gap, not merely a missing library.
+
+### What is already implemented, and what reached Karma
+
+Ingest calls [FFmpeg shot derivation](https://github.com/TemniaHQ/temnia/blob/7dd35ec6d4453ddc526c339615f61660377e8e5b/apps/pipeline/src/temnia_pipeline/media/derive.py#L104)
+and [publishes its shot artifact](https://github.com/TemniaHQ/temnia/blob/7dd35ec6d4453ddc526c339615f61660377e8e5b/apps/pipeline/src/temnia_pipeline/ingest.py#L349).
+It uses `scdet` on downscaled video, retaining emitted scores at or above an emit floor of 3 and recording
+a decision threshold of 10. These are the current implementation's values, not calibrated
+standalone-topic parameters. FFmpeg documents this as frame-change scoring, with a detection
+threshold; it does not identify complete spoken discussions. [FFmpeg scdet documentation](https://ffmpeg.org/ffmpeg-filters.html#scdet).
+
+The [chapter evidence activity](https://github.com/TemniaHQ/temnia/blob/7dd35ec6d4453ddc526c339615f61660377e8e5b/apps/pipeline/src/temnia_pipeline/harness/activities.py#L413)
+does not pass shots to `build_evidence`; its segmenter call also omits shot times. The evidence
+builder accepts them, and the compiler already has a shot-candidate preference. **The actual Karma
+evidence contains zero shots.** It contains 1,059 Silero speech intervals and 6,202 positive gaps
+between aligned word intervals. Those thousands of word gaps are not thousands of acoustically
+verified pauses. No new detector inference was run to obtain these counts; they come from the
+retained evidence bytes.
+
+Silero is already active for independent speech coverage in this editorial policy. It estimates
+speech presence, not semantic completion. The meaningful next comparison starts by connecting and
+measuring existing evidence, with PySceneDetect as a challenger, rather than claiming there is no
+audio/visual infrastructure or replacing it wholesale. [Silero official implementation](https://github.com/snakers4/silero-vad).
+
+### Which signals answer which questions
+
+| Evidence | Proposed use | Limitation |
+| --- | --- | --- |
+| Aligned words plus independent VAD | Protect spoken material and identify disagreement near candidate edges. | Neither absence of an aligned word nor VAD disagreement proves silence or missing speech. |
+| Measured silence and local energy | Identify acoustic clearance, breath/decay and awkward audible edges. | A thinking pause may occur mid-answer. Music or room noise can defeat a simple amplitude threshold. |
+| Speaker turns and overlapping speech | Preserve exchanges and avoid cutting an interruption or response. | A turn transition is often inside the same topic. |
+| Prosodic features or local audio review | Test whether delivery sounds continuing or concluding; inspect uncertainty that text misses. | A hypothesis to calibrate across speakers/languages. No universal pitch rule establishes completion. |
+| Shot changes, fades and black frames | Suggest visual transition candidates and identify where to inspect frame context. | A camera switch may separate a question from its answer; no visual change is required for a topic change. |
+| Selected frame content | Inspect slides, demonstrations or visible references when the discussion depends on them. | A pixel-change score has no knowledge of what an image means; image review remains a separate operation. |
+
+For acoustic silence, FFmpeg's `silencedetect` measures volume against a noise tolerance for a
+minimum interval. It complements speech detection but is not interchangeable with it. The proposed
+use is evidence extraction, not automatic silence removal. [FFmpeg silencedetect](https://ffmpeg.org/ffmpeg-filters.html#silencedetect).
+
+### PySceneDetect comparison
+
+The official latest documentation is **0.7.1** on this research date. `ContentDetector` scores
+adjacent-frame HSV changes; `AdaptiveDetector` compares changes with a rolling local baseline,
+which can reduce false detections during camera movement; `ThresholdDetector` is suited to
+intensity crossings such as fades. Start by comparing the existing `scdet` output with
+`AdaptiveDetector`, using `ContentDetector` as a diagnostic control where needed. This is a
+candidate choice, not a measured winner. [PySceneDetect detector documentation](https://www.scenedetect.com/docs/latest/api/detectors.html).
+
+Its official default-setting benchmark reports AdaptiveDetector hard-cut F1 of 91.59 on BBC
+Planet Earth, 73.86 on AutoShot and 55.75 on ClipShots under frame-exact matching. This variation
+supports testing the actual footage. These are shot-detection scores, not standalone-video
+acceptance rates. [Reproducible benchmark](https://www.scenedetect.com/benchmarks/).
+
+Version 0.7.1 exposes a PyAV backend through the simple detection API. A production adapter still
+needs pinned dependencies and verified source-relative PTS mapping, especially for variable-frame-rate
+media and a resized proxy. Do not assume `frame number / nominal FPS` is authoritative or that an
+upstream backend feature has been validated against Temnia's media. [Official releases](https://github.com/Breakthrough/PySceneDetect/releases),
+[timestamp migration guide](https://www.scenedetect.com/docs/latest/api/migration_guide.html).
+
+The decision order should preserve required meaning, reject unsafe speech cuts, then prefer a
+natural acoustic and visual edge among the remaining candidates. A visual score must not outweigh
+an omitted answer. Detector-native scores are retained as measurements, not presented as calibrated
+probabilities of a good chapter. Scene-assisted inspection may also reveal a topic or visible
+dependency that text missed; measure that semantic benefit separately from smoother physical cuts.
+
+The [plan's audiovisual experiment](../plans/standalone-topic-intelligence.md#3a-add-audio-and-scene-evidence-as-measured-support)
+holds semantic spans fixed first, then tests whether audiovisual context improves the semantic
+choices. This keeps the work focused on better standalone outputs rather than a detector-shopping
+or threshold-tuning loop. Neither PySceneDetect nor a new audio detector is installed by this PR.
