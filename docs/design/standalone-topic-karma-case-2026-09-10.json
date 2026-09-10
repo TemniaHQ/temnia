@@ -1,0 +1,170 @@
+{
+  "format": "temnia-standalone-topic-diagnostic/1",
+  "recordedOn": "2026-09-10",
+  "classification": "development_diagnostic_not_human_gold",
+  "purpose": "Retained full-source evidence for the standalone-topic research; not a manually supplied edit plan.",
+  "implementationCommit": "7dd35ec6d4453ddc526c339615f61660377e8e5b",
+  "runId": "0ecbe3cc-85f4-40ec-b97b-8fa41d800deb",
+  "status": "needs_review",
+  "acceptedRevision": null,
+  "source": {
+    "durationMs": 2636000,
+    "masterBytes": 126408770,
+    "masterSha256": "dbac1e49ef528b4991a0e1d0568dc83fad7c35cffd114f445325c77fb0e3e3b9",
+    "transcriptRevision": 1,
+    "transcriptSha256": "cf46fa227ab75cdf008d3666d02f67e94b574966dd9d118f09972092986399e4",
+    "wordCount": 6203,
+    "sentenceCount": 579
+  },
+  "defaultBriefVersion": "topic-chapters/1",
+  "routeSnapshotSha256": "e35aa3c9556f6b1e48923c895ef0bce98f831701eae729d07f727b8e07dcb01b",
+  "evidenceSha256": "d524511a24689fa75bb0bc738d7c1c5bedd16725739c70e3c534dbff9d31aa42",
+  "editSha256": "d6e7f2e51f60c0733fee258023643facb3d4cfd6bcce797efd9cfe9b720b0756",
+  "chapterLlamaUsed": false,
+  "technicalChecks": {
+    "pass": 204,
+    "other": 0,
+    "sections": 12
+  },
+  "editorialReview": {
+    "calls": 0,
+    "verdict": "not_run",
+    "reason": "No independent verifier family remains in the frozen route snapshot."
+  },
+  "usage": {
+    "providerCalls": 3,
+    "proposalReferenceRepairs": 2,
+    "editorialRepairs": 0,
+    "reportedUsd": "0.14417573",
+    "ledgerMicros": 144176,
+    "reservedMicros": 0,
+    "elapsedAfterIngestSeconds": 394,
+    "inputTokens": 80409,
+    "outputTokensIncludingReasoning": 9498,
+    "reasoningTokens": 5547
+  },
+  "outputs": [
+    {
+      "kind": "drop",
+      "title": "Cold open teaser",
+      "startMs": 0,
+      "endMs": 58960
+    },
+    {
+      "kind": "keep",
+      "title": "Welcome back to TRS: Guru Sakalama returns",
+      "startMs": 58960,
+      "endMs": 160560
+    },
+    {
+      "kind": "keep",
+      "title": "Framing karma: questions and definitions",
+      "startMs": 160560,
+      "endMs": 382920
+    },
+    {
+      "kind": "keep",
+      "title": "The web and rope of karma",
+      "startMs": 382920,
+      "endMs": 805760
+    },
+    {
+      "kind": "keep",
+      "title": "Understanding over control; Shani and astrology",
+      "startMs": 805760,
+      "endMs": 1022760
+    },
+    {
+      "kind": "keep",
+      "title": "Perfection, prayer as a state, and choosing sadhana",
+      "startMs": 1022760,
+      "endMs": 1323360
+    },
+    {
+      "kind": "keep",
+      "title": "Spiritual window shopping, mantras, and karmic fortunes",
+      "startMs": 1323360,
+      "endMs": 1658880
+    },
+    {
+      "kind": "keep",
+      "title": "Integrity, stillness, and surrender",
+      "startMs": 1658880,
+      "endMs": 1880440
+    },
+    {
+      "kind": "keep",
+      "title": "Handling rock bottom: karmasu kaushalam",
+      "startMs": 1880440,
+      "endMs": 2090200
+    },
+    {
+      "kind": "keep",
+      "title": "Providence and the fixed deposit of karma",
+      "startMs": 2090200,
+      "endMs": 2307680
+    },
+    {
+      "kind": "keep",
+      "title": "Bruce Lee: strength for a difficult life",
+      "startMs": 2307680,
+      "endMs": 2345680
+    },
+    {
+      "kind": "keep",
+      "title": "Messages from the Himalayan Sages",
+      "startMs": 2345680,
+      "endMs": 2527640
+    },
+    {
+      "kind": "keep",
+      "title": "Closing gratitude and sign-off",
+      "startMs": 2527640,
+      "endMs": 2636000
+    }
+  ],
+  "diagnostic": {
+    "origin": "assistant_post_run_transcript_analysis",
+    "humanAccepted": false,
+    "boundaryMs": 382920,
+    "leftSentenceIds": [
+      "s000078"
+    ],
+    "rightSentenceIds": [
+      "s000079",
+      "s000080"
+    ],
+    "failureType": "claim_separated_from_correction",
+    "observation": "The left clip ends on the host assumption; the right begins with the guest correction. Complete sentences do not make this a complete exchange.",
+    "mustNotInfer": [
+      "No human listening verdict is supplied.",
+      "The case does not prove overlap is necessary at this particular cut.",
+      "The case does not rank model quality or supply final replacement cuts."
+    ]
+  },
+  "retainedLocalEvidence": [
+    {
+      "path": "/private/tmp/temnia-editorial-long-dogfood-20260910/result-receipt.json",
+      "sha256": "54c8ea76475ed45e2927aa0f3167f2239363d75376068eadd6f69f0ea784e78e"
+    },
+    {
+      "path": "/private/tmp/temnia-editorial-long-dogfood-20260910/evaluation-bundle.json",
+      "sha256": "48baa91d4b4a1ed7edf6e6643a5d9cd498f2841a93a710b9ac3bb25356cffcdd"
+    },
+    {
+      "path": "/private/tmp/temnia-editorial-long-dogfood-20260910/temporal-history.json",
+      "sha256": "ff1574902f33f6dc88f263cfc17cb61c4d001c1647620595dc49b6868a32baaf"
+    },
+    {
+      "path": "/private/tmp/temnia-editorial-long-dogfood-20260910/independent-outcome-audit-20260910T143246636754Z.json",
+      "sha256": "ec645a2c2745bec69290c117d81d90f6a5fb6696c8eabcbb502dbd3db4bb7eca"
+    },
+    {
+      "path": "/private/tmp/temnia-editorial-long-dogfood-20260910/root-media-verification.json",
+      "sha256": "4f260e1b8f23871892c5a54c226263d049e514977fdeeaa158d7cea4ee225adb"
+    }
+  ],
+  "portability": "The private local evidence files and media are not committed. Hashes identify retained bytes; they cannot reproduce the run without those inputs.",
+  "researchProviderCalls": 0,
+  "manualOutputRecuts": 0
+}

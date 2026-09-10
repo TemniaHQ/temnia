@@ -2,6 +2,31 @@
 
 ## Decisions
 
+**2026-09-10 — The immediate editorial target is independently publishable topic videos
+(Rajesh's clarification).** By chapters, Rajesh means interesting standalone discussions extracted
+from a long video for YouTube or Facebook. Necessary surrounding context may appear in more than
+one video: standalone quality takes priority. A generic action must do this without a custom
+prompt; content determines useful count and duration. This supersedes the September 4 exact-cover
+requirement for these exported videos, not the need for source grounding and accountable source
+use. Navigation partitions and independent topic videos are distinct outputs.
+
+The research in `docs/design/standalone-topic-intelligence-2026-09-10.md` found a real objective and
+representation mismatch, missing/reduced legacy editorial operations, and a full Karma run whose
+proposal repairs left no independent reviewer. The historical 18% legacy result predates its later
+Reconciler and Publisher and must not be treated as their acceptance measurement. Technical checks
+and schema qualification are not publication-readiness evidence. The research did not identify a
+winning model or establish that competitors solved unattended extraction.
+
+`docs/plans/standalone-topic-intelligence.md` proposes the focused next implementation and measured
+comparisons: independent contiguous spans, completion and faithfulness judgments, an available
+independent reviewer, and acceptance on fresh full sources. These proposed changes are not yet
+implemented by the research PR. Keep the existing runtime/evidence/ledger/media foundations; do not
+broaden into an orchestration rewrite. Incidental findings are recorded in
+`docs/plans/editorial-research-deferred-backlog.md` and stay deferred unless they prevent a valid
+editorial experiment. Rajesh explicitly asked to stop the minor-bug fix loop and target harness
+intelligence. Do not add arbitrary duration, output-count or experimentation-spend caps; continue
+to record costs and preserve unknown-outcome fences.
+
 **2026-09-03 — Legacy docs are inspiration, not inheritance.** `docs/prd.md` is the
 only document carried over from `Mitosia/mitosia-legacy` and is the product's
 source of truth for *what* it does. The legacy `tech-stack.md`, `sprint-plan.md`,

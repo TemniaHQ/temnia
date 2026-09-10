@@ -1,5 +1,12 @@
 # Temnia pipeline architecture
 
+**September 10 editorial direction:** Rajesh clarified that the current output goal is interesting,
+independently publishable topic videos, with reused context permitted. The partition compiler
+described here remains the implemented architecture. The [diagnosis](design/standalone-topic-intelligence-2026-09-10.md)
+and [focused plan](plans/standalone-topic-intelligence.md) propose a distinct independent-span
+contract over the existing evidence/runtime/ledger/media foundations. They do not silently change
+old artifacts or establish that the new behavior is implemented or qualified.
+
 2026-09-08. This is the implementation design for PR #24, following the merged S2 baseline
 in PR #23. The chapter runtime is implemented on PR #24; implementation does not establish
 editorial accuracy or deployment qualification. The [status record](design/harness-implementation-status-2026-09-08.md)
