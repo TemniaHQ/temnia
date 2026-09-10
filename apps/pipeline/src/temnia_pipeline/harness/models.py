@@ -1047,19 +1047,24 @@ chapter_editorial_repair_v1 = _agent("chapter_editorial_repair_v1", EditorialRep
 topic_propose_v1 = _agent("topic_propose_v1", TopicProposal)
 topic_cold_review_v1 = _agent("topic_cold_review_v1", TopicColdReview)
 topic_source_review_v1 = _agent("topic_source_review_v1", TopicSourceReview)
-HARNESS_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
+# The pinned plugin appends every workflow's agents without deduplicating them.
+# Keep registrations disjoint; chapter review reuses the chapter worker activities.
+CHAPTER_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     chapter_propose_v1,
     chapter_propose_v2,
     chapter_verify_v1,
     chapter_summarize_v1,
     chapter_editorial_assess_v1,
     chapter_editorial_repair_v1,
+)
+TOPIC_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_propose_v1,
     topic_cold_review_v1,
     topic_source_review_v1,
 )
+HARNESS_AGENTS = (*CHAPTER_AGENTS, *TOPIC_AGENTS)
 
 
 def harness_pydantic_ai_plugin() -> PydanticAIPlugin:
-    """Return the worker/client plugin paired with ``HARNESS_AGENTS`` workflow registration."""
+    """Return the worker/client plugin for disjoint per-workflow agent registrations."""
     return PydanticAIPlugin()

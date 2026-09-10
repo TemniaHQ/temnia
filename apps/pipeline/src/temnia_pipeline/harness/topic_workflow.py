@@ -27,7 +27,7 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
     from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
     from temnia_pipeline.harness.models import (
-        HARNESS_AGENTS,
+        TOPIC_AGENTS,
         HarnessModelDeps,
         topic_cold_review_v1,
         topic_propose_v1,
@@ -107,7 +107,7 @@ def topic_model_deps(
 class TopicRunWorkflow(PydanticAIWorkflow):
     """A new entrypoint keeps historical chapter partitions and replay semantics intact."""
 
-    __pydantic_ai_agents__ = HARNESS_AGENTS
+    __pydantic_ai_agents__ = TOPIC_AGENTS
 
     @workflow.run
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
