@@ -27,6 +27,7 @@ from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
     ChapterExport,
+    ChapterProposal,
     ChapterRender,
     ChapterRenders,
     ChapterReviewAction,
@@ -45,13 +46,21 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
+from temnia_pipeline.harness.chapter_llama_activity import CandidateRuntime, ChapterLlamaActivities
 from temnia_pipeline.harness.compiler import CompilerConfig, compile_chapters
+from temnia_pipeline.harness.editorial import (
+    EDITORIAL_ASSESSMENT_PROMPT_VERSION,
+    render_editorial_assessment_prompt,
+)
+from temnia_pipeline.harness.editorial_activities import EditorialActivities
+from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
 from temnia_pipeline.harness.prompts import (
     SUMMARIZE_PROMPT_VERSION,
     PromptSentence,
     PromptWindow,
+    render_compact_proposal_prompt,
     render_hierarchy_proposal_prompt,
     render_proposal_prompt,
     render_summary_prompt,
@@ -129,6 +138,7 @@ from temnia_pipeline.harness.runtime_types import (
     ValidateSummaryRequest,
     VerificationPlan,
 )
+from temnia_pipeline.harness.speech_evidence import build_source_speech_coverage
 from temnia_pipeline.harness.summary_grounding import (
     GROUNDING_FORMAT,
     SummaryGroundingRefusal,
@@ -386,6 +396,20 @@ class HarnessActivities:
             "sizeBytes": run.source.size_bytes,
             "versionId": observed.get("versionId"),
         }
+        speech = None
+        if run.editorial_policy == EDITORIAL_POLICY:
+            speech = await build_source_speech_coverage(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                store=self.ctx.store,
+                source_path=source_path,
+                source_object=source_object,
+                timeline=timeline,
+                transcript=transcript,
+                detector_path=self.ctx.settings.transcription.speech_vad_model_path,
+                ffmpeg=self.ctx.settings.ffmpeg,
+            )
         evidence = build_evidence(
             transcript,
             layers,
@@ -404,6 +428,8 @@ class HarnessActivities:
             annotations=run.transcript.annotations,
             machine_revision=run.transcript.machine_revision,
             legacy_speaker_labels=run.transcript.legacy_speaker_labels,
+            speech_coverage=speech.coverage if speech is not None else None,
+            assess_source_edges=run.editorial_policy == EDITORIAL_POLICY,
             config={
                 "activity": "build_chapter_evidence",
                 "detectedLanguage": transcript.language,
@@ -411,6 +437,7 @@ class HarnessActivities:
                 "segmenter": request.segmenter,
                 "sourceObject": source_object,
                 "sourceTimeline": timeline_identity(timeline),
+                **({"speechEvidence": dict(speech.provenance)} if speech is not None else {}),
             },
         )
         fingerprint = artifacts.fingerprint_for(
@@ -441,6 +468,7 @@ class HarnessActivities:
                 "sourceSha256": source_sha,
                 "transcriptSha256": transcript_sha,
             },
+            dependency_ids=(speech.artifact_id,) if speech is not None else (),
         )
         await runs.attach_evidence(
             self.ctx.settings.database_url,
@@ -459,7 +487,9 @@ class HarnessActivities:
         )
 
     @activity.defn(name="prepare_chapter_proposal")
-    async def prepare_chapter_proposal(self, request: PreparePlanningRequest) -> ProposalPlan:
+    async def prepare_chapter_proposal(  # noqa: C901
+        self, request: PreparePlanningRequest
+    ) -> ProposalPlan:
         """Build one bounded prompt and check its route context before model dispatch."""
         self._require_enabled()
         ref = request.run
@@ -503,6 +533,46 @@ class HarnessActivities:
         )
         route = select_route(run.route_snapshot, "propose")
         summary_route = select_route(run.route_snapshot, "summary")
+        if run.editorial_policy == EDITORIAL_POLICY and len(sentences) <= 5000:  # noqa: PLR2004
+            complete = PromptWindow(
+                sourceId=ref.source_id,
+                evidenceSha256=request.evidence.sha256,
+                windowId="window-global",
+                firstSentenceId=sentences[0].id,
+                lastSentenceId=sentences[-1].id,
+                sentences=sentences,
+            )
+            try:
+                full_prompt = render_proposal_prompt(
+                    complete, brief=run.brief, detected_language=detected_language
+                )
+                dispatched_bytes = (
+                    len(render_compact_proposal_prompt(full_prompt).encode())
+                    + request.extra_context_bytes
+                )
+                estimate_cost(
+                    route,
+                    payload_bytes=dispatched_bytes,
+                    max_output_tokens=run.config.maxOutputTokens,
+                )
+            except ContextWindowExceeded:
+                pass
+            else:
+                return ProposalPlan(
+                    windows=(
+                        PlanningWindow(
+                            id=complete.windowId,
+                            first_sentence_id=complete.firstSentenceId,
+                            last_sentence_id=complete.lastSentenceId,
+                            sentence_count=len(sentences),
+                            prompt=full_prompt,
+                        ),
+                    ),
+                    route=route,
+                    summary_route=summary_route,
+                    synthetic_payload=self._recorded_output("propose"),
+                    synthetic_summary_payload=self._recorded_output("summary"),
+                )
         windows: list[PromptWindow] = []
         first = 0
         while first < len(sentences):
@@ -1431,6 +1501,20 @@ class HarnessActivities:
             technical_report={"sections": list(request.rendered.technical_report)},
         )
         try:
+            if run.editorial_policy == EDITORIAL_POLICY:
+                edit_raw = await artifacts.read_artifact_json(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    artifact_id=request.edit.id,
+                )
+                prompt = render_editorial_assessment_prompt(
+                    evidence=evidence,
+                    edit=ChapterEditSpec.model_validate(edit_raw),
+                    brief=run.brief,
+                    technical_report={"sections": list(request.rendered.technical_report)},
+                )
             estimate_cost(
                 route,
                 payload_bytes=len(prompt.encode()),
@@ -1443,9 +1527,17 @@ class HarnessActivities:
         return VerificationPlan(
             prompt=prompt,
             route=route,
-            synthetic_payload=self._recorded_output("verify"),
+            synthetic_payload=self._recorded_output(
+                "editorial_assess" if run.editorial_policy == EDITORIAL_POLICY else "verify"
+            ),
             output_cap=self.harness_settings.max_output_tokens,
             dispatch_limit=self.harness_settings.max_dispatches,
+            editorial_v2=run.editorial_policy == EDITORIAL_POLICY,
+            editorial_prompt_version=(
+                EDITORIAL_ASSESSMENT_PROMPT_VERSION
+                if run.editorial_policy == EDITORIAL_POLICY
+                else None
+            ),
         )
 
     @activity.defn(name="finalize_chapter_verification")
@@ -1459,11 +1551,33 @@ class HarnessActivities:
             organizationId=ref.scope_organization_id,
             userId=ref.scope_user_id,
         )
-        verdict = EditorialVerdictV1.model_validate(request.verdict)
-        async with db.scoped(self.ctx.settings.database_url, scope) as conn:
-            model_rows = await (
-                await conn.execute(
-                    """
+        full_editorial: dict[str, object] | None = None
+        accepted_response: artifacts.HarnessArtifact | None = None
+        if request.verdict.get("version") == 2:  # noqa: PLR2004
+            from temnia_pipeline.harness.editorial_receipts import (  # noqa: PLC0415
+                validate_postrender_editorial_receipt,
+            )
+
+            editorial, accepted_response = await validate_postrender_editorial_receipt(
+                self, request
+            )
+            full_editorial = editorial.model_dump(mode="json")
+            verdict = EditorialVerdictV1(
+                version=1,
+                status=editorial.status,
+                reasons=[finding.reason for finding in editorial.findings],
+                inspectedModalities="text_evidence_and_technical_report",
+            )
+        else:
+            verdict = EditorialVerdictV1.model_validate(request.verdict)
+        if accepted_response is not None:
+            response_id = accepted_response.id
+            response_sha256 = accepted_response.sha256
+        else:
+            async with db.scoped(self.ctx.settings.database_url, scope) as conn:
+                model_rows = await (
+                    await conn.execute(
+                        """
                     SELECT a.id, a.sha256
                       FROM harness_operation o
                       JOIN harness_artifact a ON a.id = o.result_artifact_id
@@ -1471,12 +1585,13 @@ class HarnessActivities:
                        AND o.kind = 'model' AND o.stage = %s
                        AND o.status = 'succeeded' AND a.kind = 'model_response'
                     """,
-                    (ref.run_id, ref.source_id, f"verify:revision:{request.revision}"),
-                )
-            ).fetchall()
-        if len(model_rows) != 1:
-            raise RuntimeError("verifier stage does not have one accepted model response")
-        model_row = model_rows[0]
+                        (ref.run_id, ref.source_id, f"verify:revision:{request.revision}"),
+                    )
+                ).fetchall()
+            if len(model_rows) != 1:
+                raise RuntimeError("verifier stage does not have one accepted model response")
+            response_id = cast("UUID", model_rows[0]["id"])
+            response_sha256 = str(model_rows[0]["sha256"])
         fingerprint = artifacts.fingerprint_for(
             kind="checks",
             inputs={
@@ -1484,8 +1599,8 @@ class HarnessActivities:
                 "descriptorSha256": request.rendered.descriptor.sha256,
                 "editArtifactId": str(request.edit.id),
                 "editSha256": request.edit.sha256,
-                "modelResponseArtifactId": str(model_row["id"]),
-                "modelResponseSha256": str(model_row["sha256"]),
+                "modelResponseArtifactId": str(response_id),
+                "modelResponseSha256": response_sha256,
             },
             config={"format": "chapter-verification/1"},
         )
@@ -1498,6 +1613,7 @@ class HarnessActivities:
             content={
                 "format": "chapter-verification/1",
                 "verdict": verdict.model_dump(mode="json"),
+                **({"editorial": full_editorial} if full_editorial is not None else {}),
             },
             metadata={
                 "editSha256": request.edit.sha256,
@@ -1509,7 +1625,7 @@ class HarnessActivities:
             dependency_ids=(
                 request.edit.id,
                 request.rendered.descriptor.id,
-                model_row["id"],
+                response_id,
             ),
         )
         return self._artifact_ref(accepted)
@@ -1684,6 +1800,80 @@ class HarnessActivities:
             artifact_id=request.evidence.id,
         )
         evidence = HarnessEvidence.model_validate(loaded)
+        preservation_inputs: dict[str, object] = {}
+        additional_dependencies = tuple(item.id for item in request.editorial_dependencies)
+        precompiled: ChapterEditSpec | None = None
+        if request.prior_proposal_artifact is not None and request.prior_edit_artifact is not None:
+
+            async def read_prior(
+                reference: HarnessArtifactRef, kind: str
+            ) -> tuple[artifacts.HarnessArtifact, object]:
+                accepted = await artifacts._artifact_for_read(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    artifact_id=reference.id,
+                )
+                if accepted.kind != kind or self._artifact_ref(accepted) != reference:
+                    raise HarnessValidationError(
+                        "prior artifact reference differs from accepted storage"
+                    )
+                raw = await artifacts.read_artifact_json(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    artifact_id=accepted.id,
+                )
+                return accepted, raw
+
+            evidence_record, checked_evidence = await read_prior(request.evidence, "evidence")
+            prior_proposal, proposal_raw = await read_prior(
+                request.prior_proposal_artifact, "proposal"
+            )
+            prior_edit, edit_raw = await read_prior(request.prior_edit_artifact, "edit")
+            run = await runs.get_run(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                run_id=ref.run_id,
+            )
+            if (
+                checked_evidence != loaded
+                or evidence.sourceId != ref.source_id
+                or run.evidence_artifact_id != evidence_record.id
+                or prior_proposal.metadata.get("runId") != str(ref.run_id)
+                or prior_edit.metadata.get("runId") != str(ref.run_id)
+                or prior_edit.metadata.get("proposalArtifactId") != str(prior_proposal.id)
+                or evidence_record.id not in prior_proposal.dependency_ids
+                or not {evidence_record.id, prior_proposal.id} <= set(prior_edit.dependency_ids)
+            ):
+                raise HarnessValidationError("prior proposal/edit lineage differs from this run")
+            preservation_inputs = {
+                "priorProposalArtifactId": str(prior_proposal.id),
+                "priorProposalSha256": prior_proposal.sha256,
+                "priorEditArtifactId": str(prior_edit.id),
+                "priorEditSha256": prior_edit.sha256,
+            }
+            additional_dependencies = tuple(
+                dict.fromkeys((*additional_dependencies, prior_proposal.id, prior_edit.id))
+            )
+            try:
+                precompiled = compile_chapters(
+                    evidence,
+                    request.proposal,
+                    evidence_artifact_id=request.evidence.id,
+                    evidence_sha256=request.evidence.sha256,
+                    boundary_constraints={
+                        (left, right): candidate
+                        for left, right, candidate in request.boundary_constraints
+                    }
+                    or None,
+                    preserved_proposal=ChapterProposal.model_validate(proposal_raw),
+                    preserved_edit=ChapterEditSpec.model_validate(edit_raw),
+                )
+            except HarnessValidationError as error:
+                return CompileProposalResult(refusal=str(error)[:2000])
         async with db.scoped(self.ctx.settings.database_url, scope) as conn:
             model_rows = await (
                 await conn.execute(
@@ -1701,6 +1891,24 @@ class HarnessActivities:
         if len(model_rows) != 1:
             raise RuntimeError("proposal stage does not have one accepted model response")
         model_artifact_id = model_rows[0]["id"]
+        if request.prior_proposal_artifact is not None and request.prior_edit_artifact is not None:
+            retained_model = await artifacts._artifact_for_read(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                artifact_id=model_artifact_id,
+            )
+            if (
+                retained_model.sha256 != str(model_rows[0]["sha256"])
+                or retained_model.metadata.get("runId") != str(ref.run_id)
+                or not {
+                    request.evidence.id,
+                    request.prior_proposal_artifact.id,
+                    request.prior_edit_artifact.id,
+                }
+                <= set(retained_model.dependency_ids)
+            ):
+                raise HarnessValidationError("prior pair differs from the accepted repair response")
         proposal_fingerprint = artifacts.fingerprint_for(
             kind="proposal",
             inputs={
@@ -1709,8 +1917,20 @@ class HarnessActivities:
                 "modelResponseArtifactId": str(model_artifact_id),
                 "modelResponseSha256": str(model_rows[0]["sha256"]),
                 "runId": str(ref.run_id),
+                **preservation_inputs,
             },
-            config={"schema": "chapter-proposal/1"},
+            config={
+                "schema": "chapter-proposal/1",
+                **(
+                    {
+                        "editorialDependencies": [
+                            str(ref.id) for ref in request.editorial_dependencies
+                        ]
+                    }
+                    if request.editorial_dependencies
+                    else {}
+                ),
+            },
         )
         proposal = await artifacts.publish_json(
             self.ctx.settings.database_url,
@@ -1724,15 +1944,24 @@ class HarnessActivities:
                 "generatorFamily": request.generator_family,
                 "runId": str(ref.run_id),
             },
-            dependency_ids=(request.evidence.id, model_artifact_id),
+            dependency_ids=(
+                request.evidence.id,
+                model_artifact_id,
+                *additional_dependencies,
+            ),
         )
         try:
-            edit = compile_chapters(
+            edit = precompiled or compile_chapters(
                 evidence,
                 request.proposal,
                 evidence_artifact_id=request.evidence.id,
                 evidence_sha256=request.evidence.sha256,
                 config=CompilerConfig(),
+                boundary_constraints={
+                    (left, right): candidate
+                    for left, right, candidate in request.boundary_constraints
+                }
+                or None,
             )
         except HarnessValidationError as error:
             return CompileProposalResult(refusal=str(error)[:2000])
@@ -1742,8 +1971,16 @@ class HarnessActivities:
                 "evidenceArtifactId": str(request.evidence.id),
                 "proposalArtifactId": str(proposal.id),
                 "runId": str(ref.run_id),
+                **preservation_inputs,
             },
-            config={"compiler": edit.compilerVersion},
+            config={
+                "compiler": edit.compilerVersion,
+                **(
+                    {"boundaryConstraints": request.boundary_constraints}
+                    if request.boundary_constraints
+                    else {}
+                ),
+            },
         )
         compile_operation = await ledger.acquire_operation(
             self.ctx.settings.database_url,
@@ -1755,8 +1992,16 @@ class HarnessActivities:
             inputs={
                 "evidenceArtifactId": str(request.evidence.id),
                 "proposalArtifactId": str(proposal.id),
+                **preservation_inputs,
             },
-            config={"compiler": edit.compilerVersion},
+            config={
+                "compiler": edit.compilerVersion,
+                **(
+                    {"boundaryConstraints": request.boundary_constraints}
+                    if request.boundary_constraints
+                    else {}
+                ),
+            },
         )
         accepted = await artifacts.publish_json(
             self.ctx.settings.database_url,
@@ -1771,7 +2016,12 @@ class HarnessActivities:
                 "revision": 1,
                 "runId": str(ref.run_id),
             },
-            dependency_ids=(request.evidence.id, proposal.id, model_artifact_id),
+            dependency_ids=(
+                request.evidence.id,
+                proposal.id,
+                model_artifact_id,
+                *additional_dependencies,
+            ),
         )
         await ledger.complete_operation_from_artifact(
             self.ctx.settings.database_url,
@@ -2883,6 +3133,10 @@ class HarnessActivities:
     def activities(self) -> Sequence[Callable[..., object]]:
         """Return heavy activities for the pipeline task queue."""
         return (
+            ChapterLlamaActivities(
+                CandidateRuntime(self.ctx.settings.database_url, self.ctx.store)
+            ).generate,
+            *EditorialActivities(self).activities(),
             self.build_chapter_evidence,
             self.prepare_chapter_proposal,
             self.validate_chapter_summary,

@@ -8,8 +8,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, LiteralString, cast
+from uuid import UUID
 
 from temnia_pipeline import db
+from temnia_pipeline.chapter_llama.candidate import CANDIDATE_MODEL, CandidatePayload
+from temnia_pipeline.chapter_llama.contracts import digest
 from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
@@ -21,6 +24,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.evals.chapters import (
     AttemptFact,
+    ChapterLlamaCandidateArtifact,
     CheckArtifact,
     EditorialVerificationArtifact,
     EditorialVerificationBody,
@@ -59,7 +63,6 @@ from temnia_pipeline.harness.summary_grounding import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
-    from uuid import UUID
 
     from obstore.store import S3Store
     from psycopg import AsyncConnection
@@ -91,6 +94,30 @@ def _metadata(row: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("accepted artifact metadata is not a JSON object")
     return cast("Mapping[str, Any]", value)
+
+
+def _chapter_llama_response_id(row: Mapping[str, Any]) -> UUID | None:
+    """Discover retained failures without treating their output as an accepted result."""
+    usage = row.get("usage")
+    if not isinstance(usage, dict) or "candidateArtifactId" not in usage:
+        return None
+    if (
+        row.get("provider") != "modal"
+        or row.get("family") != "llama"
+        or row.get("model") != CANDIDATE_MODEL
+        or row.get("state") not in {"succeeded", "failed_known"}
+    ):
+        raise ValueError("retained Chapter-Llama response has no matching terminal attempt")
+    raw_id = cast("object", usage["candidateArtifactId"])
+    if not isinstance(raw_id, str):
+        raise ValueError("retained Chapter-Llama artifact ID must be a canonical UUID")
+    response_id = UUID(raw_id)
+    if str(response_id) != raw_id:
+        raise ValueError("retained Chapter-Llama artifact ID must be a canonical UUID")
+    expected_result = response_id if row.get("state") == "succeeded" else None
+    if row.get("result_artifact_id") != expected_result:
+        raise ValueError("retained Chapter-Llama response differs from its attempt result")
+    return response_id
 
 
 def _artifact_ref(row: Mapping[str, Any]) -> HarnessArtifactRef:
@@ -300,6 +327,11 @@ async def _read_snapshot(
         if len(events) > MAX_EXPORT_EVENTS:
             raise ValueError(f"run exceeds {MAX_EXPORT_EVENTS} review events")
 
+        candidate_ids = tuple(
+            response_id
+            for row in attempts
+            if (response_id := _chapter_llama_response_id(row)) is not None
+        )
         root_ids = {
             value
             for value in (
@@ -309,6 +341,7 @@ async def _read_snapshot(
                 verification_id,
                 *grounding_ids,
                 *diagnostic_ids,
+                *candidate_ids,
                 *(row.get("result_artifact_id") for row in attempts),
             )
             if value is not None
@@ -321,6 +354,12 @@ async def _read_snapshot(
                 verification_id,
                 *grounding_ids,
                 *diagnostic_ids,
+                *candidate_ids,
+                *(
+                    row.get("result_artifact_id")
+                    for row in attempts
+                    if row.get("provider") == "modal" and row.get("family") == "llama"
+                ),
             )
             if value is not None
         )
@@ -436,6 +475,44 @@ async def export_evaluation_bundle(
         for row in snapshot.attempts
         if row.get("result_artifact_id") is not None and row.get("state") == "succeeded"
     }
+    chapter_llama_candidates: list[ChapterLlamaCandidateArtifact] = []
+    for attempt_row in snapshot.attempts:
+        response_id = _chapter_llama_response_id(attempt_row)
+        if response_id is None:
+            continue
+        response_row = snapshot.rows[response_id]
+        metadata = _metadata(response_row)
+        if metadata.get("schemaVersion") != "chapter-llama-candidate/1":
+            raise ValueError("retained Chapter-Llama artifact has an invalid schema identity")
+        candidate = CandidatePayload.model_validate(bodies[response_id])
+        route = candidate.configuration.model_dump(mode="json")
+        inputs = {
+            "evidenceId": str(candidate.evidence_id),
+            "evidenceSha256": candidate.evidence_sha256,
+            "inputSha256": candidate.input_sha256,
+        }
+        if (
+            candidate.job.organization_id != scope.organizationId
+            or candidate.job.source_id != source_id
+            or candidate.evidence_id != evidence_id
+            or set(snapshot.dependencies.get(response_id, ())) != {evidence_id}
+            or candidate.job.attempt_id != attempt_row["id"]
+            or candidate.job.operation_id != attempt_row["operation_id"]
+            or attempt_row.get("route") != route
+            or attempt_row.get("request_hash") != digest({"inputs": inputs, "configuration": route})
+            or metadata.get("runId") != str(run_id)
+            or metadata.get("operationId") != str(attempt_row["operation_id"])
+            or metadata.get("promptVersion")
+            != candidate.configuration.deployment.config.prompt_version
+        ):
+            raise ValueError("Chapter-Llama candidate dependency or source scope is invalid")
+        chapter_llama_candidates.append(
+            ChapterLlamaCandidateArtifact(
+                artifact=_artifact_fact(response_row),
+                evidence=_artifact_fact(snapshot.rows[candidate.evidence_id]),
+                body=candidate,
+            )
+        )
     for diagnostic_id in snapshot.diagnostic_ids:
         diagnostic_row = snapshot.rows[diagnostic_id]
         body = _proposal_diagnostic_report(bodies[diagnostic_id])
@@ -740,7 +817,9 @@ async def export_evaluation_bundle(
             raise ValueError("current editorial verification has no verifier family")
         verification = EditorialVerificationArtifact(
             artifact=_artifact_fact(verification_row),
-            body=EditorialVerificationBody.model_validate(bodies[snapshot.verification_id]),
+            body=EditorialVerificationBody.model_validate_json(
+                artifacts.canonical_json(bodies[snapshot.verification_id])
+            ),
             run_id=run_id,
             revision=int(run["current_revision"]),
             verifier_family=verifier_family,
@@ -757,8 +836,9 @@ async def export_evaluation_bundle(
     for row in snapshot.attempts:
         response_metadata: Mapping[str, Any] = {}
         result_id = row.get("result_artifact_id")
-        if result_id is not None:
-            result_row = snapshot.rows[result_id]
+        response_id = result_id or _chapter_llama_response_id(row)
+        if response_id is not None:
+            result_row = snapshot.rows[response_id]
             response_metadata = _metadata(result_row)
             prompt_version = response_metadata.get("promptVersion")
             if isinstance(prompt_version, str) and prompt_version:
@@ -787,7 +867,7 @@ async def export_evaluation_bundle(
                 actual_cost_micros=row.get("actual_cost_micros"),
                 cost_status=cast("Any", str(row["cost_status"])),
                 reservation_active=row.get("reservation_state") == "active",
-                response_present=result_id is not None,
+                response_present=response_id is not None,
                 remote_handle=row.get("remote_handle"),
                 result_artifact_id=result_id,
                 usage=cast("dict[str, Any]", row["usage"]),
@@ -849,6 +929,7 @@ async def export_evaluation_bundle(
         checks=tuple(checks),
         editorial_verification=verification,
         summary_grounding=tuple(summary_grounding),
+        chapter_llama_candidates=tuple(chapter_llama_candidates),
         proposal_diagnostics=tuple(proposal_diagnostics),
         review_events=tuple(
             ReviewEvent(

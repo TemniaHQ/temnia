@@ -154,6 +154,8 @@ def build_report(
     rows: list[Row] = []
     for spec in specs:
         name, params = parse_spec(spec)
+        if name == "chapter-llama":
+            params["duration_ms"] = duration
         layers = make_segmenter(name, **params).segment(transcript.words, shot_times_ms=shots)
         boundaries = layers.boundaries_ms()
         against_gold = (

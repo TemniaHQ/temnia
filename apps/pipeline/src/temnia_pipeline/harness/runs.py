@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from temnia_pipeline import db
+from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import (
     ChapterReviewAction,
     ChapterReviewInput,
@@ -89,6 +90,11 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
     source = PinnedSource.model_validate_json(json.dumps(route_snapshot["pinnedSource"]))
     frozen_routes = RouteSnapshot.model_validate_json(json.dumps(route_snapshot["snapshot"]))
     return RunSnapshot(
+        chapter_llama_config=(
+            ChapterLlamaConfig.model_validate(route_snapshot["chapterLlama"])
+            if route_snapshot.get("chapterLlama") is not None
+            else None
+        ),
         id=row["id"],
         workflow_id=str(row["workflow_id"]),
         workflow_run_id=str(row["workflow_run_id"]),
@@ -111,6 +117,7 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
         source=source,
         transcript=transcript,
         route_snapshot=frozen_routes,
+        editorial_policy=route_snapshot.get("editorialPolicy", "legacy"),
     )
 
 
@@ -259,12 +266,16 @@ async def start_or_refetch_run(  # noqa: PLR0912
             size_bytes=int(source["source_size_bytes"]),
             duration_ms=int(source["duration_ms"]),
         )
-        route_value = {
+        route_value: dict[str, object] = {
             "initialBudgetMicros": request.budgetMicros,
             "pinnedSource": pinned_source.model_dump(mode="json"),
             "pinnedTranscript": transcript.model_dump(mode="json"),
             "snapshot": route_snapshot.model_dump(mode="json"),
         }
+        if start.editorial_policy != "legacy":
+            route_value["editorialPolicy"] = start.editorial_policy
+            if settings.chapter_llama_config is not None:
+                route_value["chapterLlama"] = settings.chapter_llama_config.model_dump(mode="json")
         row = await (
             await conn.execute(
                 """

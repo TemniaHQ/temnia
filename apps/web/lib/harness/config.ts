@@ -3,6 +3,7 @@ import {
   ChapterRunConfigSchema,
 } from "@temnia/contracts";
 import { z } from "zod";
+import { DEFAULT_CHAPTER_BRIEF_VERSION } from "@/lib/harness/default-brief";
 
 const HarnessEnvironmentSchema = z.object({
   HARNESS_ALLOW_RECORDED: z.enum(["0", "1"]).default("0"),
@@ -23,6 +24,7 @@ const HarnessEnvironmentSchema = z.object({
 
 export interface HarnessSettings {
   config: ChapterRunConfig;
+  defaultBriefVersion: string;
   maxRunBudgetMicros: number;
   synthetic: boolean;
 }
@@ -74,6 +76,7 @@ export function harnessSettings(
     available: true,
     settings: {
       config: config.data,
+      defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
       maxRunBudgetMicros: parsed.data.HARNESS_MAX_RUN_BUDGET_MICROS,
       synthetic,
     },

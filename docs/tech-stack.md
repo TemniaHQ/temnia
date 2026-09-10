@@ -301,3 +301,36 @@ cost exposure and stopping conditions. The [architecture](pipeline-architecture.
 and [runbook](runbooks/chapter-harness.md#opt-into-the-versioned-parallel-speech-path) define the
 implementation and opt-in rollout. A candidate is not a production performance winner until the
 qualification record supplies measurements and output comparisons.
+
+### Chapter intelligence follow-up, 2026-09-10
+
+Rajesh requested prompt-free chapter creation, automatic editorial corrections and the pending
+Chapter-Llama integration. The [plan](plans/chapter-intelligence-360-view.md) compares a richer
+single proposal with an independent grounded assessment and repair program. The latter acts on
+compiled cuts before encoding, preserving the existing PydanticAI/Temporal paid-call boundaries
+and qualified multi-family seats. No new orchestration framework or default gateway vendor is added.
+
+Chapter-Llama's official ASR-only adapter runs over an explicitly pinned Llama 3.1 8B Instruct base.
+Direct Transformers 5.16.1 plus PEFT 0.20.0 replaces the upstream training-oriented execution stack
+for this inference adapter. PEFT is an optional extra; model weights and GPU inference stay out of
+the CPU worker. Both revisions, tokenizer, prompt, generation options, resource profile and remote
+build are recorded. The isolated Modal candidate has durable admission and a retained result, and
+joins the existing evaluation grid. Neither transport success nor the paper's aggregate score
+establishes Temnia quality. The configured staging HF account `rkpattanaik` initially received
+`403 GatedRepo` for the pinned base. After Rajesh granted access, both pinned configuration and
+weight metadata returned HTTP 200. A real ASR-only inference on the four-minute excerpt used
+1,064 input and 32 output tokens, with 41.147 seconds loading and 4.236 seconds generating.
+Its listed allocation estimate is $0.030234; the invoice remains unknown. Starts at 0:00, 1:57
+and 3:23 did not establish better chapter boundaries, so the candidate remains optional.
+
+For source-relative speech coverage, the existing pinned Silero/ONNX and ffmpeg 8.1.2 remain. The
+new work is a verified PCM timestamp mapping and artifact binding, compared with reusing legacy
+extracted-audio intervals whose source mapping was never saved. FFmpeg's documented `first_pts`
+and `async=1` fill/trim behavior supplies that mapping; offset and gap fixtures verify actual PCM.
+See [FFmpeg resampling documentation](https://ffmpeg.org/ffmpeg-resampler.html).
+
+The first default-brief run automatically removed the unfinished 1.960-second source tail, but
+its final critic falsely described that cut's measured silence as continuous speech. Prompt v3
+therefore receives exact cut facts calculated from immutable evidence and compact local word
+detail alongside every source sentence. This replaces model interval arithmetic and the full
+candidate catalogue in each assessment; it does not replace semantic judgment or human acceptance.

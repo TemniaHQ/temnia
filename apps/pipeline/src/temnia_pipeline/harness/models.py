@@ -56,6 +56,7 @@ from temnia_pipeline.harness.cassettes import (
     request_fingerprint,
     synthetic_function_model,
 )
+from temnia_pipeline.harness.editorial import EditorialRepairV1, EditorialVerdictV2
 from temnia_pipeline.harness.gateway import (
     CostObservation,
     GatewayConfig,
@@ -200,6 +201,13 @@ class EditorialVerdictV1(BaseModel):
     status: Literal["passed", "needs_review", "failed"]
     reasons: Annotated[list[str], Field(max_length=100)]
     inspectedModalities: Literal["text_evidence_and_technical_report"]
+
+
+def editorial_verdict_reasons(verdict: EditorialVerdictV1 | EditorialVerdictV2) -> list[str]:
+    """Expose review text while retaining the versioned structured verdict."""
+    if isinstance(verdict, EditorialVerdictV2):
+        return [finding.reason for finding in verdict.findings]
+    return verdict.reasons
 
 
 class HarnessModelDeps(BaseModel):
@@ -1031,11 +1039,15 @@ chapter_propose_v1 = _agent("chapter_propose_v1", ChapterProposal)
 chapter_propose_v2 = _agent("chapter_propose_v2", CompactChapterProposal)
 chapter_verify_v1 = _agent("chapter_verify_v1", EditorialVerdictV1)
 chapter_summarize_v1 = _agent("chapter_summarize_v1", HierarchicalSummaryV1)
+chapter_editorial_assess_v1 = _agent("chapter_editorial_assess_v1", EditorialVerdictV2)
+chapter_editorial_repair_v1 = _agent("chapter_editorial_repair_v1", EditorialRepairV1)
 HARNESS_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     chapter_propose_v1,
     chapter_propose_v2,
     chapter_verify_v1,
     chapter_summarize_v1,
+    chapter_editorial_assess_v1,
+    chapter_editorial_repair_v1,
 )
 
 

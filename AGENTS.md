@@ -659,6 +659,33 @@ leave quiet phases uncovered; new durable render stages are unnecessary for this
 A heartbeat proves activity
 liveness, not media progress or quality. Plan: `docs/plans/chapter-render-liveness-360-view.md`.
 
+**2026-09-10 — Chapter creation has a server-owned default brief and an automatic editorial program.**
+Rajesh rejected operator-specified cut lists as evidence of harness intelligence. New runs freeze
+`chapter-editorial/1` in the existing immutable route-snapshot wrapper; absent means legacy, even
+after a new continuation workflow. The primary Create chapters action requires no prompt; custom
+instructions remain optional and pending browser intents retain their published default version.
+An independent critic assesses the actual compiled edit before rendering. Findings name affected
+sections, boundaries and supporting source words; code validates ownership before a scoped repair
+uses sentence IDs or existing candidate IDs. Repeated candidates and changes to unaffected cuts
+refuse, and unresolved provider outcomes retain exposure. Automatic work creates no human approval.
+Source-relative Silero evidence is measured from the verified master using an explicit selected-track
+timestamp mapping; old extracted-audio metadata cannot establish that mapping. Missing measurements
+remain unknown. Per-cut timing arithmetic belongs to code. Global disagreement against aligned word
+intervals includes inter-word gaps and cannot establish missing transcription or risk at every cut;
+models receive compact global text and explicit local facts. Historical judgments, including false
+claims, remain intact for evaluation. Timing options are checked after frame/sample quantization;
+new repairs can select only options actually supplied. Prepared editorial plans freeze their prompt
+version, and saved responses finalize using that generation's grounding rules, so a prompt update
+cannot invalidate a committed response. Existing cuts and new timing overrides are separate compiler
+inputs: retaining an accepted risky cut must not block an independent repair, and must retain that
+cut's exact time and review flags. Scoped prior-artifact lineage and a Temporal patch fence this
+preservation policy; it cannot authorize a new risky cut. Chapter-Llama is an explicit pinned
+ASR-only base-plus-LoRA candidate, with separate durable Modal admission, attempt accounting and evaluation; loading is not
+model qualification.
+The staging HF account was granted access to the gated Llama 3.1 base during implementation;
+real inference and editorial acceptance remain separate measurements.
+Plan and comparisons: `docs/plans/chapter-intelligence-360-view.md`.
+
 ## Working rules (S0, 2026-09-06)
 
 Read `docs/prd.md` (what), `docs/sprint-plan.md` (sequence), and `docs/tech-stack.md` (system design)

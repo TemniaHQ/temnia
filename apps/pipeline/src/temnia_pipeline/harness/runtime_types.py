@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import (
     ChapterEditSpec,
     ChapterProposal,
@@ -21,6 +22,7 @@ from temnia_pipeline.contracts import (
     HarnessRunStatus,
     TranscriptRevisionAnnotations,
 )
+from temnia_pipeline.harness.editorial_policy import EditorialPolicy
 from temnia_pipeline.harness.routes import RouteEntry, RouteSnapshot
 
 
@@ -40,6 +42,7 @@ class StartRunRequest(BaseModel):
 
     request: ChapterRunInput
     workflow: WorkflowIdentity
+    editorial_policy: EditorialPolicy = "legacy"
 
 
 class PinnedTranscript(BaseModel):
@@ -96,6 +99,8 @@ class RunSnapshot(BaseModel):
     source: PinnedSource
     transcript: PinnedTranscript
     route_snapshot: RouteSnapshot
+    editorial_policy: EditorialPolicy = "legacy"
+    chapter_llama_config: ChapterLlamaConfig | None = None
 
 
 class StartRunResult(BaseModel):
@@ -206,6 +211,7 @@ class PreparePlanningRequest(BaseModel):
 
     run: RunRef
     evidence: HarnessArtifactRef
+    extra_context_bytes: Annotated[int, Field(ge=0, le=524288)] = 0
 
 
 class ProposalPlan(BaseModel):
@@ -289,6 +295,21 @@ class CompileProposalRequest(BaseModel):
     proposal: ChapterProposal
     generator_family: Annotated[str, Field(min_length=1, max_length=128)]
     model_stage: Annotated[str, Field(min_length=1, max_length=128)]
+    boundary_constraints: tuple[tuple[str, str, str], ...] = ()
+    editorial_dependencies: tuple[HarnessArtifactRef, ...] = ()
+    prior_proposal_artifact: HarnessArtifactRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    prior_edit_artifact: HarnessArtifactRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _prior_pair(self) -> CompileProposalRequest:
+        if (self.prior_proposal_artifact is None) != (self.prior_edit_artifact is None):
+            message = "preservation requires both prior artifact references"
+            raise ValueError(message)
+        return self
 
 
 class ProposalDiagnosticRequest(BaseModel):
@@ -435,6 +456,10 @@ class VerificationPlan(BaseModel):
     refusal: Annotated[str | None, Field(max_length=2000)] = None
     output_cap: Annotated[int, Field(gt=0)] = 1
     dispatch_limit: Annotated[int, Field(gt=0, le=128)] = 1
+    editorial_v2: bool = False
+    editorial_prompt_version: Annotated[str | None, Field(min_length=1, max_length=128)] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class FinalizeVerificationRequest(BaseModel):

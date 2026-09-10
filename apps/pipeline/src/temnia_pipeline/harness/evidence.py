@@ -250,6 +250,7 @@ def build_evidence(
     machine_revision: int | None = None,
     legacy_speaker_labels: Mapping[str, str] | None = None,
     speech_coverage: SpeechCoverage | None = None,
+    assess_source_edges: bool = False,
     shots: Sequence[HarnessEvidenceShot] = (),
     config: Mapping[str, Any] | None = None,
 ) -> HarnessEvidence:
@@ -305,6 +306,8 @@ def build_evidence(
         },
         **dict(config or {}),
     }
+    if assess_source_edges:
+        effective_config["sourceEdgeAssessment"] = "source-edges/1"
     model_versions = {
         **{f"model:{key}": value for key, value in layers.provenance.models.items()},
         **{f"library:{key}": value for key, value in layers.provenance.versions.items()},
@@ -444,9 +447,10 @@ def build_evidence(
         clearance = _clearance_ms(time_ms, intervals, interval_starts)
         reasons = set(aggregate.reasons)
         is_edge = Kind2.edge in aggregate.kinds
-        if _inside_spoken(time_ms, intervals, interval_starts) and not is_edge:
+        assess_candidate = not is_edge or assess_source_edges
+        if _inside_spoken(time_ms, intervals, interval_starts) and assess_candidate:
             reasons.add("inside_spoken_word")
-        if not is_edge:
+        if assess_candidate:
             reasons.update(_uncertainty_reasons(time_ms, words_by_start, word_starts))
             if coverage.status == Status1.unknown:
                 reasons.add("speech_coverage_unknown")
@@ -454,6 +458,13 @@ def build_evidence(
                 reasons.add("speech_coverage_needs_review")
             if clearance > 0 and _inside_detected(time_ms, detected_intervals, detected_starts):
                 reasons.add("detector_recognition_gap_disagreement")
+        if is_edge and assess_source_edges:
+            # Endpoint contact is a risk observation, not proof that the source
+            # cuts a word or a thought: alignment and VAD padding can touch it.
+            if any(interval.start <= time_ms <= interval.end for interval in intervals):
+                reasons.add("source_edge_lexical_contact")
+            if any(start <= time_ms <= end for start, end in detected_intervals):
+                reasons.add("source_edge_detected_speech")
         review_reasons = {
             "inside_spoken_word",
             "adjacent_word_timing_interpolated",
@@ -461,6 +472,8 @@ def build_evidence(
             "speech_coverage_unknown",
             "speech_coverage_needs_review",
             "detector_recognition_gap_disagreement",
+            "source_edge_lexical_contact",
+            "source_edge_detected_speech",
         }
         boundary_candidates.append(
             HarnessBoundaryCandidate(

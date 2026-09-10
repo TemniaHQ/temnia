@@ -1069,6 +1069,82 @@ async def test_unknown_outcome_retains_exposure() -> None:
         await db.close_pool()
 
 
+@pytest.mark.parametrize("remaining_unknown", [False, True])
+async def test_owned_known_failure_reconciliation_preserves_other_exposure(
+    *,
+    remaining_unknown: bool,
+) -> None:
+    url = pipeline_url()
+    case = await make_case(url)
+    try:
+        first_operation = await operation(url, case, "remote-first")
+        first = await reserve(url, case, first_operation.id, OWNER, 60)
+        attempts = [(first_operation, first)]
+        if remaining_unknown:
+            second_operation = await operation(url, case, "remote-second")
+            second = await reserve(url, case, second_operation.id, OWNER, 20)
+            attempts.append((second_operation, second))
+        for logical, attempt in attempts:
+            await ledger.mark_dispatched(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                operation_id=logical.id,
+                attempt_id=attempt.id,
+                owner_token=OWNER,
+                dispatch_limit=5,
+            )
+        for logical, attempt in attempts:
+            await ledger.fail_attempt(
+                url,
+                scope=SEEDED,
+                source_id=case.source_id,
+                run_id=case.run_id,
+                operation_id=logical.id,
+                attempt_id=attempt.id,
+                owner_token=OWNER,
+                outcome_known=False,
+                actual_cost_micros=None,
+                usage={},
+                error_code="unreachable",
+                error_message="Remote result is unavailable.",
+            )
+        arguments: dict[str, Any] = {
+            "scope": SEEDED,
+            "source_id": case.source_id,
+            "run_id": case.run_id,
+            "operation_id": first_operation.id,
+            "attempt_id": first.id,
+            "owner_token": OWNER,
+            "outcome_known": True,
+            "actual_cost_micros": 13,
+            "usage": {"remoteFailure": "confirmed"},
+            "error_code": "known_remote_failure",
+            "error_message": "Retained remote failure envelope.",
+        }
+        with pytest.raises(ledger.OutcomeUnknown):
+            await ledger.fail_attempt(url, **arguments)
+        reconciled = await ledger.fail_attempt(url, **arguments, reconcile_unknown=True)
+        replayed = await ledger.fail_attempt(url, **arguments, reconcile_unknown=True)
+        assert reconciled == replayed
+        assert reconciled.state == "failed_known"
+        async with db.scoped(url, SEEDED) as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT status, spent_micros, reserved_micros FROM harness_run WHERE id = %s",
+                    (case.run_id,),
+                )
+            ).fetchone()
+        assert row == {
+            "status": "outcome_unknown" if remaining_unknown else "running",
+            "spent_micros": 13,
+            "reserved_micros": 20 if remaining_unknown else 0,
+        }
+    finally:
+        await db.close_pool()
+
+
 async def test_late_ambiguous_failure_does_not_overwrite_cancelled_run() -> None:
     url = pipeline_url()
     case = await make_case(url)

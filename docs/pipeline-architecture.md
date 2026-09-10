@@ -367,6 +367,73 @@ another comparison. See the [v2 rollout procedure](runbooks/chapter-harness.md#o
 
 ## Rendering, review and qualification
 
+### Automatic editorial assessment (2026-09-10)
+
+The [intelligence plan](plans/chapter-intelligence-360-view.md) adds a versioned program before
+initial revision acceptance. A new run freezes `editorialPolicy: chapter-editorial/1` beside its
+pinned source/transcript and route snapshot. Existing runs without that field keep legacy behavior;
+the `chapter-editorial-program-v1` Temporal patch preserves their command histories. The public
+run config and old request hashes do not change.
+
+The critic receives the brief, complete source text, actual compiled cut context, local lexical
+timing and source edges. Prompt v3 supplies exact per-cut facts computed in code: strict word and
+merged detector-interval intersections, measured silence and nearby alignment uncertainty. The
+global detector comparison uses individual aligned word intervals; uncovered time includes natural
+inter-word gaps and does not establish missing transcription or a local cut defect. Every source
+sentence remains present with its times and endpoint word IDs. Detailed word data is local to cuts
+and cited findings, and only a requested timing repair receives local candidate options.
+
+Its strict v2 verdict identifies supporting source IDs and
+the affected sections/boundaries, and separates repairable defects from instruction conflicts or
+uncertainty. A valid schema alone is insufficient: references, retained response identity, family
+independence and affected scope are checked against immutable artifacts. The repair uses the
+existing paid-attempt ledger and planning repair allowance, preserving old unknown-outcome fences.
+Preparation retains the selected editorial prompt version in its internal result. Dispatch and
+saved-response finalization follow that recorded generation, including older prepared v2 plans;
+new strict grounding rules do not reinterpret or repay historical responses.
+It cannot author timestamps. Candidate constraints are checked jointly by compiler v2; an empty
+constraint map retains compiler v1. Repeated candidates and altered unaffected physical cuts are
+refused. The corrected edit is assessed again before the initial review revision is committed.
+
+Compiler v3 distinguishes a new timing choice from retaining an accepted prior cut. A valid tail
+repair exposed the need: preserving an unchanged speech-risk cut was incorrectly refused by the
+new-choice safety check. The new preservation mode reads the linked prior proposal/edit under the
+source scope, binds their identities into operation fingerprints/dependencies and derives only
+unchanged semantic transitions. It preserves exact rational cuts and review flags; it does not
+declare existing risk safe. New explicit choices still receive the strict checks, and the joint
+path must remain valid. The `chapter-editorial-retained-boundaries-v1` patch freezes this internal
+policy so old requests retain their earlier successful results or known refusals.
+
+Rendering and technical sensors then operate on that edit. Post-render verification receives the
+same compiled context and retains the full structured judgment, with a v1 review projection for
+existing bundle/review consumers. New timing-uncertainty findings require local supporting evidence;
+historical accepted judgments remain readable as recorded, including an earlier false timing claim.
+Text assessment never claims audiovisual inspection. Unresolved
+findings remain visible for review; automatic repair never accepts a section or acknowledges a drop.
+
+Independent speech intervals are measured from the already hash-verified master, not inferred from
+legacy extracted audio. The PCM wrapper selects the inspected audio stream, preserves timestamps,
+trims to the common source origin, fills/trims timestamp gaps without speed correction, and emits
+exactly the source-relative sample grid. Its immutable artifact binds the complete source/timeline,
+decoder policy and pinned Silero identity. Coverage is assessed against the selected transcript and
+attached as evidence lineage. Unsupported timing or failed measurement remains explicitly unknown.
+
+`HARNESS_CHAPTER_LLAMA_CONFIG_JSON` optionally freezes a deployed Chapter-Llama build/model/resource
+identity into new runs. After source evidence, its own durable activity reserves the bounded GPU
+window before a single dispatch, persists the handle and create-only admission, and retains unknown
+invoice exposure. The returned topic suggestions are nonbinding sentence-ID evidence for the final
+planner, with the candidate artifact in its dependencies. They do not replace speech-cut assessment.
+The model is not enabled by default; the real audition and source acceptance measurements remain
+qualification gates, including the known incomplete excerpt and representative long recordings.
+
+New-policy planning first checks whether the complete transcript fits the qualified proposer,
+including output/protocol headroom and optional candidate-hint bytes. Only larger requests use
+the summary hierarchy. On the retained 43:56 source this eliminates eight summary calls while
+preserving all 579 source sentences in one admitted request. That admission test does not measure
+editorial accuracy.
+
+### Render and review contract
+
 The verified source cache belongs to a run and uses a stable advisory-lock file outside its
 disposable workspace. Evidence and render activities hold that lease through their whole use
 of the source. Cleanup must acquire it nonblockingly; expiry cannot delete an active reader.

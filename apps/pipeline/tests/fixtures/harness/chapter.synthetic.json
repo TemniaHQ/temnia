@@ -13,7 +13,10 @@
             "id": "opening-context",
             "kind": "keep",
             "lastSentenceId": "s000003",
-            "quoteWordIds": ["w000005", "w000024"],
+            "quoteWordIds": [
+              "w000005",
+              "w000024"
+            ],
             "reason": "Introduces the transcript-first editing premise.",
             "title": "Transcript as the editing spine"
           },
@@ -22,7 +25,9 @@
             "id": "bridge-question",
             "kind": "drop",
             "lastSentenceId": "s000004",
-            "quoteWordIds": ["w000037"],
+            "quoteWordIds": [
+              "w000037"
+            ],
             "reason": "Deliberate test omission used to exercise drop review.",
             "title": "Transition question"
           },
@@ -31,7 +36,10 @@
             "id": "timed-editing",
             "kind": "keep",
             "lastSentenceId": "s000008",
-            "quoteWordIds": ["w000044", "w000060"],
+            "quoteWordIds": [
+              "w000044",
+              "w000060"
+            ],
             "reason": "Explains how timestamps and speaker structure make editing tractable.",
             "title": "Timestamps turn editing into search"
           },
@@ -40,7 +48,10 @@
             "id": "human-finish",
             "kind": "keep",
             "lastSentenceId": "s000012",
-            "quoteWordIds": ["w000068", "w000088"],
+            "quoteWordIds": [
+              "w000068",
+              "w000088"
+            ],
             "reason": "Closes with diarization and the remaining human correction step.",
             "title": "The final human pass"
           }
@@ -58,7 +69,10 @@
             "firstSentenceId": "s000000",
             "id": "summary-0",
             "lastSentenceId": "s000012",
-            "quoteWordIds": ["w000005", "w000068"],
+            "quoteWordIds": [
+              "w000005",
+              "w000068"
+            ],
             "text": "The speakers explain a transcript-first workflow, timestamped edits, and a short human diarization pass."
           }
         ],
@@ -70,9 +84,21 @@
     "verify": {
       "output": {
         "inspectedModalities": "text_evidence_and_technical_report",
-        "reasons": ["A deliberate drop remains for human acceptance."],
+        "reasons": [
+          "A deliberate drop remains for human acceptance."
+        ],
         "status": "needs_review",
         "version": 1
+      },
+      "providerResponseId": "synthetic-verifier-speech-40s-v1",
+      "synthetic": true
+    },
+    "editorial_assess": {
+      "output": {
+        "version": 2,
+        "status": "passed",
+        "findings": [],
+        "inspectedModalities": "text_evidence_and_edit_context"
       },
       "providerResponseId": "synthetic-verifier-speech-40s-v1",
       "synthetic": true

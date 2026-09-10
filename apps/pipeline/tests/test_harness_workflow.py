@@ -35,6 +35,7 @@ from temnia_pipeline.harness.routes import RouteSnapshot, estimate_cost, select_
 from temnia_pipeline.harness.runtime_types import (
     PlanningWindow,
     PrepareGlobalProposalRequest,
+    PreparePlanningRequest,
     RunRef,
 )
 from temnia_pipeline.harness.settings import HarnessSettings
@@ -52,6 +53,71 @@ SCOPE = Scope(
     organizationId=uuid.UUID("0192e8a0-0000-7000-8000-000000000001"),
     userId=uuid.UUID("0192e8a0-0000-7000-8000-000000000002"),
 )
+
+
+@pytest.mark.parametrize(
+    ("policy", "extra_bytes", "window_count"),
+    [("chapter-editorial/1", 0, 1), ("legacy", 0, 3), ("chapter-editorial/1", 524288, 3)],
+)
+async def test_complete_context_admission_avoids_unnecessary_summary_calls(
+    monkeypatch: pytest.MonkeyPatch, policy: str, extra_bytes: int, window_count: int
+) -> None:
+    from dataclasses import replace  # noqa: PLC0415
+
+    from test_harness_editorial import _case  # noqa: PLC0415
+
+    evidence, _, _ = _case()
+    routes = RouteSnapshot.model_validate_json((HARNESS / "routes.synthetic.json").read_bytes())
+    settings = replace(_harness_settings(routes), evidence_window_sentences=2)
+    owner = HarnessActivities(
+        cast(
+            "Any",
+            SimpleNamespace(
+                settings=SimpleNamespace(database_url="unused"),
+                store=None,
+            ),
+        ),
+        settings,
+        routes,
+    )
+
+    async def get_run(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(
+            brief="Create coherent topics.",
+            evidence_artifact_id=ARTIFACT_ID,
+            route_snapshot=routes,
+            editorial_policy=policy,
+            config=settings.allowed_config(),
+        )
+
+    async def read(*_args: object, **_kwargs: object) -> object:
+        return evidence.model_dump(mode="json")
+
+    monkeypatch.setattr(activities_module.runs, "get_run", get_run)
+    monkeypatch.setattr(activities_module.artifacts, "read_artifact_json", read)
+    plan = await owner.prepare_chapter_proposal(
+        PreparePlanningRequest(
+            run=RunRef(
+                scope_organization_id=SCOPE.organizationId,
+                scope_user_id=SCOPE.userId,
+                source_id=SOURCE_ID,
+                run_id=RUN_ID,
+            ),
+            evidence=HarnessArtifactRef(
+                id=ARTIFACT_ID,
+                kind=HarnessArtifactKind.evidence,
+                fingerprint="a" * 64,
+                sha256="b" * 64,
+                sizeBytes=1,
+                storageKey="fixture/evidence.json",
+            ),
+            extra_context_bytes=extra_bytes,
+        )
+    )
+    assert len(plan.windows) == window_count
+    assert sum(item.sentence_count for item in plan.windows) == len(evidence.sentences)
+    assert plan.windows[0].first_sentence_id == evidence.sentences[0].id
+    assert plan.windows[-1].last_sentence_id == evidence.sentences[-1].id
 
 
 def _harness_settings(routes: RouteSnapshot) -> HarnessSettings:
