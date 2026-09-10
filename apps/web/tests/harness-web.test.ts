@@ -6,6 +6,7 @@ import {
   appliedBudgetMatchesDraft,
   budgetInputFromMicros,
   type ChapterPanelMessage,
+  canRetryChapterRun,
   chapterOutcomeUnknownMessage,
   chapterPlanningStoppedMessage,
   chapterWaitingMessage,
@@ -350,6 +351,7 @@ describe("chapter panel status copy", () => {
   it("reports source-excerpt grounding separately from technical checks", () => {
     expect(
       summaryGroundingMessage({
+        coverageFallbackWindowCount: 0,
         fallbackQuoteCount: 1,
         fallbackUnitCount: 2,
       })
@@ -358,18 +360,69 @@ describe("chapter panel status copy", () => {
     );
     expect(
       summaryGroundingMessage({
+        coverageFallbackWindowCount: 0,
         fallbackQuoteCount: 0,
         fallbackUnitCount: 0,
       })
     ).toBeNull();
+
+    expect(
+      summaryGroundingMessage({
+        coverageFallbackWindowCount: 1,
+        fallbackQuoteCount: 0,
+        fallbackUnitCount: 1,
+      })
+    ).toBe(
+      "Used the original transcript for 1 complete summary window after the model response had missing or inconsistent sentence ranges. Review the recovered passage before accepting the chapters."
+    );
+    expect(
+      summaryGroundingMessage({
+        coverageFallbackWindowCount: 1,
+        fallbackQuoteCount: 3,
+        fallbackUnitCount: 3,
+      })
+    ).toBe(
+      "Used the original transcript for 1 complete summary window after the model response had missing or inconsistent sentence ranges. Across this run, source excerpts were used for 3 summary passages, and 3 mismatched source references were found. Review these passages before accepting the chapters."
+    );
+  });
+
+  it("offers retry only for existing retry states or a clean revision-zero refusal", () => {
+    const planningRefusal = {
+      currentRevision: 0,
+      hasEdit: false,
+      reservedMicros: 0,
+      status: "needs_review",
+    };
+    expect(canRetryChapterRun(planningRefusal)).toBe(true);
+    expect(canRetryChapterRun({ ...planningRefusal, currentRevision: 1 })).toBe(
+      false
+    );
+    expect(canRetryChapterRun({ ...planningRefusal, hasEdit: true })).toBe(
+      false
+    );
+    expect(canRetryChapterRun({ ...planningRefusal, reservedMicros: 1 })).toBe(
+      false
+    );
+    expect(
+      canRetryChapterRun({ ...planningRefusal, status: "outcome_unknown" })
+    ).toBe(false);
+    expect(canRetryChapterRun({ ...planningRefusal, status: "failed" })).toBe(
+      true
+    );
+    expect(
+      canRetryChapterRun({ ...planningRefusal, status: "budget_paused" })
+    ).toBe(true);
   });
 
   it("explains a planning refusal that has no editable revision", () => {
-    expect(chapterPlanningStoppedMessage("needs_review", 0)).toBe(
-      "Planning stopped before an edit was produced. Review the reason and start a new run to try again."
+    expect(chapterPlanningStoppedMessage("needs_review", 0, true)).toBe(
+      "Planning stopped before an edit was produced. Retry revalidates saved paid results and continues unfinished planning, but the same issue may stop it again. You can also start a new run."
     );
-    expect(chapterPlanningStoppedMessage("needs_review", 1)).toBeNull();
-    expect(chapterPlanningStoppedMessage("running", 0)).toBeNull();
+    expect(chapterPlanningStoppedMessage("needs_review", 0, false)).toBe(
+      "Planning stopped before an edit was produced. This run cannot resume while saved work or provider exposure remains unresolved. You can start a new run, which may send separate paid requests."
+    );
+    expect(chapterPlanningStoppedMessage("needs_review", 1, false)).toBeNull();
+    expect(chapterPlanningStoppedMessage("running", 0, false)).toBeNull();
   });
 
   it("explains unresolved provider exposure and a separately paid new run", () => {

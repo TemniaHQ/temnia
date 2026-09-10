@@ -49,6 +49,7 @@ export interface ChapterView {
   } | null;
   runs: Array<{ createdAt: string; id: string; status: string }>;
   summaryGrounding: {
+    coverageFallbackWindowCount: number;
     fallbackQuoteCount: number;
     fallbackUnitCount: number;
     reports: ChapterArtifactRef[];
@@ -66,6 +67,26 @@ function groundingCount(
     throw new Error(`Summary grounding report has invalid ${key}.`);
   }
   return Number(value);
+}
+
+function coverageFallbackWindowCount(
+  metadata: Record<string, unknown>
+): number {
+  const value = metadata.coverageFallbackWindowCount;
+  if (value === undefined) {
+    return 0;
+  }
+  if (value !== 1) {
+    throw new Error(
+      "Summary grounding report has invalid coverageFallbackWindowCount."
+    );
+  }
+  if (groundingCount(metadata, "fallbackUnitCount") < value) {
+    throw new Error(
+      "Summary grounding report has fewer fallback units than coverage fallback windows."
+    );
+  }
+  return 1;
 }
 
 export function artifactIdsForRevisionPointers(
@@ -131,6 +152,7 @@ export function getChapterView(
           status: row.status,
         })),
         summaryGrounding: {
+          coverageFallbackWindowCount: 0,
           fallbackQuoteCount: 0,
           fallbackUnitCount: 0,
           reports: [],
@@ -365,6 +387,11 @@ export function getChapterView(
         status: row.status,
       })),
       summaryGrounding: {
+        coverageFallbackWindowCount: groundingArtifacts.reduce(
+          (total, artifact) =>
+            total + coverageFallbackWindowCount(artifact.metadata),
+          0
+        ),
         fallbackQuoteCount: groundingArtifacts.reduce(
           (total, artifact) =>
             total + groundingCount(artifact.metadata, "fallbackQuoteCount"),

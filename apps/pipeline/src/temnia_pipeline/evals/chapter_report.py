@@ -23,6 +23,7 @@ from temnia_pipeline.evals.chapters import (
     validate_bundle,
     validate_labels,
 )
+from temnia_pipeline.harness.summary_grounding import SummaryGroundingReportV2
 
 
 class BoundaryMetrics(EvaluationModel):
@@ -71,6 +72,8 @@ class SummaryGroundingMetrics(EvaluationModel):
     first_pass_reference_valid_unit_count: int
     extractive_fallback_report_count: int
     extractive_fallback_unit_count: int
+    coverage_fallback_report_count: int
+    coverage_fallback_unit_count: int
     rejected_quote_anchor_count: int
 
 
@@ -288,14 +291,23 @@ def _summary_grounding(bundle: EvaluationBundle) -> SummaryGroundingMetrics | No
         return None
     unit_count = sum(len(item.body.normalizedSummary.units) for item in reports)
     fallback_count = sum(len(item.body.fallbacks) for item in reports)
-    fallback_reports = sum(bool(item.body.fallbacks) for item in reports)
+    quote_fallback_reports = sum(bool(item.body.fallbacks) for item in reports)
+    coverage_fallback_reports = sum(
+        isinstance(item.body, SummaryGroundingReportV2) for item in reports
+    )
     return SummaryGroundingMetrics(
         report_count=len(reports),
         summary_unit_count=unit_count,
-        first_pass_reference_valid_report_count=len(reports) - fallback_reports,
-        first_pass_reference_valid_unit_count=unit_count - fallback_count,
-        extractive_fallback_report_count=fallback_reports,
+        first_pass_reference_valid_report_count=(
+            len(reports) - quote_fallback_reports - coverage_fallback_reports
+        ),
+        first_pass_reference_valid_unit_count=(
+            unit_count - fallback_count - coverage_fallback_reports
+        ),
+        extractive_fallback_report_count=quote_fallback_reports,
         extractive_fallback_unit_count=fallback_count,
+        coverage_fallback_report_count=coverage_fallback_reports,
+        coverage_fallback_unit_count=coverage_fallback_reports,
         rejected_quote_anchor_count=sum(
             len(fallback.rejectedQuoteWordIds)
             for item in reports
@@ -429,10 +441,11 @@ def readable_table(report: ChapterEvaluationReport) -> str:
         ),
         ("human labels", str(report.boundary_metrics.label_count)),
         (
-            "summary refs first pass / fallback",
+            "summary refs first pass / quote fallback / coverage fallback",
             (
                 f"{grounding.first_pass_reference_valid_unit_count} / "
-                f"{grounding.extractive_fallback_unit_count}"
+                f"{grounding.extractive_fallback_unit_count} / "
+                f"{grounding.coverage_fallback_unit_count}"
                 if grounding is not None
                 else "not measured"
             ),

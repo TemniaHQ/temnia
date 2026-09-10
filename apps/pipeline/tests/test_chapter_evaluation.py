@@ -55,8 +55,11 @@ from temnia_pipeline.harness.proposal_diagnostics import (
     diagnostic_artifact_fingerprint,
 )
 from temnia_pipeline.harness.summary_grounding import (
+    SummaryCoverageDiagnostic,
+    SummaryCoverageFallback,
     SummaryFallback,
     SummaryGroundingReport,
+    SummaryGroundingReportV2,
     grounding_artifact_fingerprint,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
@@ -498,6 +501,71 @@ def _bundle_with_grounding() -> EvaluationBundle:
     return bundle.model_copy(update={"summary_grounding": (grounding,)})
 
 
+def _bundle_with_coverage_grounding() -> EvaluationBundle:
+    bundle = _bundle_with_grounding()
+    base = bundle.summary_grounding[0]
+    source = base.body
+    fallback_id = "coverage-fallback-" + hashlib.sha256(b"s1\0s2").hexdigest()[:24]
+    replacement = HierarchicalSummaryV1.model_validate(
+        {
+            "version": 1,
+            "units": [
+                {
+                    "id": fallback_id,
+                    "firstSentenceId": "s1",
+                    "lastSentenceId": "s2",
+                    "quoteWordIds": ["w1", "w2"],
+                    "text": "first second",
+                }
+            ],
+        }
+    )
+    body = SummaryGroundingReportV2(
+        runId=source.runId,
+        hierarchyLevel=1,
+        modelStage=source.modelStage,
+        windowId=source.windowId,
+        firstSentenceId=source.firstSentenceId,
+        lastSentenceId=source.lastSentenceId,
+        windowSentenceCount=source.windowSentenceCount,
+        windowPromptSha256=source.windowPromptSha256,
+        evidence=source.evidence,
+        rawResponse=source.rawResponse,
+        sourceSummarySha256=source.sourceSummarySha256,
+        normalizedSummary=replacement,
+        coverageDiagnostic=SummaryCoverageDiagnostic(
+            originalUnitCount=2,
+            coveredSentenceCount=1,
+            gapSentenceCount=1,
+            overlapSentenceCount=0,
+            orderingViolationCount=0,
+        ),
+        coverageFallback=SummaryCoverageFallback(
+            unitId=fallback_id,
+            firstSentenceId="s1",
+            lastSentenceId="s2",
+            replacementQuoteWordIds=("w1", "w2"),
+        ),
+    )
+    return bundle.model_copy(
+        update={
+            "summary_grounding": (
+                base.model_copy(
+                    update={
+                        "body": body,
+                        "artifact": base.artifact.model_copy(
+                            update={
+                                "fingerprint": grounding_artifact_fingerprint(body),
+                                "sha256": content_sha256(body),
+                            }
+                        ),
+                    }
+                ),
+            )
+        }
+    )
+
+
 def _bundle_with_proposal_diagnostic() -> EvaluationBundle:
     bundle = _bundle()
     assert bundle.evidence_sha256 is not None
@@ -766,7 +834,53 @@ def test_summary_grounding_is_portable_and_reports_reference_outcomes() -> None:
     assert metrics.first_pass_reference_valid_unit_count == 1
     assert metrics.extractive_fallback_report_count == 1
     assert metrics.extractive_fallback_unit_count == 1
+    assert metrics.coverage_fallback_report_count == 0
+    assert metrics.coverage_fallback_unit_count == 0
     assert metrics.rejected_quote_anchor_count == 1
+
+
+def test_summary_coverage_fallback_is_distinct_and_source_exact() -> None:
+    bundle = _bundle_with_coverage_grounding()
+    validate_bundle(bundle)
+    metrics = build_report(bundle).summary_grounding
+    assert metrics is not None
+    assert metrics.first_pass_reference_valid_report_count == 0
+    assert metrics.first_pass_reference_valid_unit_count == 0
+    assert metrics.extractive_fallback_report_count == 0
+    assert metrics.extractive_fallback_unit_count == 0
+    assert metrics.coverage_fallback_report_count == 1
+    assert metrics.coverage_fallback_unit_count == 1
+    assert metrics.rejected_quote_anchor_count == 0
+
+    item = bundle.summary_grounding[0]
+    assert isinstance(item.body, SummaryGroundingReportV2)
+    changed = item.body.model_copy(
+        update={
+            "coverageDiagnostic": item.body.coverageDiagnostic.model_copy(
+                update={"gapSentenceCount": 0}
+            )
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="coverage diagnostic"):
+        validate_bundle(
+            bundle.model_copy(
+                update={
+                    "summary_grounding": (
+                        item.model_copy(
+                            update={
+                                "body": changed,
+                                "artifact": item.artifact.model_copy(
+                                    update={
+                                        "fingerprint": grounding_artifact_fingerprint(changed),
+                                        "sha256": content_sha256(changed),
+                                    }
+                                ),
+                            }
+                        ),
+                    )
+                }
+            )
+        )
 
 
 def test_summary_grounding_reduction_uses_only_contained_prior_windows() -> None:
@@ -985,10 +1099,13 @@ def test_summary_grounding_rejects_changed_dependency_location(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["v1", "v2"])
 async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineage(
     monkeypatch: pytest.MonkeyPatch,
+    policy: str,
 ) -> None:
-    fixture = _bundle_with_grounding()
+    coverage_failure = policy == "v2"
+    fixture = _bundle_with_coverage_grounding() if coverage_failure else _bundle_with_grounding()
     grounding = fixture.summary_grounding[0]
     assert fixture.evidence is not None
     evidence_ref = grounding.body.evidence
@@ -1014,6 +1131,29 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
             ],
         }
     )
+    if coverage_failure:
+        source_summary = source_summary.model_copy(update={"units": source_summary.units[:1]})
+        assert isinstance(grounding.body, SummaryGroundingReportV2)
+        grounding_body = grounding.body.model_copy(
+            update={
+                "sourceSummarySha256": content_sha256(source_summary),
+                "coverageDiagnostic": grounding.body.coverageDiagnostic.model_copy(
+                    update={"originalUnitCount": 1}
+                ),
+            }
+        )
+        grounding = grounding.model_copy(
+            update={
+                "body": grounding_body,
+                "artifact": grounding.artifact.model_copy(
+                    update={
+                        "fingerprint": grounding_artifact_fingerprint(grounding_body),
+                        "sha256": content_sha256(grounding_body),
+                    }
+                ),
+            }
+        )
+        fixture = fixture.model_copy(update={"summary_grounding": (grounding,)})
     response_body = MODEL_RESPONSE_ADAPTER.dump_python(
         ModelResponse(
             parts=[TextPart(json.dumps(source_summary.model_dump(mode="json")))],
@@ -1063,7 +1203,8 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
                 "hierarchyLevel": grounding.body.hierarchyLevel,
                 "modelStage": grounding.body.modelStage,
                 "fallbackUnitCount": 1,
-                "fallbackQuoteCount": 1,
+                "fallbackQuoteCount": int(not coverage_failure),
+                **({"coverageFallbackWindowCount": 1} if coverage_failure else {}),
             },
         },
     }
@@ -1111,7 +1252,7 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
         events=(),
     )
     bodies = {
-        evidence_ref.id: fixture.evidence.model_dump(mode="json"),
+        evidence_ref.id: cast("HarnessEvidence", fixture.evidence).model_dump(mode="json"),
         response_ref.id: response_body,
         grounding_id: grounding.body.model_dump(mode="json"),
     }
@@ -1137,7 +1278,7 @@ async def test_exporter_includes_revision_zero_summary_grounding_with_raw_lineag
         update={
             "units": [
                 source_summary.units[0].model_copy(update={"text": "changed raw bytes"}),
-                source_summary.units[1],
+                *source_summary.units[1:],
             ]
         }
     )

@@ -77,6 +77,7 @@ SEEDED = Scope(
     userId=uuid.UUID("0192e8a0-0000-7000-8000-000000000002"),
 )
 CANCEL_TEST_OWNER = "cancel-test-owner"
+PLANNING_RETRY_OWNER = "planning-retry-owner"
 
 
 def pipeline_url() -> str:
@@ -209,6 +210,55 @@ def start_request(source_id: UUID, value: RouteSnapshot) -> StartRunRequest:
             sourceId=source_id,
         ),
         workflow=WorkflowIdentity(workflow_id="chapter/test", workflow_run_id="run/test"),
+    )
+
+
+def retry_request(*, source_id: UUID, run_id: UUID) -> ChapterReviewInput:
+    return ChapterReviewInput(
+        action=ChapterReviewAction.retry,
+        baseRevision=0,
+        boundaryId=None,
+        budgetMicros=None,
+        mutationKey=uuid.uuid4(),
+        otherSectionId=None,
+        reason="Revalidate saved planning results.",
+        runId=run_id,
+        scope=SEEDED,
+        sectionId=None,
+        sourceId=source_id,
+        targetRevision=None,
+        targetTimeMs=None,
+    )
+
+
+async def mark_planning_review(
+    url: str,
+    *,
+    source_id: UUID,
+    run_id: UUID,
+    error_message: str = "known planning refusal",
+) -> RunSnapshot:
+    async with db.scoped(url, SEEDED) as conn:
+        await conn.execute(
+            """
+            UPDATE harness_run SET status = 'running', stage = 'planning'
+             WHERE id = %s AND source_id = %s
+            """,
+            (run_id, source_id),
+        )
+    return await update_stage(
+        url,
+        StageUpdate(
+            scope_organization_id=SEEDED.organizationId,
+            scope_user_id=SEEDED.userId,
+            source_id=source_id,
+            run_id=run_id,
+            expected_stage="planning",
+            expected_revision=0,
+            next_stage="needs_review",
+            status=HarnessRunStatus.needs_review,
+            error_message=error_message,
+        ),
     )
 
 
@@ -501,6 +551,357 @@ async def test_retry_clears_only_current_failure_and_keeps_review_history() -> N
             ("retry", "refused"),
         ]
         assert ChapterReviewOutput.model_validate(events[1]["result"]) == first
+    finally:
+        await db.close_pool()
+
+
+async def test_revision_zero_planning_review_retries_same_run_from_evidence() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        operation = await ledger.acquire_operation(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+            kind=ledger.OperationKind.MODEL,
+            stage="summary:window-0000",
+            inputs={"window": "window-0000"},
+            config={"policy": "fixture"},
+        )
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET spent_micros = 123, dispatch_count = 1
+                 WHERE id = %s
+                """,
+                (start.request.runId,),
+            )
+        await mark_planning_review(
+            url,
+            source_id=source_id,
+            run_id=start.request.runId,
+            error_message="known summary coverage refusal",
+        )
+        async with db.scoped(url, SEEDED) as conn:
+            before = await (
+                await conn.execute(
+                    """
+                    SELECT id, request_key, budget_micros, spent_micros, reserved_micros,
+                           dispatch_count, repair_count, config, route_snapshot,
+                           workflow_id, workflow_run_id
+                      FROM harness_run WHERE id = %s
+                    """,
+                    (start.request.runId,),
+                )
+            ).fetchone()
+            operation_before = await (
+                await conn.execute(
+                    "SELECT * FROM harness_operation WHERE id = %s",
+                    (operation.operation.id,),
+                )
+            ).fetchone()
+        assert before is not None
+        assert operation_before is not None
+
+        request = retry_request(source_id=source_id, run_id=start.request.runId)
+        applied, duplicate = await asyncio.gather(
+            apply_operational_review(url, request=request, max_run_budget_micros=10_000_000),
+            apply_operational_review(url, request=request, max_run_budget_micros=10_000_000),
+        )
+        assert applied == duplicate
+        assert applied.state == "applied"
+        assert "revalidated" in applied.message
+
+        async with db.scoped(url, SEEDED) as conn:
+            after = await (
+                await conn.execute(
+                    """
+                    SELECT id, request_key, budget_micros, spent_micros, reserved_micros,
+                           dispatch_count, repair_count, config, route_snapshot,
+                           workflow_id, workflow_run_id, status, stage, error_message
+                      FROM harness_run WHERE id = %s
+                    """,
+                    (start.request.runId,),
+                )
+            ).fetchone()
+            operation_after = await (
+                await conn.execute(
+                    "SELECT * FROM harness_operation WHERE id = %s",
+                    (operation.operation.id,),
+                )
+            ).fetchone()
+            event_count = await (
+                await conn.execute(
+                    "SELECT count(*)::int AS count FROM chapter_review_event WHERE run_id = %s",
+                    (start.request.runId,),
+                )
+            ).fetchone()
+        assert after is not None
+        assert {key: after[key] for key in before} == before
+        assert after["status"] == "pending"
+        assert after["stage"] == "evidence"
+        assert after["error_message"] is None
+        assert operation_after == operation_before
+        assert event_count == {"count": 1}
+    finally:
+        await db.close_pool()
+
+
+async def test_planning_review_retry_refuses_unresolved_execution_and_active_cost() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        operation = await ledger.acquire_operation(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+            kind=ledger.OperationKind.MODEL,
+            stage="summary:window-0000",
+            inputs={"window": "window-0000"},
+            config={"policy": "fixture"},
+        )
+        attempt = await ledger.reserve_attempt(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+            operation_id=operation.operation.id,
+            owner_token=PLANNING_RETRY_OWNER,
+            provider="recorded",
+            model="fixture",
+            family="fixture",
+            route={"id": "fixture"},
+            request_hash="f" * 64,
+            estimated_cost_micros=100,
+            dispatch_limit=32,
+        )
+        await mark_planning_review(url, source_id=source_id, run_id=start.request.runId)
+
+        reserved = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert reserved.state == "refused"
+        assert "cost remains unresolved" in reserved.message
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                "UPDATE harness_attempt SET state = 'succeeded' WHERE id = %s",
+                (attempt.id,),
+            )
+        active_cost = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert active_cost.state == "refused"
+        assert "cost remains unresolved" in active_cost.message
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_reservation
+                   SET state = 'settled', settled_micros = 100, settled_at = now()
+                 WHERE attempt_id = %s
+                """,
+                (attempt.id,),
+            )
+        counter_exposure = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert counter_exposure.state == "refused"
+        assert "cost remains unresolved" in counter_exposure.message
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_run SET reserved_micros = 0, spent_micros = 100
+                 WHERE id = %s
+                """,
+                (start.request.runId,),
+            )
+            await conn.execute(
+                "UPDATE harness_attempt SET state = 'running' WHERE id = %s",
+                (attempt.id,),
+            )
+        running = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert running.state == "refused"
+        assert "execution" in running.message
+
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_attempt
+                   SET state = 'failed_known', actual_cost_micros = 100,
+                       cost_status = 'reported', usage = '{}'::jsonb, finished_at = now()
+                 WHERE id = %s
+                """,
+                (attempt.id,),
+            )
+            await conn.execute(
+                "UPDATE harness_operation SET status = 'failed' WHERE id = %s",
+                (operation.operation.id,),
+            )
+        safe = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert safe.state == "applied"
+    finally:
+        await db.close_pool()
+
+
+@pytest.mark.parametrize(
+    ("current_revision", "accepted_revision", "stage"),
+    [(1, None, "needs_review"), (0, 1, "needs_review"), (0, None, "planning")],
+)
+async def test_planning_review_retry_refuses_revision_acceptance_or_other_stage(
+    current_revision: int,
+    accepted_revision: int | None,
+    stage: str,
+) -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET status = 'needs_review', stage = %s, current_revision = %s,
+                       accepted_revision = %s, error_message = 'must remain'
+                 WHERE id = %s
+                """,
+                (stage, current_revision, accepted_revision, start.request.runId),
+            )
+        result = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId).model_copy(
+                update={"baseRevision": current_revision}
+            ),
+            max_run_budget_micros=10_000_000,
+        )
+        assert result.state == "refused"
+        after = await get_run(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+        )
+        assert after.status == HarnessRunStatus.needs_review
+        assert after.stage == stage
+        assert after.error_message == "must remain"
+    finally:
+        await db.close_pool()
+
+
+async def test_planning_review_retry_refuses_an_existing_edit_even_at_revision_zero() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        await mark_planning_review(url, source_id=source_id, run_id=start.request.runId)
+        artifact_id = uuid.uuid4()
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                """
+                INSERT INTO harness_artifact
+                    (id, organization_id, source_id, kind, fingerprint, sha256,
+                     size_bytes, storage_key, metadata)
+                VALUES (%s, %s, %s, 'edit', %s, %s, 2, %s, '{}'::jsonb)
+                """,
+                (
+                    artifact_id,
+                    SEEDED.organizationId,
+                    source_id,
+                    "1" * 64,
+                    "2" * 64,
+                    f"owned/{source_id}/edit.json",
+                ),
+            )
+            await conn.execute(
+                """
+                INSERT INTO chapter_revision
+                    (organization_id, source_id, run_id, revision, artifact_id,
+                     base_revision, mutation_key)
+                VALUES (%s, %s, %s, 1, %s, NULL, %s)
+                """,
+                (
+                    SEEDED.organizationId,
+                    source_id,
+                    start.request.runId,
+                    artifact_id,
+                    str(uuid.uuid4()),
+                ),
+            )
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET current_revision = 0, accepted_revision = NULL,
+                       error_message = 'must remain'
+                 WHERE id = %s
+                """,
+                (start.request.runId,),
+            )
+        result = await apply_operational_review(
+            url,
+            request=retry_request(source_id=source_id, run_id=start.request.runId),
+            max_run_budget_micros=10_000_000,
+        )
+        assert result.state == "refused"
+        assert "without an edit" in result.message
+    finally:
+        await db.close_pool()
+
+
+async def test_two_distinct_planning_retries_admit_only_one_transition() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
+        await mark_planning_review(url, source_id=source_id, run_id=start.request.runId)
+        results = await asyncio.gather(
+            *(
+                apply_operational_review(
+                    url,
+                    request=retry_request(source_id=source_id, run_id=start.request.runId),
+                    max_run_budget_micros=10_000_000,
+                )
+                for _ in range(2)
+            )
+        )
+        assert sorted(str(result.state) for result in results) == ["applied", "refused"]
+        after = await get_run(
+            url,
+            scope=SEEDED,
+            source_id=source_id,
+            run_id=start.request.runId,
+        )
+        assert after.status == HarnessRunStatus.pending
+        assert after.stage == "evidence"
     finally:
         await db.close_pool()
 

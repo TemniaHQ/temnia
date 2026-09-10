@@ -629,6 +629,65 @@ async def accept_initial_revision(  # noqa: PLR0913
         return _snapshot(updated)
 
 
+async def _planning_retry_refusal(
+    conn: AsyncConnection[dict[str, Any]],
+    *,
+    run: Mapping[str, Any],
+    source_id: UUID,
+    run_id: UUID,
+) -> str | None:
+    """Return why a revision-zero planning refusal cannot safely resume."""
+    has_edit_row = await (
+        await conn.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM chapter_revision
+                 WHERE run_id = %s AND source_id = %s
+            ) AS value
+            """,
+            (run_id, source_id),
+        )
+    ).fetchone()
+    if has_edit_row is None:
+        raise RuntimeError("planning retry edit check returned no row")
+    if (
+        int(run["current_revision"]) != 0
+        or run["accepted_revision"] is not None
+        or str(run["stage"]) != "needs_review"
+        or bool(has_edit_row["value"])
+    ):
+        return "Only revision-zero planning work without an edit may retry."
+
+    if int(run["reserved_micros"]) != 0:
+        return "Planning cannot retry while provider execution or cost remains unresolved."
+
+    unresolved_row = await (
+        await conn.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                  FROM harness_attempt a
+                  LEFT JOIN harness_reservation r
+                    ON r.organization_id = a.organization_id
+                   AND r.source_id = a.source_id
+                   AND r.attempt_id = a.id
+                 WHERE a.run_id = %s AND a.source_id = %s
+                   AND (
+                       a.state NOT IN ('succeeded', 'failed_known', 'cancelled_confirmed')
+                       OR r.state = 'active'
+                   )
+            ) AS value
+            """,
+            (run_id, source_id),
+        )
+    ).fetchone()
+    if unresolved_row is None:
+        raise RuntimeError("planning retry exposure check returned no row")
+    if bool(unresolved_row["value"]):
+        return "Planning cannot retry while provider execution or cost remains unresolved."
+    return None
+
+
 async def apply_operational_review(  # noqa: PLR0912, PLR0915
     database_url: str,
     *,
@@ -753,9 +812,31 @@ async def apply_operational_review(  # noqa: PLR0912, PLR0915
                 state = State.applied
                 message = "Budget increased without changing the current run stage."
         elif request.action == ChapterReviewAction.retry:
-            if status not in {"failed", "budget_paused"}:
-                message = "Only known failed or budget-paused work may retry."
-            else:
+            planning_retry = status == "needs_review"
+            if planning_retry:
+                refusal = await _planning_retry_refusal(
+                    conn,
+                    run=run,
+                    source_id=request.sourceId,
+                    run_id=request.runId,
+                )
+                if refusal is not None:
+                    message = refusal
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE harness_run
+                           SET status = 'pending', stage = 'evidence',
+                               error_message = NULL, updated_at = now()
+                         WHERE id = %s
+                        """,
+                        (request.runId,),
+                    )
+                    state = State.applied
+                    message = (
+                        "Saved planning results will be revalidated before unfinished work resumes."
+                    )
+            elif status in {"failed", "budget_paused"}:
                 await conn.execute(
                     """
                     UPDATE harness_run
@@ -766,6 +847,8 @@ async def apply_operational_review(  # noqa: PLR0912, PLR0915
                 )
                 state = State.applied
                 message = "Known unfinished work may resume without repeating accepted operations."
+            else:
+                message = "Only known failed, budget-paused, or planning-review work may retry."
         result = ChapterReviewOutput(
             message=message,
             mutationKey=request.mutationKey,

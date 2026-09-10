@@ -257,6 +257,7 @@ function fixture(): Fixture {
       },
       runs: [{ createdAt: "2026-09-09T00:00:00Z", id: RUN, status: "ready" }],
       summaryGrounding: {
+        coverageFallbackWindowCount: 0,
         fallbackQuoteCount: 0,
         fallbackUnitCount: 0,
         reports: [],
