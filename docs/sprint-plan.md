@@ -90,6 +90,18 @@ progress reporting, four/eight CPU limits and serial/parallel scheduling before 
 runtime configuration. Completing a long recording does not close transcript accuracy, actual
 billing reconciliation, live OOM qualification or the three-source editorial acceptance gate.
 
+S4/S5 follow-up, 2026-09-10: [chapter intelligence and default creation](plans/chapter-intelligence-360-view.md)
+adds one-click logical chapters, a grounded critic/repair loop before rendering, source-relative
+speech coverage and a real Chapter-Llama candidate integration. The four-minute crop exposed an
+unfinished source ending; an operator-directed correction is not autonomous quality evidence.
+The new loop must be qualified with the default brief, without source-specific cut instructions.
+The first real default-brief run proposed dropping only the unfinished 1.960-second tail, made
+one automatic repair and produced four chapters passing 68 technical checks. Its critics disagreed
+about timing, including a false claim at a measured silence; deterministic local cut facts and
+compact v3 context address that observed failure before another audition. Chapter-Llama's gated
+base now loads and its real ASR-only inference succeeded, but its suggested starts did not justify
+promotion. These changes do not close M1 or replace the three-source human acceptance measurement.
+
 ### Phase 1 — The editing core (S6–S20)
 
 Every editing feature in the PRD, each lane with its review surface, before any SaaS surface. The lane order follows the rule in §6.

@@ -260,6 +260,7 @@ def test_exact_reviewed_caps_reach_runner_without_transport(
     assert limits.max_dispatches == MAX_DISPATCHES
     assert limits.max_output_tokens == MAX_OUTPUT_TOKENS
     assert limits.proposal_wire == "canonical"
+    assert limits.suite == "legacy"
 
 
 def test_compact_proposal_wire_reaches_runner_without_transport(
@@ -280,6 +281,49 @@ def test_compact_proposal_wire_reaches_runner_without_transport(
     limits = observed["limits"]
     assert isinstance(limits, QualificationLimits)
     assert limits.proposal_wire == "compact"
+
+
+def test_editorial_suite_reaches_runner_without_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates = _write_catalogue(tmp_path)
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "private-test-key")
+    observed: dict[str, object] = {}
+
+    async def complete(**kwargs: object) -> dict[str, object]:
+        observed.update(kwargs)
+        return {"status": "completed", "passed": True}
+
+    monkeypatch.setattr(driver, "run_qualification", complete)
+    assert driver.main([*_run_arguments(tmp_path, candidates), "--suite", "editorial"]) == 0
+    limits = observed["limits"]
+    assert isinstance(limits, QualificationLimits)
+    assert limits.suite == "editorial"
+
+
+def test_editorial_suite_rejects_compact_wire_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates = _write_catalogue(tmp_path)
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "private-test-key")
+
+    async def refuse_dispatch(**_kwargs: object) -> dict[str, object]:
+        pytest.fail("invalid suite dispatched")
+
+    monkeypatch.setattr(driver, "run_qualification", refuse_dispatch)
+    with pytest.raises(SystemExit) as raised:
+        driver.main(
+            [
+                *_run_arguments(tmp_path, candidates),
+                "--suite",
+                "editorial",
+                "--proposal-wire",
+                "compact",
+            ]
+        )
+    assert raised.value.code == 1
 
 
 async def test_output_paths_must_be_distinct_before_journal_or_transport(

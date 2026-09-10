@@ -18,6 +18,10 @@ from temnia_pipeline.harness.qualification import (
     reconcile_journal,
     run_qualification,
 )
+from temnia_pipeline.harness.qualification_editorial import (
+    editorial_qualification_case,
+    editorial_qualification_prompts,
+)
 
 API_KEY = "qualification-test-key-marker"
 
@@ -176,7 +180,9 @@ def _lookup_transport(
     return httpx.MockTransport(handler), generations
 
 
-def _three_candidate_lookup_transport() -> tuple[httpx.MockTransport, list[str]]:
+def _three_candidate_lookup_transport(
+    stages_per_candidate: int = 3,
+) -> tuple[httpx.MockTransport, list[str]]:
     generations: list[str] = []
     models = ("family/model-one", "family-two/model-two", "family-three/model-three")
     providers = ("provider-one", "provider-two", "provider-three")
@@ -184,7 +190,9 @@ def _three_candidate_lookup_transport() -> tuple[httpx.MockTransport, list[str]]
     async def handler(request: httpx.Request) -> httpx.Response:
         generation_id = request.url.params["id"]
         generations.append(generation_id)
-        candidate_index = (int(generation_id.removeprefix("generation-")) - 1) // 3
+        candidate_index = (
+            int(generation_id.removeprefix("generation-")) - 1
+        ) // stages_per_candidate
         return httpx.Response(
             200,
             request=request,
@@ -216,12 +224,14 @@ def _limits(
     *,
     exposure: int = 100_000,
     proposal_wire: Literal["canonical", "compact"] = "canonical",
+    suite: Literal["legacy", "editorial"] = "legacy",
 ) -> QualificationLimits:
     return QualificationLimits(
         max_exposure_micros=exposure,
         max_dispatches=12,
         max_output_tokens=256,
         proposal_wire=proposal_wire,
+        suite=suite,
         lookup_wait_seconds=0,
     )
 
@@ -338,6 +348,10 @@ async def test_canonical_wire_keeps_historical_journal_shape(tmp_path: Path) -> 
     )
 
     assert "proposalWire" not in report
+    assert "suite" not in report
+    assert "editorialPromptGeneration" not in report
+    assert "suite" not in report["limits"]
+    assert all("suite" not in call for call in report["calls"])
     assert "proposal_wire" not in report["limits"]
     assert all("proposalWire" not in call for call in report["calls"])
     assert all("promptVersion" not in call for call in report["calls"])
@@ -612,3 +626,227 @@ async def test_reconcile_validates_journal_shape_and_never_dispatches(tmp_path: 
             lookup_transport=httpx.MockTransport(lookup),
         )
     assert lookups == 0
+
+
+def _editorial_outputs(count: int = 1) -> list[dict[str, Any]]:
+    evidence, proposal, _edit, verdict = editorial_qualification_case()
+    sections = [section.model_dump(mode="json", exclude={"id"}) for section in proposal.sections]
+    sections[-1]["lastSentenceId"] = evidence.sentences[-2].id
+    sections.append(
+        {
+            "kind": "drop",
+            "title": "Incomplete ending",
+            "reason": "Only the incomplete conditional fragment is removed.",
+            "firstSentenceId": evidence.sentences[-1].id,
+            "lastSentenceId": evidence.sentences[-1].id,
+            "quoteWordIds": [],
+        }
+    )
+    repair = {
+        "version": 1,
+        "summary": "Preserve complete chapters.",
+        "sections": sections,
+        "boundaryChoices": [],
+    }
+    return [value for _ in range(count) for value in (verdict.model_dump(mode="json"), repair)]
+
+
+@pytest.mark.asyncio
+async def test_editorial_suite_qualifies_exact_production_shapes_for_three_families(
+    tmp_path: Path,
+) -> None:
+    request_transport, requests = _request_transport(_editorial_outputs(3))
+    lookup_transport, generations = _three_candidate_lookup_transport(2)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=3),
+        api_key=API_KEY,
+        journal_path=tmp_path / "journal.json",
+        receipts_path=tmp_path / "receipts",
+        report_path=tmp_path / "report.json",
+        limits=_limits(suite="editorial"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+
+    assert report["passed"] is True
+    assert report["dispatchCount"] == len(requests) == len(generations) == 6
+    assert report["suite"] == report["limits"]["suite"] == "editorial"
+    assert report["editorialPromptGeneration"] == 4
+    assert "proposalWire" not in report
+    prompts = editorial_qualification_prompts()
+    for index, call in enumerate(report["calls"]):
+        stage = call["stage"]
+        assert stage == ("editorial_assess", "editorial_repair")[index % 2]
+        assert call["suite"] == "editorial"
+        assert call["promptVersion"] == prompts[stage][2]
+        assert call["promptVersion"] == (
+            "chapter-editorial-assess-v3" if index % 2 == 0 else "chapter-editorial-repair-v4"
+        )
+        assert call["schemaVersion"] == (
+            "editorial-verdict/2" if index % 2 == 0 else "editorial-repair/1"
+        )
+        assert call["response"]["promptVersion"] == call["promptVersion"]
+        assert call["response"]["schemaVersion"] == call["schemaVersion"]
+        schema = requests[index]["response_format"]["json_schema"]
+        assert schema["strict"] is True
+        assert schema["name"] == prompts[stage][1].__name__
+        assert any(
+            message["role"] == "user" and message["content"] == prompts[stage][0]
+            for message in requests[index]["messages"]
+        )
+        assert requests[index]["store"] is False
+        assert "startTimeMs" not in json.dumps(schema)
+        assert "endTimeMs" not in json.dumps(schema)
+
+
+@pytest.mark.asyncio
+async def test_editorial_known_invalid_assessment_does_not_skip_independent_repair_shape(
+    tmp_path: Path,
+) -> None:
+    outputs = _editorial_outputs()
+    outputs[0]["findings"][0]["wordIds"] = ["not-in-evidence"]
+    request_transport, requests = _request_transport(outputs)
+    lookup_transport, _ = _lookup_transport()
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path),
+        api_key=API_KEY,
+        journal_path=tmp_path / "journal.json",
+        receipts_path=tmp_path / "receipts",
+        report_path=tmp_path / "report.json",
+        limits=_limits(suite="editorial"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    assert len(requests) == 2
+    assert report["passed"] is False
+    assert report["reportedCostMicros"] == 2
+    assert report["calls"][0]["validation"] == {"passed": False, "code": "grounding-invalid"}
+    assert report["calls"][1]["state"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_editorial_pending_cost_halts_all_shapes_and_reconciliation_only_reads(
+    tmp_path: Path,
+) -> None:
+    request_transport, requests = _request_transport(_editorial_outputs(3))
+    lookup_transport, _ = _lookup_transport(status=404)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=3),
+        api_key=API_KEY,
+        journal_path=tmp_path / "journal.json",
+        receipts_path=tmp_path / "receipts",
+        report_path=tmp_path / "report.json",
+        limits=_limits(suite="editorial"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    assert len(requests) == 1
+    assert report["status"] == "halted"
+    assert [call["state"] for call in report["calls"]] == ["cost_unresolved", *(["planned"] * 5)]
+    journal = tmp_path / "journal.json"
+    original = journal.read_bytes()
+    lookup_transport, generations = _lookup_transport()
+    await reconcile_journal(
+        journal_path=journal,
+        expected_sha256=hashlib.sha256(original).hexdigest(),
+        api_key=API_KEY,
+        report_path=tmp_path / "reconciled.json",
+        lookup_transport=lookup_transport,
+    )
+    assert generations == ["generation-1"]
+    assert len(requests) == 1
+    assert journal.read_bytes() == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", ["suite", "schema", "stage", "generation", "old-prompt"])
+async def test_editorial_journal_identity_tamper_refuses_before_lookup(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    request_transport, _ = _request_transport(_editorial_outputs())
+    lookup_transport, _ = _lookup_transport()
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path),
+        api_key=API_KEY,
+        journal_path=tmp_path / "journal.json",
+        receipts_path=tmp_path / "receipts",
+        report_path=tmp_path / "report.json",
+        limits=_limits(suite="editorial"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    if tamper == "suite":
+        report["suite"] = "legacy"
+    elif tamper == "schema":
+        report["calls"][0]["schemaVersion"] = "editorial-verdict/1"
+    elif tamper == "generation":
+        report["editorialPromptGeneration"] = 5
+    elif tamper == "old-prompt":
+        report["calls"][0]["promptVersion"] = "chapter-editorial-assess-v1"
+    else:
+        report["calls"][0]["stage"] = "verify"
+    body = json.dumps(report).encode()
+    path = tmp_path / "tampered.json"
+    path.write_bytes(body)
+    lookups: list[httpx.Request] = []
+
+    def lookup(request: httpx.Request) -> httpx.Response:
+        lookups.append(request)
+        return httpx.Response(500)
+
+    with pytest.raises(QualificationRefusal):
+        await reconcile_journal(
+            journal_path=path,
+            expected_sha256=hashlib.sha256(body).hexdigest(),
+            api_key=API_KEY,
+            report_path=tmp_path / "reconcile.json",
+            lookup_transport=httpx.MockTransport(lookup),
+        )
+    assert lookups == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation", [1, 2, 3])
+async def test_retained_editorial_journal_reconciles_without_rewrite(
+    tmp_path: Path,
+    generation: int,
+) -> None:
+    request_transport, requests = _request_transport(_editorial_outputs())
+    lookup_transport, _ = _lookup_transport(status=404)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path),
+        api_key=API_KEY,
+        journal_path=tmp_path / "journal.json",
+        receipts_path=tmp_path / "receipts",
+        report_path=tmp_path / "report.json",
+        limits=_limits(suite="editorial"),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    # Reproduce the retained first-generation metadata shape, including its missing selector.
+    if generation == 1:
+        del report["editorialPromptGeneration"]
+    else:
+        report["editorialPromptGeneration"] = generation
+    for call in report["calls"]:
+        call["promptVersion"] = {
+            "editorial_assess": f"chapter-editorial-assess-v{generation}",
+            "editorial_repair": f"chapter-editorial-repair-v{generation}",
+        }[call["stage"]]
+        if "response" in call:
+            call["response"]["promptVersion"] = call["promptVersion"]
+    body = json.dumps(report).encode()
+    journal = tmp_path / "retained-v1.json"
+    journal.write_bytes(body)
+    lookup_transport, generations = _lookup_transport()
+    await reconcile_journal(
+        journal_path=journal,
+        expected_sha256=hashlib.sha256(body).hexdigest(),
+        api_key=API_KEY,
+        report_path=tmp_path / "v1-reconciliation.json",
+        lookup_transport=lookup_transport,
+    )
+    assert generations == ["generation-1"]
+    assert len(requests) == 1
+    assert journal.read_bytes() == body

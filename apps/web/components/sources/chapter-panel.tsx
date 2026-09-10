@@ -64,8 +64,9 @@ interface ChapterPanelProps {
 }
 
 interface PendingStart {
-  brief: string;
+  brief?: string;
   budgetDollars: string;
+  defaultBriefVersion?: string;
   requestKey: string;
   runId: string;
   sourceId: string;
@@ -183,6 +184,7 @@ export function ChapterPanel({
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [message, setMessage] = useState<ChapterPanelMessage | null>(null);
   const [brief, setBrief] = useState("");
+  const [customInstructions, setCustomInstructions] = useState(false);
   const [newRunBudget, setNewRunBudget] = useState("1.00");
   const [selectedRunBudget, setSelectedRunBudget] = useState(() =>
     initialView.run ? budgetInputFromMicros(initialView.run.budgetMicros) : ""
@@ -510,7 +512,8 @@ export function ChapterPanel({
       setPendingRunId(recovered.runId);
       setSelectedRunId(recovered.runId);
       setCreatingNew(false);
-      setBrief(recovered.brief);
+      setBrief(recovered.brief ?? "");
+      setCustomInstructions(Boolean(recovered.brief?.trim()));
       setNewRunBudget(recovered.budgetDollars);
       setPendingResolution(null);
     }
@@ -825,10 +828,14 @@ export function ChapterPanel({
   };
 
   const begin = () => {
+    if (!availability.available) {
+      return;
+    }
     const runId = crypto.randomUUID();
     const intent = {
-      brief,
+      ...(customInstructions ? { brief } : {}),
       budgetDollars: newRunBudget,
+      defaultBriefVersion: availability.settings.defaultBriefVersion,
       requestKey: runId,
       runId,
       sourceId,
@@ -967,14 +974,29 @@ export function ChapterPanel({
             {exposureMessage}
           </p>
         ) : null}
-        <Label htmlFor={`${formId}-brief`}>Editorial brief</Label>
-        <Textarea
-          aria-label="Editorial brief"
-          id={`${formId}-brief`}
-          onChange={(event) => setBrief(event.target.value)}
-          placeholder="Describe the chapter structure you want"
-          value={brief}
-        />
+        <p className="text-muted-foreground text-sm">
+          Create chapters at meaningful topic changes, preserving context and
+          complete spoken thoughts.
+        </p>
+        <Button
+          aria-controls={`${formId}-instructions`}
+          aria-expanded={customInstructions}
+          onClick={() => setCustomInstructions((current) => !current)}
+          variant="outline"
+        >
+          {customInstructions ? "Use default instructions" : "Add instructions"}
+        </Button>
+        <div hidden={!customInstructions} id={`${formId}-instructions`}>
+          <Label htmlFor={`${formId}-brief`}>Editorial brief (optional)</Label>
+          <Textarea
+            aria-label="Editorial brief"
+            id={`${formId}-brief`}
+            maxLength={100_000}
+            onChange={(event) => setBrief(event.target.value)}
+            placeholder="Describe any specific chapter structure you want. Leave blank to use the default."
+            value={brief}
+          />
+        </div>
         <Label htmlFor={`${formId}-budget`}>Maximum budget (USD)</Label>
         <Input
           aria-label="Maximum budget in dollars"

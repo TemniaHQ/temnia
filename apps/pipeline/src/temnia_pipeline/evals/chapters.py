@@ -1,7 +1,7 @@
 """Strict offline inputs for chapter evaluation and human boundary review."""
 
 # Public bundle refusals name the violated identity at the validation site.
-# ruff: noqa: C901, EM101, PLR0912, TC001, TC003, TRY003
+# ruff: noqa: C901, EM101, PLR0912, TC003, TRY003
 
 from __future__ import annotations
 
@@ -13,13 +13,22 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from temnia_pipeline.chapter_llama.candidate import (
+    CANDIDATE_MODEL,
+    CandidatePayload,
+    validate_candidate,
+)
+from temnia_pipeline.chapter_llama.contracts import digest
 from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
     ChapterRenders,
+    HarnessArtifactKind,
+    HarnessArtifactRef,
     HarnessEvidence,
 )
 from temnia_pipeline.harness.artifacts import canonical_json, fingerprint_for
+from temnia_pipeline.harness.editorial import EditorialVerdictV2, ground_editorial_verdict
 from temnia_pipeline.harness.models import EditorialVerdictV1
 from temnia_pipeline.harness.prompts import (
     PromptSentence,
@@ -132,6 +141,20 @@ class EditorialVerificationBody(EvaluationModel):
 
     format: Literal["chapter-verification/1"]
     verdict: EditorialVerdictV1
+    editorial: EditorialVerdictV2 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _consistent_projection(self) -> Self:
+        if self.editorial is not None and self.verdict != EditorialVerdictV1(
+            version=1,
+            status=self.editorial.status,
+            reasons=[finding.reason for finding in self.editorial.findings],
+            inspectedModalities="text_evidence_and_technical_report",
+        ):
+            raise ValueError("editorial verification compatibility projection differs from V2")
+        return self
 
 
 class EditorialVerificationArtifact(EvaluationModel):
@@ -256,6 +279,14 @@ class AttemptFact(EvaluationModel):
         return self
 
 
+class ChapterLlamaCandidateArtifact(EvaluationModel):
+    """A terminal topic generation, including rejected output, with its provenance."""
+
+    artifact: ImmutableArtifactFact
+    evidence: ImmutableArtifactFact
+    body: CandidatePayload
+
+
 class EvaluationBundle(EvaluationModel):
     """Accepted local material for one source-scoped run and revision."""
 
@@ -280,6 +311,7 @@ class EvaluationBundle(EvaluationModel):
     checks: tuple[CheckArtifact, ...] = ()
     editorial_verification: EditorialVerificationArtifact | None = None
     summary_grounding: tuple[SummaryGroundingArtifact, ...] = ()
+    chapter_llama_candidates: tuple[ChapterLlamaCandidateArtifact, ...] = ()
     proposal_diagnostics: tuple[ProposalDiagnosticArtifact, ...] = ()
     review_events: tuple[ReviewEvent, ...] = ()
     attempts: tuple[AttemptFact, ...] = ()
@@ -811,6 +843,140 @@ def _validate_proposal_diagnostics(bundle: EvaluationBundle) -> None:  # noqa: P
                 raise HarnessValidationError("proposal diagnostic input lineage is incomplete")
 
 
+def _validate_chapter_llama_candidates(bundle: EvaluationBundle) -> None:
+    declared_ids = {
+        str(attempt.usage["candidateArtifactId"])
+        for attempt in bundle.attempts
+        if "candidateArtifactId" in attempt.usage
+    }
+    if declared_ids != {str(item.artifact.id) for item in bundle.chapter_llama_candidates}:
+        raise HarnessValidationError("Chapter-Llama candidate response closure is incomplete")
+    if not bundle.chapter_llama_candidates:
+        return
+    if bundle.evidence is None or bundle.evidence_sha256 is None:
+        raise HarnessValidationError("Chapter-Llama candidates require source evidence")
+    seen: set[UUID] = set()
+    attempts = {attempt.id: attempt for attempt in bundle.attempts}
+    if len(attempts) != len(bundle.attempts):
+        raise HarnessValidationError("Chapter-Llama attempts have duplicate identities")
+    for candidate in bundle.chapter_llama_candidates:
+        fact, body = candidate.artifact, candidate.body
+        if fact.id in seen:
+            raise HarnessValidationError("duplicate Chapter-Llama candidate artifact")
+        seen.add(fact.id)
+        if fact.kind != "model_response" or candidate.evidence.kind != "evidence":
+            raise HarnessValidationError("Chapter-Llama candidate artifact kind is invalid")
+        body_bytes = canonical_json(body.model_dump(mode="json"))
+        actual = hashlib.sha256(body_bytes).hexdigest()
+        if (
+            actual != fact.sha256
+            or fact.size_bytes != len(body_bytes)
+            or candidate.evidence.sha256 != bundle.evidence_sha256
+            or candidate.evidence.size_bytes
+            != len(canonical_json(bundle.evidence.model_dump(mode="json", by_alias=True)))
+        ):
+            raise HarnessValidationError(
+                "Chapter-Llama candidate bytes or evidence digest mismatch"
+            )
+        attempt = attempts.get(body.job.attempt_id)
+        expected_state = "succeeded" if body.outcome.status == "ok" else "failed_known"
+        if (
+            attempt is None
+            or attempt.state != expected_state
+            or attempt.provider != "modal"
+            or attempt.model != CANDIDATE_MODEL
+            or not attempt.response_present
+            or attempt.usage.get("candidateArtifactId") != str(fact.id)
+            or (
+                attempt.result_artifact_id != fact.id
+                if expected_state == "succeeded"
+                else attempt.result_artifact_id is not None
+            )
+        ):
+            raise HarnessValidationError("Chapter-Llama candidate has no matching terminal attempt")
+        if (
+            attempt.family != "llama"
+            or body.evidence_id != candidate.evidence.id
+            or body.job.attempt_id != attempt.id
+            or body.job.operation_id != attempt.operation_id
+            or body.job.source_id != bundle.source_id
+            or (
+                attempt.remote_handle is not None
+                and attempt.remote_handle != body.outcome.modal_call_id
+            )
+        ):
+            raise HarnessValidationError(
+                "Chapter-Llama candidate family or evidence identity mismatch"
+            )
+        inputs = {
+            "evidenceId": str(body.evidence_id),
+            "evidenceSha256": body.evidence_sha256,
+            "inputSha256": body.input_sha256,
+        }
+        route = body.configuration.model_dump(mode="json")
+        resources = body.configuration.deployment.resources
+        expected_usage = {
+            "protocol": body.job.protocol,
+            "checkpointKey": body.job.checkpoint_key,
+            "computeSeconds": body.outcome.compute_seconds,
+            "estimatedComputeMicros": resources.estimated_micros(body.outcome.compute_seconds),
+            "inputTokens": body.outcome.result.input_tokens
+            if body.outcome.result is not None
+            else body.outcome.rejected_input_tokens,
+            "outputTokens": body.outcome.result.output_tokens
+            if body.outcome.result is not None
+            else body.outcome.rejected_output_tokens,
+            "resources": resources.model_dump(mode="json"),
+        }
+        if (
+            any(
+                key not in attempt.usage or attempt.usage[key] != value
+                for key, value in expected_usage.items()
+            )
+            or attempt.estimated_cost_micros != resources.reservation_micros
+        ):
+            raise HarnessValidationError(
+                "Chapter-Llama physical usage differs from retained output"
+            )
+        request_hash = digest({"inputs": inputs, "configuration": route})
+        expected_fingerprint = fingerprint_for(
+            kind="model_response",
+            inputs={"attemptId": str(attempt.id), "requestHash": request_hash},
+            config={"schema": "chapter-llama-candidate/1", "deployment": route},
+        )
+        if fact.fingerprint != expected_fingerprint:
+            raise HarnessValidationError("Chapter-Llama candidate producer identity is invalid")
+        if (
+            candidate.evidence.storage_key is None
+            or candidate.evidence.size_bytes is None
+            or fact.storage_key is None
+            or fact.size_bytes is None
+            or candidate.evidence.source_id != bundle.source_id
+            or fact.source_id != bundle.source_id
+            or not _source_scoped_storage_key(fact.storage_key, bundle.source_id)
+            or not _source_scoped_storage_key(candidate.evidence.storage_key, bundle.source_id)
+            or not fact.storage_key.startswith(
+                f"org/{body.job.organization_id}/source/{bundle.source_id}/"
+            )
+            or not candidate.evidence.storage_key.startswith(
+                f"org/{body.job.organization_id}/source/{bundle.source_id}/"
+            )
+        ):
+            raise HarnessValidationError("Chapter-Llama artifact storage identity is invalid")
+        evidence_ref = HarnessArtifactRef(
+            id=candidate.evidence.id,
+            kind=HarnessArtifactKind.evidence,
+            fingerprint=candidate.evidence.fingerprint,
+            sha256=candidate.evidence.sha256,
+            storageKey=candidate.evidence.storage_key,
+            sizeBytes=candidate.evidence.size_bytes,
+        )
+        try:
+            validate_candidate(body, bundle.evidence, evidence_ref)
+        except ValueError as error:
+            raise HarnessValidationError("Chapter-Llama candidate is not grounded") from error
+
+
 def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
     """Refuse corrupt, mixed-source, stale-revision, or ungrounded inputs."""
     for attempt in bundle.attempts:
@@ -838,6 +1004,7 @@ def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
             raise HarnessValidationError("an edit or revision requires grounded evidence")
         if bundle.accepted_revision is not None:
             raise HarnessValidationError("an incomplete run cannot name an accepted revision")
+    _validate_chapter_llama_candidates(bundle)
     _validate_summary_grounding(bundle)
     _validate_proposal_diagnostics(bundle)
     if bundle.edit is None:
@@ -978,6 +1145,12 @@ def validate_bundle(bundle: EvaluationBundle) -> None:  # noqa: PLR0915
             raise HarnessValidationError("editorial verification names a different descriptor")
         if content_sha256(verification.body) != verification.artifact.sha256:
             raise HarnessValidationError("editorial verification body hash is invalid")
+        if verification.body.editorial is not None:
+            ground_editorial_verdict(
+                evidence=bundle.evidence,
+                edit=bundle.edit,
+                verdict=verification.body.editorial,
+            )
         expected_fingerprint = fingerprint_for(
             kind="checks",
             inputs={

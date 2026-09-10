@@ -14,14 +14,17 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
 import { harnessSettings } from "@/lib/harness/config";
+import {
+  ChapterStartInstructionsSchema,
+  resolveChapterBrief,
+} from "@/lib/harness/default-brief";
 import { parseDollarMicros } from "@/lib/harness/money";
 import { getTemporalClient } from "@/lib/temporal/client";
 
 const INTENT_MEMO_KEY = "temniaIntentSha256";
 const TEMPORAL_RPC_DEADLINE_MS = 5000;
 
-const StartSchema = z.object({
-  brief: z.string().max(100_000),
+const StartSchema = ChapterStartInstructionsSchema.extend({
   budgetDollars: z.string(),
   requestKey: z.uuid(),
   runId: z.uuid(),
@@ -144,6 +147,7 @@ export async function startChapterRun(
   if (!parsed.success) {
     return { message: "The chapter request is invalid.", ok: false };
   }
+  const brief = resolveChapterBrief(parsed.data);
   const availability = harnessSettings();
   if (!availability.available) {
     return { message: availability.message, ok: false };
@@ -179,7 +183,7 @@ export async function startChapterRun(
       const same =
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
-        existing.brief === parsed.data.brief &&
+        existing.brief === brief &&
         initialBudget === budgetMicros &&
         stableJson(existing.config) ===
           stableJson(availability.settings.config);
@@ -217,7 +221,7 @@ export async function startChapterRun(
     }
     return {
       input: ChapterRunInputSchema.parse({
-        brief: parsed.data.brief,
+        brief,
         budgetMicros,
         config: availability.settings.config,
         requestKey: parsed.data.requestKey,
@@ -443,7 +447,7 @@ export async function getPendingChapterWorkflowStatus(
       return { message: "Source not found.", state: "terminal" };
     }
     const workflowInput = ChapterRunInputSchema.parse({
-      brief: intent.brief,
+      brief: resolveChapterBrief(intent),
       budgetMicros,
       config: availability.settings.config,
       requestKey: intent.requestKey,

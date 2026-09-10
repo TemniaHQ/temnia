@@ -28,17 +28,26 @@ with workflow.unsafe.imports_passed_through():
         HarnessArtifactRef,
         HarnessRunStatus,
     )
+    from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
+    from temnia_pipeline.harness.editorial import (
+        EDITORIAL_VERDICT_SCHEMA_VERSION,
+    )
+    from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY
+    from temnia_pipeline.harness.editorial_versions import editorial_dispatch_version
+    from temnia_pipeline.harness.editorial_workflow import assess_and_repair
     from temnia_pipeline.harness.models import (
         COMPACT_PROPOSAL_SCHEMA_VERSION,
         HARNESS_AGENTS,
         HarnessModelDeps,
         KnownProviderRejection,
         canonical_chapter_proposal,
+        chapter_editorial_assess_v1,
         chapter_propose_v1,
         chapter_propose_v2,
         chapter_summarize_v1,
         chapter_verify_v1,
         compact_synthetic_proposal,
+        editorial_verdict_reasons,
     )
     from temnia_pipeline.harness.prompts import (
         COMPACT_PROPOSE_PROMPT_VERSION,
@@ -136,10 +145,12 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
         """Build evidence, make one guarded proposal, and accept revision one."""
         info = workflow.info()
         control_queue = control_task_queue(info.task_queue)
+        editorial_program = workflow.patched("chapter-editorial-program-v1")
         started = await workflow.execute_activity(
             "start_chapter_run",
             StartRunRequest(
                 request=request,
+                editorial_policy=EDITORIAL_POLICY if editorial_program else "legacy",
                 workflow=WorkflowIdentity(
                     workflow_id=info.workflow_id,
                     workflow_run_id=info.run_id,
@@ -195,9 +206,27 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                 runId=run.id,
                 status=run.status,
             )
+        topic_candidate: CandidateResult | None = None
+        if editorial_program and run.chapter_llama_config is not None:
+            topic_candidate = await workflow.execute_activity(
+                "generate_chapter_llama_candidate",
+                CandidateRequest(
+                    run=ref, evidence=evidence.artifact, configuration=run.chapter_llama_config
+                ),
+                start_to_close_timeout=timedelta(hours=2),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=ACTIVITY_RETRY,
+                result_type=CandidateResult,
+            )
         plan = await workflow.execute_activity(
             "prepare_chapter_proposal",
-            PreparePlanningRequest(run=ref, evidence=evidence.artifact),
+            PreparePlanningRequest(
+                run=ref,
+                evidence=evidence.artifact,
+                extra_context_bytes=len(("\n\n" + topic_candidate.hints).encode())
+                if topic_candidate is not None
+                else 0,
+            ),
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=ACTIVITY_RETRY,
             result_type=ProposalPlan,
@@ -206,6 +235,8 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
         proposal_route = plan.route
         proposal_fixture = plan.synthetic_payload
         generation_families = {proposal_route.family}
+        if topic_candidate is not None:
+            generation_families.add("llama")
         hierarchy_level = 0
         proposal_grounding_artifacts: tuple[HarnessArtifactRef, ...] = ()
         if len(plan.windows) > 1:
@@ -433,6 +464,9 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                 proposal_grounding_artifacts = cast(
                     "GlobalProposalPlan", global_plan
                 ).input_artifacts
+        if topic_candidate is not None:
+            proposal_prompt += "\n\n" + topic_candidate.hints
+            proposal_grounding_artifacts = (*proposal_grounding_artifacts, topic_candidate.artifact)
         compact_proposal = bool(workflow.patched("chapter-compact-proposal-v1"))
         if compact_proposal:
             try:
@@ -685,6 +719,17 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
         if compiled is None:
             message = "proposal loop ended without a compiled revision"
             raise RuntimeError(message)
+        editorial_message: str | None = None
+        if editorial_program and run.editorial_policy == EDITORIAL_POLICY:
+            run, compiled, editorial_message = await assess_and_repair(
+                request,
+                run=run,
+                ref=ref,
+                evidence=evidence.artifact,
+                compiled=compiled,
+                generation_families=generation_families,
+                control_queue=control_queue,
+            )
         run = await workflow.execute_activity(
             "accept_initial_chapter_revision",
             AcceptInitialRevisionRequest(
@@ -709,7 +754,7 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             retry_policy=ACTIVITY_RETRY,
             result_type=RenderRevisionResult,
         )
-        review_message: str | None = None
+        review_message: str | None = editorial_message
         if rendered.technical_passed and rendered.has_kept_sections:
             verification = await workflow.execute_activity(
                 "prepare_chapter_verification",
@@ -728,7 +773,10 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             if verification.prompt is None or verification.route is None:
                 review_message = verification.refusal or "Independent verification is unavailable."
             else:
-                verdict = await chapter_verify_v1.run(
+                verifier_agent = (
+                    chapter_editorial_assess_v1 if verification.editorial_v2 else chapter_verify_v1
+                )
+                verdict = await verifier_agent.run(
                     verification.prompt,
                     deps=HarnessModelDeps(
                         scope=request.scope,
@@ -736,8 +784,16 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                         run_id=request.runId,
                         stage=f"verify:revision:{run.current_revision}",
                         program_version="chapter-workflow/1",
-                        prompt_version=VERIFY_PROMPT_VERSION,
-                        schema_version="editorial-verdict/1",
+                        prompt_version=(
+                            editorial_dispatch_version(verification.editorial_prompt_version)
+                            if verification.editorial_v2
+                            else VERIFY_PROMPT_VERSION
+                        ),
+                        schema_version=(
+                            EDITORIAL_VERDICT_SCHEMA_VERSION
+                            if verification.editorial_v2
+                            else "editorial-verdict/1"
+                        ),
                         route=verification.route,
                         operation_inputs={
                             "descriptorArtifactId": str(rendered.descriptor.id),
@@ -774,9 +830,9 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     result_type=HarnessArtifactRef,
                 )
                 if verdict.output.status != "passed":
-                    review_message = "; ".join(verdict.output.reasons)[:2000] or (
-                        "Editorial verification requires review."
-                    )
+                    review_message = "; ".join(editorial_verdict_reasons(verdict.output))[
+                        :2000
+                    ] or ("Editorial verification requires review.")
         elif rendered.technical_passed:
             review_message = "All sections are drops and require deliberate human acceptance."
         else:
@@ -1003,7 +1059,10 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
             if verification.prompt is None or verification.route is None:
                 review_message = verification.refusal or "Independent verification is unavailable."
             else:
-                verdict = await chapter_verify_v1.run(
+                verifier_agent = (
+                    chapter_editorial_assess_v1 if verification.editorial_v2 else chapter_verify_v1
+                )
+                verdict = await verifier_agent.run(
                     verification.prompt,
                     deps=HarnessModelDeps(
                         scope=request.scope,
@@ -1011,8 +1070,16 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                         run_id=request.runId,
                         stage=f"verify:revision:{assets.revision}",
                         program_version="chapter-workflow/1",
-                        prompt_version=VERIFY_PROMPT_VERSION,
-                        schema_version="editorial-verdict/1",
+                        prompt_version=(
+                            editorial_dispatch_version(verification.editorial_prompt_version)
+                            if verification.editorial_v2
+                            else VERIFY_PROMPT_VERSION
+                        ),
+                        schema_version=(
+                            EDITORIAL_VERDICT_SCHEMA_VERSION
+                            if verification.editorial_v2
+                            else "editorial-verdict/1"
+                        ),
                         route=verification.route,
                         operation_inputs={
                             "descriptorArtifactId": str(rendered.descriptor.id),
@@ -1049,9 +1116,9 @@ class ChapterRunWorkflow(PydanticAIWorkflow):
                     result_type=HarnessArtifactRef,
                 )
                 if verdict.output.status != "passed":
-                    review_message = "; ".join(verdict.output.reasons)[:2000] or (
-                        "Editorial verification requires review."
-                    )
+                    review_message = "; ".join(editorial_verdict_reasons(verdict.output))[
+                        :2000
+                    ] or ("Editorial verification requires review.")
                 else:
                     exported = await workflow.execute_activity(
                         "export_chapter_revision",
@@ -1305,7 +1372,10 @@ class ChapterReviewWorkflow:
             if verification.prompt is None or verification.route is None:
                 review_message = verification.refusal or "Independent verification is unavailable."
             else:
-                verdict = await chapter_verify_v1.run(
+                verifier_agent = (
+                    chapter_editorial_assess_v1 if verification.editorial_v2 else chapter_verify_v1
+                )
+                verdict = await verifier_agent.run(
                     verification.prompt,
                     deps=HarnessModelDeps(
                         scope=request.scope,
@@ -1313,8 +1383,16 @@ class ChapterReviewWorkflow:
                         run_id=request.runId,
                         stage=f"verify:revision:{committed.render.revision}",
                         program_version="chapter-workflow/1",
-                        prompt_version=VERIFY_PROMPT_VERSION,
-                        schema_version="editorial-verdict/1",
+                        prompt_version=(
+                            editorial_dispatch_version(verification.editorial_prompt_version)
+                            if verification.editorial_v2
+                            else VERIFY_PROMPT_VERSION
+                        ),
+                        schema_version=(
+                            EDITORIAL_VERDICT_SCHEMA_VERSION
+                            if verification.editorial_v2
+                            else "editorial-verdict/1"
+                        ),
                         route=verification.route,
                         operation_inputs={
                             "descriptorArtifactId": str(rendered.descriptor.id),
@@ -1327,6 +1405,7 @@ class ChapterReviewWorkflow:
                             "revision": committed.render.revision,
                         },
                         input_artifact_ids=(
+                            *((prepared.evidence.id,) if verification.editorial_v2 else ()),
                             committed.render.edit.id,
                             rendered.descriptor.id,
                         ),
@@ -1350,9 +1429,9 @@ class ChapterReviewWorkflow:
                     result_type=HarnessArtifactRef,
                 )
                 if verdict.output.status != "passed":
-                    review_message = "; ".join(verdict.output.reasons)[:2000] or (
-                        "Editorial verification requires review."
-                    )
+                    review_message = "; ".join(editorial_verdict_reasons(verdict.output))[
+                        :2000
+                    ] or ("Editorial verification requires review.")
                 else:
                     exported = await workflow.execute_activity(
                         "export_chapter_revision",

@@ -379,6 +379,36 @@ async def test_concurrent_duplicate_start_is_one_immutable_run() -> None:
         await db.close_pool()
 
 
+@pytest.mark.parametrize("original_policy", ["legacy", "chapter-editorial/1"])
+async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) -> None:
+    """A deployed continuation cannot upgrade or downgrade an existing run's semantics."""
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        changed = start.model_copy(
+            update={
+                "editorial_policy": "chapter-editorial/1"
+                if original_policy == "legacy"
+                else "legacy"
+            }
+        )
+        resumed = await start_or_refetch_run(
+            url, start=changed, settings=settings(value), route_snapshot=value
+        )
+        assert created.run.editorial_policy == resumed.run.editorial_policy == original_policy
+        assert resumed.created is False
+        assert created.run.config == resumed.run.config == start.request.config
+        assert created.run.brief == resumed.run.brief == start.request.brief
+        assert created.run.request_key == resumed.run.request_key
+    finally:
+        await db.close_pool()
+
+
 async def test_known_failure_marks_only_the_active_owner_and_preserves_cancellation() -> None:
     url = pipeline_url()
     value = snapshot()

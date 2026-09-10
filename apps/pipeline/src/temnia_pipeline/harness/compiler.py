@@ -19,6 +19,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.validators import (
     HarnessValidationError,
+    rational,
     rounded_milliseconds,
     validate_edit,
     validate_proposal,
@@ -26,7 +27,7 @@ from temnia_pipeline.harness.validators import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from uuid import UUID
 
     from temnia_pipeline.contracts import (
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
     )
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
+CONSTRAINED_COMPILER_VERSION = "chapter-compiler/2"
+PRESERVED_COMPILER_VERSION = "chapter-compiler/3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +220,7 @@ def _layer_choices(  # noqa: PLR0915
     config: CompilerConfig,
     lexical: _IntervalIndex,
     detected: _IntervalIndex | None,
+    required_candidate_id: str | None = None,
 ) -> list[_Choice]:
     local_candidates = [
         candidate
@@ -253,6 +257,26 @@ def _layer_choices(  # noqa: PLR0915
                 }
             )
         )
+    if required_candidate_id is not None:
+        required = next(
+            (candidate for candidate in effective if candidate.id == required_candidate_id),
+            None,
+        )
+        if required is None:
+            raise HarnessValidationError("constrained candidate is not local to its transition")
+        time = quantized_times[required.id]
+        if not Fraction(previous_sentence_end, 1000) <= time <= Fraction(next_sentence_start, 1000):
+            raise HarnessValidationError("constrained candidate does not preserve adjacent speech")
+        if lexical.inside(time) or (detected is not None and detected.inside(time)):
+            raise HarnessValidationError("constrained candidate intersects grounded speech")
+        return [
+            _Choice(
+                candidate=required,
+                cost=_candidate_cost(required, desired_ms=desired_ms, widened=False, config=config),
+                reasons=tuple(sorted({*required.reasons, "editorial_candidate_constraint"})),
+                time=time,
+            )
+        ]
     lower = min(previous_sentence_end, next_sentence_start) - config.candidate_radius_ms
     upper = max(previous_sentence_end, next_sentence_start) + config.candidate_radius_ms
     initial = [candidate for candidate in effective if lower <= candidate.timeMs <= upper]
@@ -384,17 +408,98 @@ def _edge(evidence: HarnessEvidence, time_ms: int) -> HarnessBoundaryCandidate:
     return matches[0]
 
 
-def compile_chapters(
+def _preserved_boundaries(
+    evidence: HarnessEvidence,
+    proposal: ChapterProposal,
+    edit: ChapterEditSpec,
+    *,
+    evidence_artifact_id: UUID,
+    evidence_sha256: str,
+) -> dict[tuple[str, str], ChapterBoundary]:
+    """Validate an immutable prior pair; preservation never certifies a cut as safe."""
+    validate_proposal(evidence, proposal)
+    validate_edit(evidence, edit, expected_evidence_sha256=evidence_sha256)
+    if edit.evidenceArtifactId != evidence_artifact_id or len(proposal.sections) != len(
+        edit.sections
+    ):
+        raise HarnessValidationError("preserved edit has unrelated evidence or proposal sections")
+    for previous, compiled in zip(proposal.sections, edit.sections, strict=True):
+        if any(
+            getattr(previous, field) != getattr(compiled, field)
+            for field in ("id", "kind", "title", "reason", "quoteWordIds")
+        ):
+            raise HarnessValidationError("preserved proposal differs from its compiled sections")
+    candidates = {candidate.id: candidate for candidate in evidence.boundaries}
+    sentences = {sentence.id: sentence for sentence in evidence.sentences}
+    for index, boundary in enumerate(edit.boundaries):
+        candidate = candidates.get(boundary.candidateId or "")
+        if candidate is None:
+            raise HarnessValidationError("preserved cut has no evidence candidate identity")
+        if index in (0, len(edit.boundaries) - 1):
+            if candidate != _edge(evidence, boundary.timeMs):
+                raise HarnessValidationError(
+                    "preserved source edge has unrelated candidate identity"
+                )
+        elif candidate.kind == Kind2.edge or rational(boundary.time) != quantize_time(
+            evidence, candidate.timeMs
+        ):
+            raise HarnessValidationError(
+                "preserved cut differs from its candidate on the source grid"
+            )
+        if 0 < index < len(edit.boundaries) - 1:
+            left = sentences[proposal.sections[index - 1].lastSentenceId]
+            right = sentences[proposal.sections[index].firstSentenceId]
+            if not left.startMs <= candidate.timeMs <= right.endMs:
+                raise HarnessValidationError(
+                    "preserved candidate differs from its proposal transition"
+                )
+        if candidate.requiresReview and not boundary.requiresReview:
+            raise HarnessValidationError("preserved cut discarded evidence review risk")
+    return {
+        (left.lastSentenceId, right.firstSentenceId): edit.boundaries[index]
+        for index, (left, right) in enumerate(
+            zip(proposal.sections, proposal.sections[1:], strict=False), start=1
+        )
+    }
+
+
+def compile_chapters(  # noqa: PLR0915
     evidence: HarnessEvidence,
     proposal: ChapterProposal,
     *,
     evidence_artifact_id: UUID,
     evidence_sha256: str,
     config: CompilerConfig | None = None,
+    boundary_constraints: Mapping[tuple[str, str], str] | None = None,
+    preserved_proposal: ChapterProposal | None = None,
+    preserved_edit: ChapterEditSpec | None = None,
 ) -> ChapterEditSpec:
     """Compile a validated sentence proposal through a joint monotonic DP."""
     config = config or CompilerConfig()
     validate_proposal(evidence, proposal)
+    if (preserved_proposal is None) != (preserved_edit is None):
+        raise HarnessValidationError("preservation requires both prior proposal and edit")
+    preserved = (
+        _preserved_boundaries(
+            evidence,
+            preserved_proposal,
+            preserved_edit,
+            evidence_artifact_id=evidence_artifact_id,
+            evidence_sha256=evidence_sha256,
+        )
+        if preserved_proposal is not None and preserved_edit is not None
+        else {}
+    )
+    constraints = dict(boundary_constraints or {})
+    transitions = {
+        (previous.lastSentenceId, following.firstSentenceId)
+        for previous, following in zip(proposal.sections, proposal.sections[1:], strict=False)
+    }
+    if constraints.keys() - transitions:
+        raise HarnessValidationError("boundary constraint does not name a proposal transition")
+    candidate_ids = {candidate.id for candidate in evidence.boundaries}
+    if set(constraints.values()) - candidate_ids:
+        raise HarnessValidationError("boundary constraint names an unknown evidence candidate")
     sentence_by_id = {sentence.id: sentence for sentence in evidence.sentences}
     lexical = _IntervalIndex.build([(word.startMs, word.endMs) for word in evidence.words])
     detected = (
@@ -409,6 +514,30 @@ def compile_chapters(
         previous_sentence = sentence_by_id[previous.lastSentenceId]
         next_sentence = sentence_by_id[following.firstSentenceId]
         desired_ms = (previous_sentence.endMs + next_sentence.startMs) // 2
+        transition = (previous.lastSentenceId, following.firstSentenceId)
+        if transition in preserved and transition not in constraints:
+            boundary = preserved[transition]
+            time = rational(boundary.time)
+            if not boundary.requiresReview and (
+                lexical.inside(time) or (detected is not None and detected.inside(time))
+            ):
+                raise HarnessValidationError("preserved cut discarded measured speech risk")
+            candidate = next(
+                item for item in evidence.boundaries if item.id == boundary.candidateId
+            )
+            transition_layers.append(
+                [
+                    _Choice(
+                        candidate=candidate.model_copy(
+                            update={"requiresReview": boundary.requiresReview}
+                        ),
+                        cost=0,
+                        reasons=tuple(boundary.reasons),
+                        time=time,
+                    )
+                ]
+            )
+            continue
         transition_layers.append(
             _layer_choices(
                 evidence,
@@ -420,6 +549,9 @@ def compile_chapters(
                 config=config,
                 lexical=lexical,
                 detected=detected,
+                required_candidate_id=constraints.get(
+                    (previous.lastSentenceId, following.firstSentenceId)
+                ),
             )
         )
     choices = _choose_path(evidence, proposal, transition_layers)
@@ -445,6 +577,18 @@ def compile_chapters(
         )
         for index, (candidate, time, reasons) in enumerate(compiled)
     ]
+    if preserved_edit is not None:
+        # Retain the exact accepted representation and flags, not a new safety annotation.
+        boundaries[0] = preserved_edit.boundaries[0].model_copy(update={"id": boundaries[0].id})
+        boundaries[-1] = preserved_edit.boundaries[-1].model_copy(update={"id": boundaries[-1].id})
+        for index, (left, right) in enumerate(
+            zip(proposal.sections, proposal.sections[1:], strict=False), start=1
+        ):
+            transition = (left.lastSentenceId, right.firstSentenceId)
+            if transition in preserved and transition not in constraints:
+                boundaries[index] = preserved[transition].model_copy(
+                    update={"id": boundaries[index].id}
+                )
     sections = [
         ChapterSection(
             endBoundaryId=boundaries[index + 1].id,
@@ -459,9 +603,40 @@ def compile_chapters(
         )
         for index, proposal_section in enumerate(proposal.sections)
     ]
+    if preserved_edit is not None:
+        prior_sections = {
+            section.id: (index, section) for index, section in enumerate(preserved_edit.sections)
+        }
+        for index, section in enumerate(sections):
+            prior = prior_sections.get(section.id)
+            if prior is None:
+                continue
+            old_index, old = prior
+            if (
+                all(
+                    getattr(old, field) == getattr(section, field)
+                    for field in ("kind", "title", "reason", "quoteWordIds")
+                )
+                and rational(preserved_edit.boundaries[old_index].time)
+                == rational(boundaries[index].time)
+                and rational(preserved_edit.boundaries[old_index + 1].time)
+                == rational(boundaries[index + 1].time)
+            ):
+                sections[index] = old.model_copy(
+                    update={
+                        "startBoundaryId": section.startBoundaryId,
+                        "endBoundaryId": section.endBoundaryId,
+                    }
+                )
     edit = ChapterEditSpec(
         boundaries=boundaries,
-        compilerVersion=config.version,
+        compilerVersion=(
+            PRESERVED_COMPILER_VERSION
+            if preserved_edit is not None
+            else CONSTRAINED_COMPILER_VERSION
+            if constraints
+            else config.version
+        ),
         durationMs=evidence.durationMs,
         evidenceArtifactId=evidence_artifact_id,
         evidenceSha256=evidence_sha256,

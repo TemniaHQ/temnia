@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import Backend, ChapterRunConfig
 from temnia_pipeline.harness.routes import (
     ContextWindowExceeded,
@@ -62,6 +63,7 @@ class HarnessSettings:
     max_render_concurrency: int
     gateway_api_key: str | None
     recorded_fixture_path: Path | None = None
+    chapter_llama_config: ChapterLlamaConfig | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -72,6 +74,11 @@ class HarnessSettings:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
         snapshot_path = values.get("HARNESS_ROUTE_SNAPSHOT_PATH") or None
         return cls(
+            chapter_llama_config=(
+                ChapterLlamaConfig.model_validate_json(values["HARNESS_CHAPTER_LLAMA_CONFIG_JSON"])
+                if values.get("HARNESS_CHAPTER_LLAMA_CONFIG_JSON")
+                else None
+            ),
             enabled=_flag(values, "HARNESS_ENABLED"),
             backend=cast("HarnessBackend | None", raw_backend),
             route_snapshot_id=values.get("HARNESS_ROUTE_SNAPSHOT_ID") or None,
@@ -113,6 +120,8 @@ class HarnessSettings:
         """Fail enabled workers loudly and leave disabled legacy workers untouched."""
         if not self.enabled:
             return None
+        if self.chapter_llama_config is not None and self.backend != "gateway":
+            raise RuntimeError("Chapter-Llama compute requires the explicit gateway backend")
         if self.backend is None:
             raise RuntimeError("HARNESS_BACKEND is required when HARNESS_ENABLED=1")
         if self.route_snapshot_id is None or self.route_snapshot_path is None:

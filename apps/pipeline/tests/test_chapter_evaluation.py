@@ -1684,7 +1684,10 @@ def test_human_labels_are_explicit_and_cannot_leak_source_split() -> None:
         validate_labels(bundle, leaking)
 
 
-def test_accepted_denominator_requires_acknowledged_sections_descriptor_and_exact_checks() -> None:
+@pytest.mark.parametrize("editorial_version", [1, 2])
+def test_accepted_denominator_requires_acknowledged_sections_descriptor_and_exact_checks(
+    editorial_version: int,
+) -> None:
     original = _bundle(accepted=True)
     assert original.edit is not None
     sections = [
@@ -1839,9 +1842,21 @@ def test_accepted_denominator_requires_acknowledged_sections_descriptor_and_exac
             "verdict": {
                 "version": 1,
                 "status": "passed",
-                "reasons": ["grounded fixture passed"],
+                "reasons": ["grounded fixture passed"] if editorial_version == 1 else [],
                 "inspectedModalities": "text_evidence_and_technical_report",
             },
+            **(
+                {
+                    "editorial": {
+                        "version": 2,
+                        "status": "passed",
+                        "findings": (),
+                        "inspectedModalities": "text_evidence_and_edit_context",
+                    }
+                }
+                if editorial_version == 2
+                else {}
+            ),
         }
     )
     verification_sha = content_sha256(body)
@@ -1884,6 +1899,14 @@ def test_accepted_denominator_requires_acknowledged_sections_descriptor_and_exac
     assert verified_report.editorial_verifier_families == ("independent-family",)
     assert verified_report.editorial_verdict_modality == "code_and_model"
     assert verified_report.editorial_verification_sha256 == verification_sha
+    serialized = verified.model_dump_json(by_alias=True)
+    roundtrip = EvaluationBundle.model_validate_json(serialized)
+    validate_bundle(roundtrip)
+    assert roundtrip == verified
+    assert roundtrip.editorial_verification is not None
+    assert ("editorial" in roundtrip.editorial_verification.body.model_dump()) == (
+        editorial_version == 2
+    )
 
 
 def test_cli_report_writes_atomically_and_validation_failure_is_nonzero(

@@ -41,3 +41,18 @@ Temnia changed the adaptation to validate a strict binary-string surface, use
 explicit bounded windows, maintain rolling boundary counts, and retain only two
 rows of the GHD dynamic program. It does not include NLTK package initialization,
 model/data loading, downloaders, classifiers, or other NLTK APIs.
+
+## Chapter-Llama ASR prompt and optional model adapter
+
+The ASR task prompt and Llama input wrapper in `chapter_llama/inference.py` are
+adapted from Lucas Ventura et al.'s Chapter-Llama, commit
+`d19a77efcf583f63771de052267fdeea016510e9`:
+<https://github.com/lucas-ventura/chapter-llama>. The MIT license is preserved in
+`LICENSES/Chapter-Llama-MIT.txt`. Please cite Ventura, Yang, Schmid and Varol,
+*Chapter-Llama: Efficient Chaptering in Hour-Long Videos with LLMs*, CVPR 2025.
+
+The optional ASR-10k adapter is supplied by the authors at
+<https://huggingface.co/lucas-ventura/chapter-llama>. Its model card declares MIT;
+its Llama-3.1-8B-Instruct base has the separate Llama 3.1 Community License and
+Acceptable Use Policy. Setup retrieves both notices beside the base weights.
+**Built with Llama.** No Llama weights are bundled into the CPU pipeline package.

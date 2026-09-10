@@ -5,6 +5,10 @@ import {
   startChapterRun,
 } from "@/app/actions/chapters";
 import { deleteSource } from "@/app/actions/sources";
+import {
+  DEFAULT_CHAPTER_BRIEF_VERSION,
+  resolveChapterBrief,
+} from "@/lib/harness/default-brief";
 
 const SOURCE = "01992ffe-0a00-7000-8000-000000000001";
 const RUN = "01992ffe-0a00-7000-8000-000000000004";
@@ -255,6 +259,210 @@ describe("source deletion fence", () => {
 });
 
 describe("chapter action durable identity", () => {
+  const readySource = {
+    deletionRequestedAt: null,
+    sourceStatus: "ready",
+    transcriptRevision: 1,
+    transcriptStatus: "ready",
+  };
+  const defaultBrief = resolveChapterBrief({
+    defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+  });
+  const startIdentity = {
+    budgetDollars: "1.00",
+    requestKey: RUN,
+    runId: RUN,
+    sourceId: SOURCE,
+  };
+
+  it.each([
+    { expected: defaultBrief, instructions: {}, name: "omitted instructions" },
+    {
+      expected: defaultBrief,
+      instructions: { defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION },
+      name: "versioned default",
+    },
+    {
+      expected: defaultBrief,
+      instructions: {
+        brief: "",
+        defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+      },
+      name: "versioned empty instructions",
+    },
+    {
+      expected: defaultBrief,
+      instructions: {
+        brief: " \n\t ",
+        defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+      },
+      name: "versioned whitespace instructions",
+    },
+    {
+      expected: "  Preserve every question.\n",
+      instructions: {
+        brief: "  Preserve every question.\n",
+        defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+      },
+      name: "custom instruction bytes",
+    },
+    {
+      expected: "",
+      instructions: { brief: "" },
+      name: "legacy empty instruction identity",
+    },
+    {
+      expected: " \n ",
+      instructions: { brief: " \n " },
+      name: "legacy whitespace instruction identity",
+    },
+  ])(
+    "freezes $name into the workflow and pending lookup",
+    async ({ expected, instructions }) => {
+      const transactions = [
+        transaction([[], [readySource]], []),
+        transaction([[{ id: SOURCE }]], []),
+      ];
+      mocks.scoped.mockImplementation((fn) => fn(transactions.shift(), scope));
+      let memo: Record<string, unknown> = {};
+      const describeWorkflow = async () => ({
+        memo,
+        status: { name: "RUNNING" },
+      });
+      const start = vi.fn((_workflow, options) => {
+        ({ memo } = options);
+        return Promise.resolve({ describe: describeWorkflow });
+      });
+      mocks.getClient.mockResolvedValue(
+        temporalClient({
+          getHandle: () => ({ describe: describeWorkflow }),
+          start,
+        })
+      );
+      const intent = { ...startIdentity, ...instructions };
+      await expect(startChapterRun(intent)).resolves.toMatchObject({
+        ok: false,
+        pending: true,
+        runId: RUN,
+      });
+      expect(start).toHaveBeenCalledExactlyOnceWith(
+        "ChapterRunWorkflow",
+        expect.objectContaining({
+          args: [
+            expect.objectContaining({
+              brief: expected,
+              budgetMicros: 1_000_000,
+            }),
+          ],
+          workflowId: `chapter-${RUN}`,
+        })
+      );
+      await expect(
+        getPendingChapterWorkflowStatus({ intent, kind: "start" })
+      ).resolves.toMatchObject({ state: "pending" });
+      expect(start).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    {
+      instructions: { defaultBriefVersion: "topic-chapters/unknown" },
+      name: "unknown version",
+    },
+    {
+      instructions: {
+        brief: "Custom",
+        defaultBriefVersion: "topic-chapters/unknown",
+      },
+      name: "unknown version with custom instructions",
+    },
+    {
+      instructions: {
+        brief: " ".repeat(100_001),
+        defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+      },
+      name: "oversized whitespace instructions",
+    },
+    { instructions: { brief: null }, name: "null instructions" },
+  ])("refuses $name before dispatch", async ({ instructions }) => {
+    const intent = { ...startIdentity, ...instructions };
+    await expect(startChapterRun(intent)).resolves.toEqual({
+      message: "The chapter request is invalid.",
+      ok: false,
+    });
+    await expect(
+      getPendingChapterWorkflowStatus({ intent, kind: "start" })
+    ).resolves.toMatchObject({ state: "terminal" });
+    expect(mocks.scoped).not.toHaveBeenCalled();
+    expect(mocks.getClient).not.toHaveBeenCalled();
+  });
+
+  it("reuses normalized default intent and refuses changed brief or budget", async () => {
+    mocks.scoped.mockImplementation((fn) =>
+      fn(transaction([[], [readySource]], []), scope)
+    );
+    let acceptedMemo: Record<string, unknown> | null = null;
+    const start = vi.fn((_workflow, options) => {
+      acceptedMemo ??= options.memo;
+      return Promise.resolve({
+        describe: async () => ({
+          memo: acceptedMemo,
+          status: { name: "RUNNING" },
+        }),
+      });
+    });
+    mocks.getClient.mockResolvedValue(temporalClient({ start }));
+    const intent = {
+      ...startIdentity,
+      defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+    };
+    await expect(startChapterRun(intent)).resolves.toMatchObject({
+      pending: true,
+    });
+    await expect(
+      startChapterRun({ ...intent, brief: " \n " })
+    ).resolves.toMatchObject({ pending: true });
+    expect(start.mock.calls[1]?.[1].memo).toEqual(
+      start.mock.calls[0]?.[1].memo
+    );
+    await expect(
+      startChapterRun({ ...intent, brief: "Changed instructions" })
+    ).resolves.toMatchObject({ conflict: true, ok: false });
+    await expect(
+      startChapterRun({ ...intent, budgetDollars: "1.50" })
+    ).resolves.toMatchObject({ conflict: true, ok: false });
+  });
+
+  it("returns a durable default run after normalization without redispatch", async () => {
+    const existing = {
+      brief: defaultBrief,
+      budgetMicros: 1_500_000,
+      config: {
+        backend: "gateway",
+        evidenceWindowSentences: 80,
+        maxDispatches: 32,
+        maxOutputTokens: 8192,
+        maxRenderConcurrency: 2,
+        maxRepairs: 1,
+        routeSnapshotId: "snapshot-v1",
+      },
+      id: RUN,
+      requestKey: RUN,
+      routeSnapshot: { initialBudgetMicros: 1_000_000 },
+    };
+    mocks.scoped.mockImplementation((fn) =>
+      fn(transaction([[existing]], []), scope)
+    );
+    await expect(
+      startChapterRun({
+        ...startIdentity,
+        brief: "",
+        defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+      })
+    ).resolves.toEqual({ ok: true, runId: RUN });
+    expect(mocks.getClient).not.toHaveBeenCalled();
+  });
+
   it("returns an exact existing start and refuses changed intent without Temporal", async () => {
     const existing = {
       brief: "Make complete chapters",

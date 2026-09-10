@@ -624,7 +624,7 @@ async def test_temporal_multi_window_hierarchy_reaches_original_id_proposal(
         for event in cast("Any", history).events
         if event.HasField("marker_recorded_event_attributes")
     ]
-    assert marker_names == ["core_patch", "core_patch"]
+    assert marker_names == ["core_patch", "core_patch", "core_patch"]
     assert activity_names.count("validate_chapter_summary") == 2
     assert shell.summary_events == [
         "model:summary:window-0",

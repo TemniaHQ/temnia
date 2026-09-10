@@ -2,7 +2,7 @@
 name = "temnia-pipeline"
 version = "0.0.0"
 description = "Temnia media and editorial pipeline: Temporal workers, ffmpeg wrappers, harness sensors."
-license-files = ["LICENSES/NLTK-3.10.3.txt", "THIRD_PARTY_NOTICES.md"]
+license-files = ["LICENSES/NLTK-3.10.3.txt", "LICENSES/Chapter-Llama-MIT.txt", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "av>=18.1,<19",
@@ -26,9 +26,13 @@ dependencies = [
     "wtpsplit>=2.2.1,<3",
 ]
 
+[project.optional-dependencies]
+chapter-llama = ["peft==0.20.0", "transformers==5.16.1"]
+
 [project.scripts]
 temnia-eval = "temnia_pipeline.evals.runner:main"
 temnia-harness = "temnia_pipeline.harness.cli:main"
+temnia-chapter-llama = "temnia_pipeline.chapter_llama.cli:main"
 
 [dependency-groups]
 dev = [

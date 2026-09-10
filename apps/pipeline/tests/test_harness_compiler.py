@@ -29,7 +29,7 @@ from temnia_pipeline.contracts import (
     TranscriptWord,
     WordTiming,
 )
-from temnia_pipeline.harness.compiler import compile_chapters, quantize_time
+from temnia_pipeline.harness.compiler import CompilerConfig, compile_chapters, quantize_time
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.review import (
     OperationalReviewAction,
@@ -133,6 +133,7 @@ def _evidence(  # noqa: PLR0913
     shots: tuple[HarnessEvidenceShot, ...] = (),
     annotations: TranscriptRevisionAnnotations | None = None,
     speech_coverage: SpeechCoverage | None = None,
+    assess_source_edges: bool = False,
 ) -> HarnessEvidence:
     return build_evidence(
         transcript,
@@ -145,6 +146,7 @@ def _evidence(  # noqa: PLR0913
         source_id=SOURCE_ID,
         source_start=source_start or SignedRationalTime(numerator=0, denominator=1),
         speech_coverage=speech_coverage or _clear_coverage(),
+        assess_source_edges=assess_source_edges,
         transcript_id=TRANSCRIPT_ID,
         transcript_revision=1,
         transcript_sha256=SHA,
@@ -179,6 +181,47 @@ def test_evidence_carries_explicit_identity_lineage_and_speaker_labels() -> None
         "word-old",
     ]
     assert evidence.config["speakerIdentities"]["speaker-1"]["label"] == "Alex"
+
+
+def test_source_edge_assessment_is_opt_in_and_does_not_claim_a_cut_word() -> None:
+    transcript = _transcript([_word("complete", 0, 100)], 100)
+    legacy = _evidence(transcript, [(0, 0)])
+    explicit_legacy = _evidence(transcript, [(0, 0)], assess_source_edges=False)
+    assert legacy.model_dump_json() == explicit_legacy.model_dump_json()
+    assert "sourceEdgeAssessment" not in legacy.config
+    assert all(not boundary.requiresReview for boundary in legacy.boundaries)
+
+    assessed = _evidence(transcript, [(0, 0)], assess_source_edges=True)
+    assert assessed.config["sourceEdgeAssessment"] == "source-edges/1"
+    for boundary in assessed.boundaries:
+        assert "source_edge_lexical_contact" in boundary.reasons
+        assert "inside_spoken_word" not in boundary.reasons
+        assert boundary.requiresReview
+
+
+def test_source_edges_retain_unknown_coverage_and_timing_uncertainty() -> None:
+    transcript = _transcript([_word("uncertain", 10, 90, confidence=0.2)], 100)
+    unknown = _clear_coverage().model_copy(update={"status": Status1.unknown})
+    evidence = _evidence(transcript, [(0, 0)], speech_coverage=unknown, assess_source_edges=True)
+    for boundary in evidence.boundaries:
+        assert "speech_coverage_unknown" in boundary.reasons
+        assert "adjacent_word_confidence_low" in boundary.reasons
+        assert "source_edge_lexical_contact" not in boundary.reasons
+        assert boundary.requiresReview
+
+
+def test_source_end_detector_contact_is_risk_not_an_inferred_word_cut() -> None:
+    transcript = _transcript([_word("fragment", 20, 85)], 100)
+    coverage = _clear_coverage().model_copy(
+        update={"intervals": [SpeechCoverageInterval(startMs=10, endMs=100)]}
+    )
+    evidence = _evidence(transcript, [(0, 0)], speech_coverage=coverage, assess_source_edges=True)
+    first, last = evidence.boundaries
+    assert not first.requiresReview
+    assert "source_edge_detected_speech" in last.reasons
+    assert "inside_spoken_word" not in last.reasons
+    assert "source_edge_lexical_contact" not in last.reasons
+    assert last.requiresReview
 
 
 def test_evidence_derives_matching_legacy_ids_and_rejects_bad_mapping() -> None:
@@ -262,6 +305,126 @@ def _command(  # noqa: PLR0913
         targetRevision=target_revision,
         targetTimeMs=target_time_ms,
     )
+
+
+def test_empty_boundary_constraints_preserve_legacy_bytes_and_custom_version() -> None:
+    evidence = _evidence(
+        _transcript([_word("first", 0, 100), _word("second", 1000, 1100)], 2000),
+        [(0, 0), (1, 1)],
+    )
+    config = CompilerConfig(version="fixture-legacy/1")
+    legacy = compile_chapters(
+        evidence,
+        _proposal(evidence),
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+        config=config,
+    )
+    empty = compile_chapters(
+        evidence,
+        _proposal(evidence),
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+        config=config,
+        boundary_constraints={},
+    )
+    assert empty.model_dump_json() == legacy.model_dump_json()
+    assert empty.compilerVersion == "fixture-legacy/1"
+
+
+def test_constrained_candidate_survives_candidate_cap_and_preserves_joint_cover() -> None:
+    evidence = _evidence(
+        _transcript(
+            [_word("first", 0, 100), _word("second", 1000, 1100), _word("third", 2000, 2100)],
+            3000,
+        ),
+        [(0, 0), (1, 1), (2, 2)],
+        shots=tuple(HarnessEvidenceShot(score=1.0, timeMs=ms) for ms in range(201, 801)),
+    )
+    candidate = next(item for item in evidence.boundaries if item.timeMs == 403)
+    baseline = compile_chapters(
+        evidence,
+        _proposal(evidence),
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+        config=CompilerConfig(max_candidates_per_layer=4),
+    )
+    assert baseline.boundaries[1].candidateId != candidate.id
+    edit = compile_chapters(
+        evidence,
+        _proposal(evidence),
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+        config=CompilerConfig(max_candidates_per_layer=4),
+        boundary_constraints={("s000000", "s000001"): candidate.id},
+    )
+    assert edit.compilerVersion == "chapter-compiler/2"
+    assert edit.boundaries[1].candidateId == candidate.id
+    assert edit.boundaries[1].timeMs == 403
+    assert "editorial_candidate_constraint" in edit.boundaries[1].reasons
+    assert edit.boundaries[2:] == baseline.boundaries[2:]
+    assert [item.timeMs for item in edit.boundaries] == [0, 403, 1550, 3000]
+
+
+@pytest.mark.parametrize("invalid", ["unknown", "transition", "edge", "unrelated", "speech"])
+def test_constrained_candidate_rejects_ungrounded_or_unsafe_selection(invalid: str) -> None:
+    evidence = _evidence(
+        _transcript([_word("first", 0, 400), _word("second", 1000, 1400)], 3000),
+        [(0, 0), (1, 1)],
+        shots=(
+            HarnessEvidenceShot(score=1.0, timeMs=200),
+            HarnessEvidenceShot(score=1.0, timeMs=2500),
+        ),
+    )
+    time_ms = {"edge": 0, "unrelated": 2500, "speech": 200}.get(invalid, 700)
+    candidate = next(item for item in evidence.boundaries if item.timeMs == time_ms)
+    key = ("s000001", "s000000") if invalid == "transition" else ("s000000", "s000001")
+    value = "unknown-candidate" if invalid == "unknown" else candidate.id
+    with pytest.raises(HarnessValidationError):
+        compile_chapters(
+            evidence,
+            _proposal(evidence),
+            evidence_artifact_id=ARTIFACT_ID,
+            evidence_sha256=SHA,
+            boundary_constraints={key: value},
+        )
+
+
+def test_constrained_candidate_rejects_quantization_into_speech() -> None:
+    evidence = _evidence(
+        _transcript([_word("first", 0, 540), _word("second", 560, 1500)], 2000),
+        [(0, 0), (1, 1)],
+        frame_rate=PositiveRational(numerator=2, denominator=1),
+    )
+    candidate = next(item for item in evidence.boundaries if item.timeMs == 550)
+    with pytest.raises(HarnessValidationError, match="preserve adjacent speech"):
+        compile_chapters(
+            evidence,
+            _proposal(evidence),
+            evidence_artifact_id=ARTIFACT_ID,
+            evidence_sha256=SHA,
+            boundary_constraints={("s000000", "s000001"): candidate.id},
+        )
+
+
+def test_constrained_candidate_rejects_detected_speech_inside_lexical_gap() -> None:
+    coverage = _clear_coverage().model_copy(
+        update={"intervals": [SpeechCoverageInterval(startMs=450, endMs=550)]}
+    )
+    evidence = _evidence(
+        _transcript([_word("first", 0, 400), _word("second", 600, 1000)], 1000),
+        [(0, 0), (1, 1)],
+        speech_coverage=coverage,
+    )
+    candidate = next(item for item in evidence.boundaries if item.timeMs == 500)
+    with pytest.raises(HarnessValidationError, match="intersects grounded speech"):
+        compile_chapters(
+            evidence,
+            _proposal(evidence),
+            evidence_artifact_id=ARTIFACT_ID,
+            evidence_sha256=SHA,
+            boundary_constraints={("s000000", "s000001"): candidate.id},
+        )
 
 
 def test_evidence_preserves_words_and_derives_only_positive_union_gaps() -> None:

@@ -19,6 +19,10 @@ import {
   ChapterExportSchema,
   ChapterRendersSchema,
 } from "@temnia/contracts";
+import {
+  DEFAULT_CHAPTER_BRIEF_VERSION,
+  resolveChapterBrief,
+} from "../lib/harness/default-brief";
 import type { ChapterView } from "../lib/harness/queries";
 import { uploadFixture } from "./helpers/upload";
 
@@ -296,24 +300,20 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByText("Recorded test backend", { exact: true })
   ).toBeVisible();
-  await page
-    .getByLabel("Editorial brief", { exact: true })
-    .fill(
-      "Partition the complete recording into traceable chapters, with any deliberate drop kept visible for review."
-    );
-  await page
-    .getByLabel("Maximum budget in dollars", { exact: true })
-    .fill("-1");
-  await page.getByTestId("chapter-start").click();
+  // The normal path needs no prompt or budget typing.
   await expect(
-    page.getByRole("tabpanel", { name: "Chapters" }).getByRole("status")
-  ).toContainText("positive budget");
-  expect((await readView(page, sourceId)).run).toBeNull();
-  await page
-    .getByLabel("Maximum budget in dollars", { exact: true })
-    .fill("1.00");
+    page.getByLabel("Editorial brief", { exact: true })
+  ).toBeHidden();
+  await expect(
+    page.getByLabel("Maximum budget in dollars", { exact: true })
+  ).toHaveValue("1.00");
   await page.getByTestId("chapter-start").click();
   let state = await checkedRevision(page, sourceId, 0);
+  const defaultBrief = resolveChapterBrief({
+    defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+  });
+  expect(state.view.run?.brief).toBe(defaultBrief);
+  expect(state.view.run?.budgetMicros).toBe(1_000_000);
   await expect(
     page.getByText(
       "Chapter editing was dispatched. Waiting for the durable run record.",
@@ -832,14 +832,76 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     exact: true,
   });
   await expect(newBudget).toHaveValue("1.00");
-  await newBudget.fill("1.50");
+  await expect(newBrief).toBeHidden();
+  await page
+    .getByRole("button", { exact: true, name: "Add instructions" })
+    .click();
   await newBrief.fill("A second independently reviewed chapter cut.");
+  await page
+    .getByRole("button", { exact: true, name: "Use default instructions" })
+    .click();
+  await expect(newBrief).toBeHidden();
+  await page
+    .getByRole("button", { exact: true, name: "Add instructions" })
+    .click();
+  await expect(newBrief).toHaveValue(
+    "A second independently reviewed chapter cut."
+  );
+  await newBudget.fill("-1");
+  await page.getByTestId("chapter-start").click();
+  await expect(
+    page.getByRole("tabpanel", { name: "Chapters" }).getByRole("status")
+  ).toContainText("positive budget");
+  expect((await readView(page, sourceId)).run?.id).toBe(runId);
+  await newBudget.fill("1.50");
   // Intentionally outlast the 2.5-second status poll that previously dismissed it.
   await page.waitForTimeout(3200);
   await expect(newBrief).toHaveValue(
     "A second independently reviewed chapter cut."
   );
+  // Lose the request before dispatch, then prove reload retries the same
+  // versioned custom intent rather than creating another independently paid run.
+  const startPattern = `**/sources/${sourceId}`;
+  const lostStart = deferred();
+  const loseStart = async (route: Route) => {
+    if (
+      route.request().method() === "POST" &&
+      route.request().headers()["next-action"]
+    ) {
+      await route.abort("failed");
+      lostStart.resolve();
+      return;
+    }
+    await route.continue();
+  };
+  await page.route(startPattern, loseStart);
   await page.getByTestId("chapter-start").click();
+  await expect(page.getByTestId("chapters-starting")).toBeVisible();
+  const pendingKey = `chapter-pending-start:${sourceId}`;
+  const retainedIntent = await page.evaluate(
+    (key) => JSON.parse(sessionStorage.getItem(key) ?? "null"),
+    pendingKey
+  );
+  expect(retainedIntent).toMatchObject({
+    brief: "A second independently reviewed chapter cut.",
+    budgetDollars: "1.50",
+    defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
+    sourceId,
+  });
+  await lostStart.promise;
+  await page.unroute(startPattern, loseStart);
+  await page.reload();
+  await page.getByRole("tab", { exact: true, name: "Chapters" }).click();
+  await expect(page.getByTestId("chapters-starting")).toBeVisible();
+  expect(
+    await page.evaluate(
+      (key) => JSON.parse(sessionStorage.getItem(key) ?? "null"),
+      pendingKey
+    )
+  ).toEqual(retainedIntent);
+  await page
+    .getByRole("button", { exact: true, name: "Retry the same request" })
+    .click();
   await expect
     .poll(async () => (await readView(page, sourceId)).run?.id, {
       timeout: STAGE_TIMEOUT,
@@ -847,6 +909,13 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
     .not.toBe(runId);
   const secondRun = await checkedRevision(page, sourceId, 0);
   expect(secondRun.view.run?.id).not.toBe(runId);
+  expect(secondRun.view.run?.id).toBe(retainedIntent.runId);
+  expect(secondRun.view.run?.brief).toBe(
+    "A second independently reviewed chapter cut."
+  );
+  expect(secondRun.view.runs.map((run) => run.id).sort()).toEqual(
+    [runId, retainedIntent.runId].sort()
+  );
   const secondRunId = secondRun.view.run?.id;
   await expect(
     page.getByLabel("New maximum budget in dollars", { exact: true })
@@ -860,6 +929,12 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByLabel("New maximum budget in dollars", { exact: true })
   ).toHaveValue("2.00");
+  const oldRunResponse = await page.request.get(
+    `/api/sources/${sourceId}/chapters?runId=${runId}`
+  );
+  expect(((await oldRunResponse.json()) as ChapterView).run?.brief).toBe(
+    defaultBrief
+  );
   await page.waitForTimeout(3200);
   await expect(page.getByLabel("Chapter run", { exact: true })).toHaveValue(
     runId ?? ""

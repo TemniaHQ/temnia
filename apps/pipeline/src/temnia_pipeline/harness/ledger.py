@@ -1300,8 +1300,9 @@ async def fail_attempt(  # noqa: PLR0913
     usage: JsonObject,
     error_code: str | None,
     error_message: str,
+    reconcile_unknown: bool = False,
 ) -> Attempt:
-    """Persist a known failure or retain exposure for a transport ambiguity."""
+    """Persist failure; explicit owned reconciliation may settle a later known outcome."""
     state = "failed_known" if outcome_known else "outcome_unknown"
     if not outcome_known and actual_cost_micros is not None:
         raise ValueError("an ambiguous outcome must be reconciled separately")
@@ -1328,7 +1329,13 @@ async def fail_attempt(  # noqa: PLR0913
             ):
                 raise IdentityConflict("terminal attempt failure was replayed differently")
             return _attempt(attempt)
-        if attempt["state"] not in {"dispatching", "running", "cancel_requested"}:
+        recovered_unknown = (
+            attempt["state"] == "outcome_unknown" and outcome_known and reconcile_unknown
+        )
+        if (
+            attempt["state"] not in {"dispatching", "running", "cancel_requested"}
+            and not recovered_unknown
+        ):
             if attempt["state"] == "outcome_unknown":
                 raise OutcomeUnknown("attempt outcome is already uncertain")
             raise LostOwnership("attempt is already terminal")
@@ -1363,6 +1370,15 @@ async def fail_attempt(  # noqa: PLR0913
                 "UPDATE harness_run SET status = 'outcome_unknown', updated_at = now()"
                 " WHERE id = %s AND status NOT IN ('cancelled', 'failed', 'ready')",
                 (run_id,),
+            )
+        elif recovered_unknown:
+            await conn.execute(
+                """UPDATE harness_run SET status = 'running', updated_at = now()
+                    WHERE id = %s AND status = 'outcome_unknown' AND NOT EXISTS (
+                        SELECT 1 FROM harness_attempt WHERE run_id = %s
+                        AND id <> %s AND state = 'outcome_unknown'
+                    )""",
+                (run_id, run_id, attempt_id),
             )
         if actual_cost_micros is not None:
             await _settle_cost(

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from temnia_pipeline.substrate.protocol import Segmenter
 
 #: Every segmenter `make_segmenter` knows, in the order the runner prints them.
-SEGMENTER_NAMES = ("legacy", "sat", "changepoint")
+SEGMENTER_NAMES = ("legacy", "sat", "changepoint", "chapter-llama")
 
 
 def _unknown(name: str, params: dict[str, object], allowed: tuple[str, ...]) -> None:
@@ -128,6 +128,40 @@ def make_segmenter(name: str, **params: object) -> Segmenter:
             _text(params, "embedding_model", DEFAULT_EMBEDDING_MODEL) or DEFAULT_EMBEDDING_MODEL,
             target,
             _whole(params, "min_sentences", 4),
+        )
+
+    if name == "chapter-llama":
+        from pathlib import Path  # noqa: PLC0415
+
+        from temnia_pipeline.chapter_llama.contracts import ModelConfig  # noqa: PLC0415
+        from temnia_pipeline.substrate.chapter_llama import ChapterLlamaSegmenter  # noqa: PLC0415
+
+        _unknown(
+            name,
+            params,
+            (
+                "sentences_from",
+                "result",
+                "device",
+                "max_input_tokens",
+                "max_new_tokens",
+                "duration_ms",
+            ),
+        )
+        base = _text(params, "sentences_from", "sat") or "sat"
+        if base not in {"legacy", "sat"}:
+            msg = "chapter-llama sentences_from must be sat or legacy"
+            raise ValueError(msg)
+        result_path = _text(params, "result", None)
+        return ChapterLlamaSegmenter(
+            make_segmenter(base),
+            result_path=Path(result_path) if result_path is not None else None,
+            device=_text(params, "device", "cuda") or "cuda",
+            duration_ms=_whole(params, "duration_ms", 1) if "duration_ms" in params else None,
+            config=ModelConfig(
+                max_input_tokens=_whole(params, "max_input_tokens", 35_000),
+                max_new_tokens=_whole(params, "max_new_tokens", 2048),
+            ),
         )
 
     msg = f"unknown segmenter {name!r}; it is one of {', '.join(SEGMENTER_NAMES)}"
