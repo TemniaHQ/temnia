@@ -379,8 +379,13 @@ mount semantics require their own qualification. The underlying behavior is spec
 [Linux flock](https://man7.org/linux/man-pages/man2/flock.2.html).
 
 Render the source aspect ratio to MP4 and sidecar captions first. Download a source once per
-bounded render batch, reuse unchanged sections by content/config fingerprint, heartbeat within
-subprocess work and clean partial local files on cancellation. Verify decodability, expected
+bounded render batch, reuse unchanged sections by content/config fingerprint, supervise the
+entire activity with an owned heartbeat and clean partial local files on cancellation. Encoding
+progress is separate: preparation, cached-media I/O, strict decode and publication also need
+liveness while quiet. The supervisor drains its operation before releasing its lease or cleanup;
+the 30-second heartbeat timeout and five-hour activity limit remain. This is not a progress or
+throughput measurement. The [render liveness plan](plans/chapter-render-liveness-360-view.md)
+records the correction and its cancellation tests. Verify decodability, expected
 duration, streams, audio/video correspondence and caption bounds against the accepted edit hash.
 A text-only editorial verdict does not claim inspection of pixels or sound. Export includes a
 versioned manifest that names exact edit and media hashes.
