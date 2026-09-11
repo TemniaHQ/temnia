@@ -137,13 +137,53 @@ grammar was too large. All four request/receipt identities were verified, with
 This establishes an eligible author/repair request profile, not a source reviewer or
 the maximum supported output allowance.
 
-Across these **35 physical calls**, **901,175 micros ($0.901175)** are settled and the
-one 7,371-micro reservation remains unresolved. This total includes failed returned
-responses. The high/32,768 full-workflow matrix is unavailable: only two author
-families qualified, while the existing author-pool policy requires three. A separately
-predeclared high/8,192 Astra/Kimi/Opus author comparison, with Gemini review fixed,
-is preparing its exact missing route proofs. No full-source editorial comparison has
-completed and no model is promoted by these synthetic requests.
+Those first **35 physical calls** settled **901,175 micros ($0.901175)**. The
+high/32,768 full-workflow matrix is unavailable: only two author families qualified,
+while the existing author-pool policy requires three. A separately predeclared
+high/8,192 Astra/Kimi/Opus author comparison then qualified the missing Astra, Kimi
+and Gemini settings in three separate four-call journals:
+
+| Route at high/8,192 | Author | Cold | Source | Patch | Settled micros |
+| --- | --- | --- | --- | --- | ---: |
+| Astra / Azure | Pass | Pass | Pass | Pass | 290,338 |
+| Kimi / Alibaba | Pass | Pass | Pass | Pass | 189,581 |
+| Gemini / Vertex | HTTP 400 | Pass | Truncated | Truncated | 82,530 |
+
+The Gemini source and patch responses each ended at 8,178 output tokens, approximately
+7,860 of them reasoning, with incomplete JSON and a length stop reason. Its earlier
+32,768 reviewer passes remain valid for their original setting. The uniform 8,192
+matrix is also unavailable because only two reviewer families qualified. These were
+explicitly different settings, not repeats of the same failed request to obtain a pass.
+
+Across **47 physical requests**, **1,463,624 micros ($1.463624)** are settled,
+including invalid returned outputs. There are 28 passes, seven conclusive HTTP
+failures, 11 settled validation failures and one unknown request. The original
+**7,371-micro reservation** remains unresolved; it is an estimate rather than a
+known charge. All 46 available receipt hashes were verified and all 28 passing
+responses replayed through strict schema and grounding admission. All eight owned
+qualification containers stopped and remain retained. No further qualification
+request is needed for the declared route profiles below.
+
+## Explicit route profiles
+
+The uniform allowance could not express the already proven Opus author/repair and
+Gemini reviewer requests together. V2 therefore uses the existing immutable route
+ceiling with the run ceiling: actual output is their minimum. The same value must
+reach qualification, preparation, native requests, reservations, retained-response
+identity and evaluation. This preserves the existing three-family pools and strict
+request schemas. It does not add a gateway fallback or reinterpret historical calls.
+
+The predeclared full-Karma reference has Astra and Kimi author/repair at high/32,768,
+Opus author/repair at high/8,192, and Gemini cold/source review fixed at high/32,768.
+All required stage receipts already exist. The original reports and their hashes
+remain intact; the new route snapshot and explicit `/3` qualification manifest bind
+the effective settings. Astra versus Kimi isolates an author model swap at equal
+output allowance. Comparisons with Opus are model-configuration comparisons because
+the author allowance also changes. Neither earlier unavailable matrix is replaced.
+
+No full-source editorial comparison has completed at this entry, and no model is
+promoted by synthetic request qualification. Independent human opportunity, cold,
+source and playback judgments remain necessary.
 
 Transport rejection is not a failed editorial judgment. Private source bundles,
 endpoint snapshots and retained experiment receipts are stored under
@@ -165,5 +205,10 @@ operator CLI loads. Its complete programme fingerprint equals the checkout's:
 The later binder correction accepts original terminal halted reports for independently
 settled required stages, while excluding any selected model/provider with an unresolved
 call in any referenced report. Original bytes and unknown expenses remain intact.
-**51 focused tests** passed and were independently repeated for this change. Its new
-packaged input fingerprint and full clean-commit gate are verified at delivery.
+**51 focused tests** passed and were independently repeated for this change. Its
+packaged input fingerprint was
+`e980255a76da2e213f8409750e003b4629b3b148b62508d194c80bb35a894bbf`.
+The full clean-commit gate passed for `0fcfc40f6bef3d6763f2d0aed52fd5a835f8e0d7`
+at 15:30:14 UTC: 1,455 Python tests passed (one optional skip), all 16 package tasks,
+both production images and all 20 browser tests. The subsequent route-profile change
+requires its own clean-commit gate and refreshed image/programme identity.

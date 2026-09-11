@@ -242,3 +242,61 @@ Both author and reviewer pools still need three qualified families and an open-w
 route. Opus's reviewer role remains unavailable; author/repair eligibility does not
 establish source-reviewer eligibility. Human calibration and full-source acceptance
 requirements are unchanged.
+
+## Explicit route output profiles from observed capacity failures
+
+The matched high/8,192 trial completed: Astra and Kimi passed all stages, but Gemini
+source and patch exhausted output and returned incomplete JSON. Their 8,178 output
+tokens included approximately 7,860 reasoning tokens. The already retained high/32,768
+Gemini reviewer requests passed. A common allowance cannot express the observed
+compatible Opus author and Gemini reviewer profiles. This is a direct runtime/configuration
+limitation, not a reason to retry failed probes, lower review requirements or pick a winner.
+
+Use the existing immutable `RouteEntry.max_output_tokens` as an explicitly configured
+route ceiling, no higher than advertised capacity, and the run's `maxOutputTokens` as
+its requested ceiling. For v2 only, one pure helper derives the actual output allowance
+as their minimum. Lowering a route ceiling creates a new snapshot ID; preserve the
+original catalogue capacities and all earlier snapshots. No public request field,
+database migration, gateway fallback/clamp or second paid runtime is introduced.
+
+Apply that same derived value to v2 preparation admission, all four native model
+invocations, reservation/request settings, `selection_call_config`, and retained
+response operation-identity verification. The existing budgeted gateway already reserves
+from actual settings and rejects requests exceeding the route; keep those controls.
+All valid historical v2 snapshots had route ceilings at least as large as the run
+ceiling, so their effective settings and operation identities remain unchanged.
+
+Add an explicitly opted-in `topic-selection-qualification/3` manifest containing the
+requested run ceiling and exact `routeMaxOutputTokens` map for every usable propose/verify
+route. Every positive integer must equal the derived value from the immutable snapshot
+and match an original settled request's actual output setting. Preserve `/2` single-output
+semantics and every request/schema/privacy/receipt/uncertainty check. Missing/extra route
+keys, a changed ceiling, swapped receipts or stale binding refuse. The binding CLI derives
+the map only when per-route mode is explicitly selected; it never guesses capacity from
+observed token usage. No new qualification calls are needed for the already proven profiles.
+
+Worker boot may admit the explicit v2 profiles. Because that worker also registers older
+workflows, keep strict global-ceiling admission for non-v2 runs before database creation
+or ownership claim; they must not inherit v2's allocation rule. Existing ordinary staging
+and historical calls remain unchanged. Wrong configuration fails before paid dispatch.
+
+Export effective author/reviewer output allowances as part of fixed execution identity,
+alongside retained raw run settings and route snapshots. Validate the projection against
+its frozen route/configuration inputs. A pure model swap between Astra and Kimi at 32,768
+can remain comparable; an Opus author at 8,192 changes an execution factor and must be
+declared a model-configuration comparison. Missing historical facts stay unknown.
+
+The new declared full-Karma reference uses Astra/Kimi at high/32,768 and Opus author/repair
+at high/8,192, with Gemini review held at high/32,768. Author pool: Astra, Kimi, Opus,
+reordered for each arm. Reviewer pool: Gemini, Astra, Kimi. Every usable stage has an
+original exact settled receipt, all pools keep three families and an open-weight member,
+and selected author/reviewer families remain different. Earlier uniform configurations
+remain unavailable records. Derive one identical full-programme reservation for these
+arms, preserve source/rubric/detector/repair settings, and regenerate code/image/manifest
+identities before any full-source dispatch.
+
+Verification covers different author/reviewer allowances reaching actual native requests
+and reservations, exact response reuse and incompatible-setting refusal, old v2 identity
+parity, non-v2 refusal before creation, mixed-profile binding from original receipts,
+malformed/stale maps, unknown-route quarantine, and comparison rejection of an unapproved
+output-setting change. Run the full repository gate on the resulting clean commit.

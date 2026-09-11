@@ -27,9 +27,14 @@ in any referenced report remains excluded; original report hashes and unknown ex
 remain intact. Do not relabel a halted cohort, subset its journal or replay an unknown
 request. The observed high/32,768 cohort admitted only two author families; its planned
 full-workflow matrix stays unavailable under the three-family policy. A separate
-high/8,192 Astra/Kimi/Opus author condition with fixed Gemini review is declared before
-full-source outputs, based on the compatible Opus author/repair profile. It is not a
-silent replacement of the failed condition or a limit on useful video count/duration.
+high/8,192 condition also proved unavailable: Gemini source review exhausted its output.
+The next declared reference uses explicit route ceilings: Astra/Kimi author and Gemini
+review at high/32,768, Opus author/repair at high/8,192. V2 derives actual output from the
+minimum of the run and immutable route ceilings and binds those exact settings through
+qualification, requests, expenses and evaluation. Older workflows retain strict global
+ceiling admission. Astra/Kimi can be a controlled model swap; the Opus comparison changes
+both model and output configuration. Earlier failed conditions remain evidence. These
+ceilings describe model requests, not useful video count or duration.
 
 **2026-09-11 — Standalone selection quality has a versioned decision and evaluation contract.**
 Rajesh prioritized both missed worthwhile discussions and weak selected discussions, and authorized

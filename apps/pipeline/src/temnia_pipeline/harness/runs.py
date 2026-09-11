@@ -1,7 +1,7 @@
 """Scoped chapter-run creation and compare-and-set state transitions."""
 
 # Refusal messages stay beside the exact immutable identity or state check.
-# ruff: noqa: C901, EM101, N818, TC001, TRY003
+# ruff: noqa: C901, EM101, N818, TRY003
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY, is_topic_policy
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
-from temnia_pipeline.harness.routes import RouteSnapshot
+from temnia_pipeline.harness.routes import ContextWindowExceeded, RouteSnapshot, estimate_cost
 from temnia_pipeline.harness.runtime_types import (
     ClaimRepairRequest,
     CommitReviewMutationRequest,
@@ -42,7 +42,7 @@ from temnia_pipeline.harness.runtime_types import (
     StartRunRequest,
     StartRunResult,
 )
-from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.settings import REQUIRED_ROUTE_SEATS, HarnessSettings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -202,6 +202,24 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         raise IdentityConflict("requested run config differs from worker allowed config")
     if route_snapshot.snapshot_id != request.config.routeSnapshotId:
         raise IdentityConflict("requested route snapshot differs from loaded immutable snapshot")
+    if start.editorial_policy != TOPIC_SELECTION_POLICY:
+        required_routes = {
+            route_id
+            for seat in REQUIRED_ROUTE_SEATS & route_snapshot.seats.keys()
+            for route_id in route_snapshot.seats[seat].route_ids
+        }
+        for route in route_snapshot.routes:
+            if route.id not in required_routes:
+                continue
+            try:
+                estimate_cost(
+                    route, payload_bytes=1, max_output_tokens=request.config.maxOutputTokens
+                )
+            except (ContextWindowExceeded, ValueError) as error:
+                message = (
+                    f"non-v2 route {route.id!r} cannot honor the requested global output ceiling"
+                )
+                raise IdentityConflict(message) from error
     async with db.scoped(database_url, request.scope) as conn:
         fenced = await (
             await conn.execute(

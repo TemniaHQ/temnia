@@ -128,6 +128,8 @@ def _outputs() -> list[dict[str, Any]]:
 
 async def _qualified(
     tmp_path: Path,
+    *,
+    max_output_tokens: int = 256,
 ) -> tuple[RouteSnapshot, Path, dict[str, Any], list[dict[str, Any]]]:
     catalogue = _candidate_payload(count=3)
     routes = tuple(
@@ -150,7 +152,7 @@ async def _qualified(
             suite="topic-selection",
             max_exposure_micros=100_000,
             max_dispatches=12,
-            max_output_tokens=256,
+            max_output_tokens=max_output_tokens,
             lookup_wait_seconds=0,
         ),
         request_transport=request_transport,
@@ -160,7 +162,7 @@ async def _qualified(
     assert report["passed"] is True
     manifest = tmp_path / "bound.json"
     bind_topic_selection_qualification(
-        frozen, [paths["report_path"]], manifest, max_output_tokens=256
+        frozen, [paths["report_path"]], manifest, max_output_tokens=max_output_tokens
     )
     return frozen, manifest, report, requests
 

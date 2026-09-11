@@ -34,7 +34,10 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.evals.chapters import SHA256, AttemptFact, EvaluationModel, JSONValue
 from temnia_pipeline.harness.artifacts import canonical_json
+from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.topic_compiler import validate_topic_edit, validate_topic_proposal
+from temnia_pipeline.harness.topic_editorial import editorial_routes
+from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
 from temnia_pipeline.harness.validators import validate_evidence
 
 type Split = Literal["development", "held_out", "qualification"]
@@ -118,6 +121,80 @@ class TopicConfiguration(EvaluationModel):
     intended_program_sha256: SHA256 | None = None
     observed_call_identities: tuple[dict[str, JSONValue], ...] = ()
     retained_run_configuration: dict[str, JSONValue] = Field(default_factory=dict)
+
+
+def effective_output_projection(
+    policy: str,
+    run_configuration: dict[str, JSONValue],
+    route_snapshot: dict[str, JSONValue] | None,
+) -> dict[str, JSONValue]:
+    """Derive role allowances from complete frozen inputs, never current worker defaults."""
+    unknown: dict[str, JSONValue] = {"author": None, "reviewer": None}
+    requested = run_configuration.get("maxOutputTokens")
+    if (
+        type(requested) is not int
+        or requested <= 0
+        or route_snapshot is None
+        or not {"version", "snapshot_id", "routes", "seats"} <= route_snapshot.keys()
+    ):
+        return unknown
+    snapshot = RouteSnapshot.model_validate_json(canonical_json(route_snapshot), strict=True)
+    if (
+        run_configuration.get("routeSnapshotId") is not None
+        and run_configuration["routeSnapshotId"] != snapshot.snapshot_id
+    ):
+        raise ValueError("effective output inputs name different frozen route snapshots")
+    if not {"propose", "verify"} <= snapshot.seats.keys():
+        return unknown
+    author, reviewer = editorial_routes(snapshot)
+    return {
+        name: effective_topic_output_tokens(requested, route)
+        if policy == "standalone-topics/2"
+        else requested
+        if requested <= route.max_output_tokens
+        else None
+        for name, route in (("author", author), ("reviewer", reviewer))
+    }
+
+
+def known_effective_outputs(configuration: TopicConfiguration) -> bool:
+    """An old absent/null projection is readable but cannot establish a fixed setting."""
+    value = configuration.execution_identity.get("effectiveOutputTokens")
+    return (
+        isinstance(value, dict)
+        and set(value) == {"author", "reviewer"}
+        and all(type(allowance) is int and allowance > 0 for allowance in value.values())
+    )
+
+
+def _validate_effective_outputs(configuration: TopicConfiguration) -> None:
+    """Refuse explicit projection contradictions; do not populate archived export bytes."""
+    if "effectiveOutputTokens" not in configuration.execution_identity:
+        return
+    declared = configuration.execution_identity["effectiveOutputTokens"]
+    if (
+        not isinstance(declared, dict)
+        or set(declared) != {"author", "reviewer"}
+        or any(
+            value is not None and (type(value) is not int or value <= 0)
+            for value in declared.values()
+        )
+        or declared
+        != effective_output_projection(
+            configuration.policy,
+            configuration.retained_run_configuration,
+            configuration.route_snapshot,
+        )
+    ):
+        raise ValueError("effective output projection contradicts its frozen configuration")
+    if configuration.retained_run_configuration and configuration.execution_identity.get(
+        "config"
+    ) != {
+        key: value
+        for key, value in configuration.retained_run_configuration.items()
+        if key != "routeSnapshotId"
+    }:
+        raise ValueError("execution configuration contradicts retained run settings")
 
 
 def program_identity_projections(
@@ -607,6 +684,7 @@ def validate_topic_bundle(bundle: TopicEvaluationBundle) -> None:
         digest(bundle.configuration.route_snapshot) != bundle.configuration.route_snapshot_sha256
     ):
         raise ValueError("route snapshot canonical hash differs")
+    _validate_effective_outputs(bundle.configuration)
     intended = bundle.configuration.intended_program
     if intended is not None:
         if (

@@ -19,6 +19,7 @@ from temnia_pipeline.harness.routes import (
     estimate_cost,
     load_route_snapshot,
 )
+from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -214,7 +215,11 @@ class HarnessSettings:
                 estimate_cost(
                     route,
                     payload_bytes=1,
-                    max_output_tokens=self.max_output_tokens,
+                    max_output_tokens=(
+                        effective_topic_output_tokens(self.max_output_tokens, route)
+                        if self.topic_selection_enabled
+                        else self.max_output_tokens
+                    ),
                 )
             except (ContextWindowExceeded, ValueError) as error:
                 raise RuntimeError(

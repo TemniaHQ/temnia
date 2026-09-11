@@ -45,6 +45,7 @@ from temnia_pipeline.harness.topic_selection import (
     selection_source_prompt,
     validate_selection,
 )
+from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
 
 if TYPE_CHECKING:
     from temnia_pipeline.contracts import HarnessEvidence
@@ -284,6 +285,41 @@ def _terminal_reports(
     return reports
 
 
+def _qualified_output_map(
+    snapshot: RouteSnapshot, manifest: dict[str, Any], requested_max: int | None
+) -> dict[str, int]:
+    """A route profile is explicit intent, never inferred from successful token usage."""
+    ceiling = manifest.get("maxOutputTokens")
+    if (
+        type(ceiling) is not int
+        or ceiling <= 0
+        or (requested_max is not None and requested_max != ceiling)
+    ):
+        raise ValueError("topic qualification output setting differs from the requested run")
+    usable = {
+        route_id
+        for seat in set(STAGE_SEATS.values())
+        for route_id in snapshot.seats[seat].route_ids
+    }
+    if manifest["format"] == "topic-selection-qualification/2":
+        if "routeMaxOutputTokens" in manifest:
+            raise ValueError("topic qualification per-route outputs require explicit version 3")
+        return dict.fromkeys(usable, ceiling)
+    declared = manifest.get("routeMaxOutputTokens")
+    expected = {
+        route_id: effective_topic_output_tokens(ceiling, snapshot.route(route_id))
+        for route_id in usable
+    }
+    values = cast("dict[str, Any]", declared) if isinstance(declared, dict) else {}
+    if (
+        set(values) != usable
+        or any(type(value) is not int or value <= 0 for value in values.values())
+        or values != expected
+    ):
+        raise ValueError("topic qualification per-route output map differs from frozen ceilings")
+    return expected
+
+
 def validate_topic_selection_qualification(
     snapshot: RouteSnapshot, report_path: Path | str, *, max_output_tokens: int | None = None
 ) -> None:
@@ -296,18 +332,13 @@ def validate_topic_selection_qualification(
     manifest_path = Path(report_path)
     manifest = json.loads(manifest_path.read_bytes())
     if (
-        manifest.get("format") != "topic-selection-qualification/2"
+        manifest.get("format")
+        not in {"topic-selection-qualification/2", "topic-selection-qualification/3"}
         or manifest.get("snapshotId") != snapshot.snapshot_id
         or snapshot.synthetic
     ):
         raise ValueError("topic qualification manifest does not bind this production snapshot")
-    qualified_output = manifest["maxOutputTokens"]
-    if (
-        type(qualified_output) is not int
-        or qualified_output <= 0
-        or (max_output_tokens is not None and max_output_tokens != qualified_output)
-    ):
-        raise ValueError("topic qualification output setting differs from the requested run")
+    qualified_outputs = _qualified_output_map(snapshot, manifest, max_output_tokens)
     prompts = topic_selection_qualification_prompts()
     qualified: set[tuple[str, str]] = set()
     for report, report_base in _terminal_reports(snapshot, manifest, manifest_path.parent):
@@ -349,6 +380,9 @@ def validate_topic_selection_qualification(
             output = output_type.model_validate_json(response.text, strict=True)
             validate_topic_selection_qualification_output(stage, output)
             for route in snapshot.routes:
+                if route.id not in qualified_outputs:
+                    continue
+                qualified_output = qualified_outputs[route.id]
                 if (
                     candidate["gatewayModel"] == route.gateway_model
                     and candidate["provider"] == route.provider
@@ -359,6 +393,13 @@ def validate_topic_selection_qualification(
                     == {"gateway": {"only": [route.provider], "zeroDataRetention": True}}
                     and request["maxCompletionTokens"] == qualified_output
                     and qualified_output <= route.max_output_tokens
+                    and (
+                        manifest["format"] == "topic-selection-qualification/2"
+                        or (
+                            type(candidate.get("maxOutputTokens")) is int
+                            and route.max_output_tokens <= candidate["maxOutputTokens"]
+                        )
+                    )
                     and request.get("reasoningEffort") == route.reasoning_effort
                     and request.get("serviceTier") == route.service_tier
                     and not route.cache_enabled
@@ -375,11 +416,18 @@ def validate_topic_selection_qualification(
 
 
 def bind_topic_selection_qualification(
-    snapshot: RouteSnapshot, reports: list[Path], output: Path, *, max_output_tokens: int
+    snapshot: RouteSnapshot,
+    reports: list[Path],
+    output: Path,
+    *,
+    max_output_tokens: int,
+    per_route_output: bool = False,
 ) -> None:
     """Create a checked manifest without changing the frozen route snapshot."""
-    value = {
-        "format": "topic-selection-qualification/2",
+    value: dict[str, Any] = {
+        "format": "topic-selection-qualification/3"
+        if per_route_output
+        else "topic-selection-qualification/2",
         "snapshotId": snapshot.snapshot_id,
         "maxOutputTokens": max_output_tokens,
         "reports": [
@@ -393,6 +441,17 @@ def bind_topic_selection_qualification(
             "with any unsettled call in any referenced report remain excluded."
         ),
     }
+    if per_route_output:
+        value["routeMaxOutputTokens"] = {
+            route_id: effective_topic_output_tokens(max_output_tokens, snapshot.route(route_id))
+            for route_id in sorted(
+                {
+                    route_id
+                    for seat in set(STAGE_SEATS.values())
+                    for route_id in snapshot.seats[seat].route_ids
+                }
+            )
+        }
     # Create-only. Invalid evidence never leaves an admission manifest behind.
     with output.open("x") as stream:
         stream.write(json.dumps(value, indent=2) + "\n")

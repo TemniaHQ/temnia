@@ -125,6 +125,18 @@ def selection_call_inputs(plan: SelectionCallPlan) -> dict[str, object]:
     }
 
 
+def effective_topic_output_tokens(requested_max: int, route: RouteEntry) -> int:
+    """Honor both frozen ceilings only for the v2 selection programme."""
+    if type(requested_max) is not int or requested_max <= 0:
+        message = "requested topic output allowance must be a positive integer"
+        raise ValueError(message)
+    return min(requested_max, route.max_output_tokens)
+
+
 def selection_call_config(plan: SelectionCallPlan, max_tokens: int) -> dict[str, object]:
-    """The reviewer reservation and output settings are immutable call inputs."""
-    return {"maxOutputTokens": max_tokens, "reservedVerifierFamily": plan.verifier.family}
+    """The reviewer reservation and effective output are immutable call inputs."""
+    route = plan.verifier if plan.stage.startswith("verify:") else plan.author
+    return {
+        "maxOutputTokens": effective_topic_output_tokens(max_tokens, route),
+        "reservedVerifierFamily": plan.verifier.family,
+    }

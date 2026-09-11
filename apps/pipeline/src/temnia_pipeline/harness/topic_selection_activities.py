@@ -63,6 +63,7 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionSaveRequest,
     SelectionSaveResult,
     SelectionStopRequest,
+    effective_topic_output_tokens,
     selection_call_config,
     selection_call_inputs,
 )
@@ -307,7 +308,9 @@ class TopicSelectionActivities:
             synthetic = "topic_selection_author"
         route = verifier if stage.startswith("verify:") else author
         estimate_cost(
-            route, payload_bytes=len(prompt.encode()), max_output_tokens=run.config.maxOutputTokens
+            route,
+            payload_bytes=len(prompt.encode()),
+            max_output_tokens=effective_topic_output_tokens(run.config.maxOutputTokens, route),
         )
         synthetic_payload = self.owner._recorded_output(synthetic)
         if synthetic_payload is not None and version == SELECTION_PATCH_PROMPT:

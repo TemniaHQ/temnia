@@ -31,6 +31,9 @@ from temnia_pipeline.evals.topics import (
     validate_topic_bundle,
 )
 from temnia_pipeline.harness import topic_bundle_export as exporter
+from temnia_pipeline.harness.routes import RouteEntry, SeatRoutePool
+from test_harness_settings import route as fixture_route
+from test_harness_settings import snapshot as fixture_snapshot
 from test_topic_evaluation import NOW, _bundle, _labels
 
 
@@ -86,19 +89,34 @@ def _snapshot(
     )
     routes = {
         seat: {
+            **fixture_route(route_id=route).model_dump(mode="json"),
             "id": route,
             "gateway_model": f"fixture/{route}",
-            "provider": "synthetic-recorded",
+            "provider": "fixture-provider",
             "family": f"fixture-{seat}",
             "reasoning_effort": "high",
             "max_output_tokens": 8192,
         }
         for seat, route in (("author", author), ("reviewer", "reviewer-fixed"))
     }
-    route_snapshot = {
-        "routes": list(routes.values()),
-        "seats": {"propose": [author], "verify": ["reviewer-fixed"]},
-    }
+    third = fixture_route(route_id="third-qualified-family")
+    frozen_routes = fixture_snapshot(
+        routes=(
+            *tuple(RouteEntry.model_validate_json(json.dumps(value)) for value in routes.values()),
+            third,
+        ),
+        synthetic=False,
+    )
+    frozen_routes = frozen_routes.model_copy(
+        update={
+            "seats": {
+                **frozen_routes.seats,
+                "verify": SeatRoutePool(route_ids=("reviewer-fixed", author, third.id)),
+            }
+        }
+    )
+    frozen_routes = frozen_routes.model_copy(update={"snapshot_id": frozen_routes.computed_id()})
+    route_snapshot = frozen_routes.model_dump(mode="json")
     program = _programme()
     program_body = program.model_dump(mode="json", by_alias=True)
     attempts: list[dict[str, Any]] = []
@@ -177,7 +195,7 @@ def _snapshot(
             "status": "needs_review",
             "config": {
                 "backend": "gateway",
-                "routeSnapshotId": digest(route_snapshot),
+                "routeSnapshotId": frozen_routes.snapshot_id,
                 "evidenceWindowSentences": 80,
                 "maxDispatches": 128,
                 "maxOutputTokens": 8192,
@@ -223,7 +241,9 @@ async def _export(
     )
 
 
-def _compare(tmp_path: Path, bundles: list[TopicEvaluationBundle]) -> TopicComparisonReport:
+def _compare(
+    tmp_path: Path, bundles: list[TopicEvaluationBundle], *, configuration: bool = False
+) -> TopicComparisonReport:
     inputs: list[ComparisonInput] = []
     for index, bundle in enumerate(bundles):
         labels = _labels(bundle)
@@ -254,9 +274,11 @@ def _compare(tmp_path: Path, bundles: list[TopicEvaluationBundle]) -> TopicCompa
     return compare_topics(
         TopicComparisonManifest(
             experiment_id="synthetic-production-projection",
-            mode="model_swap",
+            mode="configuration" if configuration else "model_swap",
             baseline_configuration_id=bundles[0].configuration.configuration_id,
-            allowed_changed_factors=("author_identity",),
+            allowed_changed_factors=("author_identity", "execution_identity")
+            if configuration
+            else ("author_identity",),
             inputs=tuple(inputs),
             rationale="Synthetic exporter regression, not measured model performance.",
         ),
@@ -381,6 +403,7 @@ async def test_archived_null_source_projection_remains_readable_and_unknown(
         body = bundle.model_dump(mode="json", by_alias=True)
         config = body["configuration"]
         config["sourceSha256"] = None
+        del config["executionIdentity"]["effectiveOutputTokens"]
         for field in (
             "intendedProgram",
             "intendedProgramSha256",
@@ -424,3 +447,113 @@ async def test_report_roundtrip_refuses_explicit_programme_identity_contradictio
     roundtrip = TopicEvaluationBundle.model_validate_json(updated.model_dump_json(by_alias=True))
     with pytest.raises(ValueError, match=r"(programme|manifest|schema)"):
         validate_topic_bundle(roundtrip)
+
+
+def _v2_output_profile(
+    original: TopicEvaluationBundle, *, author: str, author_output: int
+) -> tuple[exporter._TopicSnapshot, dict[UUID, object]]:
+    value, bodies = _snapshot(original, author=author)
+    wrapper = value.run["route_snapshot"]
+    wrapper["editorialPolicy"] = "standalone-topics/2"
+    program = wrapper["evaluationProgram"]
+    program["policy"] = program["programVersion"] = "standalone-topics/2"
+    wrapper["evaluationProgramSha256"] = digest(program)
+    for row in value.attempts:
+        value.rows[row["result_artifact_id"]]["metadata"]["programVersion"] = "standalone-topics/2"
+    routes = wrapper["snapshot"]["routes"]
+    for route in routes:
+        route["context_tokens"] = 131072
+        route["max_output_tokens"] = author_output if route["id"] == author else 32768
+    for row in value.attempts:
+        row["route"].update(next(route for route in routes if route["id"] == row["route"]["id"]))
+    frozen = wrapper["snapshot"]
+    frozen["snapshot_id"] = digest(
+        {key: item for key, item in frozen.items() if key not in {"snapshot_id", "signature"}}
+    )
+    value.run["config"]["routeSnapshotId"] = frozen["snapshot_id"]
+    value.run["config"]["maxOutputTokens"] = 32768
+    return value, bodies
+
+
+@pytest.mark.parametrize("author_output", [8192, 32768])
+async def test_export_to_compare_keeps_output_profile_as_fixed_execution_factor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, author_output: int
+) -> None:
+    original = _bundle()
+    pairs = [
+        _v2_output_profile(original, author="author-a", author_output=32768),
+        _v2_output_profile(original, author="author-b", author_output=author_output),
+    ]
+    bundles = [await _export(monkeypatch, *pair) for pair in pairs]
+    expected = {"author": author_output, "reviewer": 32768}
+    assert bundles[1].configuration.execution_identity["effectiveOutputTokens"] == expected
+    comparison = _compare(tmp_path, bundles)
+    assert comparison.comparable is (author_output == 32768)
+    if author_output == 8192:
+        assert any(
+            "changed_fixed_factor:execution_identity" in reason for reason in comparison.reasons
+        )
+        declared = tmp_path / "configuration"
+        declared.mkdir()
+        result = _compare(declared, bundles, configuration=True)
+        assert result.comparable, result.reasons
+
+
+@pytest.mark.parametrize("tamper", ["projection", "raw_config", "execution_config", "route_cap"])
+async def test_effective_output_projection_cannot_contradict_frozen_inputs(
+    monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    bundle = await _export(
+        monkeypatch, *_v2_output_profile(_bundle(), author="author-a", author_output=8192)
+    )
+    body = bundle.model_dump(mode="json", by_alias=True)
+    config = body["configuration"]
+    if tamper == "projection":
+        config["executionIdentity"]["effectiveOutputTokens"]["author"] = 32768
+    elif tamper == "raw_config":
+        config["retainedRunConfiguration"]["maxOutputTokens"] = 4096
+    elif tamper == "execution_config":
+        config["executionIdentity"]["config"]["maxOutputTokens"] = 8192
+    else:
+        frozen = config["routeSnapshot"]
+        frozen["routes"][0]["max_output_tokens"] = 32768
+        frozen["snapshot_id"] = digest(
+            {key: item for key, item in frozen.items() if key not in {"snapshot_id", "signature"}}
+        )
+        config["retainedRunConfiguration"]["routeSnapshotId"] = frozen["snapshot_id"]
+        config["routeSnapshotSha256"] = digest(frozen)
+    roundtrip = TopicEvaluationBundle.model_validate_json(json.dumps(body))
+    with pytest.raises(
+        ValueError, match=r"(output|execution) .*configuration|execution configuration"
+    ):
+        validate_topic_bundle(roundtrip)
+
+
+async def test_archived_absent_output_projections_remain_unknown_for_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bundles: list[TopicEvaluationBundle] = []
+    original = _bundle()
+    for author in ("author-a", "author-b"):
+        bundle = await _export(monkeypatch, *_snapshot(original, author=author))
+        body = bundle.model_dump(mode="json", by_alias=True)
+        del body["configuration"]["executionIdentity"]["effectiveOutputTokens"]
+        archived = TopicEvaluationBundle.model_validate_json(json.dumps(body))
+        validate_topic_bundle(archived)
+        bundles.append(archived)
+    result = _compare(tmp_path, bundles)
+    assert not result.comparable
+    assert any("unobserved_effective_outputs" in reason for reason in result.reasons)
+
+
+async def test_export_does_not_invent_missing_historical_output_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value, bodies = _snapshot(_bundle())
+    del value.run["config"]["maxOutputTokens"]
+    bundle = await _export(monkeypatch, value, bodies)
+    assert bundle.configuration.execution_identity["effectiveOutputTokens"] == {
+        "author": None,
+        "reviewer": None,
+    }
+    validate_topic_bundle(bundle)

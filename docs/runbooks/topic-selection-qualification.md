@@ -78,6 +78,29 @@ run's frozen configuration. A route's advertised maximum is not the effective
 request setting. Keep the manifest and referenced reports/receipts accessible to
 the worker at their recorded paths; no customer source is used by this suite.
 
+The default binding remains `topic-selection-qualification/2`, with one exact
+effective output allowance. To use explicitly configured route ceilings, add
+`--per-route-output` to `bind-topics`. This opts into `/3`: the requested run ceiling
+is retained alongside `routeMaxOutputTokens` for every usable author/reviewer route.
+Each value must equal the smaller of that run ceiling and the immutable route's
+`max_output_tokens`, and must match the original settled request. Lowering a route
+ceiling creates a new snapshot; preserve its original advertised capacity evidence.
+Missing/extra keys, stale ceilings and other-setting receipts refuse admission.
+The flag does not dispatch inference or infer capacity from observed token usage.
+
+V2 uses the same effective allowance in preparation, all four native requests,
+expense reservations and response-reuse identity. Older workflows still require
+the full global allowance to fit their routes, even when sharing a v2-enabled worker;
+incompatible older-policy starts refuse before database creation or ownership claim.
+
+Terminal `completed` and `halted` reports may provide original settled proofs for
+unrelated routes. Any selected model/provider with an unsettled call in any referenced
+report remains excluded. A later pass cannot override that uncertainty. Preserve the
+whole report and journal; do not relabel, subset or replay an unknown request. When
+original absolute receipt paths collide, retain the complete original directories
+separately and provide verified read-only aliases only for nonconflicting response
+files required for validation. Alias hashes must match their original receipts.
+
 ## Full-source editorial comparison
 
 Once exact requests are qualified, freeze complete source recordings, rubric,

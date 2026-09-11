@@ -161,6 +161,13 @@ factors are reported, not silently tolerated. Recording groups cannot cross data
 splits. Repeated trials must first be explicitly grouped rather than supplied as
 duplicate source/configuration rows.
 
+Effective author/reviewer output allowances are fixed execution factors derived from
+the retained run configuration and immutable route snapshot. Equal run ceilings alone
+do not establish equal actual requests. V2 may use an explicit smaller route ceiling;
+a comparison that changes this allowance requires `configuration` mode and declares
+`execution_identity` among the changed factors. Historical missing effective settings
+remain unknown and cannot establish a controlled model swap.
+
 Paired differences use episodes as the sampling unit. A deterministic bootstrap
 interval is provided for two or more measured source pairs; a one-source result has
 no interval. These descriptive reports select no automatic winner. A production
