@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "TopicBoundaryIssue": {
+      "$id": "#/$defs/TopicBoundaryIssue",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "const": "no-safe-cut"
+        },
+        "edge": {
+          "type": "string",
+          "enum": [
+            "opening",
+            "ending",
+            "execution"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportingSentenceIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "code",
+        "edge",
+        "reason",
+        "supportingSentenceIds"
+      ],
+      "additionalProperties": false,
+      "title": "TopicBoundaryIssue"
+    }
+  },
+  "$id": "TopicBoundaryIssue.json",
+  "$ref": "#/$defs/TopicBoundaryIssue",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

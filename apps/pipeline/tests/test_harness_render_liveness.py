@@ -199,9 +199,13 @@ class QuietRenderActivities(HarnessActivities):
                 self.lease_released.set()
 
     async def _render_chapter_revision_locked(
-        self, request: RenderRevisionRequest, run: RunSnapshot
+        self,
+        request: RenderRevisionRequest,
+        run: RunSnapshot,
+        *,
+        retain_source_cache: bool = False,
     ) -> RenderRevisionResult:
-        _ = run
+        _ = run, retain_source_cache
         with contextlib.suppress(RuntimeError):
             self.attempts.append(activity.info().attempt)
         workspace = self._render_workspace(self.run, request)

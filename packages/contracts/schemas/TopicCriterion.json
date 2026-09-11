@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicCriterion.json",
+  "$ref": "#/$defs/TopicCriterion",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

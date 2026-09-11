@@ -1,0 +1,29 @@
+{
+  "$defs": {
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicSentenceSpan.json",
+  "$ref": "#/$defs/TopicSentenceSpan",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

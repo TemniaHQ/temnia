@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 HarnessBackend = Literal["gateway", "recorded"]
+TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
 DEFAULT_MAX_RUN_BUDGET_MICROS = 10_000_000
 REQUIRED_ROUTE_SEATS = frozenset({"propose", "summary", "verify"})
 MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
@@ -64,6 +65,7 @@ class HarnessSettings:
     gateway_api_key: str | None
     recorded_fixture_path: Path | None = None
     chapter_llama_config: ChapterLlamaConfig | None = None
+    topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -72,8 +74,12 @@ class HarnessSettings:
         raw_backend = values.get("HARNESS_BACKEND") or None
         if raw_backend not in {None, "gateway", "recorded"}:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
+        raw_shot_detector = values.get("HARNESS_TOPIC_SHOT_DETECTOR", "pyscenedetect-adaptive")
+        if raw_shot_detector not in {"pyscenedetect-adaptive", "scdet"}:
+            raise ValueError("HARNESS_TOPIC_SHOT_DETECTOR must be pyscenedetect-adaptive or scdet")
         snapshot_path = values.get("HARNESS_ROUTE_SNAPSHOT_PATH") or None
         return cls(
+            topic_shot_detector=cast("TopicShotDetector", raw_shot_detector),
             chapter_llama_config=(
                 ChapterLlamaConfig.model_validate_json(values["HARNESS_CHAPTER_LLAMA_CONFIG_JSON"])
                 if values.get("HARNESS_CHAPTER_LLAMA_CONFIG_JSON")

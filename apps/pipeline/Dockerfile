@@ -13,7 +13,7 @@ COPY LICENSES ./LICENSES
 COPY THIRD_PARTY_NOTICES.md ./
 # Dependencies first: this layer survives source-only changes.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv sync --frozen --no-dev --extra scene-challenger --no-install-project
 # The substrate's models, baked in so the worker never downloads during a
 # request on staging. Before the source copy on purpose: this layer depends on
 # the lock file alone, so editing Python does not re-fetch a gigabyte of
@@ -25,7 +25,10 @@ COPY scripts/fetch_models.py ./scripts/
 RUN /app/.venv/bin/python scripts/fetch_models.py
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --extra scene-challenger
+# Standalone-topic trials use this qualified detector. Fail the image build if
+# the headless package or its native dependencies cannot actually import.
+RUN /app/.venv/bin/python -c "from importlib.metadata import version; from scenedetect import AdaptiveDetector; assert version('scenedetect-headless') == '0.7.1'; AdaptiveDetector()"
 # Independent speech coverage uses this exact verified ONNX file and performs
 # no network access during an activity. The setup script imports its verifier
 # from the installed project, so it runs after the source/package sync.

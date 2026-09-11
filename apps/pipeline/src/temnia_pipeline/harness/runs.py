@@ -23,6 +23,7 @@ from temnia_pipeline.contracts import (
     State,
     TranscriptRevisionAnnotations,
 )
+from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
 from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.runtime_types import (
@@ -118,6 +119,7 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
         transcript=transcript,
         route_snapshot=frozen_routes,
         editorial_policy=route_snapshot.get("editorialPolicy", "legacy"),
+        topic_shot_detector=route_snapshot.get("topicShotDetector", "scdet"),
     )
 
 
@@ -169,7 +171,7 @@ async def _lock_ready_source(
     return row
 
 
-async def start_or_refetch_run(  # noqa: PLR0912
+async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
     database_url: str,
     *,
     start: StartRunRequest,
@@ -210,6 +212,10 @@ async def start_or_refetch_run(  # noqa: PLR0912
         config_value = request.config.model_dump(mode="json")
         if existing is not None:
             pinned = existing["route_snapshot"]
+            if (start.editorial_policy == "standalone-topics/1") != (
+                pinned.get("editorialPolicy", "legacy") == "standalone-topics/1"
+            ):
+                raise IdentityConflict("request key was reused across incompatible editorial lanes")
             expected = (
                 request.runId,
                 request.sourceId,
@@ -276,6 +282,8 @@ async def start_or_refetch_run(  # noqa: PLR0912
             route_value["editorialPolicy"] = start.editorial_policy
             if settings.chapter_llama_config is not None:
                 route_value["chapterLlama"] = settings.chapter_llama_config.model_dump(mode="json")
+        if start.editorial_policy == TOPIC_POLICY:
+            route_value["topicShotDetector"] = settings.topic_shot_detector
         row = await (
             await conn.execute(
                 """

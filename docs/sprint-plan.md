@@ -23,6 +23,22 @@ short editorial text, code-owned section labels, and an error-directed repair ti
 response. Chapter count remains variable. The measured truncation, unknown repair outcome and
 compatibility plan are in [chapter proposal output](plans/chapter-proposal-output-360-view.md).
 
+**Editorial focus amendment (2026-09-10, Rajesh):** the immediate S4/S5 goal is useful standalone
+topic videos, not merely a correct navigation partition. Necessary context can be reused across
+outputs. The [research](design/standalone-topic-intelligence-2026-09-10.md) and
+[focused implementation plan](plans/standalone-topic-intelligence.md) take priority for the next
+editorial work. Keep M1 acceptance on fresh sources, measured for this clarified outcome, and report
+the stricter no-content-boundary-edit result separately. Karma is a repeatedly inspected development
+source, not fresh acceptance gold. Do not advance to SaaS work or incidental bug batches while the
+editorial result remains unproven; the separate [backlog](plans/editorial-research-deferred-backlog.md)
+records those findings. This amendment is direction and evaluation design, not an M1 pass.
+
+**Implementation follow-up (2026-09-10):** the generic topic action, independent-span program,
+reserved reviewer, grounded repair, per-video rendering and human acceptance path are implemented
+on the PR branch. The [implementation record](design/standalone-topic-implementation-2026-09-10.md)
+separates local test evidence from the pending full-source editorial audition. Rajesh requested
+PySceneDetect AdaptiveDetector for the next harness trial. M1 remains open.
+
 ## 1. How to read this plan
 
 - **A sprint is a scope unit with an exit test, not a calendar block.** The legacy sized two-week sprints for a three-person team and then shipped its first six in three calendar weeks with one founder working AI-assisted. This plan is sized for that team: one founder, coding agents doing most of the implementation. The working assumption is about a week per sprint; the exit test, not the date, decides when a sprint ends. Sequence is the commitment.

@@ -36,8 +36,8 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.editorial_versions import editorial_dispatch_version
     from temnia_pipeline.harness.editorial_workflow import assess_and_repair
     from temnia_pipeline.harness.models import (
+        CHAPTER_AGENTS,
         COMPACT_PROPOSAL_SCHEMA_VERSION,
-        HARNESS_AGENTS,
         HarnessModelDeps,
         KnownProviderRejection,
         canonical_chapter_proposal,
@@ -126,7 +126,7 @@ def _known_failure_details(
 class ChapterRunWorkflow(PydanticAIWorkflow):
     """Create/refetch the immutable run before executing its finite stage program."""
 
-    __pydantic_ai_agents__ = HARNESS_AGENTS
+    __pydantic_ai_agents__ = CHAPTER_AGENTS
 
     @workflow.run
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:

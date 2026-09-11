@@ -1757,6 +1757,567 @@
       "additionalProperties": false,
       "title": "SpeechCoverageInterval"
     },
+    "TopicAssessment": {
+      "$id": "#/$defs/TopicAssessment",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicAssessmentCandidate"
+          }
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-assessment/1"
+        },
+        "proposalSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "proposerFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verifierFamily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "candidates",
+        "evidenceSha256",
+        "format",
+        "proposalSha256",
+        "proposerFamily",
+        "runId",
+        "summary",
+        "verifierFamily"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAssessment"
+    },
+    "TopicAssessmentCandidate": {
+      "$id": "#/$defs/TopicAssessmentCandidate",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coldReview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicColdReview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "physicalBoundaryIssues": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicBoundaryIssue"
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceReview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicSourceJudgment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "needs_review",
+            "rejected"
+          ]
+        }
+      },
+      "required": [
+        "candidateId",
+        "coldReview",
+        "physicalBoundaryIssues",
+        "reasons",
+        "sourceReview",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAssessmentCandidate"
+    },
+    "TopicBoundaryIssue": {
+      "$id": "#/$defs/TopicBoundaryIssue",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "const": "no-safe-cut"
+        },
+        "edge": {
+          "type": "string",
+          "enum": [
+            "opening",
+            "ending",
+            "execution"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportingSentenceIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "code",
+        "edge",
+        "reason",
+        "supportingSentenceIds"
+      ],
+      "additionalProperties": false,
+      "title": "TopicBoundaryIssue"
+    },
+    "TopicCandidate": {
+      "$id": "#/$defs/TopicCandidate",
+      "type": "object",
+      "properties": {
+        "completionSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "completionSpans",
+        "coreSpans",
+        "firstSentenceId",
+        "id",
+        "lastSentenceId",
+        "meaningChangingFollowups",
+        "purpose",
+        "reason",
+        "requiredContextSpans",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidate"
+    },
+    "TopicColdReview": {
+      "$id": "#/$defs/TopicColdReview",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coherentTopic": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "completeDiscussion": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "intelligibleBeginning": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "titleFaithful": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "coherentTopic",
+        "completeDiscussion",
+        "intelligibleBeginning",
+        "titleFaithful"
+      ],
+      "additionalProperties": false,
+      "title": "TopicColdReview"
+    },
+    "TopicCompiledVideo": {
+      "$id": "#/$defs/TopicCompiledVideo",
+      "type": "object",
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/TopicCandidate"
+        },
+        "edit": {
+          "$ref": "#/$defs/ChapterEditSpec"
+        },
+        "keptSectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "candidate",
+        "edit",
+        "keptSectionId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCompiledVideo"
+    },
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicEditSpec": {
+      "$id": "#/$defs/TopicEditSpec",
+      "type": "object",
+      "properties": {
+        "compilerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "evidenceArtifactId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCompiledVideo"
+          }
+        }
+      },
+      "required": [
+        "compilerVersion",
+        "durationMs",
+        "evidenceArtifactId",
+        "evidenceSha256",
+        "sourceId",
+        "summary",
+        "version",
+        "videos"
+      ],
+      "additionalProperties": false,
+      "title": "TopicEditSpec"
+    },
+    "TopicExport": {
+      "$id": "#/$defs/TopicExport",
+      "type": "object",
+      "properties": {
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-export/1"
+        },
+        "revision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicRenderedVideo"
+          }
+        }
+      },
+      "required": [
+        "editSha256",
+        "format",
+        "revision",
+        "runId",
+        "videos"
+      ],
+      "additionalProperties": false,
+      "title": "TopicExport"
+    },
+    "TopicProposal": {
+      "$id": "#/$defs/TopicProposal",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidate"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "candidates",
+        "summary",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "TopicProposal"
+    },
+    "TopicRenderedVideo": {
+      "$id": "#/$defs/TopicRenderedVideo",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "descriptor": {
+          "$ref": "#/$defs/HarnessArtifactRef"
+        },
+        "execution": {
+          "$ref": "#/$defs/HarnessArtifactRef"
+        }
+      },
+      "required": [
+        "candidateId",
+        "descriptor",
+        "execution"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRenderedVideo"
+    },
+    "TopicRenders": {
+      "$id": "#/$defs/TopicRenders",
+      "type": "object",
+      "properties": {
+        "editSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-renders/1"
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicRenderedVideo"
+          }
+        }
+      },
+      "required": [
+        "editSha256",
+        "format",
+        "runId",
+        "videos"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRenders"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceJudgment": {
+      "$id": "#/$defs/TopicSourceJudgment",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "completeContext": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "distinctPurpose": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "faithfulMeaning": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "completeContext",
+        "distinctPurpose",
+        "faithfulMeaning"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceJudgment"
+    },
+    "TopicSourceReview": {
+      "$id": "#/$defs/TopicSourceReview",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceJudgment"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidates",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReview"
+    },
     "TranscribeInput": {
       "$id": "#/$defs/TranscribeInput",
       "type": "object",

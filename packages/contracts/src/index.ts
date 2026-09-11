@@ -4,4 +4,6 @@ export * from "./ingest.ts";
 export * from "./scope.ts";
 export * from "./storage.ts";
 export * from "./temporal.ts";
+export * from "./topic-runtime.ts";
+export * from "./topics.ts";
 export * from "./transcript.ts";

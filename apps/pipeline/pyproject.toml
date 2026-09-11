@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 chapter-llama = ["peft==0.20.0", "transformers==5.16.1"]
+scene-challenger = ["scenedetect-headless==0.7.1"]
 
 [project.scripts]
 temnia-eval = "temnia_pipeline.evals.runner:main"

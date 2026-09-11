@@ -9,7 +9,7 @@ import {
 } from "@temnia/contracts";
 import { chapterReviewEvent, harnessRun, source, transcript } from "@temnia/db";
 import { WorkflowNotFoundError } from "@temporalio/client";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
@@ -19,6 +19,7 @@ import {
   resolveChapterBrief,
 } from "@/lib/harness/default-brief";
 import { parseDollarMicros } from "@/lib/harness/money";
+import { TOPIC_POLICY } from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
 
 const INTENT_MEMO_KEY = "temniaIntentSha256";
@@ -181,6 +182,7 @@ export async function startChapterRun(
         existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
       );
       const same =
+        existing.routeSnapshot.editorialPolicy !== TOPIC_POLICY &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
         existing.brief === brief &&
@@ -310,7 +312,8 @@ export async function reviewChapterCommand(
         and(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
-          eq(harnessRun.lane, "chapters")
+          eq(harnessRun.lane, "chapters"),
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`
         )
       )
       .limit(1);
@@ -478,7 +481,8 @@ export async function getPendingChapterWorkflowStatus(
         and(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
-          eq(harnessRun.lane, "chapters")
+          eq(harnessRun.lane, "chapters"),
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`
         )
       )
       .limit(1);

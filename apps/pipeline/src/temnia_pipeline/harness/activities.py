@@ -53,7 +53,7 @@ from temnia_pipeline.harness.editorial import (
     render_editorial_assessment_prompt,
 )
 from temnia_pipeline.harness.editorial_activities import EditorialActivities
-from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY
+from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY, TOPIC_POLICY
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
 from temnia_pipeline.harness.prompts import (
@@ -138,6 +138,7 @@ from temnia_pipeline.harness.runtime_types import (
     ValidateSummaryRequest,
     VerificationPlan,
 )
+from temnia_pipeline.harness.shot_evidence import build_source_shot_evidence
 from temnia_pipeline.harness.speech_evidence import build_source_speech_coverage
 from temnia_pipeline.harness.summary_grounding import (
     GROUNDING_FORMAT,
@@ -153,6 +154,9 @@ from temnia_pipeline.harness.summary_grounding import (
     normalized_summary_from_response,
     read_summary_grounding_report,
 )
+from temnia_pipeline.harness.topic_activities import TopicActivities
+from temnia_pipeline.harness.topic_render import TopicRenderActivities
+from temnia_pipeline.harness.topic_review import TopicReviewActivities
 from temnia_pipeline.harness.validators import HarnessValidationError, rounded_milliseconds, word_id
 from temnia_pipeline.media.chapter_checks import (
     check_chapter_captions,
@@ -383,9 +387,6 @@ class HarnessActivities:
         transcript = TranscriptV1.model_validate_json(body)
         if abs(timeline.duration * 1000 - transcript.durationMs) > 1:
             raise RuntimeError("source timeline duration differs from its pinned transcript")
-        layers = await asyncio.to_thread(
-            make_segmenter(request.segmenter).segment, transcript.words
-        )
         source_fingerprint = self._source_fingerprint(
             scope, run, timeline, source_sha=source_sha, observed=observed
         )
@@ -396,8 +397,26 @@ class HarnessActivities:
             "sizeBytes": run.source.size_bytes,
             "versionId": observed.get("versionId"),
         }
+        shot_record = None
+        if run.editorial_policy == TOPIC_POLICY:
+            shot_record = await build_source_shot_evidence(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                store=self.ctx.store,
+                source_path=source_path,
+                source_object=source_object,
+                timeline=timeline,
+                ffmpeg=self.ctx.settings.ffmpeg,
+                detector=run.topic_shot_detector,
+            )
+        layers = await asyncio.to_thread(
+            make_segmenter(request.segmenter).segment,
+            transcript.words,
+            **({"shot_times_ms": shot_record.shot_times_ms} if shot_record is not None else {}),
+        )
         speech = None
-        if run.editorial_policy == EDITORIAL_POLICY:
+        if run.editorial_policy in {EDITORIAL_POLICY, TOPIC_POLICY}:
             speech = await build_source_speech_coverage(
                 self.ctx.settings.database_url,
                 scope=scope,
@@ -429,7 +448,8 @@ class HarnessActivities:
             machine_revision=run.transcript.machine_revision,
             legacy_speaker_labels=run.transcript.legacy_speaker_labels,
             speech_coverage=speech.coverage if speech is not None else None,
-            assess_source_edges=run.editorial_policy == EDITORIAL_POLICY,
+            assess_source_edges=run.editorial_policy in {EDITORIAL_POLICY, TOPIC_POLICY},
+            shots=shot_record.shots if shot_record is not None else (),
             config={
                 "activity": "build_chapter_evidence",
                 "detectedLanguage": transcript.language,
@@ -438,6 +458,11 @@ class HarnessActivities:
                 "sourceObject": source_object,
                 "sourceTimeline": timeline_identity(timeline),
                 **({"speechEvidence": dict(speech.provenance)} if speech is not None else {}),
+                **(
+                    {"shotEvidence": dict(shot_record.provenance)}
+                    if shot_record is not None
+                    else {}
+                ),
             },
         )
         fingerprint = artifacts.fingerprint_for(
@@ -468,7 +493,9 @@ class HarnessActivities:
                 "sourceSha256": source_sha,
                 "transcriptSha256": transcript_sha,
             },
-            dependency_ids=(speech.artifact_id,) if speech is not None else (),
+            dependency_ids=tuple(
+                item.artifact_id for item in (speech, shot_record) if item is not None
+            ),
         )
         await runs.attach_evidence(
             self.ctx.settings.database_url,
@@ -2308,7 +2335,7 @@ class HarnessActivities:
         )
 
     async def _render_chapter_revision_locked(  # noqa: C901, PLR0915
-        self, request: RenderRevisionRequest, run: RunSnapshot
+        self, request: RenderRevisionRequest, run: RunSnapshot, *, retain_source_cache: bool = False
     ) -> RenderRevisionResult:
         """Render, inspect, and publish every current keep against frozen source bytes."""
         ref = request.run
@@ -2672,7 +2699,8 @@ class HarnessActivities:
                     )
                 ),
             )
-            self._cleanup_source_cache_held(run.id)
+            if not retain_source_cache:
+                self._cleanup_source_cache_held(run.id)
             return RenderRevisionResult(
                 descriptor=self._artifact_ref(accepted_descriptor),
                 has_kept_sections=bool(sections),
@@ -3137,6 +3165,9 @@ class HarnessActivities:
                 CandidateRuntime(self.ctx.settings.database_url, self.ctx.store)
             ).generate,
             *EditorialActivities(self).activities(),
+            *TopicActivities(self).activities(),
+            *TopicRenderActivities(self).activities(),
+            *TopicReviewActivities(self).activities(),
             self.build_chapter_evidence,
             self.prepare_chapter_proposal,
             self.validate_chapter_summary,
@@ -3155,6 +3186,7 @@ class HarnessActivities:
     def control_activities(self) -> Sequence[Callable[..., object]]:
         """Return compact DB-only activities for the control task queue."""
         return (
+            *TopicReviewActivities(self).control_activities(),
             self.start_chapter_run,
             self.get_chapter_run,
             self.get_chapter_resume_assets,

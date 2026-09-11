@@ -101,6 +101,7 @@ class RunSnapshot(BaseModel):
     route_snapshot: RouteSnapshot
     editorial_policy: EditorialPolicy = "legacy"
     chapter_llama_config: ChapterLlamaConfig | None = None
+    topic_shot_detector: Literal["pyscenedetect-adaptive", "scdet"] = "scdet"
 
 
 class StartRunResult(BaseModel):

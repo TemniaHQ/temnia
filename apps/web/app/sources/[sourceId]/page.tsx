@@ -11,7 +11,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { harnessSettings } from "@/lib/harness/config";
-import { getChapterView } from "@/lib/harness/queries";
+import { getChapterView, getTopicView } from "@/lib/harness/queries";
 import { resolveScope } from "@/lib/scope/resolve-scope";
 import { getSourceWithArtifacts } from "@/lib/sources/queries";
 import { getTranscript } from "@/lib/transcript/queries";
@@ -22,10 +22,11 @@ export default async function SourcePage({
   params,
 }: PageProps<"/sources/[sourceId]">) {
   const { sourceId } = await params;
-  const [found, transcript, chapters] = await Promise.all([
+  const [found, transcript, chapters, topics] = await Promise.all([
     getSourceWithArtifacts(sourceId),
     getTranscript(sourceId),
     getChapterView(sourceId),
+    getTopicView(sourceId),
   ]);
   if (!found) {
     notFound();
@@ -96,6 +97,7 @@ export default async function SourcePage({
           width: source.width,
         }}
         speakerLabels={row?.speakerLabels ?? {}}
+        topics={topics}
         transcript={
           row
             ? {

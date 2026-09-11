@@ -1,5 +1,15 @@
 # Temnia Product Requirements
 
+**Editorial clarification, 2026-09-10 (Rajesh):** the immediate chaptering job is to extract
+interesting, independently publishable topic videos from a long source for YouTube/Facebook.
+Necessary context may be reused across videos; standalone quality takes priority. The generic
+action supplies the default editorial policy without a custom prompt, with no arbitrary count or
+duration restriction. This supersedes conflicting exact-cover requirements below for exported
+topic videos. Exact-cover remains a navigation/source-accounting representation. Existing code
+still implements the older partition contract. The [research](design/standalone-topic-intelligence-2026-09-10.md)
+and [focused plan](plans/standalone-topic-intelligence.md) distinguish measured shortcomings from
+proposed implementation; no standalone-quality gate has been passed by writing these documents.
+
 **Status:** v1.2, 2026-09-03 — the feature inventory of the product this monorepo will build: everything v1 (GA, gate M4) ships plus the recorded post-GA scope. **Nothing in this repository exists yet; every item below is roadmap.** The legacy codebase (`Mitosia/mitosia-legacy`, archived 2026-09-03 — the product was called Mitosia until the 2026-09-03 rename, see `naming.md`) implemented a first version of many of these items and is the behavioural reference, not the starting code.
 **Inputs:** the legacy repository's `tech-stack.md`, `sprint-plan.md`, `pipeline-architecture.md`, `pipeline-implementation-plan.md`, `clip-cut-architecture.md`, `episode-to-clips.md`, `clipping-landscape.md`, and `editor-study.md` (consulted in `mitosia-legacy/docs/` as needed; deliberately not copied here), the decisions carried into AGENTS.md, and the 2026-09-02 Riverside audit
 **Precedence:** this file records *what* the product does and for whom. Sequence will live in this repository's sprint plan and pipeline implementation plan; system design in its tech stack and pipeline architecture; editorial design in its clip-cut architecture. Those documents are yet to be written for this monorepo; once one exists and disagrees with this file on its own subject, it wins — and this file gets updated. Stack names that appear below (Better Auth, Uppy, Video.js, Temporal, OpenRouter, Dokploy, …) are the legacy choices carried in as the default until the new tech stack decides otherwise. Durable decisions are recorded in AGENTS.md with their dates and are not re-argued here.
@@ -30,7 +40,7 @@ An agency-grade AI content operations platform. Long-form sources go in — a tw
 ### 1.2 Positioning
 
 - **Against creator studios (Riverside, Descript).** They record and polish one creator's session. Temnia starts after the master exists, takes it from wherever it was recorded, and serves the agency that runs weekly work for many clients under approval and rights governance. Temnia does not record.
-- **Against clipping tools (Opus Clip, Vizard, Klap, Munch).** They cherry-pick shorts with black-box selection and boundaries that "start too early, end too late" (the category's universal complaint). Temnia leads with an exact-cover chapter partition: every source interval belongs to a chapter or an explicit drop, with one shared cut between neighbors. Those cuts are grounded to the word timeline, checked by deterministic sensors and an independent-family verifier, explained against an editorial brief, and reviewed in tooling built for correction. Moments hang off that chapter structure.
+- **Against clipping tools (Opus Clip, Vizard, Klap, Munch).** Temnia's immediate goal is independently publishable topic videos with enough setup, a completed discussion and source-faithful boundaries. Necessary source context can be reused between videos. Source use remains accountable, every cut is grounded to the word timeline, and technical checks remain distinct from independent editorial judgment and human acceptance. Navigation chapters and short moments are separate views or outputs over the same source evidence. Current comparative quality is unproven; the September 10 research records what competitor documentation establishes and what still needs measurement.
 - **Against coverage editors (Eddie AI).** Editor-grade rough cuts without multi-client workflow, transparency, or client approval.
 - **The open flank** ([clipping-landscape.md](clipping-landscape.md) §1): multi-client agency workflow + editor-quality coverage clips + transparent, steerable selection + real boundary tooling in review. That intersection is Temnia's declared shape.
 
@@ -177,6 +187,12 @@ The harness is the product. Every editing workflow follows the same five-layer r
 - Live generation progress in the review panel (stage rail, truthful step progress, previous result stays visible). `[deferred nice-to-have]`
 
 ## 9. Clip lanes: moments and segments
+
+**September 10 clarification:** the active segments/topic-video target is the standalone contract
+at the top of this PRD. The historical partition and shared-cut details in this section describe
+the earlier coverage design; they must not prohibit context reuse in independently exported topic
+videos. The new plan preserves original source order and contiguous spans initially, with independent
+in/out edges per video. Non-contiguous assembly remains separate scope.
 
 Two lanes share one cutting room. **Moments** is the peak lane (standalone highlights); **Segments** is the coverage lane (an exact-cover chapter partition with keep and drop decisions). Both were built in the legacy app, are on by default in the design, and are the first two lanes on the harness chassis.
 

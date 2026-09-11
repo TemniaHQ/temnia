@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SEEDED_SCOPE, sourcePrefix } from "@temnia/contracts";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getChapterView } from "@/lib/harness/queries";
+import { getChapterView, getTopicView } from "@/lib/harness/queries";
 
 const ownerUrl = process.env.TEST_DATABASE_URL;
 if (process.env.LOCAL_CI === "1" && !ownerUrl) {
@@ -275,6 +275,39 @@ suite("chapter view Postgres dependency ownership", () => {
       expect.arrayContaining([groundingId, legacyGroundingId])
     );
     expect(view.summaryGrounding.reports).toHaveLength(2);
+  });
+
+  it("keeps topic and legacy chapter history separate, including exact run selection", async () => {
+    if (!owner) {
+      return;
+    }
+    const topicRunId = randomUUID();
+    await owner.query(
+      `INSERT INTO harness_run
+         (id, organization_id, source_id, lane, status, brief, request_key,
+          budget_micros, config, route_snapshot, evidence_artifact_id, current_revision)
+       VALUES ($1, $2, $3, 'chapters', 'needs_review', 'topic fixture', $4,
+          1000000, '{"backend":"recorded"}'::jsonb,
+          '{"editorialPolicy":"standalone-topics/1"}'::jsonb, $5, 0)`,
+      [
+        topicRunId,
+        SEEDED_SCOPE.organizationId,
+        sourceId,
+        randomUUID(),
+        evidenceId,
+      ]
+    );
+    const [chapters, topics, wrongChapter, wrongTopic] = await Promise.all([
+      getChapterView(sourceId),
+      getTopicView(sourceId),
+      getChapterView(sourceId, topicRunId),
+      getTopicView(sourceId, runId),
+    ]);
+    expect(chapters.runs.map((item) => item.id)).toEqual([runId]);
+    expect(topics.runs.map((item) => item.id)).toEqual([topicRunId]);
+    expect(topics.run?.id).toBe(topicRunId);
+    expect(wrongChapter.run).toBeNull();
+    expect(wrongTopic.run).toBeNull();
   });
 
   it("refuses a present coverage fallback count unless it is exactly one", async () => {

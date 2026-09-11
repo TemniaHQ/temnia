@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceJudgment": {
+      "$id": "#/$defs/TopicSourceJudgment",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "completeContext": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "distinctPurpose": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "faithfulMeaning": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "completeContext",
+        "distinctPurpose",
+        "faithfulMeaning"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceJudgment"
+    }
+  },
+  "$id": "TopicSourceJudgment.json",
+  "$ref": "#/$defs/TopicSourceJudgment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
