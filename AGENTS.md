@@ -2,6 +2,48 @@
 
 ## Decisions
 
+**2026-09-11 — Model auditions freeze the programme and use the production workflow.**
+Rajesh requested model evaluation after merging PR #36 (`a96b571`). The
+[model evaluation plan](docs/plans/topic-model-evaluation.md) keeps the observed staging
+configuration, new quality-first request settings, and programme changes as separate
+conditions. Qualification checks actual route/prompt/native-schema/settings requests;
+it does not establish editorial ability. The controlled operator freezes source and
+transcript pins, rubric, intended stage roster, configuration and stable run identities,
+then starts the existing `TopicSelectionWorkflow` on isolated arm queues. Conditional
+repair is an observed outcome under that same programme. Historical missing programme
+identity remains unknown rather than reconstructed from today's constants.
+
+Human source opportunities and cold/source/playback judgments determine selection and
+publication acceptance. Karma and the 151-minute World Order recording are development
+sources, not fresh holdouts. No model winner follows from transport success or an
+uncalibrated model critic. Keep unknown paid outcomes fenced, record all costs, and keep
+the ordinary staging configuration separate from declared experiment workers. Current
+evidence and limitations are in
+[the audition record](docs/design/topic-model-evaluation-2026-09-11.md).
+
+Qualification binding may use unchanged terminal halted reports for completely settled
+required stages of unrelated routes. Any selected model/provider with an unsettled call
+in any referenced report remains excluded; original report hashes and unknown expenses
+remain intact. Do not relabel a halted cohort, subset its journal or replay an unknown
+request. The observed high/32,768 cohort admitted only two author families; its planned
+full-workflow matrix stays unavailable under the three-family policy. A separate
+high/8,192 condition also proved unavailable: Gemini source review exhausted its output.
+The next declared reference uses explicit route ceilings: Astra/Kimi author and Gemini
+review at high/32,768, Opus author/repair at high/8,192. V2 derives actual output from the
+minimum of the run and immutable route ceilings and binds those exact settings through
+qualification, requests, expenses and evaluation. Older workflows retain strict global
+ceiling admission. Astra/Kimi can be a controlled model swap; the Opus comparison changes
+both model and output configuration. Earlier failed conditions remain evidence. These
+ceilings describe model requests, not useful video count or duration.
+
+The first full-source author trial ended at the client's 300-second read timeout,
+with no generation handle or returned selection. Rajesh then reported better
+OpenRouter reliability in his experience. New Vercel experiment starts are held for
+that assessment. The observed timeout does not establish which upstream layer was
+slow. Any OpenRouter comparison must bind gateway/provider/request-policy identity,
+qualify its own strict requests and retain expense/unknown-outcome fences. Streaming
+is a separate configuration factor. No gateway or model winner has been established.
+
 **2026-09-11 — Standalone selection quality has a versioned decision and evaluation contract.**
 Rajesh prioritized both missed worthwhile discussions and weak selected discussions, and authorized
 [the complete selection-quality programme](docs/plans/topic-selection-quality.md) after review of

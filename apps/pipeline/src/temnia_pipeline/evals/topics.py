@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from temnia_pipeline.contracts import (
     ChapterChecks,
@@ -34,7 +34,10 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.evals.chapters import SHA256, AttemptFact, EvaluationModel, JSONValue
 from temnia_pipeline.harness.artifacts import canonical_json
+from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.topic_compiler import validate_topic_edit, validate_topic_proposal
+from temnia_pipeline.harness.topic_editorial import editorial_routes
+from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
 from temnia_pipeline.harness.validators import validate_evidence
 
 type Split = Literal["development", "held_out", "qualification"]
@@ -64,6 +67,39 @@ class TopicArtifact(EvaluationModel):
     body_status: Literal["included", "binary_reference", "retained_reference"] = "included"
 
 
+class TopicProgramStage(EvaluationModel):
+    """One intended native call shape, including stages that a run may never need."""
+
+    seat: Literal["author", "reviewer"]
+    prompt_version: Identifier
+    prompt_template_sha256: SHA256
+    schema_version: Identifier
+    native_schema_sha256: SHA256
+
+
+class TopicProgramManifest(EvaluationModel):
+    """Frozen runtime identity captured before dispatch, never inferred from current code."""
+
+    format: Literal["temnia-topic-evaluation-program/1"] = "temnia-topic-evaluation-program/1"
+    policy: Literal["standalone-topics/1", "standalone-topics/2"]
+    implementation_sha256: SHA256
+    program_version: Identifier
+    stages: Annotated[dict[Identifier, TopicProgramStage], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def _complete_v2_roster(self) -> Self:
+        if self.policy == "standalone-topics/2" and {
+            name: stage.seat for name, stage in self.stages.items()
+        } != {
+            "topic_author": "author",
+            "topic_cold": "reviewer",
+            "topic_source": "reviewer",
+            "topic_patch": "author",
+        }:
+            raise ValueError("v2 intended programme requires its complete four-stage seat roster")
+        return self
+
+
 class TopicConfiguration(EvaluationModel):
     """Unknown deployment details stay null; no vendor is implicitly selected."""
 
@@ -81,6 +117,135 @@ class TopicConfiguration(EvaluationModel):
     schema_identity: dict[str, JSONValue] = Field(default_factory=dict)
     media_identity: dict[str, JSONValue] = Field(default_factory=dict)
     execution_identity: dict[str, JSONValue] = Field(default_factory=dict)
+    intended_program: TopicProgramManifest | None = None
+    intended_program_sha256: SHA256 | None = None
+    observed_call_identities: tuple[dict[str, JSONValue], ...] = ()
+    retained_run_configuration: dict[str, JSONValue] = Field(default_factory=dict)
+
+
+def effective_output_projection(
+    policy: str,
+    run_configuration: dict[str, JSONValue],
+    route_snapshot: dict[str, JSONValue] | None,
+) -> dict[str, JSONValue]:
+    """Derive role allowances from complete frozen inputs, never current worker defaults."""
+    unknown: dict[str, JSONValue] = {"author": None, "reviewer": None}
+    requested = run_configuration.get("maxOutputTokens")
+    if (
+        type(requested) is not int
+        or requested <= 0
+        or route_snapshot is None
+        or not {"version", "snapshot_id", "routes", "seats"} <= route_snapshot.keys()
+    ):
+        return unknown
+    snapshot = RouteSnapshot.model_validate_json(canonical_json(route_snapshot), strict=True)
+    if (
+        run_configuration.get("routeSnapshotId") is not None
+        and run_configuration["routeSnapshotId"] != snapshot.snapshot_id
+    ):
+        raise ValueError("effective output inputs name different frozen route snapshots")
+    if not {"propose", "verify"} <= snapshot.seats.keys():
+        return unknown
+    author, reviewer = editorial_routes(snapshot)
+    return {
+        name: effective_topic_output_tokens(requested, route)
+        if policy == "standalone-topics/2"
+        else requested
+        if requested <= route.max_output_tokens
+        else None
+        for name, route in (("author", author), ("reviewer", reviewer))
+    }
+
+
+def known_effective_outputs(configuration: TopicConfiguration) -> bool:
+    """An old absent/null projection is readable but cannot establish a fixed setting."""
+    value = configuration.execution_identity.get("effectiveOutputTokens")
+    return (
+        isinstance(value, dict)
+        and set(value) == {"author", "reviewer"}
+        and all(type(allowance) is int and allowance > 0 for allowance in value.values())
+    )
+
+
+def _validate_effective_outputs(configuration: TopicConfiguration) -> None:
+    """Refuse explicit projection contradictions; do not populate archived export bytes."""
+    if "effectiveOutputTokens" not in configuration.execution_identity:
+        return
+    declared = configuration.execution_identity["effectiveOutputTokens"]
+    if (
+        not isinstance(declared, dict)
+        or set(declared) != {"author", "reviewer"}
+        or any(
+            value is not None and (type(value) is not int or value <= 0)
+            for value in declared.values()
+        )
+        or declared
+        != effective_output_projection(
+            configuration.policy,
+            configuration.retained_run_configuration,
+            configuration.route_snapshot,
+        )
+    ):
+        raise ValueError("effective output projection contradicts its frozen configuration")
+    if configuration.retained_run_configuration and configuration.execution_identity.get(
+        "config"
+    ) != {
+        key: value
+        for key, value in configuration.retained_run_configuration.items()
+        if key != "routeSnapshotId"
+    }:
+        raise ValueError("execution configuration contradicts retained run settings")
+
+
+def program_identity_projections(
+    manifest: TopicProgramManifest,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], dict[str, JSONValue]]:
+    """Derive fixed factors from one frozen complete roster, never observed call counts."""
+    return (
+        {
+            "policy": manifest.policy,
+            "programVersion": manifest.program_version,
+            "implementationSha256": manifest.implementation_sha256,
+        },
+        {
+            name: {"version": stage.prompt_version, "templateSha256": stage.prompt_template_sha256}
+            for name, stage in manifest.stages.items()
+        },
+        {
+            name: {
+                "version": stage.schema_version,
+                "nativeSchemaSha256": stage.native_schema_sha256,
+            }
+            for name, stage in manifest.stages.items()
+        },
+    )
+
+
+def validate_program_observation(
+    manifest: TopicProgramManifest | None, stage: str, metadata: dict[str, JSONValue]
+) -> None:
+    """Known observed IDs and available template/schema hashes must fit their intended seat."""
+    if manifest is None:
+        return
+    if (
+        metadata.get("programVersion") is not None
+        and metadata["programVersion"] != manifest.program_version
+    ):
+        raise ValueError("observed runtime programme differs from frozen programme")
+    fields = {
+        "promptVersion": "prompt_version",
+        "schemaVersion": "schema_version",
+        "promptTemplateSha256": "prompt_template_sha256",
+        "nativeSchemaSha256": "native_schema_sha256",
+    }
+    observed = {key: metadata[key] for key in fields if metadata.get(key) is not None}
+    seat = "reviewer" if stage.startswith("verify") else "author"
+    if observed and not any(
+        candidate.seat == seat
+        and all(value == getattr(candidate, fields[key]) for key, value in observed.items())
+        for candidate in manifest.stages.values()
+    ):
+        raise ValueError("observed prompt or schema differs from intended programme roster")
 
 
 class TopicAttempt(EvaluationModel):
@@ -497,12 +662,50 @@ def validate_topic_bundle(bundle: TopicEvaluationBundle) -> None:
             raise ValueError("source evidence identity differs")
         if bundle.configuration.transcript_sha256 != bundle.evidence.transcriptSha256:
             raise ValueError("configuration transcript differs from evidence")
+        for artifact in bundle.artifacts:
+            if artifact.sha256 != bundle.evidence_sha256:
+                continue
+            for field, expected in (
+                ("sourceSha256", bundle.configuration.source_sha256),
+                ("sourceFingerprint", bundle.evidence.sourceFingerprint),
+                ("transcriptSha256", bundle.evidence.transcriptSha256),
+            ):
+                if (
+                    expected is not None
+                    and artifact.metadata.get(field) is not None
+                    and artifact.metadata[field] != expected
+                ):
+                    raise ValueError(
+                        "configuration source identity differs from retained evidence metadata"
+                    )
     elif bundle.evidence_sha256 is not None:
         raise ValueError("named evidence body is unavailable")
     if bundle.configuration.route_snapshot is not None and (
         digest(bundle.configuration.route_snapshot) != bundle.configuration.route_snapshot_sha256
     ):
         raise ValueError("route snapshot canonical hash differs")
+    _validate_effective_outputs(bundle.configuration)
+    intended = bundle.configuration.intended_program
+    if intended is not None:
+        if (
+            intended.policy != bundle.configuration.policy
+            or digest(intended.model_dump(mode="json", by_alias=True))
+            != bundle.configuration.intended_program_sha256
+        ):
+            raise ValueError("intended programme differs from frozen policy or hash")
+        if (
+            bundle.configuration.program_identity,
+            bundle.configuration.prompt_identity,
+            bundle.configuration.schema_identity,
+        ) != program_identity_projections(intended):
+            raise ValueError("projected programme factors contradict the frozen manifest")
+        for observed in bundle.configuration.observed_call_identities:
+            stage, metadata = observed.get("stage"), observed.get("identities")
+            if not isinstance(stage, str) or not isinstance(metadata, dict):
+                raise ValueError("observed programme identity has an invalid stage or metadata")
+            validate_program_observation(intended, stage, metadata)
+    elif bundle.configuration.intended_program_sha256 is not None:
+        raise ValueError("intended programme body is absent")
     candidates = candidate_index(bundle)
     if bundle.evidence is not None:
         for candidate in candidates.values():

@@ -21,12 +21,12 @@ from temnia_pipeline.harness.topic_selection_activities import TopicSelectionAct
 from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionContext,
     SelectionSaveRequest,
-    selection_call_config,
     selection_call_inputs,
 )
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_harness_hierarchy_workflow import EVIDENCE_REF
+from test_topic_output_profiles import profiles
 from test_topic_selection_workflow import Program, cold, draft
 
 if TYPE_CHECKING:
@@ -35,12 +35,20 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.activities import HarnessActivities
 
 
-@pytest.mark.parametrize("corruption", ["none", "prompt", "rubric", "schema", "route", "output"])
+@pytest.mark.parametrize("output_ceiling", [4096, 8192])
+@pytest.mark.parametrize(
+    "corruption", ["none", "prompt", "rubric", "schema", "route", "output", "setting"]
+)
 async def test_response_requires_complete_original_call_identity(  # noqa: C901 — independent receipt corruptions
     monkeypatch: pytest.MonkeyPatch,
     corruption: str,
+    output_ceiling: int,
 ) -> None:
     program = Program(monkeypatch, initial=draft(selected=True), sources=[], patches=[])
+    routes = profiles(author_max=output_ceiling, reviewer_max=output_ceiling)
+    config = program.run.config.model_copy(update={"routeSnapshotId": routes.snapshot_id})
+    program.request = program.request.model_copy(update={"config": config})
+    program.run = program.run.model_copy(update={"route_snapshot": routes, "config": config})
     context = SelectionContext(
         run=TopicSelectionWorkflow.ref(program.request), evidence=EVIDENCE_REF
     )
@@ -62,7 +70,8 @@ async def test_response_requires_complete_original_call_identity(  # noqa: C901 
         kind="model",
         inputs={**selection_call_inputs(plan), "requestHash": request_hash},
         config={
-            **selection_call_config(plan, program.run.config.maxOutputTokens),
+            "maxOutputTokens": output_ceiling - 1 if corruption == "setting" else output_ceiling,
+            "reservedVerifierFamily": plan.verifier.family,
             "programVersion": SELECTION_POLICY,
             "promptVersion": plan.prompt_version,
             "schemaVersion": plan.schema_version,

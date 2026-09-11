@@ -60,6 +60,11 @@ def parser() -> argparse.ArgumentParser:
     bind.add_argument("--reports", required=True, nargs="+", type=Path)
     bind.add_argument("--output", required=True, type=Path)
     bind.add_argument("--max-output-tokens", required=True, type=int)
+    bind.add_argument(
+        "--per-route-output",
+        action="store_true",
+        help="explicitly bind version 3 effective outputs from the run and route ceilings",
+    )
     return result
 
 
@@ -70,6 +75,7 @@ async def _run(args: argparse.Namespace) -> int:
             args.reports,
             args.output,
             max_output_tokens=args.max_output_tokens,
+            per_route_output=args.per_route_output,
         )
         return 0
     api_key = os.environ.get("AI_GATEWAY_API_KEY")

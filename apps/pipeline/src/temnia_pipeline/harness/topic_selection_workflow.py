@@ -51,6 +51,7 @@ with workflow.unsafe.imports_passed_through():
         SelectionSaveRequest,
         SelectionSaveResult,
         SelectionStopRequest,
+        effective_topic_output_tokens,
         selection_call_config,
         selection_call_inputs,
     )
@@ -158,7 +159,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     result = await topic_selection_cold_v2.run(
                         plan.prompt,
                         deps=selection_model_deps(request, plan),
-                        model_settings={"max_tokens": request.config.maxOutputTokens},
+                        model_settings={
+                            "max_tokens": effective_topic_output_tokens(
+                                request.config.maxOutputTokens, plan.verifier
+                            )
+                        },
                     )
                 except UnexpectedModelBehavior:
                     unavailable.append(candidate.id)
@@ -185,7 +190,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 result = await topic_selection_source_v2.run(
                     source_plan.prompt,
                     deps=selection_model_deps(request, source_plan),
-                    model_settings={"max_tokens": request.config.maxOutputTokens},
+                    model_settings={
+                        "max_tokens": effective_topic_output_tokens(
+                            request.config.maxOutputTokens, source_plan.verifier
+                        )
+                    },
                 )
                 source_dispatched = True
                 source_review = result.output
@@ -294,7 +303,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 result = await topic_selection_author_v2.run(
                     plan.prompt,
                     deps=selection_model_deps(request, plan),
-                    model_settings={"max_tokens": request.config.maxOutputTokens},
+                    model_settings={
+                        "max_tokens": effective_topic_output_tokens(
+                            request.config.maxOutputTokens, plan.author
+                        )
+                    },
                 )
                 save = SelectionSaveRequest(context=context, draft=result.output)
             except UnexpectedModelBehavior:
@@ -346,7 +359,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 result = await topic_selection_patch_v2.run(
                     plan.prompt,
                     deps=selection_model_deps(request, plan),
-                    model_settings={"max_tokens": request.config.maxOutputTokens},
+                    model_settings={
+                        "max_tokens": effective_topic_output_tokens(
+                            request.config.maxOutputTokens, plan.author
+                        )
+                    },
                 )
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except UnexpectedModelBehavior:

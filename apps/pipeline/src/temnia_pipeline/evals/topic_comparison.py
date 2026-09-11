@@ -13,7 +13,13 @@ from pydantic import Field
 
 from temnia_pipeline.evals.chapters import EvaluationModel
 from temnia_pipeline.evals.topic_report import TopicQualityReport, build_topic_report
-from temnia_pipeline.evals.topics import Identifier, TopicEvaluationBundle, TopicHumanLabels, digest
+from temnia_pipeline.evals.topics import (
+    Identifier,
+    TopicEvaluationBundle,
+    TopicHumanLabels,
+    digest,
+    known_effective_outputs,
+)
 
 
 class ComparisonInput(EvaluationModel):
@@ -127,6 +133,16 @@ def compare_topics(manifest: TopicComparisonManifest, *, directory: Path) -> Top
         splits[bundle.recording_group] = bundle.split
         bundles.append(bundle)
         reports.append(build_topic_report(bundle, labels))
+        if bundle.configuration.intended_program is None:
+            reasons.append(
+                f"unobserved_intended_program:{bundle.recording_group}:"
+                f"{bundle.configuration.configuration_id}"
+            )
+        if not known_effective_outputs(bundle.configuration):
+            reasons.append(
+                f"unobserved_effective_outputs:{bundle.recording_group}:"
+                f"{bundle.configuration.configuration_id}"
+            )
     by_key = {
         (bundle.recording_group, bundle.configuration.configuration_id): (bundle, report)
         for bundle, report in zip(bundles, reports, strict=True)
