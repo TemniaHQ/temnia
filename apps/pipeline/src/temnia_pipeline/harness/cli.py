@@ -243,6 +243,17 @@ def _parser() -> argparse.ArgumentParser:
         default="qualification",
     )
 
+    topic_export = commands.add_parser(
+        "export-topic-bundle",
+        help="export one scoped standalone-topic artifact closure for offline evaluation",
+    )
+    topic_export.add_argument("--run-id", required=True, type=UUID)
+    topic_export.add_argument("--output", required=True, type=Path)
+    topic_export.add_argument("--recording-group")
+    topic_export.add_argument(
+        "--split", choices=("development", "held_out", "qualification"), default="qualification"
+    )
+
     routes = commands.add_parser("routes", help="route snapshot operations")
     route_commands = routes.add_subparsers(dest="route_command", required=True)
     route_validate = route_commands.add_parser("validate", help="validate a frozen route snapshot")
@@ -255,7 +266,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run(args: argparse.Namespace) -> int:
+async def _run(args: argparse.Namespace) -> int:  # noqa: C901
+    if args.command == "export-topic-bundle":
+        from temnia_pipeline.harness.topic_bundle_export import export_topic_bundle  # noqa: PLC0415
+
+        database_url = os.environ.get("PIPELINE_DATABASE_URL")
+        if not database_url:
+            raise ValueError("PIPELINE_DATABASE_URL is required")
+        topic_bundle = await export_topic_bundle(
+            database_url,
+            scope=resolve_scope(),
+            store=storage.make_store(StorageSettings.from_env()),
+            run_id=args.run_id,
+            split=args.split,
+            recording_group=args.recording_group,
+        )
+        _atomic_json(args.output, topic_bundle.model_dump(mode="json", by_alias=True))
+        print(  # noqa: T201
+            f"Exported topic artifact closure: {len(topic_bundle.artifacts)} artifacts, "
+            f"{len(topic_bundle.attempts)} attempts. Human playback remains unmeasured."
+        )
+        return 0
     if args.command == "validate":
         print(_validate_command(args.input, args.evidence))  # noqa: T201
         return 0

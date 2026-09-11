@@ -53,7 +53,11 @@ from temnia_pipeline.harness.editorial import (
     render_editorial_assessment_prompt,
 )
 from temnia_pipeline.harness.editorial_activities import EditorialActivities
-from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY, TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import (
+    EDITORIAL_POLICY,
+    TOPIC_SELECTION_POLICY,
+    is_topic_policy,
+)
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.models import EditorialVerdictV1, HierarchicalSummaryV1
 from temnia_pipeline.harness.prompts import (
@@ -155,8 +159,11 @@ from temnia_pipeline.harness.summary_grounding import (
     read_summary_grounding_report,
 )
 from temnia_pipeline.harness.topic_activities import TopicActivities
+from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
 from temnia_pipeline.harness.topic_review import TopicReviewActivities
+from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
 from temnia_pipeline.harness.validators import HarnessValidationError, rounded_milliseconds, word_id
 from temnia_pipeline.media.chapter_checks import (
     check_chapter_captions,
@@ -398,7 +405,7 @@ class HarnessActivities:
             "versionId": observed.get("versionId"),
         }
         shot_record = None
-        if run.editorial_policy == TOPIC_POLICY:
+        if is_topic_policy(run.editorial_policy):
             shot_record = await build_source_shot_evidence(
                 self.ctx.settings.database_url,
                 scope=scope,
@@ -416,7 +423,7 @@ class HarnessActivities:
             **({"shot_times_ms": shot_record.shot_times_ms} if shot_record is not None else {}),
         )
         speech = None
-        if run.editorial_policy in {EDITORIAL_POLICY, TOPIC_POLICY}:
+        if run.editorial_policy == EDITORIAL_POLICY or is_topic_policy(run.editorial_policy):
             speech = await build_source_speech_coverage(
                 self.ctx.settings.database_url,
                 scope=scope,
@@ -448,7 +455,8 @@ class HarnessActivities:
             machine_revision=run.transcript.machine_revision,
             legacy_speaker_labels=run.transcript.legacy_speaker_labels,
             speech_coverage=speech.coverage if speech is not None else None,
-            assess_source_edges=run.editorial_policy in {EDITORIAL_POLICY, TOPIC_POLICY},
+            assess_source_edges=run.editorial_policy == EDITORIAL_POLICY
+            or is_topic_policy(run.editorial_policy),
             shots=shot_record.shots if shot_record is not None else (),
             config={
                 "activity": "build_chapter_evidence",
@@ -465,6 +473,8 @@ class HarnessActivities:
                 ),
             },
         )
+        if run.editorial_policy == TOPIC_SELECTION_POLICY:
+            evidence = augment_topic_evidence(evidence)
         fingerprint = artifacts.fingerprint_for(
             kind="evidence",
             inputs={
@@ -3168,6 +3178,8 @@ class HarnessActivities:
             *TopicActivities(self).activities(),
             *TopicRenderActivities(self).activities(),
             *TopicReviewActivities(self).activities(),
+            *TopicSelectionActivities(self).activities(),
+            *TopicEditorialPatchActivities(self).activities(),
             self.build_chapter_evidence,
             self.prepare_chapter_proposal,
             self.validate_chapter_summary,

@@ -66,6 +66,8 @@ class HarnessSettings:
     recorded_fixture_path: Path | None = None
     chapter_llama_config: ChapterLlamaConfig | None = None
     topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
+    topic_selection_enabled: bool = False
+    topic_selection_qualification_path: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -79,6 +81,12 @@ class HarnessSettings:
             raise ValueError("HARNESS_TOPIC_SHOT_DETECTOR must be pyscenedetect-adaptive or scdet")
         snapshot_path = values.get("HARNESS_ROUTE_SNAPSHOT_PATH") or None
         return cls(
+            topic_selection_enabled=_flag(values, "HARNESS_TOPIC_SELECTION_ENABLED"),
+            topic_selection_qualification_path=(
+                Path(values["HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH"])
+                if values.get("HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH")
+                else None
+            ),
             topic_shot_detector=cast("TopicShotDetector", raw_shot_detector),
             chapter_llama_config=(
                 ChapterLlamaConfig.model_validate_json(values["HARNESS_CHAPTER_LLAMA_CONFIG_JSON"])
@@ -122,7 +130,7 @@ class HarnessSettings:
             routeSnapshotId=self.route_snapshot_id,
         )
 
-    def validate_boot(self) -> RouteSnapshot | None:  # noqa: C901
+    def validate_boot(self) -> RouteSnapshot | None:  # noqa: C901, PLR0915
         """Fail enabled workers loudly and leave disabled legacy workers untouched."""
         if not self.enabled:
             return None
@@ -177,6 +185,19 @@ class HarnessSettings:
             raise RuntimeError("recorded backend requires a visibly synthetic route snapshot")
         if self.backend == "gateway" and snapshot.synthetic:
             raise RuntimeError("gateway backend requires a production route snapshot")
+        if self.topic_selection_enabled and self.backend == "gateway":
+            # Qualification imports native schemas; defer until settings/route loading finishes.
+            from temnia_pipeline.harness.qualification_topic_selection import (  # noqa: PLC0415
+                validate_topic_selection_qualification,
+            )
+
+            if self.topic_selection_qualification_path is None:
+                raise RuntimeError("HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH is required for v2")
+            validate_topic_selection_qualification(
+                snapshot,
+                self.topic_selection_qualification_path,
+                max_output_tokens=self.max_output_tokens,
+            )
         missing_seats = REQUIRED_ROUTE_SEATS - snapshot.seats.keys()
         if missing_seats:
             raise RuntimeError(

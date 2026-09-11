@@ -409,6 +409,45 @@ class Status3(StrEnum):
     unknown = "unknown"
 
 
+class Kind3(StrEnum):
+    adjust_extent = "adjust_extent"
+    retitle = "retitle"
+    add = "add"
+    drop = "drop"
+    merge = "merge"
+    split = "split"  # pyright: ignore[reportAssignmentType]
+
+
+class TopicEditorialRubric(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    assumedDomainKnowledge: list[str]
+    audienceDescription: Annotated[str, Field(min_length=1)]
+    exclusions: list[str]
+    focus: str
+    languagePolicy: Annotated[str, Field(min_length=1)]
+    originalInstructions: str
+    version: Literal[1]
+    viewerGoals: list[str]
+
+
+class Disposition(StrEnum):
+    proposed = "proposed"
+    not_useful_for_audience = "not_useful_for_audience"
+    not_contiguously_extractable = "not_contiguously_extractable"
+    needs_evidence = "needs_evidence"
+
+
+class Status4(StrEnum):
+    represented = "represented"
+    missing_candidate = "missing_candidate"
+    duplicate_core = "duplicate_core"
+    not_useful_for_audience = "not_useful_for_audience"
+    not_contiguously_extractable = "not_contiguously_extractable"
+    unresolved = "unresolved"
+
+
 class TopicRenderedVideo(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -426,6 +465,53 @@ class TopicRenders(BaseModel):
     format: Literal["topic-renders/1"]
     runId: UUID
     videos: list[TopicRenderedVideo]
+
+
+class ExecutionStatus(StrEnum):
+    complete = "complete"
+    needs_review = "needs_review"
+    execution_limited = "execution_limited"
+
+
+class Disposition1(StrEnum):
+    select = "select"
+    decline = "decline"
+    unresolved = "unresolved"
+
+
+class Kind4(StrEnum):
+    missing_setup = "missing_setup"
+    missing_qualification = "missing_qualification"
+    unfinished_discussion = "unfinished_discussion"
+    unsupported_title = "unsupported_title"
+    weak_viewer_value = "weak_viewer_value"
+    unfocused_extent = "unfocused_extent"
+    duplicate_core = "duplicate_core"
+    missed_opportunity = "missed_opportunity"
+    transcript_uncertainty = "transcript_uncertainty"
+    physical_boundary_constraint = "physical_boundary_constraint"
+
+
+class Severity(StrEnum):
+    required = "required"
+    preference = "preference"
+    unknown = "unknown"
+
+
+class Kind5(StrEnum):
+    extend_start = "extend_start"
+    extend_end = "extend_end"
+    retitle = "retitle"
+    merge = "merge"
+    split = "split"  # pyright: ignore[reportAssignmentType]
+    drop = "drop"
+    add_opportunity = "add_opportunity"
+
+
+class Origin(StrEnum):
+    model = "model"
+    human = "human"
+    retained_diagnostic = "retained_diagnostic"
 
 
 class TopicSentenceSpan(BaseModel):
@@ -894,6 +980,16 @@ class TopicEditSpec(BaseModel):
     videos: list[TopicCompiledVideo]
 
 
+class TopicEditorialPatchOperation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    affectedCandidateIds: list[str]
+    kind: Kind3
+    operationId: Annotated[str, Field(max_length=256, min_length=1)]
+    replacementCandidates: list[TopicCandidate]
+
+
 class TopicExport(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -905,6 +1001,33 @@ class TopicExport(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class TopicOpportunity(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: list[str]
+    completionSpans: list[TopicSentenceSpan]
+    coreSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    disposition: Disposition
+    dispositionReason: Annotated[str, Field(min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    meaningChangingFollowups: list[TopicSentenceSpan]
+    requiredContextSpans: list[TopicSentenceSpan]
+    valueEvidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    viewerPurpose: Annotated[str, Field(min_length=1)]
+
+
+class TopicOpportunityJudgment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: list[str]
+    evidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    opportunityId: Annotated[str, Field(max_length=256, min_length=1)]
+    reason: Annotated[str, Field(min_length=1)]
+    status: Status4
+
+
 class TopicProposal(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -912,6 +1035,64 @@ class TopicProposal(BaseModel):
     candidates: list[TopicCandidate]
     summary: Annotated[str, Field(min_length=1)]
     version: Literal[1]
+
+
+class TopicSelectionDecision(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    disposition: Disposition1
+    evidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    reason: Annotated[str, Field(min_length=1)]
+
+
+class TopicSelectionDraft(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    opportunities: list[TopicOpportunity]
+    proposal: TopicProposal
+
+
+class TopicSelectionFinding(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    affectedCandidateIds: list[str]
+    evidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    kind: Kind4
+    opportunityIds: list[str]
+    reason: Annotated[str, Field(min_length=1)]
+    severity: Severity
+
+
+class TopicSelectionPatchOperation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    affectedCandidateIds: list[str]
+    findingIds: Annotated[list[str], Field(min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    kind: Kind5
+    opportunities: list[TopicOpportunity]
+    reason: Annotated[str, Field(min_length=1)]
+    replacementCandidates: list[TopicCandidate]
+
+
+class TopicSelectionRecord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    draft: TopicSelectionDraft
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-selection/2"]
+    origin: Origin
+    parentSelectionSha256: Annotated[str | None, Field(pattern="^[a-fA-F0-9]{64}$")]
+    rubric: TopicEditorialRubric
+    rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    runId: UUID
 
 
 class TopicSourceJudgment(BaseModel):
@@ -930,6 +1111,18 @@ class TopicSourceReview(BaseModel):
     )
     candidates: list[TopicSourceJudgment]
     summary: Annotated[str, Field(min_length=1)]
+
+
+class TopicValueReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    deliveredValue: TopicCriterion
+    focusedDevelopment: TopicCriterion
+    openingEffectiveness: TopicCriterion
+    reconstructedPurpose: Annotated[str, Field(min_length=1)]
+    reconstructedTakeaway: Annotated[str, Field(min_length=1)]
+    viewerReasonToWatch: TopicCriterion
 
 
 class TranscribeOutput(BaseModel):
@@ -1028,6 +1221,60 @@ class TopicColdReview(BaseModel):
     titleFaithful: TopicCriterion
 
 
+class TopicEditorialPatchInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: Literal["topic_edit"]
+    baseEditSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    baseRevision: Annotated[int, Field(gt=0, le=9007199254740991)]
+    correctionActiveSeconds: Annotated[float | None, Field(ge=0.0)]
+    correctionMeasurementMethod: Annotated[str | None, Field(min_length=1)]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    mutationKey: UUID
+    operations: Annotated[list[TopicEditorialPatchOperation], Field(min_length=1)]
+    reason: Annotated[str, Field(min_length=1)]
+    runId: UUID
+    scope: Scope
+    sourceId: UUID
+    version: Literal[1]
+
+
+class TopicPortfolioReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicSourceJudgment]
+    findings: list[TopicSelectionFinding]
+    missingOpportunities: list[TopicOpportunity]
+    opportunities: list[TopicOpportunityJudgment]
+    selection: list[TopicSelectionDecision]
+    summary: Annotated[str, Field(min_length=1)]
+
+
+class TopicSelectionColdReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    coherentTopic: TopicCriterion
+    completeDiscussion: TopicCriterion
+    intelligibleBeginning: TopicCriterion
+    titleFaithful: TopicCriterion
+    value: TopicValueReview
+
+
+class TopicSelectionPatch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    baseSelectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    operations: list[TopicSelectionPatchOperation]
+    rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    summary: Annotated[str, Field(min_length=1)]
+
+
 class TranscriptCorrectionMetadata(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1086,6 +1333,25 @@ class TopicAssessmentCandidate(BaseModel):
     reasons: list[str]
     sourceReview: TopicSourceJudgment | None
     status: Status2
+
+
+class TopicSelectionAssessment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    coldReviews: list[TopicSelectionColdReview]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    executionStatus: ExecutionStatus
+    findings: list[TopicSelectionFinding]
+    format: Literal["topic-selection-assessment/2"]
+    portfolioReview: TopicPortfolioReview | None
+    proposerFamily: Annotated[str, Field(min_length=1)]
+    reasons: list[str]
+    responseArtifacts: list[HarnessArtifactRef]
+    rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    runId: UUID
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    verifierFamily: str | None
 
 
 class TopicAssessment(BaseModel):

@@ -7,8 +7,13 @@ import {
   reviewTopicCommand,
   startTopicRun,
 } from "@/app/actions/topics";
+import { TopicEditor } from "@/components/sources/topic-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import type { HarnessAvailability } from "@/lib/harness/config";
 import type { ChapterView } from "@/lib/harness/queries";
@@ -20,7 +25,11 @@ import {
   topicArtifactIdentity,
   topicEditorialStatus,
 } from "@/lib/harness/topic-artifacts";
-import { DEFAULT_TOPIC_BRIEF_VERSION } from "@/lib/harness/topic-defaults";
+import {
+  DEFAULT_TOPIC_BRIEF_VERSION,
+  TOPIC_POLICY,
+  TOPIC_SELECTION_POLICY,
+} from "@/lib/harness/topic-defaults";
 import {
   restoreTopicIntent,
   type TopicReviewIntent,
@@ -53,6 +62,7 @@ function emptyView(previous: ChapterView): ChapterView {
   };
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one source panel coordinates legacy pending intents, live revision state and both editorial programs
 export function TopicPanel({
   availability,
   initialView,
@@ -65,6 +75,7 @@ export function TopicPanel({
   const [view, setView] = useState(initialView);
   const [selectedRunId, setSelectedRunId] = useState(initialView.run?.id ?? "");
   const [brief, setBrief] = useState("");
+  const [program, setProgram] = useState<string>(DEFAULT_TOPIC_BRIEF_VERSION);
   const [pendingStart, setPendingStart] = useState<TopicStartIntent | null>(
     null
   );
@@ -212,7 +223,8 @@ export function TopicPanel({
     }
     const request = intent ?? {
       brief: brief.trim(),
-      defaultBriefVersion: DEFAULT_TOPIC_BRIEF_VERSION,
+      defaultBriefVersion:
+        program === TOPIC_POLICY ? TOPIC_POLICY : TOPIC_SELECTION_POLICY,
       requestKey: crypto.randomUUID(),
       runId: crypto.randomUUID(),
       sourceId,
@@ -344,6 +356,19 @@ export function TopicPanel({
       </div>
       {!selectedRunId && (
         <div className="space-y-3 rounded-lg border p-4">
+          <NativeSelect
+            aria-label="Topic selection program"
+            disabled={blocked}
+            onChange={(event) => setProgram(event.target.value)}
+            value={program}
+          >
+            <NativeSelectOption value={TOPIC_SELECTION_POLICY}>
+              Selection and missed-discussion review
+            </NativeSelectOption>
+            <NativeSelectOption value={TOPIC_POLICY}>
+              Earlier program · comparison
+            </NativeSelectOption>
+          </NativeSelect>
           <details>
             <summary className="cursor-pointer text-sm">
               Optional instructions
@@ -431,6 +456,49 @@ export function TopicPanel({
       {!!current && (
         <div className="space-y-4">
           <p className="text-sm">{current.summary}</p>
+          {!!current.selectionAssessment && (
+            <details className="text-sm">
+              <summary className="cursor-pointer">
+                Source selection and missed discussions
+              </summary>
+              <p>
+                {current.selectionAssessment.portfolioReview?.summary ??
+                  "The current portfolio has not received a complete source assessment."}
+              </p>
+              {current.selectionAssessment.reasons.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+              {current.selection?.draft.opportunities.map((item) => {
+                const judgment =
+                  current.selectionAssessment?.portfolioReview?.opportunities.find(
+                    (row) => row.opportunityId === item.id
+                  );
+                return (
+                  <p key={item.id}>
+                    <strong>{item.viewerPurpose}</strong> —{" "}
+                    {judgment?.status.replaceAll("_", " ") ??
+                      item.disposition.replaceAll("_", " ")}
+                    : {judgment?.reason ?? item.dispositionReason}
+                  </p>
+                );
+              })}
+              {current.selectionAssessment.portfolioReview?.missingOpportunities.map(
+                (item) => (
+                  <p key={item.id}>
+                    <strong>{item.viewerPurpose}</strong> —{" "}
+                    {item.dispositionReason}
+                  </p>
+                )
+              )}
+              {current.selectionAssessment.portfolioReview?.selection
+                .filter((item) => item.disposition !== "select")
+                .map((item) => (
+                  <p key={item.candidateId}>
+                    {item.disposition}: {item.reason}
+                  </p>
+                ))}
+            </details>
+          )}
           {current.videos.length === 0 && (
             <p className="text-muted-foreground text-sm">
               This run produced no topic candidates.
@@ -451,6 +519,20 @@ export function TopicPanel({
               video={video}
             />
           ))}
+          {view.run && view.run.currentRevision > 0 && (
+            <TopicEditor
+              blocked={
+                blocked ||
+                ["running", "cancelled", "failed", "outcome_unknown"].includes(
+                  view.run.status
+                )
+              }
+              onChanged={refresh}
+              revision={view.run.currentRevision}
+              runId={view.run.id}
+              sourceId={sourceId}
+            />
+          )}
         </div>
       )}
       <TopicDownloads {...downloadRevision(current, accepted, view.run)} />
@@ -524,7 +606,10 @@ function TopicVideoCard({
       <div className="flex flex-wrap gap-2 text-xs">
         <Badge variant="outline">{humanState}</Badge>
         <Badge variant="outline">
-          {topicEditorialStatus(portfolio.assessment, video.assessment)}
+          {topicEditorialStatus(
+            portfolio.selectionAssessment ?? portfolio.assessment,
+            video.assessment
+          )}
         </Badge>
         <span>
           {video.technicalPass

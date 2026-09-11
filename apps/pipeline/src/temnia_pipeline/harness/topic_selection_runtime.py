@@ -1,0 +1,130 @@
+"""Immutable activity inputs for the second standalone editorial program."""
+
+# Pydantic resolves these runtime DTO annotations while Temporal registers activities.
+# ruff: noqa: TC001
+
+from __future__ import annotations
+
+import hashlib
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from temnia_pipeline.contracts import (
+    HarnessArtifactRef,
+    TopicPortfolioReview,
+    TopicSelectionAssessment,
+    TopicSelectionColdReview,
+    TopicSelectionDraft,
+    TopicSelectionPatch,
+)
+from temnia_pipeline.harness.routes import RouteEntry
+from temnia_pipeline.harness.runtime_types import RunRef
+
+
+class SelectionContext(BaseModel):
+    """Every model input is an exact, scoped artifact identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    run: RunRef
+    evidence: HarnessArtifactRef
+    rubric: HarnessArtifactRef | None = None
+    selection: HarnessArtifactRef | None = None
+    assessment: HarnessArtifactRef | None = None
+    navigation: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    candidate_id: str | None = None
+    iteration: int = 0
+
+
+class SelectionCallPlan(BaseModel):
+    """Prepared native request and immutable accounting facts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    prompt: str
+    stage: str
+    prompt_version: str
+    schema_version: str
+    author: RouteEntry
+    verifier: RouteEntry
+    input_artifacts: tuple[HarnessArtifactRef, ...]
+    synthetic_payload: dict[str, object] | None = None
+
+
+class SelectionSaveRequest(BaseModel):
+    """A settled initial draft or grounded patch, never an unowned replacement."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    draft: TopicSelectionDraft | None = None
+    patch: TopicSelectionPatch | None = None
+    schema_error: str | None = None
+
+
+class SelectionSaveResult(BaseModel):
+    """A refused answer retains the exact prior selection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    selection: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    diagnostics: tuple[str, ...] = ()
+    semantic_key: str | None = None
+    draft: TopicSelectionDraft | None = None
+
+
+class SelectionRejection(BaseModel):
+    """Source/schema rejection bound to a known successful provider response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-selection-rejection/2"] = "topic-selection-rejection/2"
+    response: HarnessArtifactRef
+    stage: str
+    draft: TopicSelectionDraft | None = None
+    patch: TopicSelectionPatch | None = None
+    diagnostics: tuple[str, ...]
+
+
+class SelectionReviewRequest(BaseModel):
+    """Review observations retain their original call inputs and stages."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    cold_reviews: tuple[TopicSelectionColdReview, ...] = ()
+    cold_candidate_ids: tuple[str, ...] = ()
+    cold_stages: tuple[str, ...] = ()
+    unavailable_cold_ids: tuple[str, ...] = ()
+    source_review: TopicPortfolioReview | None = None
+    source_dispatched: bool = True
+    reasons: tuple[str, ...] = ()
+    execution_limited: bool = False
+
+
+class SelectionAssessmentResult(BaseModel):
+    """The complete retained decision, not a human publication decision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    assessment: TopicSelectionAssessment
+    actionable: bool
+
+
+class SelectionStopRequest(BaseModel):
+    """Append terminal execution facts to the last valid assessment."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    reasons: tuple[str, ...]
+    execution_limited: bool = False
+
+
+def selection_call_inputs(plan: SelectionCallPlan) -> dict[str, object]:
+    """Reproduce the paid operation identity at dispatch and retained admission."""
+    return {
+        "artifacts": [{"id": str(ref.id), "sha256": ref.sha256} for ref in plan.input_artifacts],
+        "promptSha256": hashlib.sha256(plan.prompt.encode()).hexdigest(),
+    }
+
+
+def selection_call_config(plan: SelectionCallPlan, max_tokens: int) -> dict[str, object]:
+    """The reviewer reservation and output settings are immutable call inputs."""
+    return {"maxOutputTokens": max_tokens, "reservedVerifierFamily": plan.verifier.family}

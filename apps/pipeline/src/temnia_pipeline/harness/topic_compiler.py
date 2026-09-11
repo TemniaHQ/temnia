@@ -23,7 +23,11 @@ from temnia_pipeline.contracts import (
     TopicEditSpec,
     TopicProposal,
 )
-from temnia_pipeline.harness.compiler import CompilerConfig, compile_chapters, quantize_time
+from temnia_pipeline.harness.compiler import CompilerConfig, candidate_time, compile_chapters
+from temnia_pipeline.harness.topic_feasible import CONFIG_KEY, DERIVATION_VERSION
+from temnia_pipeline.harness.topic_feasible import (
+    augment_topic_evidence as augment_topic_evidence,  # noqa: PLC0414
+)
 from temnia_pipeline.harness.validators import (
     HarnessValidationError,
     rational,
@@ -46,6 +50,7 @@ if TYPE_CHECKING:
     )
 
 TOPIC_COMPILER_VERSION = "topic-compiler/1"
+TOPIC_COMPILER_VERSION_V2 = "topic-compiler/2"
 _SPAN_FIELDS = (
     "coreSpans",
     "requiredContextSpans",
@@ -237,7 +242,7 @@ def _boundary_constraints(
         if boundary.kind == Kind2.edge:
             candidates.append(boundary)
             continue
-        instant = quantize_time(evidence, boundary.timeMs)
+        instant = candidate_time(evidence, boundary)
         if lexical.inside(instant) or detected.inside(instant):
             continue
         matches = [name for name, (start, end) in windows if start <= instant <= end]
@@ -278,6 +283,16 @@ def topic_boundary_issues(
     validate_evidence(evidence)
     _validate_candidate(evidence, candidate)
     return _boundary_constraints(evidence, candidate)[1]
+
+
+def topic_boundary_issues_v2(
+    evidence: HarnessEvidence,
+    candidate: TopicCandidate,
+) -> tuple[TopicBoundaryIssue, ...]:
+    """Inspect the same reproducible feasible inventory used for v2 production."""
+    if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
+        _refuse("v2 physical review requires persisted derived boundary evidence")
+    return topic_boundary_issues(evidence, candidate)
 
 
 def _safe_candidates(
@@ -321,13 +336,14 @@ def compile_topics(
     videos: list[TopicCompiledVideo] = []
     for candidate in proposal.candidates:
         execution = topic_execution_proposal(evidence, candidate)
-        filtered = evidence.model_copy(update={"boundaries": _safe_candidates(evidence, candidate)})
+        eligible = frozenset(item.id for item in _safe_candidates(evidence, candidate))
         edit = compile_chapters(
-            filtered,
+            evidence,
             execution,
             evidence_artifact_id=evidence_artifact_id,
             evidence_sha256=evidence_sha256,
             config=config,
+            eligible_candidate_ids=eligible,
         )
         videos.append(
             TopicCompiledVideo(
@@ -346,6 +362,28 @@ def compile_topics(
         version=1,
         videos=videos,
     )
+    validate_topic_edit(evidence, result, expected_evidence_sha256=evidence_sha256)
+    return result
+
+
+def compile_topics_v2(
+    evidence: HarnessEvidence,
+    proposal: TopicProposal,
+    *,
+    evidence_artifact_id: UUID,
+    evidence_sha256: str,
+    config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
+) -> TopicEditSpec:
+    """Compile against already-persisted v2 physical evidence, never an unrecorded grid."""
+    if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
+        _refuse("v2 compilation requires persisted derived boundary evidence")
+    result = compile_topics(
+        evidence,
+        proposal,
+        evidence_artifact_id=evidence_artifact_id,
+        evidence_sha256=evidence_sha256,
+        config=config,
+    ).model_copy(update={"compilerVersion": TOPIC_COMPILER_VERSION_V2})
     validate_topic_edit(evidence, result, expected_evidence_sha256=evidence_sha256)
     return result
 
@@ -387,7 +425,7 @@ def _validate_video_boundaries(evidence: HarnessEvidence, video: TopicCompiledVi
         expected_instant = (
             Fraction(original.timeMs, 1000)
             if original.kind == Kind2.edge
-            else quantize_time(evidence, original.timeMs)
+            else candidate_time(evidence, original)
         )
         if instant != expected_instant:
             _refuse(f"topic {video.candidate.id}: cut differs from its candidate")
@@ -411,8 +449,13 @@ def validate_topic_edit(
 ) -> None:
     """Verify portfolio lineage and every video's independent semantic membership."""
     edit = TopicEditSpec.model_validate(edit.model_dump(), strict=True)
-    if edit.compilerVersion != TOPIC_COMPILER_VERSION:
+    if edit.compilerVersion not in {TOPIC_COMPILER_VERSION, TOPIC_COMPILER_VERSION_V2}:
         _refuse("topic portfolio names an unsupported compiler version")
+    if (
+        edit.compilerVersion == TOPIC_COMPILER_VERSION_V2
+        and evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION
+    ):
+        _refuse("v2 topic portfolio lacks its persisted derived boundary evidence")
     proposal = TopicProposal(
         candidates=[video.candidate for video in edit.videos], summary=edit.summary, version=1
     )

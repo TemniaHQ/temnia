@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "TopicOpportunity": {
+      "$id": "#/$defs/TopicOpportunity",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completionSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "needs_evidence"
+          ]
+        },
+        "dispositionReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "valueEvidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "viewerPurpose": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "completionSpans",
+        "coreSpans",
+        "disposition",
+        "dispositionReason",
+        "id",
+        "meaningChangingFollowups",
+        "requiredContextSpans",
+        "valueEvidenceSpans",
+        "viewerPurpose"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunity"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicOpportunity.json",
+  "$ref": "#/$defs/TopicOpportunity",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

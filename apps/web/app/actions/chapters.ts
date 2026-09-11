@@ -19,7 +19,11 @@ import {
   resolveChapterBrief,
 } from "@/lib/harness/default-brief";
 import { parseDollarMicros } from "@/lib/harness/money";
-import { TOPIC_POLICY } from "@/lib/harness/topic-defaults";
+import {
+  isTopicPolicy,
+  TOPIC_POLICY,
+  TOPIC_SELECTION_POLICY,
+} from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
 
 const INTENT_MEMO_KEY = "temniaIntentSha256";
@@ -182,7 +186,7 @@ export async function startChapterRun(
         existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
       );
       const same =
-        existing.routeSnapshot.editorialPolicy !== TOPIC_POLICY &&
+        !isTopicPolicy(existing.routeSnapshot.editorialPolicy) &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
         existing.brief === brief &&
@@ -313,7 +317,7 @@ export async function reviewChapterCommand(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
         )
       )
       .limit(1);
@@ -482,7 +486,7 @@ export async function getPendingChapterWorkflowStatus(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
         )
       )
       .limit(1);

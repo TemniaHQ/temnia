@@ -20,6 +20,7 @@ from temnia_pipeline.contracts import (
     ChapterRunInput,
     HarnessArtifactRef,
     HarnessRunStatus,
+    TopicEditorialPatchInput,
     TranscriptRevisionAnnotations,
 )
 from temnia_pipeline.harness.editorial_policy import EditorialPolicy
@@ -501,7 +502,7 @@ class PreparedReviewMutation(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    request: ChapterReviewInput
+    request: ChapterReviewInput | TopicEditorialPatchInput
     candidate: HarnessArtifactRef | None
     evidence: HarnessArtifactRef | None = None
     message: Annotated[str, Field(max_length=2000)]

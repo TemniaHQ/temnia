@@ -294,6 +294,8 @@ async function runFullGate(sha) {
       "-e",
       "HARNESS_ENABLED=1",
       "-e",
+      "HARNESS_TOPIC_SELECTION_ENABLED=1",
+      "-e",
       "HARNESS_BACKEND=recorded",
       "-e",
       "HARNESS_ALLOW_RECORDED=1",

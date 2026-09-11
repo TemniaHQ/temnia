@@ -65,11 +65,19 @@ from temnia_pipeline.harness.qualification_editorial import (
     editorial_qualification_prompts,
     validate_editorial_qualification_output,
 )
+from temnia_pipeline.harness.qualification_topic_selection import (
+    TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_STAGES,
+    topic_selection_qualification_prompts,
+    validate_topic_selection_qualification_output,
+)
 from temnia_pipeline.harness.routes import (
     UNPROVEN_ROUTE_PREFIX,
+    ReasoningEffort,
     RouteEligibility,
     RouteEntry,
     RoutePrices,
+    ServiceTier,
     estimate_cost,
 )
 
@@ -85,7 +93,7 @@ _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
 _STAGES = ("summary", "proposal", "verify")
-QualificationSuite = Literal["legacy", "editorial"]
+QualificationSuite = Literal["legacy", "editorial", "topic-selection"]
 _EDITORIAL_PROMPT_GENERATION = 4
 _EDITORIAL_PROMPT_VERSIONS = {
     1: {
@@ -108,10 +116,14 @@ _EDITORIAL_PROMPT_VERSIONS = {
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
+    if suite == "topic-selection":
+        return TOPIC_SELECTION_STAGES
     return ("editorial_assess", "editorial_repair") if suite == "editorial" else _STAGES
 
 
 def _schema_version(stage: str, limits: QualificationLimits) -> str:
+    if limits.suite == "topic-selection":
+        return TOPIC_SELECTION_SCHEMAS[stage]
     if limits.suite == "editorial":
         return {
             "editorial_assess": EDITORIAL_VERDICT_SCHEMA_VERSION,
@@ -182,6 +194,8 @@ class CandidateRoute(BaseModel):
     max_output_tokens: Annotated[int, Field(alias="maxOutputTokens", gt=0)]
     zdr_claim: Literal[True] = Field(alias="zdrClaim")
     prices: CandidatePrices
+    reasoning_effort: ReasoningEffort | None = Field(default=None, alias="reasoningEffort")
+    service_tier: ServiceTier | None = Field(default=None, alias="serviceTier")
 
 
 class CandidateCatalogue(BaseModel):
@@ -192,9 +206,7 @@ class CandidateCatalogue(BaseModel):
     version: Literal[1]
     catalogue_observed_at: AwareDatetime = Field(alias="catalogueObservedAt")
     catalogue_sha256: Annotated[str, Field(alias="catalogueSha256", pattern=SHA256_PATTERN)]
-    candidates: Annotated[
-        tuple[CandidateRoute, ...], Field(min_length=1, max_length=MAX_CANDIDATES)
-    ]
+    candidates: Annotated[tuple[CandidateRoute, ...], Field(min_length=1)]
 
     @model_validator(mode="after")
     def _unique(self) -> CandidateCatalogue:
@@ -207,13 +219,13 @@ class CandidateCatalogue(BaseModel):
 
 
 class QualificationLimits(BaseModel):
-    """Reviewed caps which callers may lower but never raise."""
+    """Operator limits; historical suites retain their original fixed ceilings."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    max_exposure_micros: Annotated[int, Field(gt=0, le=MAX_EXPOSURE_MICROS)]
-    max_dispatches: Annotated[int, Field(gt=0, le=MAX_DISPATCHES)]
-    max_output_tokens: Annotated[int, Field(ge=256, le=MAX_OUTPUT_TOKENS)]
+    max_exposure_micros: Annotated[int, Field(gt=0)]
+    max_dispatches: Annotated[int, Field(gt=0)]
+    max_output_tokens: Annotated[int, Field(ge=256)]
     proposal_wire: Literal["canonical", "compact"] = "canonical"
     suite: QualificationSuite = "legacy"
     request_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 300
@@ -222,7 +234,13 @@ class QualificationLimits(BaseModel):
 
     @model_validator(mode="after")
     def _suite_wire(self) -> QualificationLimits:
-        if self.suite == "editorial" and self.proposal_wire != "canonical":
+        if self.suite != "topic-selection" and (
+            self.max_exposure_micros > MAX_EXPOSURE_MICROS
+            or self.max_dispatches > MAX_DISPATCHES
+            or self.max_output_tokens > MAX_OUTPUT_TOKENS
+        ):
+            raise ValueError("historical qualification suite exceeds its fixed ceilings")
+        if self.suite != "legacy" and self.proposal_wire != "canonical":
             raise ValueError("the editorial suite has no proposal-wire selection")
         return self
 
@@ -391,15 +409,15 @@ class _QualificationJournal:
             for candidate in catalogue.candidates
             for stage in _suite_stages(limits.suite)
         ]
-        if limits.proposal_wire == "compact" or limits.suite == "editorial":
+        if limits.proposal_wire == "compact" or limits.suite != "legacy":
             prompts = qualification_prompts(limits.proposal_wire, limits.suite)
             for call in calls:
                 stage = call["stage"]
                 call.update(
                     {
                         **(
-                            {"suite": "editorial"}
-                            if limits.suite == "editorial"
+                            {"suite": limits.suite}
+                            if limits.suite != "legacy"
                             else {"proposalWire": "compact"}
                         ),
                         "promptVersion": prompts[stage][2],
@@ -432,8 +450,9 @@ class _QualificationJournal:
         }
         if limits.proposal_wire == "compact":
             value["proposalWire"] = "compact"
+        if limits.suite != "legacy":
+            value["suite"] = limits.suite
         if limits.suite == "editorial":
-            value["suite"] = "editorial"
             value["editorialPromptGeneration"] = _EDITORIAL_PROMPT_GENERATION
         forbidden = api_key.encode()
         if forbidden in canonical_json(value):
@@ -488,8 +507,8 @@ class _QualificationJournal:
             call.update(
                 {
                     **(
-                        {"suite": "editorial"}
-                        if limits.get("suite") == "editorial"
+                        {"suite": limits["suite"]}
+                        if limits.get("suite", "legacy") != "legacy"
                         else {"proposalWire": "compact"}
                     ),
                     "promptVersion": prompt_version,
@@ -500,6 +519,10 @@ class _QualificationJournal:
         self.value["admittedExposureMicros"] = exposure + estimated_cost_micros
         self.value["status"] = "running"
         self.save()
+
+    def call_identity(self, candidate_id: str, stage: str) -> dict[str, Any]:
+        """Return the admitted call for exact native-schema evidence before dispatch."""
+        return self._call(candidate_id, stage)
 
     def request_sent(self, candidate_id: str, stage: str, sanitized: dict[str, Any]) -> None:
         call = self._call(candidate_id, stage)
@@ -537,7 +560,7 @@ class _QualificationJournal:
             raise
         digest = hashlib.sha256(raw).hexdigest()
         response_ref = {"path": str(path), "sha256": digest, "sizeBytes": len(raw)}
-        if call.get("proposalWire") == "compact" or call.get("suite") == "editorial":
+        if call.get("proposalWire") == "compact" or call.get("suite", "legacy") != "legacy":
             response_ref.update(
                 {
                     "promptVersion": call["promptVersion"],
@@ -641,8 +664,8 @@ def _provisional_route(candidate: CandidateRoute, observed: date) -> RouteEntry:
             probed_at=observed,
         ),
         prices=candidate.prices.route_prices(),
-        reasoning_effort=None,
-        service_tier=None,
+        reasoning_effort=candidate.reasoning_effort,
+        service_tier=candidate.service_tier,
         cache_enabled=False,
     )
 
@@ -697,6 +720,8 @@ def qualification_prompts(
     suite: QualificationSuite = "legacy",
 ) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the three seats."""
+    if suite == "topic-selection":
+        return dict(topic_selection_qualification_prompts())
     if suite == "editorial":
         return dict(editorial_qualification_prompts())
     window = qualification_window()
@@ -739,6 +764,9 @@ def _validate_grounding(
     proposal_wire: Literal["canonical", "compact"] = "canonical",
     suite: QualificationSuite = "legacy",
 ) -> None:
+    if suite == "topic-selection":
+        validate_topic_selection_qualification_output(stage, output)
+        return
     if suite == "editorial":
         validate_editorial_qualification_output(stage, output)
         return
@@ -827,6 +855,8 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
         "model": body["model"],
         "store": body["store"],
         "maxCompletionTokens": body.get("max_completion_tokens"),
+        "reasoningEffort": body.get("reasoning_effort"),
+        "serviceTier": body.get("service_tier"),
         "providerOptions": body["providerOptions"],
         "responseFormat": {
             "type": response_format_values.get("type"),
@@ -906,15 +936,31 @@ class _QualificationModel(WrapperModel):
             estimated_cost_micros=estimate.amount_micros,
             prompt_version=(
                 metadata.prompt_version
-                if self.limits.proposal_wire == "compact" or self.limits.suite == "editorial"
+                if self.limits.proposal_wire == "compact" or self.limits.suite != "legacy"
                 else None
             ),
             schema_version=(
                 metadata.schema_version
-                if self.limits.proposal_wire == "compact" or self.limits.suite == "editorial"
+                if self.limits.proposal_wire == "compact" or self.limits.suite != "legacy"
                 else None
             ),
         )
+        if self.limits.suite == "topic-selection":
+            prompt, output_type, _ = prompts[self.stage]
+            output_object = self.customize_request_parameters(
+                model_request_parameters
+            ).output_object
+            if output_object is None:
+                raise QualificationRefusal("topic qualification lacks its native output schema")
+            call = self.journal.call_identity(self.candidate_id, self.stage)
+            call.update(
+                {
+                    "outputContractSha256": _sha(output_type.model_json_schema()),
+                    "promptSha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                    "nativeSchemaSha256": _sha(output_object.json_schema),
+                }
+            )
+            self.journal.save()
         try:
             response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
@@ -1040,7 +1086,7 @@ async def run_qualification(
     lookup_transport: httpx.AsyncBaseTransport | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> dict[str, Any]:
-    """Run at most three sequential strict-schema requests per candidate."""
+    """Run the selected finite strict-schema suite sequentially with durable spend evidence."""
     if not api_key:
         raise QualificationRefusal("AI_GATEWAY_API_KEY is required")
     resolved_journal = journal_path.resolve()
@@ -1058,6 +1104,8 @@ async def run_qualification(
     if receipts_path.exists() and any(receipts_path.iterdir()):
         raise QualificationRefusal("qualification receipt directory is not empty")
     candidates = _load_candidate_source(candidate_path)
+    if limits.suite != "topic-selection" and len(candidates.catalogue.candidates) > MAX_CANDIDATES:
+        raise QualificationRefusal("historical qualification exceeds its candidate ceiling")
     journal = _QualificationJournal.create(
         path=journal_path,
         receipts=receipts_path,
@@ -1261,13 +1309,13 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
             raise QualificationRefusal("legacy qualification cannot declare editorial generation")
         expected_prompt_versions = {
             stage: prompt[2]
-            for stage, prompt in qualification_prompts(limits.proposal_wire).items()
+            for stage, prompt in qualification_prompts(limits.proposal_wire, limits.suite).items()
         }
     calls_value = value.get("calls")
     if not isinstance(calls_value, list):
         raise QualificationRefusal("qualification journal call list is invalid")
     calls = cast("list[object]", calls_value)
-    if len(calls) > MAX_DISPATCHES:
+    if limits.suite != "topic-selection" and len(calls) > MAX_DISPATCHES:
         raise QualificationRefusal("qualification journal call list is invalid")
     expected = {
         (candidate.id, stage)
@@ -1298,8 +1346,8 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
         state = str(call.get("state"))
         if identity not in expected or identity in observed or state not in allowed_states:
             raise QualificationRefusal("qualification journal call identity or state is invalid")
-        if (limits.proposal_wire == "compact" or limits.suite == "editorial") and (
-            (limits.suite == "editorial" and call.get("suite") != "editorial")
+        if (limits.proposal_wire == "compact" or limits.suite != "legacy") and (
+            (limits.suite != "legacy" and call.get("suite") != limits.suite)
             or (limits.proposal_wire == "compact" and call.get("proposalWire") != "compact")
             or call.get("promptVersion") != expected_prompt_versions[identity[1]]
             or call.get("schemaVersion") != _schema_version(identity[1], limits)

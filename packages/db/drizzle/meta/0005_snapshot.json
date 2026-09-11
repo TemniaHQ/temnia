@@ -1,0 +1,3545 @@
+{
+  "id": "2e951931-91b0-48db-928e-50d542e4d3c6",
+  "prevId": "82e28dc1-2beb-4a0a-aa81-e3f9d27320d2",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.chapter_review_event": {
+      "name": "chapter_review_event",
+      "schema": "",
+      "columns": {
+        "action": {
+          "name": "action",
+          "type": "chapter_review_action",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_revision": {
+          "name": "base_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "mutation_key": {
+          "name": "mutation_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "resulting_revision": {
+          "name": "resulting_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "chapter_review_event_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "chapter_review_event_mutation_idx": {
+          "name": "chapter_review_event_mutation_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "mutation_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "chapter_review_event_created_by_user_id_fk": {
+          "name": "chapter_review_event_created_by_user_id_fk",
+          "tableFrom": "chapter_review_event",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "chapter_review_event_organization_id_organization_id_fk": {
+          "name": "chapter_review_event_organization_id_organization_id_fk",
+          "tableFrom": "chapter_review_event",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "chapter_review_event_scoped_source_fk": {
+          "name": "chapter_review_event_scoped_source_fk",
+          "tableFrom": "chapter_review_event",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "chapter_review_event_scoped_run_fk": {
+          "name": "chapter_review_event_scoped_run_fk",
+          "tableFrom": "chapter_review_event",
+          "tableTo": "harness_run",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "run_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "chapter_review_event_in_organization": {
+          "name": "chapter_review_event_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"chapter_review_event\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"chapter_review_event\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "chapter_review_event_base_revision_nonnegative_check": {
+          "name": "chapter_review_event_base_revision_nonnegative_check",
+          "value": "\"chapter_review_event\".\"base_revision\" >= 0"
+        },
+        "chapter_review_event_resulting_revision_positive_check": {
+          "name": "chapter_review_event_resulting_revision_positive_check",
+          "value": "\"chapter_review_event\".\"resulting_revision\" IS NULL OR \"chapter_review_event\".\"resulting_revision\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.chapter_revision": {
+      "name": "chapter_revision",
+      "schema": "",
+      "columns": {
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_revision": {
+          "name": "base_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "mutation_key": {
+          "name": "mutation_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "chapter_revision_number_idx": {
+          "name": "chapter_revision_number_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "revision",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chapter_revision_mutation_idx": {
+          "name": "chapter_revision_mutation_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "mutation_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "chapter_revision_created_by_user_id_fk": {
+          "name": "chapter_revision_created_by_user_id_fk",
+          "tableFrom": "chapter_revision",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "chapter_revision_organization_id_organization_id_fk": {
+          "name": "chapter_revision_organization_id_organization_id_fk",
+          "tableFrom": "chapter_revision",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "chapter_revision_scoped_source_fk": {
+          "name": "chapter_revision_scoped_source_fk",
+          "tableFrom": "chapter_revision",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "chapter_revision_scoped_run_fk": {
+          "name": "chapter_revision_scoped_run_fk",
+          "tableFrom": "chapter_revision",
+          "tableTo": "harness_run",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "run_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "chapter_revision_scoped_artifact_fk": {
+          "name": "chapter_revision_scoped_artifact_fk",
+          "tableFrom": "chapter_revision",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "chapter_revision_in_organization": {
+          "name": "chapter_revision_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"chapter_revision\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"chapter_revision\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "chapter_revision_revision_positive_check": {
+          "name": "chapter_revision_revision_positive_check",
+          "value": "\"chapter_revision\".\"revision\" > 0"
+        },
+        "chapter_revision_base_revision_positive_check": {
+          "name": "chapter_revision_base_revision_positive_check",
+          "value": "\"chapter_revision\".\"base_revision\" IS NULL OR \"chapter_revision\".\"base_revision\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_artifact": {
+      "name": "harness_artifact",
+      "schema": "",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "harness_artifact_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transcript_id": {
+          "name": "transcript_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transcript_revision": {
+          "name": "transcript_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "harness_artifact_fingerprint_idx": {
+          "name": "harness_artifact_fingerprint_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "harness_artifact_organization_id_organization_id_fk": {
+          "name": "harness_artifact_organization_id_organization_id_fk",
+          "tableFrom": "harness_artifact",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_artifact_scoped_source_fk": {
+          "name": "harness_artifact_scoped_source_fk",
+          "tableFrom": "harness_artifact",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_artifact_scoped_transcript_fk": {
+          "name": "harness_artifact_scoped_transcript_fk",
+          "tableFrom": "harness_artifact",
+          "tableTo": "transcript",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "transcript_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_artifact_scoped_transcript_revision_fk": {
+          "name": "harness_artifact_scoped_transcript_revision_fk",
+          "tableFrom": "harness_artifact",
+          "tableTo": "transcript_revision",
+          "columnsFrom": [
+            "organization_id",
+            "transcript_id",
+            "transcript_revision"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "transcript_id",
+            "revision"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "harness_artifact_scoped_id_idx": {
+          "name": "harness_artifact_scoped_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "source_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "harness_artifact_in_organization": {
+          "name": "harness_artifact_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_artifact\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_artifact\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_artifact_fingerprint_length_check": {
+          "name": "harness_artifact_fingerprint_length_check",
+          "value": "length(\"harness_artifact\".\"fingerprint\") = 64"
+        },
+        "harness_artifact_sha256_length_check": {
+          "name": "harness_artifact_sha256_length_check",
+          "value": "length(\"harness_artifact\".\"sha256\") = 64"
+        },
+        "harness_artifact_size_nonnegative_check": {
+          "name": "harness_artifact_size_nonnegative_check",
+          "value": "\"harness_artifact\".\"size_bytes\" >= 0"
+        },
+        "harness_artifact_transcript_pair_check": {
+          "name": "harness_artifact_transcript_pair_check",
+          "value": "(\"harness_artifact\".\"transcript_id\" IS NULL) = (\"harness_artifact\".\"transcript_revision\" IS NULL)"
+        },
+        "harness_artifact_evidence_transcript_check": {
+          "name": "harness_artifact_evidence_transcript_check",
+          "value": "\"harness_artifact\".\"kind\" <> 'evidence' OR \"harness_artifact\".\"transcript_id\" IS NOT NULL"
+        },
+        "harness_artifact_transcript_revision_positive_check": {
+          "name": "harness_artifact_transcript_revision_positive_check",
+          "value": "\"harness_artifact\".\"transcript_revision\" IS NULL OR \"harness_artifact\".\"transcript_revision\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_artifact_dependency": {
+      "name": "harness_artifact_dependency",
+      "schema": "",
+      "columns": {
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "input_artifact_id": {
+          "name": "input_artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "harness_artifact_dependency_organization_id_organization_id_fk": {
+          "name": "harness_artifact_dependency_organization_id_organization_id_fk",
+          "tableFrom": "harness_artifact_dependency",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_artifact_dependency_consumer_fk": {
+          "name": "harness_artifact_dependency_consumer_fk",
+          "tableFrom": "harness_artifact_dependency",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_artifact_dependency_input_fk": {
+          "name": "harness_artifact_dependency_input_fk",
+          "tableFrom": "harness_artifact_dependency",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "input_artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "harness_artifact_dependency_pk": {
+          "name": "harness_artifact_dependency_pk",
+          "columns": [
+            "organization_id",
+            "artifact_id",
+            "input_artifact_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "harness_artifact_dependency_in_organization": {
+          "name": "harness_artifact_dependency_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_artifact_dependency\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_artifact_dependency\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_artifact_dependency_not_self_check": {
+          "name": "harness_artifact_dependency_not_self_check",
+          "value": "\"harness_artifact_dependency\".\"artifact_id\" <> \"harness_artifact_dependency\".\"input_artifact_id\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_attempt": {
+      "name": "harness_attempt",
+      "schema": "",
+      "columns": {
+        "actual_cost_micros": {
+          "name": "actual_cost_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempt_number": {
+          "name": "attempt_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cost_status": {
+          "name": "cost_status",
+          "type": "harness_cost_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "dispatched_at": {
+          "name": "dispatched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimated_cost_micros": {
+          "name": "estimated_cost_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "family": {
+          "name": "family",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "heartbeat_at": {
+          "name": "heartbeat_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_token": {
+          "name": "owner_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "remote_handle": {
+          "name": "remote_handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result_artifact_id": {
+          "name": "result_artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "route": {
+          "name": "route",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "harness_attempt_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'reserved'"
+        },
+        "usage": {
+          "name": "usage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {
+        "harness_attempt_number_idx": {
+          "name": "harness_attempt_number_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "attempt_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "harness_attempt_organization_id_organization_id_fk": {
+          "name": "harness_attempt_organization_id_organization_id_fk",
+          "tableFrom": "harness_attempt",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_attempt_scoped_source_fk": {
+          "name": "harness_attempt_scoped_source_fk",
+          "tableFrom": "harness_attempt",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_attempt_scoped_operation_fk": {
+          "name": "harness_attempt_scoped_operation_fk",
+          "tableFrom": "harness_attempt",
+          "tableTo": "harness_operation",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "operation_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_attempt_scoped_run_fk": {
+          "name": "harness_attempt_scoped_run_fk",
+          "tableFrom": "harness_attempt",
+          "tableTo": "harness_run",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "run_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_attempt_scoped_result_artifact_fk": {
+          "name": "harness_attempt_scoped_result_artifact_fk",
+          "tableFrom": "harness_attempt",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "result_artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "harness_attempt_scoped_id_idx": {
+          "name": "harness_attempt_scoped_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "source_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "harness_attempt_in_organization": {
+          "name": "harness_attempt_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_attempt\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_attempt\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_attempt_number_positive_check": {
+          "name": "harness_attempt_number_positive_check",
+          "value": "\"harness_attempt\".\"attempt_number\" > 0"
+        },
+        "harness_attempt_request_hash_length_check": {
+          "name": "harness_attempt_request_hash_length_check",
+          "value": "length(\"harness_attempt\".\"request_hash\") = 64"
+        },
+        "harness_attempt_estimated_cost_nonnegative_check": {
+          "name": "harness_attempt_estimated_cost_nonnegative_check",
+          "value": "\"harness_attempt\".\"estimated_cost_micros\" >= 0"
+        },
+        "harness_attempt_actual_cost_nonnegative_check": {
+          "name": "harness_attempt_actual_cost_nonnegative_check",
+          "value": "\"harness_attempt\".\"actual_cost_micros\" IS NULL OR \"harness_attempt\".\"actual_cost_micros\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_operation": {
+      "name": "harness_operation",
+      "schema": "",
+      "columns": {
+        "config_hash": {
+          "name": "config_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "input_hash": {
+          "name": "input_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "harness_operation_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result_artifact_id": {
+          "name": "result_artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "semantic_key": {
+          "name": "semantic_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "harness_operation_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "harness_operation_semantic_key_idx": {
+          "name": "harness_operation_semantic_key_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "semantic_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "harness_operation_organization_id_organization_id_fk": {
+          "name": "harness_operation_organization_id_organization_id_fk",
+          "tableFrom": "harness_operation",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_operation_scoped_source_fk": {
+          "name": "harness_operation_scoped_source_fk",
+          "tableFrom": "harness_operation",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_operation_scoped_run_fk": {
+          "name": "harness_operation_scoped_run_fk",
+          "tableFrom": "harness_operation",
+          "tableTo": "harness_run",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "run_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_operation_scoped_result_artifact_fk": {
+          "name": "harness_operation_scoped_result_artifact_fk",
+          "tableFrom": "harness_operation",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "result_artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "harness_operation_scoped_id_idx": {
+          "name": "harness_operation_scoped_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "source_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "harness_operation_in_organization": {
+          "name": "harness_operation_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_operation\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_operation\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_operation_semantic_key_length_check": {
+          "name": "harness_operation_semantic_key_length_check",
+          "value": "length(\"harness_operation\".\"semantic_key\") = 64"
+        },
+        "harness_operation_input_hash_length_check": {
+          "name": "harness_operation_input_hash_length_check",
+          "value": "length(\"harness_operation\".\"input_hash\") = 64"
+        },
+        "harness_operation_config_hash_length_check": {
+          "name": "harness_operation_config_hash_length_check",
+          "value": "length(\"harness_operation\".\"config_hash\") = 64"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_reservation": {
+      "name": "harness_reservation",
+      "schema": "",
+      "columns": {
+        "amount_micros": {
+          "name": "amount_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_micros": {
+          "name": "settled_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "harness_reservation_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        }
+      },
+      "indexes": {
+        "harness_reservation_attempt_idx": {
+          "name": "harness_reservation_attempt_idx",
+          "columns": [
+            {
+              "expression": "attempt_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "harness_reservation_organization_id_organization_id_fk": {
+          "name": "harness_reservation_organization_id_organization_id_fk",
+          "tableFrom": "harness_reservation",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_reservation_scoped_source_fk": {
+          "name": "harness_reservation_scoped_source_fk",
+          "tableFrom": "harness_reservation",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_reservation_scoped_run_fk": {
+          "name": "harness_reservation_scoped_run_fk",
+          "tableFrom": "harness_reservation",
+          "tableTo": "harness_run",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "run_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_reservation_scoped_attempt_fk": {
+          "name": "harness_reservation_scoped_attempt_fk",
+          "tableFrom": "harness_reservation",
+          "tableTo": "harness_attempt",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "attempt_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "harness_reservation_in_organization": {
+          "name": "harness_reservation_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_reservation\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_reservation\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_reservation_amount_nonnegative_check": {
+          "name": "harness_reservation_amount_nonnegative_check",
+          "value": "\"harness_reservation\".\"amount_micros\" >= 0"
+        },
+        "harness_reservation_settled_nonnegative_check": {
+          "name": "harness_reservation_settled_nonnegative_check",
+          "value": "\"harness_reservation\".\"settled_micros\" IS NULL OR \"harness_reservation\".\"settled_micros\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.harness_run": {
+      "name": "harness_run",
+      "schema": "",
+      "columns": {
+        "accepted_revision": {
+          "name": "accepted_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "brief": {
+          "name": "brief",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "budget_micros": {
+          "name": "budget_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "current_revision": {
+          "name": "current_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "dispatch_count": {
+          "name": "dispatch_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_artifact_id": {
+          "name": "evidence_artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "lane": {
+          "name": "lane",
+          "type": "harness_run_lane",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "repair_count": {
+          "name": "repair_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "request_key": {
+          "name": "request_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reserved_micros": {
+          "name": "reserved_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "route_snapshot": {
+          "name": "route_snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "spent_micros": {
+          "name": "spent_micros",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "harness_run_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "workflow_id": {
+          "name": "workflow_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workflow_run_id": {
+          "name": "workflow_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "harness_run_request_key_idx": {
+          "name": "harness_run_request_key_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "request_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "harness_run_organization_id_organization_id_fk": {
+          "name": "harness_run_organization_id_organization_id_fk",
+          "tableFrom": "harness_run",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "harness_run_scoped_source_fk": {
+          "name": "harness_run_scoped_source_fk",
+          "tableFrom": "harness_run",
+          "tableTo": "source",
+          "columnsFrom": [
+            "organization_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "harness_run_scoped_evidence_artifact_fk": {
+          "name": "harness_run_scoped_evidence_artifact_fk",
+          "tableFrom": "harness_run",
+          "tableTo": "harness_artifact",
+          "columnsFrom": [
+            "organization_id",
+            "source_id",
+            "evidence_artifact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "source_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "harness_run_scoped_id_idx": {
+          "name": "harness_run_scoped_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "source_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "harness_run_in_organization": {
+          "name": "harness_run_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"harness_run\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"harness_run\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "harness_run_budget_nonnegative_check": {
+          "name": "harness_run_budget_nonnegative_check",
+          "value": "\"harness_run\".\"budget_micros\" >= 0"
+        },
+        "harness_run_spent_nonnegative_check": {
+          "name": "harness_run_spent_nonnegative_check",
+          "value": "\"harness_run\".\"spent_micros\" >= 0"
+        },
+        "harness_run_reserved_nonnegative_check": {
+          "name": "harness_run_reserved_nonnegative_check",
+          "value": "\"harness_run\".\"reserved_micros\" >= 0"
+        },
+        "harness_run_current_revision_nonnegative_check": {
+          "name": "harness_run_current_revision_nonnegative_check",
+          "value": "\"harness_run\".\"current_revision\" >= 0"
+        },
+        "harness_run_accepted_revision_positive_check": {
+          "name": "harness_run_accepted_revision_positive_check",
+          "value": "\"harness_run\".\"accepted_revision\" IS NULL OR \"harness_run\".\"accepted_revision\" > 0"
+        },
+        "harness_run_dispatch_count_nonnegative_check": {
+          "name": "harness_run_dispatch_count_nonnegative_check",
+          "value": "\"harness_run\".\"dispatch_count\" >= 0"
+        },
+        "harness_run_repair_count_nonnegative_check": {
+          "name": "harness_run_repair_count_nonnegative_check",
+          "value": "\"harness_run\".\"repair_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.member": {
+      "name": "member",
+      "schema": "",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'member'"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "member_organization_user_idx": {
+          "name": "member_organization_user_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "member_user_idx": {
+          "name": "member_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "member_organization_id_organization_id_fk": {
+          "name": "member_organization_id_organization_id_fk",
+          "tableFrom": "member",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "member_user_id_user_id_fk": {
+          "name": "member_user_id_user_id_fk",
+          "tableFrom": "member",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "member_in_organization": {
+          "name": "member_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"member\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"member\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.organization": {
+      "name": "organization",
+      "schema": "",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "logo": {
+          "name": "logo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "organization_slug_idx": {
+          "name": "organization_slug_idx",
+          "columns": [
+            {
+              "expression": "slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "organization_is_current": {
+          "name": "organization_is_current",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"organization\".\"id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"organization\".\"id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        },
+        "organization_enumerable_by_pipeline": {
+          "name": "organization_enumerable_by_pipeline",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "temnia_pipeline"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.user": {
+      "name": "user",
+      "schema": "",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_verified": {
+          "name": "email_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "image": {
+          "name": "image",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "user_email_idx": {
+          "name": "user_email_idx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "user_is_member_or_self": {
+          "name": "user_is_member_or_self",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"user\".\"id\" = NULLIF(current_setting('app.user_id', true), '')::uuid OR EXISTS (\n        SELECT 1 FROM \"member\" m\n        WHERE m.user_id = \"user\".\"id\" AND m.organization_id = NULLIF(current_setting('app.organization_id', true), '')::uuid\n      )",
+          "withCheck": "\"user\".\"id\" = NULLIF(current_setting('app.user_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.artifact": {
+      "name": "artifact",
+      "schema": "",
+      "columns": {
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "artifact_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_prefix": {
+          "name": "storage_prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "artifact_source_kind_idx": {
+          "name": "artifact_source_kind_idx",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "artifact_organization_id_organization_id_fk": {
+          "name": "artifact_organization_id_organization_id_fk",
+          "tableFrom": "artifact",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "artifact_source_id_source_id_fk": {
+          "name": "artifact_source_id_source_id_fk",
+          "tableFrom": "artifact",
+          "tableTo": "source",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "artifact_in_organization": {
+          "name": "artifact_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"artifact\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"artifact\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.project": {
+      "name": "project",
+      "schema": "",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "project_organization_idx": {
+          "name": "project_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "project_created_by_user_id_fk": {
+          "name": "project_created_by_user_id_fk",
+          "tableFrom": "project",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "project_organization_id_organization_id_fk": {
+          "name": "project_organization_id_organization_id_fk",
+          "tableFrom": "project",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "project_in_organization": {
+          "name": "project_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"project\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"project\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.source": {
+      "name": "source",
+      "schema": "",
+      "columns": {
+        "audio_channels": {
+          "name": "audio_channels",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "audio_codec": {
+          "name": "audio_codec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deletion_requested_at": {
+          "name": "deletion_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fps": {
+          "name": "fps",
+          "type": "numeric(8, 3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "ingest_heartbeat_at": {
+          "name": "ingest_heartbeat_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ingest_percent": {
+          "name": "ingest_percent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ingest_stage": {
+          "name": "ingest_stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ingest_workflow_id": {
+          "name": "ingest_workflow_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "master_key": {
+          "name": "master_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_filename": {
+          "name": "original_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ready_at": {
+          "name": "ready_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "source_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'uploading'"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "video_codec": {
+          "name": "video_codec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "width": {
+          "name": "width",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "source_project_idx": {
+          "name": "source_project_idx",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "source_organization_status_idx": {
+          "name": "source_organization_status_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "source_created_by_user_id_fk": {
+          "name": "source_created_by_user_id_fk",
+          "tableFrom": "source",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "source_organization_id_organization_id_fk": {
+          "name": "source_organization_id_organization_id_fk",
+          "tableFrom": "source",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "source_project_id_project_id_fk": {
+          "name": "source_project_id_project_id_fk",
+          "tableFrom": "source",
+          "tableTo": "project",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "source_organization_id_idx": {
+          "name": "source_organization_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "source_in_organization": {
+          "name": "source_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"source\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"source\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.transcript": {
+      "name": "transcript",
+      "schema": "",
+      "columns": {
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "current_revision": {
+          "name": "current_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "heartbeat_at": {
+          "name": "heartbeat_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "percent": {
+          "name": "percent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ready_at": {
+          "name": "ready_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "speaker_labels": {
+          "name": "speaker_labels",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "transcript_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "workflow_id": {
+          "name": "workflow_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "transcript_source_idx": {
+          "name": "transcript_source_idx",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transcript_organization_status_idx": {
+          "name": "transcript_organization_status_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transcript_organization_id_organization_id_fk": {
+          "name": "transcript_organization_id_organization_id_fk",
+          "tableFrom": "transcript",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "transcript_source_id_source_id_fk": {
+          "name": "transcript_source_id_source_id_fk",
+          "tableFrom": "transcript",
+          "tableTo": "source",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "transcript_organization_source_id_idx": {
+          "name": "transcript_organization_source_id_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "source_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "transcript_in_organization": {
+          "name": "transcript_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"transcript\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"transcript\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.transcript_revision": {
+      "name": "transcript_revision",
+      "schema": "",
+      "columns": {
+        "base_revision": {
+          "name": "base_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "transcript_revision_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transcript_id": {
+          "name": "transcript_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "word_count": {
+          "name": "word_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "transcript_revision_idx": {
+          "name": "transcript_revision_idx",
+          "columns": [
+            {
+              "expression": "transcript_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "revision",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transcript_revision_created_by_user_id_fk": {
+          "name": "transcript_revision_created_by_user_id_fk",
+          "tableFrom": "transcript_revision",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "transcript_revision_organization_id_organization_id_fk": {
+          "name": "transcript_revision_organization_id_organization_id_fk",
+          "tableFrom": "transcript_revision",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "transcript_revision_transcript_id_transcript_id_fk": {
+          "name": "transcript_revision_transcript_id_transcript_id_fk",
+          "tableFrom": "transcript_revision",
+          "tableTo": "transcript",
+          "columnsFrom": [
+            "transcript_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "transcript_revision_organization_transcript_revision_idx": {
+          "name": "transcript_revision_organization_transcript_revision_idx",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "transcript_id",
+            "revision"
+          ]
+        }
+      },
+      "policies": {
+        "transcript_revision_in_organization": {
+          "name": "transcript_revision_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"transcript_revision\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"transcript_revision\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.upload": {
+      "name": "upload",
+      "schema": "",
+      "columns": {
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "multipart_upload_id": {
+          "name": "multipart_upload_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "part_size_bytes": {
+          "name": "part_size_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "upload_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "upload_active_fingerprint_idx": {
+          "name": "upload_active_fingerprint_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"upload\".\"status\" = 'active'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "upload_status_activity_idx": {
+          "name": "upload_status_activity_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_activity_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "upload_organization_id_organization_id_fk": {
+          "name": "upload_organization_id_organization_id_fk",
+          "tableFrom": "upload",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "upload_source_id_source_id_fk": {
+          "name": "upload_source_id_source_id_fk",
+          "tableFrom": "upload",
+          "tableTo": "source",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "upload_in_organization": {
+          "name": "upload_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"upload\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"upload\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.usage_ledger": {
+      "name": "usage_ledger",
+      "schema": "",
+      "columns": {
+        "detail": {
+          "name": "detail",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "usage_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workflow_id": {
+          "name": "workflow_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "usage_ledger_organization_kind_idx": {
+          "name": "usage_ledger_organization_kind_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recorded_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "usage_ledger_idempotency_idx": {
+          "name": "usage_ledger_idempotency_idx",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"usage_ledger\".\"idempotency_key\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "usage_ledger_organization_id_organization_id_fk": {
+          "name": "usage_ledger_organization_id_organization_id_fk",
+          "tableFrom": "usage_ledger",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "usage_ledger_source_id_source_id_fk": {
+          "name": "usage_ledger_source_id_source_id_fk",
+          "tableFrom": "usage_ledger",
+          "tableTo": "source",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "usage_ledger_in_organization": {
+          "name": "usage_ledger_in_organization",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "temnia_app",
+            "temnia_pipeline"
+          ],
+          "using": "\"usage_ledger\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid",
+          "withCheck": "\"usage_ledger\".\"organization_id\" = NULLIF(current_setting('app.organization_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {
+    "public.chapter_review_action": {
+      "name": "chapter_review_action",
+      "schema": "public",
+      "values": [
+        "accept",
+        "reject",
+        "nudge",
+        "restore",
+        "merge",
+        "undo",
+        "retry",
+        "cancel",
+        "raise_budget",
+        "topic_edit"
+      ]
+    },
+    "public.chapter_review_event_state": {
+      "name": "chapter_review_event_state",
+      "schema": "public",
+      "values": [
+        "applied",
+        "conflict",
+        "refused"
+      ]
+    },
+    "public.harness_artifact_kind": {
+      "name": "harness_artifact_kind",
+      "schema": "public",
+      "values": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint",
+        "speech_assignment"
+      ]
+    },
+    "public.harness_attempt_state": {
+      "name": "harness_attempt_state",
+      "schema": "public",
+      "values": [
+        "reserved",
+        "dispatching",
+        "running",
+        "succeeded",
+        "failed_known",
+        "outcome_unknown",
+        "cancel_requested",
+        "cancelled_confirmed"
+      ]
+    },
+    "public.harness_cost_status": {
+      "name": "harness_cost_status",
+      "schema": "public",
+      "values": [
+        "estimated",
+        "reported",
+        "reconciled",
+        "unknown"
+      ]
+    },
+    "public.harness_operation_kind": {
+      "name": "harness_operation_kind",
+      "schema": "public",
+      "values": [
+        "recognize",
+        "align",
+        "diarize",
+        "speech_coverage",
+        "evidence",
+        "model",
+        "compile",
+        "render",
+        "check",
+        "export"
+      ]
+    },
+    "public.harness_operation_status": {
+      "name": "harness_operation_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "outcome_unknown",
+        "cancelled"
+      ]
+    },
+    "public.harness_reservation_state": {
+      "name": "harness_reservation_state",
+      "schema": "public",
+      "values": [
+        "active",
+        "settled",
+        "released"
+      ]
+    },
+    "public.harness_run_lane": {
+      "name": "harness_run_lane",
+      "schema": "public",
+      "values": [
+        "chapters",
+        "transcription"
+      ]
+    },
+    "public.harness_run_status": {
+      "name": "harness_run_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "running",
+        "needs_review",
+        "ready",
+        "budget_paused",
+        "outcome_unknown",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "public.artifact_kind": {
+      "name": "artifact_kind",
+      "schema": "public",
+      "values": [
+        "master",
+        "hls",
+        "peaks",
+        "thumbnails",
+        "audio",
+        "shots"
+      ]
+    },
+    "public.source_status": {
+      "name": "source_status",
+      "schema": "public",
+      "values": [
+        "uploading",
+        "uploaded",
+        "processing",
+        "ready",
+        "failed"
+      ]
+    },
+    "public.transcript_revision_kind": {
+      "name": "transcript_revision_kind",
+      "schema": "public",
+      "values": [
+        "machine",
+        "correction"
+      ]
+    },
+    "public.transcript_status": {
+      "name": "transcript_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "processing",
+        "ready",
+        "failed"
+      ]
+    },
+    "public.upload_status": {
+      "name": "upload_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "completed",
+        "aborted"
+      ]
+    },
+    "public.usage_kind": {
+      "name": "usage_kind",
+      "schema": "public",
+      "values": [
+        "storage_bytes",
+        "processing_seconds",
+        "transcription_seconds",
+        "provider_cost_micros"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

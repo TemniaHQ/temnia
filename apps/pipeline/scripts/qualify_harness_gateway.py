@@ -19,6 +19,8 @@ from temnia_pipeline.harness.qualification import (
     reconcile_journal,
     run_qualification,
 )
+from temnia_pipeline.harness.qualification_topic_selection import bind_topic_selection_qualification
+from temnia_pipeline.harness.routes import load_route_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,7 +40,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--max-dispatches", required=True, type=int)
     run.add_argument("--max-output-tokens", required=True, type=int)
     run.add_argument("--proposal-wire", choices=("canonical", "compact"), default="canonical")
-    run.add_argument("--suite", choices=("legacy", "editorial"), default="legacy")
+    run.add_argument(
+        "--suite", choices=("legacy", "editorial", "topic-selection"), default="legacy"
+    )
     run.add_argument("--request-timeout-seconds", type=float, default=300)
     run.add_argument("--lookup-timeout-seconds", type=float, default=10)
     run.add_argument("--lookup-wait-seconds", type=float, default=30)
@@ -49,10 +53,25 @@ def parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--journal", required=True, type=Path)
     reconcile.add_argument("--journal-sha256", required=True)
     reconcile.add_argument("--report", required=True, type=Path)
+    bind = commands.add_parser(
+        "bind-topics", help="bind exact topic request receipts to a snapshot"
+    )
+    bind.add_argument("--snapshot", required=True, type=Path)
+    bind.add_argument("--reports", required=True, nargs="+", type=Path)
+    bind.add_argument("--output", required=True, type=Path)
+    bind.add_argument("--max-output-tokens", required=True, type=int)
     return result
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.command == "bind-topics":
+        bind_topic_selection_qualification(
+            load_route_snapshot(args.snapshot),
+            args.reports,
+            args.output,
+            max_output_tokens=args.max_output_tokens,
+        )
+        return 0
     api_key = os.environ.get("AI_GATEWAY_API_KEY")
     if not api_key:
         raise QualificationRefusal("AI_GATEWAY_API_KEY is required in the environment")

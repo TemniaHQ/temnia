@@ -21,9 +21,10 @@ from temnia_pipeline.contracts import (
     HarnessRunStatus,
     Scope,
     State,
+    TopicEditorialPatchInput,
     TranscriptRevisionAnnotations,
 )
-from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY, is_topic_policy
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
 from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.runtime_types import (
@@ -212,8 +213,9 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         config_value = request.config.model_dump(mode="json")
         if existing is not None:
             pinned = existing["route_snapshot"]
-            if (start.editorial_policy == "standalone-topics/1") != (
-                pinned.get("editorialPolicy", "legacy") == "standalone-topics/1"
+            prior_policy = pinned.get("editorialPolicy", "legacy")
+            if (is_topic_policy(start.editorial_policy) or is_topic_policy(prior_policy)) and (
+                start.editorial_policy != prior_policy
             ):
                 raise IdentityConflict("request key was reused across incompatible editorial lanes")
             expected = (
@@ -260,6 +262,13 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             elif existing["status"] == "running" and not same_execution:
                 raise IdentityConflict("run resume is already owned by another execution")
             return StartRunResult(run=_snapshot(existing), created=False)
+        if (
+            start.editorial_policy == TOPIC_SELECTION_POLICY
+            and not settings.topic_selection_enabled
+        ):
+            raise IdentityConflict(
+                "new topic selection runs are disabled until deployment qualification"
+            )
         source = await _lock_ready_source(conn, request.sourceId)
         transcript = _pinned(source)
         prefix = f"org/{request.scope.organizationId}/source/{request.sourceId}/"
@@ -282,7 +291,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             route_value["editorialPolicy"] = start.editorial_policy
             if settings.chapter_llama_config is not None:
                 route_value["chapterLlama"] = settings.chapter_llama_config.model_dump(mode="json")
-        if start.editorial_policy == TOPIC_POLICY:
+        if is_topic_policy(start.editorial_policy):
             route_value["topicShotDetector"] = settings.topic_shot_detector
         row = await (
             await conn.execute(
@@ -1051,7 +1060,7 @@ async def commit_review_mutation(
 
 async def _existing_render_request(
     conn: AsyncConnection[dict[str, Any]],
-    command: ChapterReviewInput,
+    command: ChapterReviewInput | TopicEditorialPatchInput,
     run: Mapping[str, Any],
     revision: int | None,
 ) -> RenderRevisionRequest | None:

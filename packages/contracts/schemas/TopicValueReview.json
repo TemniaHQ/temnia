@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicValueReview": {
+      "$id": "#/$defs/TopicValueReview",
+      "type": "object",
+      "properties": {
+        "deliveredValue": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "focusedDevelopment": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "openingEffectiveness": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "reconstructedPurpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reconstructedTakeaway": {
+          "type": "string",
+          "minLength": 1
+        },
+        "viewerReasonToWatch": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "deliveredValue",
+        "focusedDevelopment",
+        "openingEffectiveness",
+        "reconstructedPurpose",
+        "reconstructedTakeaway",
+        "viewerReasonToWatch"
+      ],
+      "additionalProperties": false,
+      "title": "TopicValueReview"
+    }
+  },
+  "$id": "TopicValueReview.json",
+  "$ref": "#/$defs/TopicValueReview",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,4 +1,9 @@
-import { ChapterReviewInputSchema } from "@temnia/contracts";
+import {
+  ChapterReviewInputSchema,
+  TopicCandidateSchema,
+  TopicEditorialPatchInputSchema,
+  TopicEditorialPatchOperationSchema,
+} from "@temnia/contracts";
 import { z } from "zod";
 import { TopicStartInstructionsSchema } from "./topic-defaults";
 
@@ -27,6 +32,37 @@ export const TopicReviewIntentSchema = z
         : command.sectionId !== null)
   );
 export type TopicReviewIntent = z.infer<typeof TopicReviewIntentSchema>;
+
+export const TopicEditorialPatchIntentSchema =
+  TopicEditorialPatchInputSchema.omit({ scope: true });
+export type TopicEditorialPatchIntent = z.infer<
+  typeof TopicEditorialPatchIntentSchema
+>;
+
+// Drafts are deliberately incomplete; submitted commands use the strict contract above.
+const DraftSpanSchema = z.object({
+  firstSentenceId: z.string(),
+  lastSentenceId: z.string(),
+});
+export const TopicEditorialDraftSchema = z.object({
+  baseRevision: z.number().int().positive(),
+  drafts: z.array(
+    TopicCandidateSchema.extend({
+      completionSpans: z.array(DraftSpanSchema),
+      coreSpans: z.array(DraftSpanSchema),
+      firstSentenceId: z.string(),
+      lastSentenceId: z.string(),
+      meaningChangingFollowups: z.array(DraftSpanSchema),
+      purpose: z.string(),
+      reason: z.string(),
+      requiredContextSpans: z.array(DraftSpanSchema),
+      title: z.string(),
+    })
+  ),
+  kind: TopicEditorialPatchOperationSchema.shape.kind,
+  parents: z.array(z.string()),
+  reason: z.string(),
+});
 
 export function restoreTopicIntent<T>(
   raw: string | null,

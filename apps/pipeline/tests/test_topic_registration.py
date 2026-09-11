@@ -10,7 +10,9 @@ from temporalio import activity
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from temnia_pipeline.harness.models import harness_pydantic_ai_plugin
+from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchWorkflow
 from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
+from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
 from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunWorkflow
 
@@ -32,6 +34,8 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
                     ChapterReviewWorkflow,
                     TopicRunWorkflow,
                     TopicReviewWorkflow,
+                    TopicSelectionWorkflow,
+                    TopicEditorialPatchWorkflow,
                 ],
             },
         )
@@ -47,3 +51,7 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
     assert "agent__topic_propose_v1__model_request" in names
     assert "agent__topic_cold_review_v1__model_request" in names
     assert "agent__topic_source_review_v1__model_request" in names
+    assert "agent__topic_selection_author_v2__model_request" in names
+    assert "agent__topic_selection_cold_v2__model_request" in names
+    assert "agent__topic_selection_source_v2__model_request" in names
+    assert "agent__topic_selection_patch_v2__model_request" in names

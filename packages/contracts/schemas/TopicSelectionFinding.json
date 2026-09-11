@@ -1,0 +1,97 @@
+{
+  "$defs": {
+    "TopicSelectionFinding": {
+      "$id": "#/$defs/TopicSelectionFinding",
+      "type": "object",
+      "properties": {
+        "affectedCandidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "missing_setup",
+            "missing_qualification",
+            "unfinished_discussion",
+            "unsupported_title",
+            "weak_viewer_value",
+            "unfocused_extent",
+            "duplicate_core",
+            "missed_opportunity",
+            "transcript_uncertainty",
+            "physical_boundary_constraint"
+          ]
+        },
+        "opportunityIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "required",
+            "preference",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "affectedCandidateIds",
+        "evidenceSpans",
+        "id",
+        "kind",
+        "opportunityIds",
+        "reason",
+        "severity"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionFinding"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicSelectionFinding.json",
+  "$ref": "#/$defs/TopicSelectionFinding",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

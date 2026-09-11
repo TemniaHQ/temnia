@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "TopicSelectionDecision": {
+      "$id": "#/$defs/TopicSelectionDecision",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "select",
+            "decline",
+            "unresolved"
+          ]
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateId",
+        "disposition",
+        "evidenceSpans",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionDecision"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicSelectionDecision.json",
+  "$ref": "#/$defs/TopicSelectionDecision",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

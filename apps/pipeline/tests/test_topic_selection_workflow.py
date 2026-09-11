@@ -1,0 +1,517 @@
+"""Connected selection behaviors with real prompts/grounding and mocked I/O boundaries.
+
+These exercise no paid model and do not establish actual editorial quality or server replay.
+"""
+
+# Test doubles replace persistence and model transport, not editorial validators.
+# pyright: reportPrivateUsage=false
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+import pytest
+
+from temnia_pipeline.contracts import (
+    HarnessArtifactKind,
+    HarnessArtifactRef,
+    HarnessEvidence,
+    TopicEditorialRubric,
+    TopicOpportunity,
+    TopicPortfolioReview,
+    TopicProposal,
+    TopicSelectionColdReview,
+    TopicSelectionDraft,
+    TopicSelectionPatch,
+    TopicSelectionRecord,
+)
+from temnia_pipeline.harness import topic_selection_workflow as module
+from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown
+from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
+from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
+from temnia_pipeline.harness.topic_selection import SELECTION_POLICY, content_hash, make_rubric
+from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
+from test_harness_hierarchy_workflow import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
+from test_topic_compiler import _candidate, _case, _span
+from test_topic_editorial import _cold, _criterion, _source
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic import BaseModel
+
+    from temnia_pipeline.harness.activities import HarnessActivities
+    from temnia_pipeline.harness.models import HarnessModelDeps
+    from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan, SelectionContext
+
+
+EVIDENCE = augment_topic_evidence(_case().model_copy(update={"sourceId": SOURCE_ID}))
+CANDIDATE = _candidate("discussion", 0, 3)
+
+
+def opportunity(*, selected: bool) -> TopicOpportunity:
+    return TopicOpportunity.model_validate(
+        {
+            "id": "useful-discussion",
+            "candidateIds": [CANDIDATE.id] if selected else [],
+            "completionSpans": [_span(3)],
+            "coreSpans": [_span(1)],
+            "disposition": "proposed" if selected else "needs_evidence",
+            "dispositionReason": "The source develops a useful explanation.",
+            "meaningChangingFollowups": [],
+            "requiredContextSpans": [_span(0)],
+            "valueEvidenceSpans": [_span(1, 3)],
+            "viewerPurpose": "Understand the explanation.",
+        }
+    )
+
+
+def draft(*, selected: bool) -> TopicSelectionDraft:
+    return TopicSelectionDraft(
+        proposal=TopicProposal(
+            version=1,
+            summary="Independent editorial opportunities.",
+            candidates=[CANDIDATE] if selected else [],
+        ),
+        opportunities=[opportunity(selected=True)] if selected else [],
+    )
+
+
+def cold() -> TopicSelectionColdReview:
+    return TopicSelectionColdReview.model_validate(
+        {
+            **_cold(CANDIDATE.id).model_dump(mode="json"),
+            "value": {
+                "reconstructedPurpose": "Understand the explanation.",
+                "reconstructedTakeaway": "The qualification completes the claim.",
+                **{
+                    name: _criterion().model_dump(mode="json")
+                    for name in (
+                        "viewerReasonToWatch",
+                        "deliveredValue",
+                        "openingEffectiveness",
+                        "focusedDevelopment",
+                    )
+                },
+            },
+        }
+    )
+
+
+def portfolio(*, selected: bool, missing: bool = False, weak: bool = False) -> TopicPortfolioReview:
+    finding = {
+        "id": "missing" if missing else "weak",
+        "kind": "missed_opportunity" if missing else "weak_viewer_value",
+        "affectedCandidateIds": [] if missing else [CANDIDATE.id],
+        "evidenceSpans": [_span(1)],
+        "opportunityIds": ["useful-discussion"],
+        "reason": "The source supports this finding.",
+        "severity": "required",
+    }
+    return TopicPortfolioReview.model_validate(
+        {
+            "candidates": [_source(CANDIDATE.id)] if selected else [],
+            "findings": [finding] if missing or weak else [],
+            "missingOpportunities": [opportunity(selected=False)] if missing else [],
+            "opportunities": [
+                {
+                    "opportunityId": "useful-discussion",
+                    "candidateIds": [CANDIDATE.id],
+                    "evidenceSpans": [_span(1)],
+                    "reason": "This treatment contains the core.",
+                    "status": "unresolved" if weak else "represented",
+                }
+            ]
+            if selected
+            else [],
+            "selection": [
+                {
+                    "candidateId": CANDIDATE.id,
+                    "disposition": "decline" if weak else "select",
+                    "evidenceSpans": [_span(1)],
+                    "reason": "Value assessed against the brief.",
+                }
+            ]
+            if selected
+            else [],
+            "summary": "Source opportunities and selected treatments were independently assessed.",
+        }
+    )
+
+
+class AgentDouble:
+    def __init__(self, outputs: list[object]) -> None:
+        self.outputs = outputs
+        self.calls: list[HarnessModelDeps] = []
+
+    async def run(self, prompt: str, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+        self.calls.append(kwargs["deps"])
+        assert self.outputs, "unexpected extra editorial call"
+        output = self.outputs.pop(0)
+        if isinstance(output, Exception):
+            raise output
+        if callable(output):
+            output = output(json.loads(prompt.split("SOURCE DATA\n", 1)[1]))
+        return SimpleNamespace(output=output)
+
+
+class Program:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        initial: TopicSelectionDraft,
+        sources: list[object],
+        patches: list[object],
+        colds: list[object] | None = None,
+    ) -> None:
+        _, self.routes = _settings()
+        self.request = _request().model_copy(update={"brief": "A specialist audience."})
+        self.request = self.request.model_copy(
+            update={"config": self.request.config.model_copy(update={"maxRepairs": 2})}
+        )
+        start = module.StartRunRequest(
+            request=self.request,
+            editorial_policy=SELECTION_POLICY,
+            workflow=module.WorkflowIdentity(workflow_id="selection", workflow_run_id="run"),
+        )
+        self.run = _snapshot(start, self.routes).model_copy(
+            update={"editorial_policy": SELECTION_POLICY}
+        )
+        self.objects: dict[UUID, BaseModel] = {}
+        self.saved: list[tuple[str, HarnessArtifactRef]] = []
+        self.compiled: TopicCompilation | None = None
+        self.final_context: SelectionContext | None = None
+        self.render_count = 0
+        self.author = AgentDouble([initial])
+        self.cold = AgentDouble(colds if colds is not None else [cold()])
+        self.source = AgentDouble(sources)
+        self.patch = AgentDouble(patches)
+        self.activities = TopicSelectionActivities(
+            cast("HarnessActivities", SimpleNamespace(_recorded_output=lambda _name: None))  # pyright: ignore[reportUnknownLambdaType]
+        )
+        monkeypatch.setattr(self.activities, "load", self.load)
+        monkeypatch.setattr(self.activities, "read", self.read)
+        monkeypatch.setattr(self.activities, "require_record", self.require_record)
+        monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
+        monkeypatch.setattr(self.activities.topics, "publish", self.publish)
+        monkeypatch.setattr(module, "topic_selection_author_v2", self.author)
+        monkeypatch.setattr(module, "topic_selection_cold_v2", self.cold)
+        monkeypatch.setattr(module, "topic_selection_source_v2", self.source)
+        monkeypatch.setattr(module, "topic_selection_patch_v2", self.patch)
+        monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
+        monkeypatch.setattr(
+            module.workflow,
+            "info",
+            lambda: SimpleNamespace(
+                workflow_id="selection", run_id="run", task_queue="selection-tests"
+            ),
+        )
+
+    async def load(
+        self, context: SelectionContext
+    ) -> tuple[
+        RunSnapshot,
+        HarnessEvidence,
+        TopicEditorialRubric | None,
+        TopicSelectionRecord | None,
+    ]:
+        return (
+            self.run,
+            EVIDENCE,
+            cast("TopicEditorialRubric", self.objects[context.rubric.id])
+            if context.rubric
+            else None,
+            cast("TopicSelectionRecord", self.objects[context.selection.id])
+            if context.selection
+            else None,
+        )
+
+    async def read(self, _context: SelectionContext, ref: HarnessArtifactRef) -> object:
+        return self.objects[ref.id].model_dump(mode="json")
+
+    async def require_record(self, *_args: object, **_kwargs: object) -> None:
+        pass
+
+    async def publish(
+        self,
+        _context: TopicContext,
+        *,
+        content: BaseModel,
+        format_name: str,
+        kind: str,
+        **_kwargs: object,
+    ) -> HarnessArtifactRef:
+        digest = content_hash(content)
+        ref = HarnessArtifactRef(
+            id=uuid5(NAMESPACE_URL, format_name + digest),
+            fingerprint=digest,
+            sha256=digest,
+            kind=HarnessArtifactKind(kind),
+            sizeBytes=1,
+            storageKey=f"tests/{digest}.json",
+        )
+        self.objects[ref.id] = content
+        self.saved.append((format_name, ref))
+        return ref
+
+    async def response_ref(
+        self, context: SelectionContext, plan: SelectionCallPlan, _output: BaseModel | None
+    ) -> HarnessArtifactRef:
+        return await self.publish(
+            TopicContext(run=context.run, evidence=context.evidence),
+            content=make_rubric(plan.stage),
+            kind="model_response",
+            format_name="test-paid-response",
+        )
+
+    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, PLR0911
+        if name == "start_chapter_run":
+            assert value.editorial_policy == SELECTION_POLICY
+            return StartRunResult(run=self.run, created=True)
+        if name == "build_chapter_evidence":
+            return EvidenceResult(
+                artifact=EVIDENCE_REF,
+                sentence_count=4,
+                word_count=4,
+                duration_ms=4000,
+                lexical_state="present",
+            )
+        if name == "claim_chapter_repair":
+            self.run = self.run.model_copy(update={"repair_count": self.run.repair_count + 1})
+            return self.run
+        operations: dict[str, Callable[..., Any]] = {
+            "prepare_topic_selection_rubric": self.activities.rubric,
+            "prepare_topic_selection_call": self.activities.prepare,
+            "save_topic_selection": self.activities.save,
+            "save_topic_selection_assessment": self.activities.save_assessment,
+            "stop_topic_selection": self.activities.stop,
+        }
+        if name in operations:
+            return await operations[name](value)
+        if name == "compile_topic_selection":
+            self.final_context = value
+            self.compiled = await self.activities.compile(value)
+            return self.compiled
+        if name == "accept_initial_chapter_revision":
+            self.run = self.run.model_copy(update={"current_revision": 1})
+            return self.run
+        if name == "render_topic_revision":
+            assert self.compiled is not None
+            self.render_count = len(self.compiled.edit.videos)
+            return TopicRenderResult(
+                count=self.render_count, technical_passed=True, descriptor=self.compiled.artifact
+            )
+        if name == "update_chapter_run_stage":
+            self.run = self.run.model_copy(update={"status": value.status})
+            return self.run
+        message = f"unexpected activity: {name}"
+        raise AssertionError(message)
+
+
+def add_patch(payload: dict[str, Any]) -> TopicSelectionPatch:
+    return TopicSelectionPatch.model_validate(
+        {
+            **{
+                name: payload[name]
+                for name in ("baseSelectionSha256", "evidenceSha256", "rubricSha256")
+            },
+            "summary": "A missed worthwhile discussion now has a treatment.",
+            "operations": [
+                {
+                    "id": "add",
+                    "affectedCandidateIds": [],
+                    "findingIds": ["source:missing"],
+                    "kind": "add_opportunity",
+                    "opportunities": [opportunity(selected=True)],
+                    "reason": "Recover the independently found discussion.",
+                    "replacementCandidates": [CANDIDATE.model_copy(deep=True)],
+                }
+            ],
+        }
+    )
+
+
+async def test_empty_author_is_challenged_then_missing_discussion_is_added(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[portfolio(selected=False, missing=True), portfolio(selected=True)],
+        patches=[add_patch],
+    )
+    result = await TopicSelectionWorkflow().program(run.request)
+    assert result.revision == 1
+    assert len(run.author.calls) == 1
+    assert len(run.source.calls) == 2
+    assert len(run.patch.calls) == len(run.cold.calls) == 1
+    assert run.render_count == 1
+    assert run.final_context is not None
+    assessed = await run.activities.assessment(run.final_context)
+    assert assessed is not None
+    assert str(assessed.executionStatus) == "complete"
+    assert all(
+        call.program_version == SELECTION_POLICY for call in (*run.author.calls, *run.source.calls)
+    )
+    assert run.author.calls[0].route.family != run.source.calls[0].route.family
+
+
+async def test_empty_source_assessment_can_confirm_abstention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch, initial=draft(selected=False), sources=[portfolio(selected=False)], patches=[]
+    )
+    result = await TopicSelectionWorkflow().program(run.request)
+    assert run.render_count == 0
+    assert len(run.source.calls) == 1
+    assert not run.cold.calls
+    assert not run.patch.calls
+    assert "selected no standalone video" in (result.errorMessage or "")
+
+
+async def test_weak_selection_is_dropped_with_its_audience_disposition_retained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def drop(payload: dict[str, Any]) -> TopicSelectionPatch:
+        excluded = opportunity(selected=False).model_dump(mode="json")
+        excluded.update(
+            disposition="not_useful_for_audience",
+            dispositionReason="This explanation is too elementary for the specialist brief.",
+        )
+        return TopicSelectionPatch.model_validate(
+            {
+                **{
+                    name: payload[name]
+                    for name in ("baseSelectionSha256", "evidenceSha256", "rubricSha256")
+                },
+                "summary": "The opportunity remains recorded after dropping its weak treatment.",
+                "operations": [
+                    {
+                        "id": "drop-weak",
+                        "affectedCandidateIds": [CANDIDATE.id],
+                        "findingIds": ["source:weak"],
+                        "kind": "drop",
+                        "opportunities": [excluded],
+                        "reason": "The independent review found no value for this audience.",
+                        "replacementCandidates": [],
+                    }
+                ],
+            }
+        )
+
+    confirmed = portfolio(selected=False).model_dump(mode="json")
+    confirmed["opportunities"] = [
+        {
+            "opportunityId": "useful-discussion",
+            "candidateIds": [],
+            "evidenceSpans": [_span(1).model_dump(mode="json")],
+            "reason": "The explanation adds no value for the specified specialist audience.",
+            "status": "not_useful_for_audience",
+        }
+    ]
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[
+            portfolio(selected=True, weak=True),
+            TopicPortfolioReview.model_validate(confirmed),
+        ],
+        patches=[drop],
+    )
+    result = await TopicSelectionWorkflow().program(run.request)
+    assert run.render_count == 0
+    assert len(run.cold.calls) == 1
+    assert len(run.source.calls) == 2
+    assert len(run.patch.calls) == 1
+    assert run.final_context is not None
+    assert run.final_context.selection is not None
+    selection = TopicSelectionRecord.model_validate(
+        await run.activities.read(run.final_context, run.final_context.selection)
+    )
+    assert not selection.draft.proposal.candidates
+    assert str(selection.draft.opportunities[0].disposition) == "not_useful_for_audience"
+    assessment = await run.activities.assessment(run.final_context)
+    assert assessment is not None
+    assert str(assessment.executionStatus) == "complete"
+    assert "selected no standalone video" in (result.errorMessage or "")
+
+
+async def test_source_invalid_patch_retains_the_prior_assessed_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid(payload: dict[str, Any]) -> TopicSelectionPatch:
+        patch = add_patch(payload)
+        patch.operations[0].replacementCandidates[0].firstSentenceId = "foreign-sentence"
+        return patch
+
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[portfolio(selected=False, missing=True)],
+        patches=[invalid],
+    )
+    result = await TopicSelectionWorkflow().program(run.request)
+    selections = [ref for format_name, ref in run.saved if format_name == "topic-selection/2"]
+    assert len(selections) == 1
+    assert run.final_context is not None
+    assert run.final_context.selection == selections[0]
+    assert any(name == "topic-selection-rejection/2" for name, _ in run.saved)
+    assert "invalid repair" in (result.errorMessage or "")
+    assert run.render_count == 0
+
+
+async def test_review_execution_limit_preserves_unknown_not_false_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch, initial=draft(selected=True), sources=[BudgetExceeded("limited")], patches=[]
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.final_context is not None
+    assessment = await run.activities.assessment(run.final_context)
+    assert assessment is not None
+    assert str(assessment.executionStatus) == "execution_limited"
+    assert assessment.portfolioReview is None
+    assert run.render_count == 1
+    assert not run.patch.calls
+
+
+async def test_unknown_provider_outcome_never_continues_to_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch, initial=draft(selected=True), sources=[OutcomeUnknown("unknown")], patches=[]
+    )
+    with pytest.raises(OutcomeUnknown):
+        await TopicSelectionWorkflow().program(run.request)
+    assert run.compiled is None
+    assert not run.patch.calls
+
+
+async def test_cold_review_with_foreign_candidate_id_is_retained_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong_target = cold().model_copy(update={"candidateId": "foreign-candidate"})
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        colds=[wrong_target],
+        sources=[portfolio(selected=True)],
+        patches=[],
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.final_context is not None
+    assessment = await run.activities.assessment(run.final_context)
+    assert assessment is not None
+    assert not assessment.coldReviews
+    assert assessment.portfolioReview is not None
+    assert len(assessment.responseArtifacts) == 2
+    assert str(assessment.executionStatus) == "needs_review"
+    assert any("different candidate" in reason for reason in assessment.reasons)
+    assert run.render_count == 1

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."chapter_review_action" ADD VALUE 'topic_edit';
