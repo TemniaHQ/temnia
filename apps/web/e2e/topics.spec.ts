@@ -47,7 +47,9 @@ for (const policy of TOPIC_POLICIES) {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/projects");
-    await page.getByLabel("New project").fill(`topic harness ${Date.now()}`);
+    await page
+      .getByLabel("New project", { exact: true })
+      .fill(`topic harness ${Date.now()}`);
     await page
       .getByRole("button", { exact: true, name: "Create project" })
       .click();
@@ -70,8 +72,12 @@ for (const policy of TOPIC_POLICIES) {
     );
     await page.getByRole("tab", { exact: true, name: "Topic videos" }).click();
     const panel = page.getByTestId("topic-panel");
-    await panel.getByLabel("Topic selection program").selectOption(policy);
-    await expect(panel.getByLabel("Topic instructions")).toBeHidden();
+    await panel
+      .getByLabel("Topic selection program", { exact: true })
+      .selectOption(policy);
+    await expect(
+      panel.getByLabel("Topic instructions", { exact: true })
+    ).toBeHidden();
     await panel
       .getByRole("button", { exact: true, name: "Find topic videos" })
       .click();
@@ -202,16 +208,23 @@ for (const policy of TOPIC_POLICIES) {
     await panel
       .getByRole("button", { exact: true, name: "Edit topic selections" })
       .click();
-    await expect(panel.getByLabel("Editorial correction")).toBeVisible();
-    await panel.getByLabel("Editorial correction").selectOption("retitle");
+    await expect(
+      panel.getByLabel("Editorial correction", { exact: true })
+    ).toBeVisible();
     await panel
-      .getByRole("checkbox", { name: edit.videos[0]?.candidate.title ?? "" })
+      .getByLabel("Editorial correction", { exact: true })
+      .selectOption("retitle");
+    await panel
+      .getByRole("checkbox", {
+        exact: true,
+        name: edit.videos[0]?.candidate.title ?? "",
+      })
       .check();
     await panel
       .getByLabel("Video 1 title", { exact: true })
       .fill("Human-corrected faithful topic title");
     await panel
-      .getByLabel("Editorial correction reason")
+      .getByLabel("Editorial correction reason", { exact: true })
       .fill(
         "Correct the title without changing the speech. Synthetic validation only."
       );
