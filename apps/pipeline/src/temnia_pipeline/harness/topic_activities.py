@@ -28,6 +28,10 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import artifacts, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+from temnia_pipeline.harness.models import (
+    TOPIC_ID_NORMALIZATION_VERSION,
+    normalize_initial_topic_response,
+)
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.topic_compiler import (
@@ -192,6 +196,13 @@ class TopicActivities:
         )
         if response != diagnostic.model_response:
             raise HarnessValidationError("topic diagnostic differs from its settled model response")
+        normalization = await self.proposal_normalization_metadata(
+            context, response, stage=diagnostic.model_stage
+        )
+        if retained.metadata.get("candidateIdNormalization") != normalization.get(
+            "candidateIdNormalization"
+        ):
+            raise HarnessValidationError("topic diagnostic changed its identifier normalization")
         validate_evidence(evidence)
         try:
             validate_topic_proposal(evidence, diagnostic.proposal)
@@ -369,12 +380,34 @@ REJECTED PROPOSAL DATA\n""" + json.dumps(
             )
         reference = self.owner._artifact_ref(retained)
         response = MODEL_RESPONSE_ADAPTER.validate_python(await self.read(context, reference))
+        response = normalize_initial_topic_response(
+            response,
+            schema_version=str(retained.metadata.get("schemaVersion", "")),
+            stage=stage,
+        )
         response_text = "".join(
             part.content for part in response.parts if isinstance(part, TextPart)
         )
         if type(output).model_validate_json(response_text) != output:
             raise HarnessValidationError("topic output differs from the original paid response")
         return reference
+
+    async def proposal_normalization_metadata(
+        self, context: TopicContext, response_ref: HarnessArtifactRef, *, stage: str
+    ) -> dict[str, Any]:
+        """Audit derived identifiers beside the unmodified, hash-verified provider receipt."""
+        response = MODEL_RESPONSE_ADAPTER.validate_python(await self.read(context, response_ref))
+        normalized = normalize_initial_topic_response(
+            response, schema_version=TOPIC_PROMPT, stage=stage
+        )
+        if normalized is response:
+            return {}
+        return {
+            "candidateIdNormalization": {
+                "version": TOPIC_ID_NORMALIZATION_VERSION,
+                "rawResponseSha256": response_ref.sha256,
+            }
+        }
 
     async def publish(  # noqa: PLR0913
         self,
@@ -427,6 +460,9 @@ REJECTED PROPOSAL DATA\n""" + json.dumps(
         response = await self.model_response(
             context, stage=request.model_stage, output=request.proposal, family=author.family
         )
+        normalization = await self.proposal_normalization_metadata(
+            context, response, stage=request.model_stage
+        )
         # A corrupt source is not a model error and cannot authorize paid correction.
         validate_evidence(evidence)
         dependencies = tuple(
@@ -462,6 +498,7 @@ REJECTED PROPOSAL DATA\n""" + json.dumps(
                 format_name=diagnostic.format,
                 content=diagnostic,
                 dependencies=dependencies,
+                metadata=normalization,
             )
             return TopicProposalResult(validation=reference, validation_error=str(error))
         assessment = await self.assessment(context)
@@ -475,7 +512,11 @@ REJECTED PROPOSAL DATA\n""" + json.dumps(
             format_name="topic-proposal/1",
             content=request.proposal,
             dependencies=dependencies,
-            metadata={"generatorFamily": author.family, "verifierFamily": verifier.family},
+            metadata={
+                "generatorFamily": author.family,
+                "verifierFamily": verifier.family,
+                **normalization,
+            },
         )
         return TopicProposalResult(artifact=reference)
 
