@@ -190,6 +190,104 @@ endpoint snapshots and retained experiment receipts are stored under
 `/private/tmp/temnia-model-evaluation-preflight-20260911/`; only this content-free record
 is intended for Git.
 
+## Full-source runtime and retained outcomes
+
+The route-profile implementation was frozen at `abb61cb8a3a97412de087e0e56e0c8754e50464d`,
+with packaged input SHA-256
+`085604ac684d72f390d4635c7aa1860061001861e6f9b289fea16f9122553d6b`.
+The isolated server image
+`sha256:5d92cbe0fbf54f235b3a7f94daf8517a4863e9f6eaf199c90db3221ce60ca3df`
+was checked against the original base image's installed dependencies and filesystem
+layers, all 160 packaged Python files, both operator scripts and the complete
+prompt/native-schema roster. All three qualification bindings passed with network
+access disabled, using unchanged original reports and verified response aliases.
+
+Production preparation froze the source, transcript revision, settings and stable
+run/workflow IDs. A final external preparation check refused because the native
+transcript's optional database hash was null. The actual transcript object matched:
+634,934 bytes, SHA-256
+`cf46fa227ab75cdf008d3666d02f67e94b574966dd9d118f09972092986399e4`.
+A separate read-only proof records the exact scope, transcript ID, revision, object
+key, size and observed bytes. The native null, original refusal and prepared bytes
+remain unchanged. The object is rechecked immediately before each paid start and
+compared with persisted evidence afterward; this supplement does not claim that the
+native optional hash was populated.
+
+The first Astra/Azure full-Karma run (`4f366046-ce37-5521-a93f-91f93cedc2d1`)
+completed evidence processing, with source and transcript identities matched. Its
+first author request then reached the existing 300-second client timeout after
+300.24 seconds. The retained error chain is `ReadTimeout` → `APITimeoutError` →
+`OutcomeUnknown`. There is no response, generation handle or reported charge;
+**4,548,260 micros ($4.54826)** remain reserved. No selection, review or video was
+committed. This is an unresolved execution outcome, not a zero editorial score or
+proof that the model cannot select topics. The request was not repeated.
+
+Evidence processing took approximately 11 minutes 19 seconds before author dispatch;
+that time is separate from model latency. The resulting evidence SHA-256 is
+`38da4d18000440a2c9db9a0864866f1c19c34c82b0c9864fb23e5e46c8617219`.
+Terminal Temporal checks found no pending activities or queue backlog. Production
+bundle export and strict offline validation passed; the unfilled label template and
+unlabelled report do not supply human judgments. Astra's owned worker stopped cleanly
+after export. Its unknown expense reservation remains active.
+
+Rajesh then reported that OpenRouter rarely times out in his experience. New Vercel
+dispatches were held while investigating that alternative. Kimi's worker had passed
+readiness, but its workflow and model calls had not started; it was stopped after
+verifying the workflow was absent and all three queues empty. Opus remained unstarted.
+Prepared identities and all original results remain intact. No paid call is in flight.
+
+Across qualification and the single full-source author request, **48 physical model
+requests** were dispatched. **$1.463624** is settled, and **two unknown requests retain
+$4.555631 in estimated reservations**. The reserved amount is not a confirmed charge
+or a guarantee of final cost. No full-source chapter-selection quality result exists;
+human opportunity recall, selected-value precision and publication acceptance remain
+unmeasured. The unlabelled evaluator correctly refuses a quality winner.
+
+The durable private experiment directory is
+`/var/lib/temnia/experiments/karma-mixed-route-profiles-20260911` on the authorized
+server. General staging configuration remains unchanged.
+
+## Gateway follow-up prompted by the trial
+
+The retained failure is a client read timeout, with no Vercel HTTP error response.
+`GatewayConfig` defaults to 300 seconds and the worker uses that default; the model
+activity has a separate ten-minute timeout. The transport deliberately disables
+streaming. This identifies the limit that fired but does not locate the underlying
+delay within the client/network/gateway/upstream provider path.
+
+OpenRouter is a viable next candidate, not an established winner. Its
+[routing controls](https://openrouter.ai/docs/guides/routing/provider-selection)
+support an exact provider allowlist, disabled fallbacks, required parameters and ZDR.
+Its [structured-output interface](https://openrouter.ai/docs/guides/features/structured-outputs)
+supports strict JSON Schema on compatible routes, while
+[usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
+includes cost and reasoning usage. These capabilities still require Temnia's actual
+four-stage requests to qualify.
+
+OpenRouter's [streaming documentation](https://openrouter.ai/docs/api/reference/streaming)
+describes SSE keep-alives and a generation ID header. A streaming condition could make
+progress and generation identity observable before a complete answer, but must retain
+partial-output, terminal-error and unknown-charge handling. It must be compared as a
+transport configuration change, separately from a gateway-only comparison. Merely
+changing the base URL leaves Temnia's client timeout and non-streaming behavior intact.
+
+The public OpenRouter catalogue was read at 16:45 UTC: 443 model records (SHA-256
+`a09af06301205d88ce98b9c96bc868fa5f8a4473593f871f7e2f6406299c66d7`) and
+851 ZDR endpoint records (SHA-256
+`8254d945d8b8677574bb34781926c8b366056f2058b58a8caa0a4b8aab605892`).
+The four named models are listed. Exact ZDR provider availability differs: Astra has
+Azure routes, Gemini has Vertex routes, Opus has Bedrock/Vertex routes, and Kimi's
+listed routes do not include the Alibaba route used here. A comparison that changes
+the upstream provider or quantization must disclose that additional factor.
+
+The current adapter, request policy and cost parser are specific to Vercel. The
+follow-up needs explicit gateway identity in requests/proofs and evaluation, a
+transport-specific policy/accounting adapter, and exact request qualification through
+the existing paid runtime. Existing Vercel receipts cannot qualify OpenRouter. Neither
+recognized OpenRouter key variable was present in the checked staging container;
+the key's secure location is pending. No OpenRouter paid request, implementation
+change or general gateway switch was made in this session.
+
 ## Experiment implementation verification
 
 The controlled operator adds immutable preparation, same-ID workflow start and read-only
@@ -211,4 +309,8 @@ packaged input fingerprint was
 The full clean-commit gate passed for `0fcfc40f6bef3d6763f2d0aed52fd5a835f8e0d7`
 at 15:30:14 UTC: 1,455 Python tests passed (one optional skip), all 16 package tasks,
 both production images and all 20 browser tests. The subsequent route-profile change
-requires its own clean-commit gate and refreshed image/programme identity.
+requires its own clean-commit gate. Its refreshed image/programme identity is recorded
+above. Route-profile verification passed 47 workflow/boot/receipt tests, 91 binding
+and comparison-projection tests, and a real migrated-PostgreSQL/native-HTTP-mock
+integration proving effective allowances, reservations and zero-request settled reuse.
+Whole-package Pyright reports zero errors or warnings.

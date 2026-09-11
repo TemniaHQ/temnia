@@ -42,6 +42,30 @@ with completion and fidelity preserved. Qualification is not editorial acceptanc
 
 ## Necessary experiment-readiness changes
 
+### September 11 gateway follow-up
+
+After the first full-source Astra request reached the client's 300-second read
+timeout, Rajesh reported better OpenRouter reliability in his experience. Hold new
+Vercel experiment starts while assessing OpenRouter. Preserve the unknown Astra
+request, all qualification results and the unstarted Kimi/Opus preparations.
+
+The next comparison must distinguish gateway, upstream provider, streaming behavior
+and timeout policy from model/editorial effects. Use an explicit transport adapter
+with provider pinning, ZDR, strict native schemas, observed routing and actual cost
+accounting; bind gateway and request-policy identity into new qualification proofs
+and comparisons. Reuse the existing workflow and paid ledger. Do not reinterpret
+Vercel receipts as OpenRouter qualification or treat a new comparison as reconciliation
+of an unknown request. A streaming condition must retain early generation identity,
+partial-response failures, terminal accounting and unknown-outcome fences.
+
+Compare the actual full-source requests and completion/latency/charge observability
+before choosing the transport for the editorial audition. A single success or failure
+cannot establish a general reliability rate. The live trial awaits the secure location
+of an OpenRouter credential. Current evidence and the read-only adapter assessment
+are recorded in the [audition record](../design/topic-model-evaluation-2026-09-11.md).
+
+### Initial evaluation projection work
+
 Read-only preflight found two projection errors that prevent a valid actual model-swap
 comparison: source bytes SHA is retained on evidence artifact metadata but the exporter
 looks only for an absent run-pinned SHA; execution identity includes the route snapshot

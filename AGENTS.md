@@ -36,6 +36,14 @@ ceiling admission. Astra/Kimi can be a controlled model swap; the Opus compariso
 both model and output configuration. Earlier failed conditions remain evidence. These
 ceilings describe model requests, not useful video count or duration.
 
+The first full-source author trial ended at the client's 300-second read timeout,
+with no generation handle or returned selection. Rajesh then reported better
+OpenRouter reliability in his experience. New Vercel experiment starts are held for
+that assessment. The observed timeout does not establish which upstream layer was
+slow. Any OpenRouter comparison must bind gateway/provider/request-policy identity,
+qualify its own strict requests and retain expense/unknown-outcome fences. Streaming
+is a separate configuration factor. No gateway or model winner has been established.
+
 **2026-09-11 — Standalone selection quality has a versioned decision and evaluation contract.**
 Rajesh prioritized both missed worthwhile discussions and weak selected discussions, and authorized
 [the complete selection-quality programme](docs/plans/topic-selection-quality.md) after review of
