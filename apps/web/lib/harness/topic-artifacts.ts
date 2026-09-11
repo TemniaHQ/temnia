@@ -11,6 +11,10 @@ import {
   TopicEditSpecSchema,
   TopicExportSchema,
   TopicRendersSchema,
+  type TopicSelectionAssessment,
+  TopicSelectionAssessmentSchema,
+  type TopicSelectionRecord,
+  TopicSelectionRecordSchema,
 } from "@temnia/contracts";
 import type { ZodType } from "zod";
 import { verifiedArtifactJson } from "./artifact";
@@ -38,6 +42,8 @@ export interface TopicRevisionView {
   assessment: TopicAssessment | null;
   exportedCandidateIds: string[];
   exportUrl: string | null;
+  selection?: TopicSelectionRecord | null;
+  selectionAssessment?: TopicSelectionAssessment | null;
   summary: string;
   videos: TopicVideoView[];
 }
@@ -125,7 +131,7 @@ export function topicArtifactIdentity(view: ChapterView): string {
 }
 
 export function topicEditorialStatus(
-  assessment: TopicAssessment | null,
+  assessment: Pick<TopicAssessment, "verifierFamily" | "proposerFamily"> | null,
   candidate: TopicAssessmentCandidate | null
 ):
   | "Passed text review"
@@ -187,6 +193,7 @@ export function reusedContextMs(
 }
 
 /** Hash-load one portfolio and only descriptors bound to its exact revision. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: validate both editorial formats against the same immutable physical portfolio and source scope
 export async function loadTopicRevision(
   sourceId: string,
   view: ChapterView,
@@ -214,7 +221,128 @@ export async function loadTopicRevision(
     "The topic portfolio belongs to another source."
   );
   let assessment: TopicAssessment | null = null;
-  if (editRef.metadata.assessmentArtifactId) {
+  let selectionAssessment: TopicSelectionAssessment | null = null;
+  let selection: TopicSelectionRecord | null = null;
+  let selectionCandidates: TopicAssessmentCandidate[] = [];
+  if (editRef.metadata.selectionArtifactId) {
+    const selectedRef = one(
+      view.artifacts.filter(
+        (item) =>
+          item.id === editRef.metadata.selectionArtifactId &&
+          item.kind === "proposal" &&
+          item.metadata.format === "topic-selection/2" &&
+          item.metadata.runId === run.id
+      ),
+      "The source opportunity inventory is missing or ambiguous."
+    );
+    requireFact(
+      organizationFor(checkedKey(selectedRef, sourceId), sourceId) ===
+        organizationId &&
+        selectedRef.sha256 === editRef.metadata.selectionSha256,
+      "Foreign selection inventory."
+    );
+    selection = await load(selectedRef, TopicSelectionRecordSchema);
+    requireFact(
+      selection.runId === run.id &&
+        selection.evidenceSha256 === edit.evidenceSha256,
+      "The selection inventory belongs to another source or run."
+    );
+    const ref = one(
+      view.artifacts.filter(
+        (item) =>
+          item.id === editRef.metadata.assessmentArtifactId &&
+          item.kind === "checks" &&
+          item.metadata.format === "topic-selection-assessment/2" &&
+          item.metadata.runId === run.id
+      ),
+      "The selection assessment is missing or ambiguous."
+    );
+    requireFact(
+      organizationFor(checkedKey(ref, sourceId), sourceId) === organizationId,
+      "Foreign selection assessment."
+    );
+    selectionAssessment = await load(ref, TopicSelectionAssessmentSchema);
+    requireFact(
+      selectionAssessment.runId === run.id &&
+        selectionAssessment.evidenceSha256 === edit.evidenceSha256 &&
+        selectionAssessment.selectionSha256 ===
+          editRef.metadata.selectionSha256 &&
+        selectionAssessment.rubricSha256 === selection.rubricSha256,
+      "The selection assessment belongs to another source or selection."
+    );
+    // Candidate presentation shares the UI shape; the v2 assessment retains its own identity.
+    selectionCandidates = edit.videos.map(({ candidate }) => {
+      const cold =
+        selectionAssessment?.coldReviews.find(
+          (item) => item.candidateId === candidate.id
+        ) ?? null;
+      const source =
+        selectionAssessment?.portfolioReview?.candidates.find(
+          (item) => item.candidateId === candidate.id
+        ) ?? null;
+      const decision = selectionAssessment?.portfolioReview?.selection.find(
+        (item) => item.candidateId === candidate.id
+      );
+      const valuePass =
+        cold &&
+        [
+          cold.value.deliveredValue,
+          cold.value.focusedDevelopment,
+          cold.value.openingEffectiveness,
+          cold.value.viewerReasonToWatch,
+        ].every((item) => item.status === "pass");
+      const basicPass =
+        cold &&
+        source &&
+        [
+          cold.intelligibleBeginning,
+          cold.coherentTopic,
+          cold.completeDiscussion,
+          cold.titleFaithful,
+          source.faithfulMeaning,
+          source.completeContext,
+          source.distinctPurpose,
+        ].every((item) => item.status === "pass");
+      return {
+        candidateId: candidate.id,
+        coldReview: cold,
+        physicalBoundaryIssues: [],
+        reasons: [
+          decision?.reason,
+          ...(cold
+            ? [
+                cold.value.viewerReasonToWatch,
+                cold.value.deliveredValue,
+                cold.value.focusedDevelopment,
+                cold.value.openingEffectiveness,
+              ]
+                .filter((item) => item.status !== "pass")
+                .map((item) => item.reason)
+            : []),
+          ...(selectionAssessment?.findings
+            .filter((item) => item.affectedCandidateIds.includes(candidate.id))
+            .map((item) => item.reason) ?? []),
+        ].filter((item): item is string => Boolean(item)),
+        sourceReview: source,
+        status: selectionStatus(
+          decision?.disposition,
+          Boolean(
+            valuePass &&
+              basicPass &&
+              !selectionAssessment?.findings.some(
+                (finding) =>
+                  finding.affectedCandidateIds.includes(candidate.id) &&
+                  finding.severity !== "preference"
+              )
+          )
+        ),
+      };
+    });
+  }
+  if (
+    editRef.metadata.assessmentArtifactId &&
+    !editRef.metadata.selectionArtifactId
+  ) {
     const ref = one(
       view.artifacts.filter(
         (item) =>
@@ -270,9 +398,10 @@ export async function loadTopicRevision(
     );
     return {
       assessment:
-        assessment?.candidates.find(
-          (item) => item.candidateId === video.candidate.id
-        ) ?? null,
+        (selectionAssessment
+          ? selectionCandidates
+          : assessment?.candidates
+        )?.find((item) => item.candidateId === video.candidate.id) ?? null,
       captionsUrl: null,
       durationMs: topicDurationMs(start.time, end.time),
       endMs: end.timeMs,
@@ -431,7 +560,19 @@ export async function loadTopicRevision(
     assessment,
     exportedCandidateIds,
     exportUrl,
+    selection,
+    selectionAssessment,
     summary: edit.summary,
     videos,
   };
+}
+
+function selectionStatus(
+  disposition: string | undefined,
+  passed: boolean
+): "rejected" | "passed" | "needs_review" {
+  if (disposition === "decline") {
+    return "rejected";
+  }
+  return disposition === "select" && passed ? "passed" : "needs_review";
 }

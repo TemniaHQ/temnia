@@ -38,7 +38,7 @@ with workflow.unsafe.imports_passed_through():
         TopicRenders,
     )
     from temnia_pipeline.harness import artifacts, runs
-    from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+    from temnia_pipeline.harness.editorial_policy import is_topic_policy
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.rendering import kept_sections
     from temnia_pipeline.harness.review import ReviewRefused
@@ -57,6 +57,8 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.topic_activities import TopicActivities
     from temnia_pipeline.harness.topic_compiler import validate_topic_edit
     from temnia_pipeline.harness.topic_runtime import TopicContext, TopicRenderResult
+    from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+    from temnia_pipeline.harness.topic_selection_runtime import SelectionContext
     from temnia_pipeline.harness.validators import rounded_milliseconds
     from temnia_pipeline.media.chapter_checks import technical_checks_pass
 
@@ -151,7 +153,7 @@ class TopicReviewActivities:
             source_id=ref.source_id,
             run_id=ref.run_id,
         )
-        if run.editorial_policy != TOPIC_POLICY or run.evidence_artifact_id is None:
+        if not is_topic_policy(run.editorial_policy) or run.evidence_artifact_id is None:
             raise ReviewRefused("topic review requires a standalone run with accepted evidence")
         record = await artifacts._artifact_for_read(
             self.owner.ctx.settings.database_url,
@@ -193,6 +195,31 @@ class TopicReviewActivities:
         self, context: TopicContext, edit: HarnessArtifactRef, metadata: dict[str, object]
     ) -> tuple[HarnessArtifactRef, HarnessArtifactRef]:
         """Keep the original proposal and assessment directly reachable after human review."""
+        # The selected reader verifies the frozen policy; metadata is only a dispatch hint.
+        if metadata.get("selectionArtifactId") is not None:
+            selection = await self.reference(context, metadata.get("selectionArtifactId"))
+            assessment = await self.reference(context, metadata.get("assessmentArtifactId"))
+            rubric = await self.reference(context, metadata.get("rubricArtifactId"))
+            if (
+                selection.kind != HarnessArtifactKind.proposal
+                or assessment.kind != HarnessArtifactKind.checks
+                or selection.sha256 != metadata.get("selectionSha256")
+            ):
+                raise ReviewRefused("selection portfolio differs from its editorial lineage")
+            selections = TopicSelectionActivities(self.owner)
+            lineage = SelectionContext(
+                run=context.run,
+                evidence=context.evidence,
+                rubric=rubric,
+                selection=selection,
+                assessment=assessment,
+            )
+            await selections.load(lineage)
+            await selections.assessment(lineage)
+            await self.require_dependencies(
+                context, edit, (context.evidence, rubric, selection, assessment)
+            )
+            return selection, assessment
         proposal = await self.reference(context, metadata.get("proposalArtifactId"))
         assessment = await self.reference(context, metadata.get("assessmentArtifactId"))
         if (
@@ -241,7 +268,10 @@ class TopicReviewActivities:
         ):
             raise ReviewRefused("the portfolio belongs to another run or format")
         edit = TopicEditSpec.model_validate(await self.topics.read(context, ref))
-        _, evidence, _ = await self.topics.load(context)
+        if record.metadata.get("selectionArtifactId") is not None:
+            _, evidence = await self.topics.load_evidence(context)
+        else:
+            _, evidence, _ = await self.topics.load(context)
         if (
             edit.evidenceArtifactId != context.evidence.id
             or context.evidence.id not in record.dependency_ids
@@ -380,9 +410,11 @@ class TopicReviewActivities:
         dependencies = [
             context.evidence.id,
             previous.id,
-            UUID(str(metadata["proposalArtifactId"])),
+            UUID(str(metadata.get("selectionArtifactId", metadata.get("proposalArtifactId")))),
             UUID(str(metadata["assessmentArtifactId"])),
         ]
+        if metadata.get("rubricArtifactId") is not None:
+            dependencies.append(UUID(str(metadata["rubricArtifactId"])))
         try:
             candidate = apply_topic_decision(edit, command)
             validate_topic_edit(
@@ -448,7 +480,7 @@ class TopicReviewActivities:
             source_id=command.sourceId,
             run_id=command.runId,
         )
-        if run.editorial_policy != TOPIC_POLICY:
+        if not is_topic_policy(run.editorial_policy):
             raise ReviewRefused("topic cancellation cannot mutate a chapter run")
         return await self.owner.apply_chapter_review(command)
 
@@ -526,6 +558,7 @@ class TopicReviewActivities:
         self, context: TopicContext, request: ExportRevisionRequest, manifest: HarnessArtifactRef
     ) -> None:
         """Keep the topic manifest's ready CAS separate from historical chapter formats."""
+        run, _ = await self.topics.load_evidence(context)
         async with db.scoped(
             self.owner.ctx.settings.database_url, self.topics.scope(context)
         ) as conn:
@@ -552,7 +585,7 @@ class TopicReviewActivities:
                         context.run.run_id,
                         context.run.source_id,
                         request.revision,
-                        TOPIC_POLICY,
+                        run.editorial_policy,
                         request.revision,
                         request.edit.id,
                         request.edit.sha256,

@@ -5,6 +5,7 @@ import {
   ChapterReviewInputSchema,
   ChapterRunInputSchema,
   TASK_QUEUES,
+  TopicEditorialPatchInputSchema,
   WORKFLOWS,
 } from "@temnia/contracts";
 import { chapterReviewEvent, harnessRun, source, transcript } from "@temnia/db";
@@ -17,6 +18,7 @@ import { harnessSettings } from "@/lib/harness/config";
 import {
   resolveTopicBrief,
   TOPIC_POLICY,
+  TOPIC_SELECTION_POLICY,
   TopicStartInstructionsSchema,
 } from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
@@ -68,6 +70,20 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function topicGeneration(policy: string, input: unknown) {
+  return policy === TOPIC_SELECTION_POLICY
+    ? {
+        intent: {
+          editorialPolicy: policy,
+          input,
+          workflow: WORKFLOWS.topicSelection,
+        },
+        prefix: "topic-selection",
+        workflow: WORKFLOWS.topicSelection,
+      }
+    : { intent: input, prefix: "topic-run", workflow: WORKFLOWS.topicRun };
 }
 
 function intentSha256(value: unknown): string {
@@ -159,6 +175,17 @@ export async function startTopicRun(
     return { message: "The topic request is invalid.", ok: false };
   }
   const brief = resolveTopicBrief(parsed.data);
+  const policy = parsed.data.defaultBriefVersion;
+  if (
+    policy === TOPIC_SELECTION_POLICY &&
+    process.env.HARNESS_TOPIC_SELECTION_ENABLED !== "1"
+  ) {
+    return {
+      message:
+        "The new selection program awaits deployment qualification. Existing topic runs remain reviewable; the earlier program is available for comparison.",
+      ok: false,
+    };
+  }
   const availability = harnessSettings();
   if (!availability.available) {
     return { message: availability.message, ok: false };
@@ -183,7 +210,7 @@ export async function startTopicRun(
         existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
       );
       const same =
-        existing.routeSnapshot.editorialPolicy === TOPIC_POLICY &&
+        existing.routeSnapshot.editorialPolicy === policy &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
         existing.brief === brief &&
@@ -240,14 +267,15 @@ export async function startTopicRun(
   if ("existing" in prepared) {
     return { ok: true, runId: parsed.data.runId };
   }
-  const intentHash = intentSha256(prepared.input);
-  const workflowId = `topic-run/${parsed.data.runId}`;
+  const generation = topicGeneration(policy, prepared.input);
+  const intentHash = intentSha256(generation.intent);
+  const workflowId = `${generation.prefix}/${parsed.data.runId}`;
   try {
     const client = await getTemporalClient();
     const description = await client.withDeadline(
       Date.now() + TEMPORAL_RPC_DEADLINE_MS,
       async () => {
-        const handle = await client.workflow.start(WORKFLOWS.topicRun, {
+        const handle = await client.workflow.start(generation.workflow, {
           args: [prepared.input],
           memo: { [INTENT_MEMO_KEY]: intentHash },
           taskQueue: TASK_QUEUES.pipeline,
@@ -314,7 +342,7 @@ export async function reviewTopicCommand(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
         )
       )
       .limit(1);
@@ -413,9 +441,134 @@ export async function reviewTopicCommand(
   return { ok: true, pending: true, runId: prepared.command.runId };
 }
 
+export async function editTopicPortfolio(
+  input: unknown
+): Promise<TopicActionResult> {
+  const prepared = await scoped(async (tx, scope) => {
+    const parsed = TopicEditorialPatchInputSchema.safeParse({
+      ...(typeof input === "object" && input ? input : {}),
+      scope,
+    });
+    if (!parsed.success) {
+      return { error: "The topic editorial correction is invalid." } as const;
+    }
+    const [run] = await tx
+      .select({ id: harnessRun.id })
+      .from(harnessRun)
+      .where(
+        and(
+          eq(harnessRun.id, parsed.data.runId),
+          eq(harnessRun.sourceId, parsed.data.sourceId),
+          eq(harnessRun.lane, "chapters"),
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+        )
+      )
+      .limit(1);
+    if (!run) {
+      return { error: "Topic run not found." } as const;
+    }
+    const [existing] = await tx
+      .select({
+        payload: chapterReviewEvent.payload,
+        state: chapterReviewEvent.state,
+      })
+      .from(chapterReviewEvent)
+      .where(
+        and(
+          eq(chapterReviewEvent.runId, parsed.data.runId),
+          eq(chapterReviewEvent.mutationKey, parsed.data.mutationKey)
+        )
+      )
+      .limit(1);
+    if (existing) {
+      if (stableJson(existing.payload) !== stableJson(parsed.data)) {
+        return {
+          error:
+            "That editorial correction ID already names a different command.",
+        } as const;
+      }
+      return { existing: existing.state } as const;
+    }
+    return { command: parsed.data } as const;
+  });
+  if ("error" in prepared) {
+    return { message: prepared.error, ok: false };
+  }
+  if ("existing" in prepared) {
+    if (prepared.existing === "applied") {
+      return { ok: true, runId: (input as { runId: string }).runId };
+    }
+    return prepared.existing === "conflict"
+      ? {
+          conflict: true,
+          message: "This command was based on an older topic revision.",
+          ok: false,
+          runId: (input as { runId: string }).runId,
+        }
+      : {
+          message: "This editorial correction was refused.",
+          ok: false,
+          runId: (input as { runId: string }).runId,
+        };
+  }
+  const intentHash = intentSha256(prepared.command);
+  const workflowId = `topic-edit/${prepared.command.runId}/${prepared.command.mutationKey}`;
+  try {
+    const client = await getTemporalClient();
+    const description = await client.withDeadline(
+      Date.now() + TEMPORAL_RPC_DEADLINE_MS,
+      async () => {
+        const handle = await client.workflow.start(
+          WORKFLOWS.topicEditorialPatch,
+          {
+            args: [prepared.command],
+            memo: { [INTENT_MEMO_KEY]: intentHash },
+            taskQueue: TASK_QUEUES.pipeline,
+            workflowExecutionTimeout: "12 hours",
+            workflowId,
+            workflowIdConflictPolicy: "USE_EXISTING",
+            workflowIdReusePolicy: "REJECT_DUPLICATE",
+          }
+        );
+        return handle.describe();
+      }
+    );
+    if (description.memo?.[INTENT_MEMO_KEY] !== intentHash) {
+      return {
+        conflict: true,
+        message:
+          "That editorial correction ID already names a different command.",
+        ok: false,
+        runId: prepared.command.runId,
+      };
+    }
+  } catch {
+    const inspection = await inspectTemporalIntent(workflowId, intentHash);
+    if (inspection.kind === "mismatch") {
+      return {
+        conflict: true,
+        message:
+          "That editorial correction ID already names a different command.",
+        ok: false,
+        runId: prepared.command.runId,
+      };
+    }
+    return {
+      message:
+        "Could not confirm this editorial correction. Check or retry the same command.",
+      ok: false,
+      pending: true,
+      runId: prepared.command.runId,
+    };
+  }
+  revalidatePath(`/sources/${prepared.command.sourceId}`);
+  return { ok: true, pending: true, runId: prepared.command.runId };
+}
+
 const PendingWorkflowSchema = z.discriminatedUnion("kind", [
   z.object({ intent: StartSchema, kind: z.literal("start") }),
   z.object({ intent: z.unknown(), kind: z.literal("review") }),
+  z.object({ intent: z.unknown(), kind: z.literal("patch") }),
 ]);
 
 /** Inspect only one deterministic pending execution after its durable row is absent. */
@@ -453,14 +606,22 @@ export async function getPendingTopicWorkflowStatus(
       scope: ownedScope,
       sourceId: intent.sourceId,
     });
+    const generation = topicGeneration(
+      intent.defaultBriefVersion,
+      workflowInput
+    );
     const inspection = await inspectTemporalIntent(
-      `topic-run/${intent.runId}`,
-      intentSha256(workflowInput)
+      `${generation.prefix}/${intent.runId}`,
+      intentSha256(generation.intent)
     );
     return pendingStatus("topic discovery", inspection);
   }
   const prepared = await scoped(async (tx, scope) => {
-    const command = TopicReviewSchema.safeParse({
+    const commandSchema =
+      parsed.data.kind === "patch"
+        ? TopicEditorialPatchInputSchema
+        : TopicReviewSchema;
+    const command = commandSchema.safeParse({
       ...(typeof parsed.data.intent === "object" && parsed.data.intent
         ? parsed.data.intent
         : {}),
@@ -477,7 +638,7 @@ export async function getPendingTopicWorkflowStatus(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
         )
       )
       .limit(1);
@@ -490,7 +651,7 @@ export async function getPendingTopicWorkflowStatus(
     };
   }
   const inspection = await inspectTemporalIntent(
-    `topic-review/${prepared.runId}/${prepared.mutationKey}`,
+    `${parsed.data.kind === "patch" ? "topic-edit" : "topic-review"}/${prepared.runId}/${prepared.mutationKey}`,
     intentSha256(prepared)
   );
   return pendingStatus("review command", inspection);

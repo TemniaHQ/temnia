@@ -144,6 +144,14 @@ def quantize_time(evidence: HarnessEvidence, time_ms: int) -> Fraction:
     return source_time
 
 
+def candidate_time(evidence: HarnessEvidence, candidate: HarnessBoundaryCandidate) -> Fraction:
+    """Use reproducible exact grid instants for v2 evidence; preserve v1 quantization."""
+    from temnia_pipeline.harness.topic_feasible import derived_candidate_time  # noqa: PLC0415
+
+    derived = derived_candidate_time(evidence, candidate)
+    return derived if derived is not None else quantize_time(evidence, candidate.timeMs)
+
+
 def _public_time(value: Fraction) -> RationalTime:
     if value < 0 or value.numerator > MAX_SAFE_INTEGER or value.denominator > MAX_SAFE_INTEGER:
         raise HarnessValidationError("quantized rational time exceeds public safe integers")
@@ -221,11 +229,13 @@ def _layer_choices(  # noqa: PLR0915
     lexical: _IntervalIndex,
     detected: _IntervalIndex | None,
     required_candidate_id: str | None = None,
+    eligible_candidate_ids: frozenset[str] | None = None,
 ) -> list[_Choice]:
     local_candidates = [
         candidate
         for candidate in evidence.boundaries
-        if candidate.kind != Kind2.edge
+        if (eligible_candidate_ids is None or candidate.id in eligible_candidate_ids)
+        and candidate.kind != Kind2.edge
         and previous_sentence_start <= candidate.timeMs <= next_sentence_end
     ]
     if not local_candidates:
@@ -235,7 +245,7 @@ def _layer_choices(  # noqa: PLR0915
     quantized_times: dict[str, Fraction] = {}
     effective: list[HarnessBoundaryCandidate] = []
     for candidate in local_candidates:
-        quantized = quantize_time(evidence, candidate.timeMs)
+        quantized = candidate_time(evidence, candidate)
         quantized_times[candidate.id] = quantized
         reasons = set(candidate.reasons)
         requires_review = candidate.requiresReview
@@ -471,6 +481,7 @@ def compile_chapters(  # noqa: PLR0915
     evidence_sha256: str,
     config: CompilerConfig | None = None,
     boundary_constraints: Mapping[tuple[str, str], str] | None = None,
+    eligible_candidate_ids: frozenset[str] | None = None,
     preserved_proposal: ChapterProposal | None = None,
     preserved_edit: ChapterEditSpec | None = None,
 ) -> ChapterEditSpec:
@@ -498,6 +509,8 @@ def compile_chapters(  # noqa: PLR0915
     if constraints.keys() - transitions:
         raise HarnessValidationError("boundary constraint does not name a proposal transition")
     candidate_ids = {candidate.id for candidate in evidence.boundaries}
+    if eligible_candidate_ids is not None and eligible_candidate_ids - candidate_ids:
+        raise HarnessValidationError("eligible boundary inventory names an unknown candidate")
     if set(constraints.values()) - candidate_ids:
         raise HarnessValidationError("boundary constraint names an unknown evidence candidate")
     sentence_by_id = {sentence.id: sentence for sentence in evidence.sentences}
@@ -549,6 +562,7 @@ def compile_chapters(  # noqa: PLR0915
                 config=config,
                 lexical=lexical,
                 detected=detected,
+                eligible_candidate_ids=eligible_candidate_ids,
                 required_candidate_id=constraints.get(
                     (previous.lastSentenceId, following.firstSentenceId)
                 ),

@@ -57,7 +57,7 @@ def _validate_hash(value: str, name: str) -> None:
         raise HarnessValidationError(f"{name} must be a SHA-256 hex digest")
 
 
-def validate_evidence(evidence: HarnessEvidence) -> None:
+def validate_evidence(evidence: HarnessEvidence) -> None:  # noqa: PLR0915
     """Validate grounding, ownership, timing and finite evidence values."""
     _validate_hash(evidence.transcriptSha256, "transcriptSha256")
     _validate_hash(evidence.sourceFingerprint, "sourceFingerprint")
@@ -130,6 +130,12 @@ def validate_evidence(evidence: HarnessEvidence) -> None:
             or interval.endMs > evidence.durationMs
         ):
             raise HarnessValidationError("speech coverage interval lies outside the source")
+    from temnia_pipeline.harness.topic_feasible import validate_topic_derivation  # noqa: PLC0415
+
+    try:
+        validate_topic_derivation(evidence)
+    except (ValueError, ZeroDivisionError) as error:
+        raise HarnessValidationError("invalid derived topic boundary evidence") from error
 
 
 def validate_proposal(evidence: HarnessEvidence, proposal: ChapterProposal) -> None:

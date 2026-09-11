@@ -32,6 +32,7 @@ from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessRunStatus,
     Scope,
+    TopicEditorialPatchInput,
 )
 from temnia_pipeline.harness import ledger
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
@@ -417,6 +418,8 @@ async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) 
     [
         ("standalone-topics/1", "pyscenedetect-adaptive"),
         ("standalone-topics/1", "scdet"),
+        ("standalone-topics/2", "pyscenedetect-adaptive"),
+        ("standalone-topics/2", "scdet"),
         ("legacy", "pyscenedetect-adaptive"),
         ("chapter-editorial/1", "pyscenedetect-adaptive"),
     ],
@@ -429,7 +432,9 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
     value = snapshot()
     source_id = await ready_source(url)
     start = start_request(source_id, value).model_copy(update={"editorial_policy": policy})
-    initial_settings = replace(settings(value), topic_shot_detector=initial_detector)
+    initial_settings = replace(
+        settings(value), topic_shot_detector=initial_detector, topic_selection_enabled=True
+    )
     changed_settings = replace(
         initial_settings,
         topic_shot_detector="scdet"
@@ -444,7 +449,7 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
             url, start=start, settings=changed_settings, route_snapshot=value
         )
         loaded = await get_run(url, scope=SEEDED, source_id=source_id, run_id=start.request.runId)
-        expected = initial_detector if policy == "standalone-topics/1" else "scdet"
+        expected = initial_detector if policy.startswith("standalone-topics/") else "scdet"
         assert created.run.topic_shot_detector == resumed.run.topic_shot_detector == expected
         assert loaded.topic_shot_detector == expected
         assert resumed.created is False
@@ -458,10 +463,47 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
                 )
             ).fetchone()
         assert retained is not None
-        if policy == "standalone-topics/1":
+        if policy.startswith("standalone-topics/"):
             assert retained["route_snapshot"]["topicShotDetector"] == initial_detector
         else:
             assert "topicShotDetector" not in retained["route_snapshot"]
+    finally:
+        await db.close_pool()
+
+
+@pytest.mark.parametrize("original_policy", ["standalone-topics/1", "standalone-topics/2"])
+async def test_topic_generation_is_exact_and_rollout_does_not_fence_existing_runs(
+    original_policy: str,
+) -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
+    disabled = settings(value)
+    enabled = replace(disabled, topic_selection_enabled=True)
+    try:
+        if original_policy == "standalone-topics/2":
+            with pytest.raises(IdentityConflict, match="disabled until deployment qualification"):
+                await start_or_refetch_run(
+                    url, start=start, settings=disabled, route_snapshot=value
+                )
+        created = await start_or_refetch_run(
+            url, start=start, settings=enabled, route_snapshot=value
+        )
+        resumed = await start_or_refetch_run(
+            url, start=start, settings=disabled, route_snapshot=value
+        )
+        assert resumed.created is False
+        assert resumed.run.editorial_policy == created.run.editorial_policy == original_policy
+        changed = start.model_copy(
+            update={
+                "editorial_policy": "standalone-topics/2"
+                if original_policy == "standalone-topics/1"
+                else "standalone-topics/1"
+            }
+        )
+        with pytest.raises(IdentityConflict, match="incompatible editorial lanes"):
+            await start_or_refetch_run(url, start=changed, settings=enabled, route_snapshot=value)
     finally:
         await db.close_pool()
 
@@ -1513,7 +1555,11 @@ async def test_cancel_refuses_a_run_that_became_ready_under_the_locked_row() -> 
         await db.close_pool()
 
 
-async def test_concurrent_review_revision_cas_persists_applied_and_conflict() -> None:
+@pytest.mark.parametrize("editorial_patch", [False, True])
+async def test_concurrent_review_revision_cas_persists_applied_and_conflict(
+    *,
+    editorial_patch: bool,
+) -> None:
     url = pipeline_url()
     value = snapshot()
     source_id = await ready_source(url)
@@ -1521,7 +1567,9 @@ async def test_concurrent_review_revision_cas_persists_applied_and_conflict() ->
     try:
         await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
         first_artifact: UUID | None = None
-        candidates: list[tuple[ChapterReviewInput, HarnessArtifactRef]] = []
+        candidates: list[
+            tuple[ChapterReviewInput | TopicEditorialPatchInput, HarnessArtifactRef]
+        ] = []
         async with db.scoped(url, SEEDED) as conn:
             initial = await (
                 await conn.execute(
@@ -1556,7 +1604,7 @@ async def test_concurrent_review_revision_cas_persists_applied_and_conflict() ->
         async with db.scoped(url, SEEDED) as conn:
             for index in range(2):
                 mutation = uuid.uuid4()
-                command = ChapterReviewInput(
+                command: ChapterReviewInput | TopicEditorialPatchInput = ChapterReviewInput(
                     action=ChapterReviewAction.restore,
                     baseRevision=1,
                     boundaryId=None,
@@ -1571,6 +1619,31 @@ async def test_concurrent_review_revision_cas_persists_applied_and_conflict() ->
                     targetRevision=None,
                     targetTimeMs=None,
                 )
+                if editorial_patch:
+                    command = TopicEditorialPatchInput.model_validate(
+                        {
+                            "action": "topic_edit",
+                            "version": 1,
+                            "scope": SEEDED,
+                            "runId": start.request.runId,
+                            "sourceId": source_id,
+                            "mutationKey": mutation,
+                            "baseRevision": 1,
+                            "baseEditSha256": hashlib.sha256(b"initial-body").hexdigest(),
+                            "evidenceSha256": "a" * 64,
+                            "reason": "The selected discussion does not deliver viewer value.",
+                            "correctionActiveSeconds": None,
+                            "correctionMeasurementMethod": None,
+                            "operations": [
+                                {
+                                    "operationId": "remove",
+                                    "kind": "drop",
+                                    "affectedCandidateIds": ["weak"],
+                                    "replacementCandidates": [],
+                                }
+                            ],
+                        }
+                    )
                 row = await (
                     await conn.execute(
                         """
@@ -1613,7 +1686,7 @@ async def test_concurrent_review_revision_cas_persists_applied_and_conflict() ->
                 )
 
         async def commit(
-            item: tuple[ChapterReviewInput, HarnessArtifactRef],
+            item: tuple[ChapterReviewInput | TopicEditorialPatchInput, HarnessArtifactRef],
         ) -> str:
             command, candidate = item
             result = await commit_review_mutation(
@@ -1634,6 +1707,12 @@ async def test_concurrent_review_revision_cas_persists_applied_and_conflict() ->
 
         states = await asyncio.gather(*(commit(item) for item in candidates))
         assert sorted(states) == ["applied", "conflict"]
+        assert await asyncio.gather(*(commit(item) for item in candidates)) == states
+        if editorial_patch:
+            command, artifact = candidates[0]
+            changed = command.model_copy(update={"reason": "A different correction."})
+            with pytest.raises(IdentityConflict, match="different payload"):
+                await commit((changed, artifact))
         async with db.scoped(url, SEEDED) as conn:
             run = await (
                 await conn.execute(

@@ -2,6 +2,25 @@
 
 ## Decisions
 
+**2026-09-11 — Standalone selection quality has a versioned decision and evaluation contract.**
+Rajesh prioritized both missed worthwhile discussions and weak selected discussions, and authorized
+[the complete selection-quality programme](docs/plans/topic-selection-quality.md) after review of
+the two supplied engineering plans. `standalone-topics/2` retains source-linked opportunities,
+one frozen audience rubric, isolated cold value/comprehension judgments, source-wide omission and
+portfolio review, and finding-scoped atomic add/merge/split/extent/title/drop repair. A partial
+repair retains every known opportunity; physical-only authority cannot rewrite semantic annotations.
+Human corrections are source-bound immutable revisions and invalidate changed-content acceptance.
+V1 remains an explicit comparison and its histories/artifacts remain supported.
+
+New v2 gateway calls require exact four-schema/prompt/settings qualification; the web and worker
+rollout flag defaults off. Synthetic qualification and production-image mechanics do not establish
+editorial improvement. The standalone evaluator separates editorial value/recall, physical delivery,
+and media-inspected acceptance; whole-source independent human labels remain necessary. No model,
+provider or detector winner is selected by this implementation. See the
+[qualification](docs/runbooks/topic-selection-qualification.md) and
+[evaluation](docs/runbooks/topic-quality-evaluation.md) runbooks. Keep the existing runtime,
+source/expense fences and media foundations; do not broaden this into unrelated hardening.
+
 **2026-09-10 — The immediate editorial target is independently publishable topic videos
 (Rajesh's clarification).** By chapters, Rajesh means interesting standalone discussions extracted
 from a long video for YouTube or Facebook. Necessary surrounding context may appear in more than

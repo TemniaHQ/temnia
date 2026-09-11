@@ -12,7 +12,7 @@ from temporalio import activity
 from temnia_pipeline import db
 from temnia_pipeline.contracts import Scope, TopicEditSpec, TopicRenderedVideo, TopicRenders
 from temnia_pipeline.harness import artifacts
-from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY, is_topic_policy
 from temnia_pipeline.harness.runtime_types import RenderRevisionRequest
 from temnia_pipeline.harness.topic_activities import TopicActivities
 from temnia_pipeline.harness.topic_compiler import validate_topic_edit
@@ -40,7 +40,7 @@ class TopicRenderActivities:
         async def operation() -> TopicRenderResult:
             self.owner._require_enabled()
             run = await self.owner._assert_render_active(request.run, request.revision)
-            if run.editorial_policy != TOPIC_POLICY:
+            if not is_topic_policy(run.editorial_policy):
                 raise HarnessValidationError("topic renderer requires a standalone topic run")
             scope = Scope(
                 organizationId=request.run.scope_organization_id, userId=request.run.scope_user_id
@@ -73,7 +73,10 @@ class TopicRenderActivities:
                 run=request.run, evidence=self.owner._artifact_ref(evidence_record)
             )
             await self.topics.read(context, request.edit)
-            _, evidence, _ = await self.topics.load(context)
+            if run.editorial_policy == TOPIC_POLICY:
+                _, evidence, _ = await self.topics.load(context)
+            else:
+                _, evidence = await self.topics.load_evidence(context)
             validate_topic_edit(
                 evidence, portfolio, expected_evidence_sha256=context.evidence.sha256
             )

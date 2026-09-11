@@ -594,6 +594,7 @@ export const chapterReviewAction = pgEnum("chapter_review_action", [
   "retry",
   "cancel",
   "raise_budget",
+  "topic_edit",
 ]);
 
 export const chapterReviewEventState = pgEnum("chapter_review_event_state", [

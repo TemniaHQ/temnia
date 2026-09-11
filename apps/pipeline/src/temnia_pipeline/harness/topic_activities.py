@@ -27,7 +27,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
-from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY, is_topic_policy
 from temnia_pipeline.harness.models import (
     TOPIC_ID_NORMALIZATION_VERSION,
     normalize_initial_topic_response,
@@ -107,6 +107,25 @@ class TopicActivities:
         if hashlib.sha256(artifacts.canonical_json(raw)).hexdigest() != ref.sha256:
             raise HarnessValidationError("topic input differs from its retained hash")
         return raw
+
+    async def load_evidence(self, context: TopicContext) -> tuple[RunSnapshot, HarnessEvidence]:
+        """Share immutable media evidence across topic generations, never authoring semantics."""
+        self.owner._require_enabled()
+        run = await runs.get_run(
+            self.owner.ctx.settings.database_url,
+            scope=self.scope(context),
+            source_id=context.run.source_id,
+            run_id=context.run.run_id,
+        )
+        if (
+            not is_topic_policy(run.editorial_policy)
+            or run.evidence_artifact_id != context.evidence.id
+        ):
+            raise HarnessValidationError("topic media requires the run's accepted source evidence")
+        evidence = HarnessEvidence.model_validate(await self.read(context, context.evidence))
+        if evidence.sourceId != run.source_id:
+            raise HarnessValidationError("topic evidence belongs to another source")
+        return run, evidence
 
     async def load(
         self, context: TopicContext

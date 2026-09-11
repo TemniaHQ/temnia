@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "TopicEditorialRubric": {
+      "$id": "#/$defs/TopicEditorialRubric",
+      "type": "object",
+      "properties": {
+        "assumedDomainKnowledge": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "audienceDescription": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "focus": {
+          "type": "string"
+        },
+        "languagePolicy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "originalInstructions": {
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "viewerGoals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "assumedDomainKnowledge",
+        "audienceDescription",
+        "exclusions",
+        "focus",
+        "languagePolicy",
+        "originalInstructions",
+        "version",
+        "viewerGoals"
+      ],
+      "additionalProperties": false,
+      "title": "TopicEditorialRubric"
+    }
+  },
+  "$id": "TopicEditorialRubric.json",
+  "$ref": "#/$defs/TopicEditorialRubric",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

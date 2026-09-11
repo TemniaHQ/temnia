@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicSelectionColdReview": {
+      "$id": "#/$defs/TopicSelectionColdReview",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coherentTopic": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "completeDiscussion": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "intelligibleBeginning": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "titleFaithful": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "value": {
+          "$ref": "#/$defs/TopicValueReview"
+        }
+      },
+      "required": [
+        "candidateId",
+        "coherentTopic",
+        "completeDiscussion",
+        "intelligibleBeginning",
+        "titleFaithful",
+        "value"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionColdReview"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicValueReview": {
+      "$id": "#/$defs/TopicValueReview",
+      "type": "object",
+      "properties": {
+        "deliveredValue": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "focusedDevelopment": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "openingEffectiveness": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "reconstructedPurpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reconstructedTakeaway": {
+          "type": "string",
+          "minLength": 1
+        },
+        "viewerReasonToWatch": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "deliveredValue",
+        "focusedDevelopment",
+        "openingEffectiveness",
+        "reconstructedPurpose",
+        "reconstructedTakeaway",
+        "viewerReasonToWatch"
+      ],
+      "additionalProperties": false,
+      "title": "TopicValueReview"
+    }
+  },
+  "$id": "TopicSelectionColdReview.json",
+  "$ref": "#/$defs/TopicSelectionColdReview",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

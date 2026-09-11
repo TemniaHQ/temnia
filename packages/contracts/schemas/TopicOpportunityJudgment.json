@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "TopicOpportunityJudgment": {
+      "$id": "#/$defs/TopicOpportunityJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "opportunityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "represented",
+            "missing_candidate",
+            "duplicate_core",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "unresolved"
+          ]
+        }
+      },
+      "required": [
+        "candidateIds",
+        "evidenceSpans",
+        "opportunityId",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunityJudgment"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicOpportunityJudgment.json",
+  "$ref": "#/$defs/TopicOpportunityJudgment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

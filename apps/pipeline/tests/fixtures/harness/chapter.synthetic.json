@@ -2,7 +2,8 @@
   "format": "chapter-recorded-fixture/1",
   "grounding": {
     "evidenceFixture": "../substrate/speech-40s.transcript.json",
-    "note": "Editorial choices are deterministic test data grounded in the speech-40s transcript; they are not a measured quality claim."
+    "note": "Editorial choices are deterministic test data grounded in the speech-40s transcript; they are not a measured quality claim.",
+    "topicSelectionNote": "V2 executes all four native schemas: an empty author selection, independent omission finding, an add patch, then cold value and source assessments. Patch hashes bind to the actual run at preparation; all editorial judgments remain explicit synthetic test data."
   },
   "outputs": {
     "propose": {
@@ -219,6 +220,310 @@
             }
           }
         ]
+      }
+    },
+    "topic_selection_author": {
+      "synthetic": true,
+      "output": {
+        "proposal": {
+          "version": 1,
+          "summary": "Synthetic empty initial selection exercises independent omission discovery.",
+          "candidates": []
+        },
+        "opportunities": []
+      }
+    },
+    "topic_selection_source": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic source review recovers an omitted timestamp discussion; not measured quality.",
+        "candidates": [],
+        "opportunities": [],
+        "selection": [],
+        "missingOpportunities": [
+          {
+            "id": "timestamp-value",
+            "viewerPurpose": "Explain why aligned words make editing searchable.",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "meaningChangingFollowups": [],
+            "valueEvidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "candidateIds": [],
+            "disposition": "needs_evidence",
+            "dispositionReason": "Synthetic discovery case: aligned word timestamps support a discussion that the first selection missed."
+          }
+        ],
+        "findings": [
+          {
+            "id": "missed-timestamps",
+            "kind": "missed_opportunity",
+            "severity": "required",
+            "affectedCandidateIds": [],
+            "opportunityIds": [
+              "timestamp-value"
+            ],
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "reason": "The source explains searchable editing with aligned timestamps; this predetermined fixture tests recovering an omission."
+          }
+        ]
+      }
+    },
+    "topic_selection_patch": {
+      "synthetic": true,
+      "output": {
+        "baseSelectionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "rubricSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "summary": "A deterministic patch adds the independently found discussion.",
+        "operations": [
+          {
+            "id": "add-timestamps",
+            "kind": "add_opportunity",
+            "findingIds": [
+              "source:missed-timestamps"
+            ],
+            "affectedCandidateIds": [],
+            "replacementCandidates": [
+              {
+                "id": "timestamp-search",
+                "title": "Timestamps turn editing into search",
+                "purpose": "Explain why aligned words make editing searchable.",
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008",
+                "coreSpans": [
+                  {
+                    "firstSentenceId": "s000005",
+                    "lastSentenceId": "s000008"
+                  }
+                ],
+                "requiredContextSpans": [],
+                "completionSpans": [
+                  {
+                    "firstSentenceId": "s000008",
+                    "lastSentenceId": "s000008"
+                  }
+                ],
+                "meaningChangingFollowups": [],
+                "reason": "Explicit deterministic fixture, not an editorial quality measurement."
+              }
+            ],
+            "opportunities": [
+              {
+                "id": "timestamp-value",
+                "viewerPurpose": "Explain why aligned words make editing searchable.",
+                "coreSpans": [
+                  {
+                    "firstSentenceId": "s000005",
+                    "lastSentenceId": "s000008"
+                  }
+                ],
+                "completionSpans": [
+                  {
+                    "firstSentenceId": "s000008",
+                    "lastSentenceId": "s000008"
+                  }
+                ],
+                "requiredContextSpans": [],
+                "meaningChangingFollowups": [],
+                "valueEvidenceSpans": [
+                  {
+                    "firstSentenceId": "s000005",
+                    "lastSentenceId": "s000008"
+                  }
+                ],
+                "candidateIds": [
+                  "timestamp-search"
+                ],
+                "disposition": "proposed",
+                "dispositionReason": "The independently identified discussion now has one synthetic treatment."
+              }
+            ],
+            "reason": "Recover the source-grounded opportunity identified by the independent review."
+          }
+        ]
+      }
+    },
+    "topic_selection_cold": {
+      "synthetic": true,
+      "output": {
+        "candidateId": "timestamp-search",
+        "intelligibleBeginning": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "coherentTopic": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "completeDiscussion": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "titleFaithful": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "value": {
+          "reconstructedPurpose": "Explain how aligned words make editing searchable.",
+          "reconstructedTakeaway": "Word timestamps connect transcript search to editing decisions.",
+          "viewerReasonToWatch": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "deliveredValue": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "openingEffectiveness": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "focusedDevelopment": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "topic_selection_source_selected": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic source review, not a measured editorial result.",
+        "candidates": [
+          {
+            "candidateId": "timestamp-search",
+            "faithfulMeaning": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            },
+            "completeContext": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            },
+            "distinctPurpose": {
+              "status": "unknown",
+              "reason": "Synthetic fixture does not establish real editorial quality.",
+              "evidenceSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ]
+            }
+          }
+        ],
+        "opportunities": [
+          {
+            "opportunityId": "timestamp-value",
+            "candidateIds": [
+              "timestamp-search"
+            ],
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "status": "unresolved",
+            "reason": "The synthetic candidate exists, but this fixture cannot establish its editorial usefulness."
+          }
+        ],
+        "selection": [
+          {
+            "candidateId": "timestamp-search",
+            "disposition": "unresolved",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "reason": "A human must assess this synthetic candidate before accepting it."
+          }
+        ],
+        "missingOpportunities": [],
+        "findings": []
       }
     }
   },

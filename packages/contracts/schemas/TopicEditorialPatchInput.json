@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "Scope": {
+      "$id": "#/$defs/Scope",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The organization every row is scoped to."
+        },
+        "userId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The acting user inside that organization."
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false,
+      "title": "Scope"
+    },
+    "TopicCandidate": {
+      "$id": "#/$defs/TopicCandidate",
+      "type": "object",
+      "properties": {
+        "completionSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "completionSpans",
+        "coreSpans",
+        "firstSentenceId",
+        "id",
+        "lastSentenceId",
+        "meaningChangingFollowups",
+        "purpose",
+        "reason",
+        "requiredContextSpans",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidate"
+    },
+    "TopicEditorialPatchInput": {
+      "$id": "#/$defs/TopicEditorialPatchInput",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "topic_edit"
+        },
+        "baseEditSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "correctionActiveSeconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "correctionMeasurementMethod": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "mutationKey": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "operations": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicEditorialPatchOperation"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "action",
+        "baseEditSha256",
+        "baseRevision",
+        "correctionActiveSeconds",
+        "correctionMeasurementMethod",
+        "evidenceSha256",
+        "mutationKey",
+        "operations",
+        "reason",
+        "runId",
+        "scope",
+        "sourceId",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "TopicEditorialPatchInput"
+    },
+    "TopicEditorialPatchOperation": {
+      "$id": "#/$defs/TopicEditorialPatchOperation",
+      "type": "object",
+      "properties": {
+        "affectedCandidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "adjust_extent",
+            "retitle",
+            "add",
+            "drop",
+            "merge",
+            "split"
+          ]
+        },
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "replacementCandidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidate"
+          }
+        }
+      },
+      "required": [
+        "affectedCandidateIds",
+        "kind",
+        "operationId",
+        "replacementCandidates"
+      ],
+      "additionalProperties": false,
+      "title": "TopicEditorialPatchOperation"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicEditorialPatchInput.json",
+  "$ref": "#/$defs/TopicEditorialPatchInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

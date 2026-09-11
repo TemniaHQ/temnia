@@ -118,6 +118,12 @@ def _segment_command(args: argparse.Namespace) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="temnia-eval")
     commands = parser.add_subparsers(dest="command", required=True)
+    from temnia_pipeline.evals.topic_cli import (  # noqa: PLC0415
+        add_topic_commands,
+        run_topic_command,
+    )
+
+    add_topic_commands(commands)
 
     verify = commands.add_parser(
         "verify", help="replay parity snapshots through the ported scorers"
@@ -155,6 +161,15 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if args.command == "topics":
+        try:
+            raise SystemExit(run_topic_command(args))
+        except (OSError, ValueError) as error:
+            parser.exit(
+                1,
+                f"temnia-eval topics: input refused ({type(error).__name__}); "
+                "no inference was dispatched\n",
+            )
     if args.command == "verify":
         raise SystemExit(_verify_command(args.directory))
     if args.command == "segment":

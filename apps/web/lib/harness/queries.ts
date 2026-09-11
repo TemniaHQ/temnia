@@ -8,11 +8,11 @@ import {
 } from "@temnia/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { scoped } from "@/lib/db";
-import { TOPIC_POLICY } from "./topic-defaults";
+import { TOPIC_POLICY, TOPIC_SELECTION_POLICY } from "./topic-defaults";
 
 export interface ChapterArtifactRef {
   id: string;
-  kind: "edit" | "render" | "checks" | "export";
+  kind: "edit" | "render" | "checks" | "export" | "evidence" | "proposal";
   metadata: Record<string, unknown>;
   sha256: string;
   sizeBytes: number;
@@ -28,6 +28,7 @@ export interface ChapterView {
     baseRevision: number;
     createdAt: string;
     mutationKey: string;
+    message?: string | null;
     resultingRevision: number | null;
     state: string;
   }>;
@@ -119,6 +120,74 @@ export function getTopicView(
   return getHarnessView(sourceId, selectedRunId, pendingMutationKey, true);
 }
 
+/** Return scoped immutable references; the browser verifies bytes before editing. */
+export function getTopicEditorialContext(
+  sourceId: string,
+  runId: string,
+  revision: number
+) {
+  return scoped(async (tx) => {
+    const [run] = await tx
+      .select()
+      .from(harnessRun)
+      .where(
+        and(
+          eq(harnessRun.id, runId),
+          eq(harnessRun.sourceId, sourceId),
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+        )
+      )
+      .limit(1);
+    if (!run?.evidenceArtifactId) {
+      return null;
+    }
+    const [base] = await tx
+      .select()
+      .from(chapterRevision)
+      .where(
+        and(
+          eq(chapterRevision.runId, runId),
+          eq(chapterRevision.sourceId, sourceId),
+          eq(chapterRevision.revision, revision)
+        )
+      )
+      .limit(1);
+    if (!base) {
+      return null;
+    }
+    const rows = await tx
+      .select()
+      .from(harnessArtifact)
+      .where(
+        and(
+          eq(harnessArtifact.sourceId, sourceId),
+          inArray(harnessArtifact.id, [base.artifactId, run.evidenceArtifactId])
+        )
+      );
+    const reference = (
+      id: string,
+      kind: "edit" | "evidence"
+    ): ChapterArtifactRef | null => {
+      const row = rows.find((item) => item.id === id && item.kind === kind);
+      return row
+        ? {
+            id: row.id,
+            kind,
+            metadata: row.metadata,
+            sha256: row.sha256,
+            sizeBytes: row.sizeBytes,
+            url: `/api/media/${row.storageKey}`,
+          }
+        : null;
+    };
+    const edit = reference(base.artifactId, "edit");
+    const evidence = reference(run.evidenceArtifactId, "evidence");
+    return edit && evidence
+      ? { currentRevision: run.currentRevision, edit, evidence }
+      : null;
+  });
+}
+
 function getHarnessView(
   sourceId: string,
   selectedRunId: string | undefined,
@@ -128,8 +197,8 @@ function getHarnessView(
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one scoped snapshot keeps run pointers, bounded events, and exact immutable descriptors mutually consistent
   return scoped(async (tx) => {
     const policy = topics
-      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
-      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') <> ${TOPIC_POLICY}`;
+      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`;
     const rows = await tx
       .select()
       .from(harnessRun)
@@ -209,6 +278,7 @@ function getHarnessView(
           action: chapterReviewEvent.action,
           baseRevision: chapterReviewEvent.baseRevision,
           createdAt: chapterReviewEvent.createdAt,
+          message: sql<string | null>`${chapterReviewEvent.result}->>'message'`,
           mutationKey: chapterReviewEvent.mutationKey,
           resultingRevision: chapterReviewEvent.resultingRevision,
           state: chapterReviewEvent.state,
@@ -226,6 +296,9 @@ function getHarnessView(
               action: chapterReviewEvent.action,
               baseRevision: chapterReviewEvent.baseRevision,
               createdAt: chapterReviewEvent.createdAt,
+              message: sql<
+                string | null
+              >`${chapterReviewEvent.result}->>'message'`,
               mutationKey: chapterReviewEvent.mutationKey,
               resultingRevision: chapterReviewEvent.resultingRevision,
               state: chapterReviewEvent.state,
@@ -370,9 +443,8 @@ function getHarnessView(
           .where(
             and(
               eq(harnessArtifact.sourceId, sourceId),
-              eq(harnessArtifact.kind, "checks"),
               sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
-              sql`${harnessArtifact.metadata}->>'format' = 'topic-assessment/1'`
+              sql`${harnessArtifact.metadata}->>'format' IN ('topic-assessment/1', 'topic-selection-assessment/2', 'topic-selection/2')`
             )
           )
       : [];

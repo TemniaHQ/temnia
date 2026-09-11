@@ -36,6 +36,13 @@
       "when": 1788921358096,
       "tag": "0004_speech_assignment",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789128142852,
+      "tag": "0005_topic_editorial_corrections",
+      "breakpoints": true
     }
   ]
 }

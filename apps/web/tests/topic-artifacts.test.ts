@@ -20,7 +20,7 @@ const EVIDENCE = "0192e8a0-0000-7000-8000-000000000030";
 const evidenceSha256 = "a".repeat(64);
 const proposalSha256 = "b".repeat(64);
 
-function fixture(accepted = false) {
+function fixture(accepted = false, selection = false) {
   const bodies = new Map<string, unknown>();
   let counter = 100;
   function put(
@@ -134,11 +134,104 @@ function fixture(accepted = false) {
     summary: "Text review passed.",
     verifierFamily: "two",
   };
-  const assessmentArtifact = put("checks", assessment, {
-    format: "topic-assessment/1",
+  const selectionRecord = put(
+    "proposal",
+    {
+      draft: {
+        opportunities: [
+          {
+            candidateIds: [],
+            completionSpans: [{ firstSentenceId: "s1", lastSentenceId: "s1" }],
+            coreSpans: [{ firstSentenceId: "s0", lastSentenceId: "s0" }],
+            disposition: "needs_evidence",
+            dispositionReason:
+              "A known discussion still needs a useful treatment.",
+            id: "omitted",
+            meaningChangingFollowups: [],
+            requiredContextSpans: [],
+            valueEvidenceSpans: [
+              { firstSentenceId: "s0", lastSentenceId: "s1" },
+            ],
+            viewerPurpose: "Understand an unresolved source discussion.",
+          },
+        ],
+        proposal: {
+          candidates: portfolio.videos.map((item) => item.candidate),
+          summary: portfolio.summary,
+          version: 1,
+        },
+      },
+      evidenceSha256,
+      format: "topic-selection/2",
+      origin: "model",
+      parentSelectionSha256: null,
+      rubric: {
+        assumedDomainKnowledge: [],
+        audienceDescription: "Interested viewers.",
+        exclusions: [],
+        focus: "",
+        languagePolicy: "Preserve source speech.",
+        originalInstructions: "",
+        version: 1,
+        viewerGoals: ["Understand useful discussions."],
+      },
+      rubricSha256: "c".repeat(64),
+      runId: RUN,
+    },
+    { format: "topic-selection/2", runId: RUN }
+  );
+  const selectionAssessment = {
+    coldReviews: assessment.candidates.map((item) => ({
+      ...item.coldReview,
+      value: {
+        deliveredValue: { ...criterion },
+        focusedDevelopment: criterion,
+        openingEffectiveness: criterion,
+        reconstructedPurpose: "Explain a useful answer.",
+        reconstructedTakeaway: "The answer is complete.",
+        viewerReasonToWatch: criterion,
+      },
+    })),
+    evidenceSha256,
+    executionStatus: "complete",
+    findings: [],
+    format: "topic-selection-assessment/2",
+    portfolioReview: {
+      candidates: assessment.candidates.map((item) => item.sourceReview),
+      findings: [],
+      missingOpportunities: [],
+      opportunities: [],
+      selection: assessment.candidates.map((item) => ({
+        candidateId: item.candidateId,
+        disposition: "select",
+        evidenceSpans: [{ firstSentenceId: "s0", lastSentenceId: "s1" }],
+        reason: "Useful complete discussion.",
+      })),
+      summary: "Both discussions add value.",
+    },
+    proposerFamily: "one",
+    reasons: [],
+    responseArtifacts: [],
+    rubricSha256: "c".repeat(64),
     runId: RUN,
-  });
+    selectionSha256: selectionRecord.ref.sha256,
+    verifierFamily: "two",
+  };
+  const assessmentArtifact = put(
+    "checks",
+    selection ? selectionAssessment : assessment,
+    {
+      format: selection ? "topic-selection-assessment/2" : "topic-assessment/1",
+      runId: RUN,
+    }
+  );
   const edit = put("edit", portfolio, {
+    ...(selection
+      ? {
+          selectionArtifactId: selectionRecord.ref.id,
+          selectionSha256: selectionRecord.ref.sha256,
+        }
+      : {}),
     assessmentArtifactId: assessmentArtifact.ref.id,
     format: "topic-edit/1",
     proposalSha256,
@@ -214,7 +307,12 @@ function fixture(accepted = false) {
   );
   const view: ChapterView = {
     acceptedEdit: accepted ? edit.webRef : null,
-    artifacts: [edit.webRef, assessmentArtifact.webRef, descriptor.webRef],
+    artifacts: [
+      edit.webRef,
+      assessmentArtifact.webRef,
+      descriptor.webRef,
+      ...(selection ? [selectionRecord.webRef] : []),
+    ],
     currentEdit: edit.webRef,
     events: [],
     run: {
@@ -253,11 +351,36 @@ function fixture(accepted = false) {
     load,
     manifest,
     portfolio,
+    selectionAssessment,
     view,
   };
 }
 
 describe("independent topic artifact graph", () => {
+  it("binds v2 judgments to the exact selection and does not hide weak value behind basic passes", async () => {
+    const f = fixture(false, true);
+    const [first] = f.selectionAssessment.coldReviews;
+    if (!first) {
+      throw new Error("Missing fixture review");
+    }
+    first.value.deliveredValue = {
+      ...first.value.deliveredValue,
+      reason: "The answer never delivers its claim.",
+      status: "fail",
+    };
+    const result = await loadTopicRevision(SOURCE, f.view, false, f.load);
+    expect(result?.assessment).toBeNull();
+    expect(result?.selectionAssessment?.format).toBe(
+      "topic-selection-assessment/2"
+    );
+    expect(result?.selection?.draft.opportunities[0]?.id).toBe("omitted");
+    expect(result?.videos[0]?.assessment?.status).toBe("needs_review");
+    expect(result?.videos[1]?.assessment?.status).toBe("passed");
+    f.selectionAssessment.selectionSha256 = "d".repeat(64);
+    await expect(
+      loadTopicRevision(SOURCE, f.view, false, f.load)
+    ).rejects.toThrow("another source or selection");
+  });
   it("rounds the rational duration instead of subtracting rounded endpoints", () => {
     expect(
       topicDurationMs(
