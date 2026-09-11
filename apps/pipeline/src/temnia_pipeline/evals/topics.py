@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from temnia_pipeline.contracts import (
     ChapterChecks,
@@ -64,6 +64,39 @@ class TopicArtifact(EvaluationModel):
     body_status: Literal["included", "binary_reference", "retained_reference"] = "included"
 
 
+class TopicProgramStage(EvaluationModel):
+    """One intended native call shape, including stages that a run may never need."""
+
+    seat: Literal["author", "reviewer"]
+    prompt_version: Identifier
+    prompt_template_sha256: SHA256
+    schema_version: Identifier
+    native_schema_sha256: SHA256
+
+
+class TopicProgramManifest(EvaluationModel):
+    """Frozen runtime identity captured before dispatch, never inferred from current code."""
+
+    format: Literal["temnia-topic-evaluation-program/1"] = "temnia-topic-evaluation-program/1"
+    policy: Literal["standalone-topics/1", "standalone-topics/2"]
+    implementation_sha256: SHA256
+    program_version: Identifier
+    stages: Annotated[dict[Identifier, TopicProgramStage], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def _complete_v2_roster(self) -> Self:
+        if self.policy == "standalone-topics/2" and {
+            name: stage.seat for name, stage in self.stages.items()
+        } != {
+            "topic_author": "author",
+            "topic_cold": "reviewer",
+            "topic_source": "reviewer",
+            "topic_patch": "author",
+        }:
+            raise ValueError("v2 intended programme requires its complete four-stage seat roster")
+        return self
+
+
 class TopicConfiguration(EvaluationModel):
     """Unknown deployment details stay null; no vendor is implicitly selected."""
 
@@ -81,6 +114,61 @@ class TopicConfiguration(EvaluationModel):
     schema_identity: dict[str, JSONValue] = Field(default_factory=dict)
     media_identity: dict[str, JSONValue] = Field(default_factory=dict)
     execution_identity: dict[str, JSONValue] = Field(default_factory=dict)
+    intended_program: TopicProgramManifest | None = None
+    intended_program_sha256: SHA256 | None = None
+    observed_call_identities: tuple[dict[str, JSONValue], ...] = ()
+    retained_run_configuration: dict[str, JSONValue] = Field(default_factory=dict)
+
+
+def program_identity_projections(
+    manifest: TopicProgramManifest,
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue], dict[str, JSONValue]]:
+    """Derive fixed factors from one frozen complete roster, never observed call counts."""
+    return (
+        {
+            "policy": manifest.policy,
+            "programVersion": manifest.program_version,
+            "implementationSha256": manifest.implementation_sha256,
+        },
+        {
+            name: {"version": stage.prompt_version, "templateSha256": stage.prompt_template_sha256}
+            for name, stage in manifest.stages.items()
+        },
+        {
+            name: {
+                "version": stage.schema_version,
+                "nativeSchemaSha256": stage.native_schema_sha256,
+            }
+            for name, stage in manifest.stages.items()
+        },
+    )
+
+
+def validate_program_observation(
+    manifest: TopicProgramManifest | None, stage: str, metadata: dict[str, JSONValue]
+) -> None:
+    """Known observed IDs and available template/schema hashes must fit their intended seat."""
+    if manifest is None:
+        return
+    if (
+        metadata.get("programVersion") is not None
+        and metadata["programVersion"] != manifest.program_version
+    ):
+        raise ValueError("observed runtime programme differs from frozen programme")
+    fields = {
+        "promptVersion": "prompt_version",
+        "schemaVersion": "schema_version",
+        "promptTemplateSha256": "prompt_template_sha256",
+        "nativeSchemaSha256": "native_schema_sha256",
+    }
+    observed = {key: metadata[key] for key in fields if metadata.get(key) is not None}
+    seat = "reviewer" if stage.startswith("verify") else "author"
+    if observed and not any(
+        candidate.seat == seat
+        and all(value == getattr(candidate, fields[key]) for key, value in observed.items())
+        for candidate in manifest.stages.values()
+    ):
+        raise ValueError("observed prompt or schema differs from intended programme roster")
 
 
 class TopicAttempt(EvaluationModel):
@@ -497,12 +585,49 @@ def validate_topic_bundle(bundle: TopicEvaluationBundle) -> None:
             raise ValueError("source evidence identity differs")
         if bundle.configuration.transcript_sha256 != bundle.evidence.transcriptSha256:
             raise ValueError("configuration transcript differs from evidence")
+        for artifact in bundle.artifacts:
+            if artifact.sha256 != bundle.evidence_sha256:
+                continue
+            for field, expected in (
+                ("sourceSha256", bundle.configuration.source_sha256),
+                ("sourceFingerprint", bundle.evidence.sourceFingerprint),
+                ("transcriptSha256", bundle.evidence.transcriptSha256),
+            ):
+                if (
+                    expected is not None
+                    and artifact.metadata.get(field) is not None
+                    and artifact.metadata[field] != expected
+                ):
+                    raise ValueError(
+                        "configuration source identity differs from retained evidence metadata"
+                    )
     elif bundle.evidence_sha256 is not None:
         raise ValueError("named evidence body is unavailable")
     if bundle.configuration.route_snapshot is not None and (
         digest(bundle.configuration.route_snapshot) != bundle.configuration.route_snapshot_sha256
     ):
         raise ValueError("route snapshot canonical hash differs")
+    intended = bundle.configuration.intended_program
+    if intended is not None:
+        if (
+            intended.policy != bundle.configuration.policy
+            or digest(intended.model_dump(mode="json", by_alias=True))
+            != bundle.configuration.intended_program_sha256
+        ):
+            raise ValueError("intended programme differs from frozen policy or hash")
+        if (
+            bundle.configuration.program_identity,
+            bundle.configuration.prompt_identity,
+            bundle.configuration.schema_identity,
+        ) != program_identity_projections(intended):
+            raise ValueError("projected programme factors contradict the frozen manifest")
+        for observed in bundle.configuration.observed_call_identities:
+            stage, metadata = observed.get("stage"), observed.get("identities")
+            if not isinstance(stage, str) or not isinstance(metadata, dict):
+                raise ValueError("observed programme identity has an invalid stage or metadata")
+            validate_program_observation(intended, stage, metadata)
+    elif bundle.configuration.intended_program_sha256 is not None:
+        raise ValueError("intended programme body is absent")
     candidates = candidate_index(bundle)
     if bundle.evidence is not None:
         for candidate in candidates.values():

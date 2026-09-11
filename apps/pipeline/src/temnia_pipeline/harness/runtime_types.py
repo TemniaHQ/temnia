@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import (
@@ -44,6 +44,7 @@ class StartRunRequest(BaseModel):
     request: ChapterRunInput
     workflow: WorkflowIdentity
     editorial_policy: EditorialPolicy = "legacy"
+    evaluation_program: dict[str, JsonValue] | None = None
 
 
 class PinnedTranscript(BaseModel):
@@ -100,6 +101,8 @@ class RunSnapshot(BaseModel):
     source: PinnedSource
     transcript: PinnedTranscript
     route_snapshot: RouteSnapshot
+    evaluation_program: dict[str, JsonValue] | None = None
+    evaluation_program_sha256: Annotated[str | None, Field(pattern=r"^[a-f0-9]{64}$")] = None
     editorial_policy: EditorialPolicy = "legacy"
     chapter_llama_config: ChapterLlamaConfig | None = None
     topic_shot_detector: Literal["pyscenedetect-adaptive", "scdet"] = "scdet"

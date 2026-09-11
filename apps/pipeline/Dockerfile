@@ -24,6 +24,10 @@ ENV TEMNIA_MODELS_DIR=/opt/temnia-models
 COPY scripts/fetch_models.py ./scripts/
 RUN /app/.venv/bin/python scripts/fetch_models.py
 COPY src ./src
+# The experiment operator and isolated worker use the same image and source-input
+# fingerprint. These declarations are hashed inputs, not runtime build commands.
+COPY Dockerfile Dockerfile.speech ./
+COPY scripts/run_topic_model_experiment.py ./scripts/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra scene-challenger
 # Standalone-topic trials use this qualified detector. Fail the image build if

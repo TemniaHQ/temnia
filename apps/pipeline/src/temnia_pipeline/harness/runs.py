@@ -119,6 +119,8 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
         source=source,
         transcript=transcript,
         route_snapshot=frozen_routes,
+        evaluation_program=route_snapshot.get("evaluationProgram"),
+        evaluation_program_sha256=route_snapshot.get("evaluationProgramSha256"),
         editorial_policy=route_snapshot.get("editorialPolicy", "legacy"),
         topic_shot_detector=route_snapshot.get("topicShotDetector", "scdet"),
     )
@@ -181,6 +183,17 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 ) -> StartRunResult:
     """Create one immutable request-keyed run or return its exact prior identity."""
     request = start.request
+    evaluation_program = None
+    evaluation_program_sha = None
+    if start.evaluation_program is not None:
+        # The operator-only manifest is not part of the cross-language run request.
+        from temnia_pipeline.evals.topics import TopicProgramManifest, digest  # noqa: PLC0415
+
+        program = TopicProgramManifest.model_validate(start.evaluation_program)
+        if program.policy != start.editorial_policy:
+            raise IdentityConflict("evaluation programme differs from the run editorial policy")
+        evaluation_program = program.model_dump(mode="json", by_alias=True)
+        evaluation_program_sha = digest(evaluation_program)
     if not settings.enabled:
         raise RuntimeError("chapter harness is disabled on this worker")
     if request.budgetMicros > settings.max_run_budget_micros:
@@ -213,6 +226,11 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         config_value = request.config.model_dump(mode="json")
         if existing is not None:
             pinned = existing["route_snapshot"]
+            if evaluation_program is not None and (
+                pinned.get("evaluationProgram") != evaluation_program
+                or pinned.get("evaluationProgramSha256") != evaluation_program_sha
+            ):
+                raise IdentityConflict("request key was reused with different evaluation programme")
             prior_policy = pinned.get("editorialPolicy", "legacy")
             if (is_topic_policy(start.editorial_policy) or is_topic_policy(prior_policy)) and (
                 start.editorial_policy != prior_policy
@@ -287,6 +305,9 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             "pinnedTranscript": transcript.model_dump(mode="json"),
             "snapshot": route_snapshot.model_dump(mode="json"),
         }
+        if evaluation_program is not None:
+            route_value["evaluationProgram"] = evaluation_program
+            route_value["evaluationProgramSha256"] = evaluation_program_sha
         if start.editorial_policy != "legacy":
             route_value["editorialPolicy"] = start.editorial_policy
             if settings.chapter_llama_config is not None:
@@ -326,6 +347,16 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 
 async def get_run(database_url: str, *, scope: Scope, source_id: UUID, run_id: UUID) -> RunSnapshot:
     """Read one scoped run and its pinned transcript identity."""
+    run = await find_run(database_url, scope=scope, source_id=source_id, run_id=run_id)
+    if run is None:
+        raise IdentityConflict("run is absent from the source scope")
+    return run
+
+
+async def find_run(
+    database_url: str, *, scope: Scope, source_id: UUID, run_id: UUID
+) -> RunSnapshot | None:
+    """Read an optional prepared run without acquiring or changing its ownership."""
     async with db.scoped(database_url, scope) as conn:
         row = await (
             await conn.execute(
@@ -333,9 +364,23 @@ async def get_run(database_url: str, *, scope: Scope, source_id: UUID, run_id: U
                 (run_id, source_id),
             )
         ).fetchone()
-        if row is None:
-            raise IdentityConflict("run is absent from the source scope")
-        return _snapshot(row)
+        return _snapshot(row) if row is not None else None
+
+
+async def ready_source_pins(
+    database_url: str, *, scope: Scope, source_id: UUID
+) -> tuple[PinnedSource, PinnedTranscript]:
+    """Observe ready source facts; creation must still pin and compare them atomically."""
+    async with db.scoped(database_url, scope) as conn:
+        row = await _lock_ready_source(conn, source_id)
+        return (
+            PinnedSource(
+                storage_key=str(row["master_key"]),
+                size_bytes=int(row["source_size_bytes"]),
+                duration_ms=int(row["duration_ms"]),
+            ),
+            _pinned(row),
+        )
 
 
 async def get_resume_assets(

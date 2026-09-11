@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
@@ -236,6 +236,54 @@ def _read_ref(value: dict[str, Any], base: Path) -> bytes:
     return raw
 
 
+def _unsettled_call(call: dict[str, Any]) -> bool:
+    """A terminal cohort cannot clear an unfinished or unaccounted-for candidate call."""
+    if call.get("state") not in {"planned", "skipped", "known_failure", "passed", "failed"}:
+        return True
+    cost = call.get("cost")
+    if call["state"] in {"passed", "failed"} or cost is not None:
+        if not isinstance(cost, dict):
+            return True
+        observation = cast("dict[str, Any]", cost)
+        return (
+            observation.get("status") != "reported" or observation.get("actual_cost_micros") is None
+        )
+    # Planned/skipped calls incurred no dispatch; a conclusive HTTP failure has no
+    # generation to settle. They still cannot supply a passed required stage.
+    return False
+
+
+def _terminal_reports(
+    snapshot: RouteSnapshot, manifest: dict[str, Any], base: Path
+) -> list[tuple[dict[str, Any], Path]]:
+    """Read original report bytes once and apply uncertainty fences across every report."""
+    reports: list[tuple[dict[str, Any], Path]] = []
+    unsettled: set[tuple[str, str]] = set()
+    for reference in manifest["reports"]:
+        report = json.loads(_read_ref(reference, base))
+        report_file = Path(reference["path"])
+        report_base = (report_file if report_file.is_absolute() else base / report_file).parent
+        if (
+            report.get("format") != "temnia-gateway-qualification/1"
+            or report.get("suite") != "topic-selection"
+            or report.get("status") not in {"completed", "halted"}
+        ):
+            raise ValueError("topic qualification report has the wrong suite or is nonterminal")
+        catalogue = {candidate["id"]: candidate for candidate in report["catalogue"]["candidates"]}
+        for call in report["calls"]:
+            candidate = catalogue[call["candidateId"]]
+            if _unsettled_call(call):
+                unsettled.add((candidate["gatewayModel"], candidate["provider"]))
+        reports.append((report, report_base))
+    selected = {(route.gateway_model, route.provider) for route in snapshot.routes}
+    if blocked := selected & unsettled:
+        message = (
+            f"topic qualification selected model/provider has unsettled calls: {sorted(blocked)}"
+        )
+        raise ValueError(message)
+    return reports
+
+
 def validate_topic_selection_qualification(
     snapshot: RouteSnapshot, report_path: Path | str, *, max_output_tokens: int | None = None
 ) -> None:
@@ -262,19 +310,7 @@ def validate_topic_selection_qualification(
         raise ValueError("topic qualification output setting differs from the requested run")
     prompts = topic_selection_qualification_prompts()
     qualified: set[tuple[str, str]] = set()
-    for reference in manifest["reports"]:
-        report_raw = _read_ref(reference, manifest_path.parent)
-        report = json.loads(report_raw)
-        report_file = Path(reference["path"])
-        report_base = (
-            report_file if report_file.is_absolute() else manifest_path.parent / report_file
-        ).parent
-        if (
-            report.get("format") != "temnia-gateway-qualification/1"
-            or report.get("suite") != "topic-selection"
-            or report.get("status") != "completed"
-        ):
-            raise ValueError("topic qualification report has the wrong suite or unresolved calls")
+    for report, report_base in _terminal_reports(snapshot, manifest, manifest_path.parent):
         catalogue = {c["id"]: c for c in report["catalogue"]["candidates"]}
         for call in report["calls"]:
             stage = call["stage"]
@@ -351,7 +387,10 @@ def bind_topic_selection_qualification(
             for path in reports
         ],
         "proofLimit": (
-            "Exact request qualification; full-source editorial acceptance remains separate."
+            "Exact request qualification; full-source editorial acceptance remains separate. "
+            "Original completed or halted reports remain intact. Per-route qualification does "
+            "not resolve unrelated cohort outcomes or expenses; selected model/provider pairs "
+            "with any unsettled call in any referenced report remain excluded."
         ),
     }
     # Create-only. Invalid evidence never leaves an admission manifest behind.

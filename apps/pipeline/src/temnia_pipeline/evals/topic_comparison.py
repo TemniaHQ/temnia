@@ -127,6 +127,11 @@ def compare_topics(manifest: TopicComparisonManifest, *, directory: Path) -> Top
         splits[bundle.recording_group] = bundle.split
         bundles.append(bundle)
         reports.append(build_topic_report(bundle, labels))
+        if bundle.configuration.intended_program is None:
+            reasons.append(
+                f"unobserved_intended_program:{bundle.recording_group}:"
+                f"{bundle.configuration.configuration_id}"
+            )
     by_key = {
         (bundle.recording_group, bundle.configuration.configuration_id): (bundle, report)
         for bundle, report in zip(bundles, reports, strict=True)

@@ -62,6 +62,19 @@ the v1 cold-review prompt. This derived identity does not claim that v1 used the
 new shared audience-rubric contract. The external Karma receipt lacks a separately
 retained brief/rubric and therefore does not receive this derived workflow identity.
 
+Controlled new runs also freeze the complete `evaluationProgram` and its canonical
+SHA-256 in the run wrapper before dispatch. This names the implementation build and
+every intended prompt/native-schema stage, including conditional repair. The exporter
+uses this roster for programme, prompt and schema comparison factors and retains
+actual observed call identities separately. Historical runs without it keep those
+intended factors unknown; successful-response subsets are not a substitute. Export
+refuses available runtime IDs/hashes that conflict with the declared roster.
+The full route snapshot and original run configuration remain in the bundle; the
+route snapshot ID is excluded only from non-route execution settings, so author
+substitution is not counted again as an execution-policy change. Source master SHA
+comes from source-bound evidence metadata or an agreeing pinned source identity;
+conflicting source identities refuse export.
+
 `TopicHumanLabels` names the exact source, evidence, rubric, recording group and
 split. An opportunity annotator identifies useful discussions from the whole source
 independently of the proposed portfolio. Each opportunity records a viewer purpose,
@@ -259,6 +272,44 @@ request/response/evidence/candidate hashes in the derived record, and identify t
 audience choice as evaluation context rather than an instruction originally sent
 to the model. A complete production-quality comparison still needs the declared
 downstream stages and full-media evaluation.
+
+## Launch a controlled model comparison
+
+The Python-only operator reuses the complete production topic workflow. Its
+`prepare` command freezes qualified arms and ready source/transcript pins in a
+create-only private manifest; it makes no model calls. Use the pipeline image or
+the same verified checkout for preparation and execution.
+
+```sh
+python scripts/run_topic_model_experiment.py prepare --spec /private/spec.json --output /private/prepared.json
+python scripts/run_topic_model_experiment.py run --prepared /private/prepared.json --arm control --case karma
+python scripts/run_topic_model_experiment.py status --prepared /private/prepared.json
+```
+
+The spec contains `name`, `brief`, explicit `budgetMicros` and
+`workerMaxRunBudgetMicros`, Temporal address/namespace, and `topicShotDetector`.
+Each source declares `id`, the environment's `sourceId`, `sourceGroup`, `split`,
+`priorExposure`, and known expected source/evidence hashes. Each arm declares
+`id`, the exact `ChapterRunConfig`, `routeSnapshotPath`, `qualificationPath`,
+and the expected `authorRouteId` and `reviewerRouteId`. Source scope comes from
+the existing resolver. Paths are absolute within the execution environment.
+Use the [experiment plan](../plans/topic-model-evaluation.md) to declare the
+comparison and derive request exposure before preparing paid arms.
+
+Preparation prints each arm's non-secret worker environment. Start the existing
+worker entry point with these overrides and its existing server-side database,
+storage and gateway credentials. Every arm has its own pipeline/control queues.
+Verify the actual image, input fingerprint, dependency versions, configuration
+and successful worker boot before `run`; a queue poller alone is insufficient.
+Keep the ordinary staging worker configuration separate from the experiment.
+
+Run and request IDs remain fixed in `prepared.json`. After an uncertain start,
+inspect this same intent with `status` and reuse it with `run`; neither duplicate
+nor closed workflows are restarted. A claimed database run whose Temporal
+execution is absent is fenced. Status never creates a run or spends tokens.
+Known later source/evidence mismatches remain visible as incomparable results.
+Missing pre-run source hashes remain unknown. Export the retained run through
+`topics export`, then use the labeling and comparison commands above.
 
 ## Validation evidence
 

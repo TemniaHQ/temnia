@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+from pydantic import TypeAdapter
+
 from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessEvidence,
@@ -20,23 +22,28 @@ from temnia_pipeline.contracts import (
     TopicSelectionAssessment,
     TopicSelectionRecord,
 )
-from temnia_pipeline.evals.chapters import AttemptFact
+from temnia_pipeline.evals.chapters import SHA256, AttemptFact
 from temnia_pipeline.evals.topics import (
     StageObservation,
     TopicArtifact,
     TopicAttempt,
     TopicConfiguration,
     TopicEvaluationBundle,
+    TopicProgramManifest,
     TopicReviewEvent,
     TopicRevision,
     artifact_model,
     digest,
+    program_identity_projections,
+    validate_program_observation,
     validate_topic_bundle,
 )
 from temnia_pipeline.harness import artifacts
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
+
+_SHA256: TypeAdapter[str] = TypeAdapter(SHA256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +56,60 @@ class _TopicSnapshot:
     attempts: list[dict[str, Any]]
     rows: dict[UUID, dict[str, Any]]
     dependencies: dict[UUID, tuple[UUID, ...]]
+
+
+def _source_sha256(
+    source_id: UUID,
+    source: dict[str, Any],
+    wrapper: dict[str, Any],
+    evidence: HarnessEvidence | None,
+    artifact: TopicArtifact | None,
+) -> str | None:
+    """Use source-bound evidence metadata; refuse conflicting available source identities."""
+    if source.get("id") is not None and str(source["id"]) != str(source_id):
+        raise ValueError("source snapshot belongs to another source")
+    pinned = wrapper.get("pinnedSource", {})
+    identities: list[str] = []
+    if pinned.get("sha256") is not None:
+        identities.append(_SHA256.validate_python(pinned["sha256"], strict=True))
+    for pinned_field, source_field in (
+        ("storage_key", "master_key"),
+        ("size_bytes", "size_bytes"),
+        ("duration_ms", "duration_ms"),
+    ):
+        if (
+            pinned.get(pinned_field) is not None
+            and source.get(source_field) is not None
+            and pinned[pinned_field] != source[source_field]
+        ):
+            raise ValueError("pinned source identity differs from source snapshot")
+    if artifact is not None:
+        if evidence is None or artifact.source_id != source_id or evidence.sourceId != source_id:
+            raise ValueError("source hash metadata belongs to another evidence source")
+        for name, expected in (
+            ("sourceFingerprint", evidence.sourceFingerprint),
+            ("transcriptSha256", evidence.transcriptSha256),
+        ):
+            if artifact.metadata.get(name) is not None and artifact.metadata[name] != expected:
+                raise ValueError("source evidence metadata differs from its retained body")
+        if artifact.metadata.get("sourceSha256") is not None:
+            identities.append(
+                _SHA256.validate_python(artifact.metadata["sourceSha256"], strict=True)
+            )
+    if len(set(identities)) > 1:
+        raise ValueError("conflicting pinned and evidence source hashes")
+    return identities[0] if identities else None
+
+
+def _intended_program(wrapper: dict[str, Any], policy: str) -> TopicProgramManifest | None:
+    """Read an explicitly frozen roster; historical response subsets cannot supply it."""
+    body, sha = wrapper.get("evaluationProgram"), wrapper.get("evaluationProgramSha256")
+    if body is None and sha is None:
+        return None
+    manifest = TopicProgramManifest.model_validate(body)
+    if manifest.policy != policy or digest(manifest.model_dump(mode="json", by_alias=True)) != sha:
+        raise ValueError("intended programme differs from its frozen identity or policy")
+    return manifest
 
 
 async def _read_topic_snapshot(database_url: str, *, scope: Scope, run_id: UUID) -> _TopicSnapshot:
@@ -293,6 +354,7 @@ async def export_topic_bundle(
         ]
     route_wrapper = run["route_snapshot"]
     snapshot = route_wrapper.get("snapshot")
+    intended_program = _intended_program(route_wrapper, policy)
     rubric_sha = (
         selection.rubricSha256
         if isinstance(selection, TopicSelectionRecord)
@@ -307,23 +369,33 @@ async def export_topic_bundle(
     attempt_facts: list[TopicAttempt] = []
     author_routes: dict[str, Any] = {}
     reviewer_routes: dict[str, Any] = {}
-    prompt_versions: set[str] = set()
-    schema_versions: set[str] = set()
-    programs: set[str] = set()
+    observed_calls: list[dict[str, Any]] = []
     for row in attempts:
         result = by_id.get(row["result_artifact_id"]) if row.get("result_artifact_id") else None
         metadata = result.metadata if result else {}
         route: dict[str, Any] = (
             cast("dict[str, Any]", row["route"]) if isinstance(row.get("route"), dict) else {}
         )
-        for field, target in (
-            ("promptVersion", prompt_versions),
-            ("schemaVersion", schema_versions),
-            ("programVersion", programs),
-        ):
-            if isinstance(metadata.get(field), str):
-                target.add(str(metadata[field]))
         stage = str(row["operation_stage"])
+        validate_program_observation(intended_program, stage, metadata)
+        observed_calls.append(
+            {
+                "attemptId": str(row["id"]),
+                "stage": stage,
+                "route": route,
+                "identities": {
+                    name: metadata[name]
+                    for name in (
+                        "programVersion",
+                        "promptVersion",
+                        "schemaVersion",
+                        "promptTemplateSha256",
+                        "nativeSchemaSha256",
+                    )
+                    if metadata.get(name) is not None
+                },
+            }
+        )
         if row.get("model"):
             target_routes = reviewer_routes if stage.startswith("verify") else author_routes
             target_routes[str(route.get("id") or row.get("model"))] = route or {
@@ -406,29 +478,42 @@ async def export_topic_bundle(
             reason="V1 reviews supplied candidates and does not establish opportunity coverage.",
         )
     evidence_config = evidence.config if evidence else {}
+    program_identity: dict[str, Any] = {}
+    prompt_identity: dict[str, Any] = {}
+    schema_identity: dict[str, Any] = {}
+    if intended_program is not None:
+        program_identity, prompt_identity, schema_identity = program_identity_projections(
+            intended_program
+        )
     configuration = TopicConfiguration(
         configuration_id=str(run["config"].get("routeSnapshotId") or digest(route_wrapper)),
         policy=policy,
-        source_sha256=route_wrapper.get("pinnedSource", {}).get("sha256"),
+        source_sha256=_source_sha256(source_id, source, route_wrapper, evidence, evidence_artifact),
         transcript_sha256=evidence.transcriptSha256
         if evidence
         else route_wrapper.get("pinnedTranscript", {}).get("sha256"),
         rubric_sha256=rubric_sha,
         route_snapshot_sha256=digest(snapshot) if snapshot else None,
         route_snapshot=snapshot,
-        program_identity=cast("Any", {"policy": policy, "programs": sorted(programs)}),
+        program_identity=program_identity,
         author_identity=author_routes,
         reviewer_identity=reviewer_routes,
-        prompt_identity=cast("Any", {"versions": sorted(prompt_versions)}),
-        schema_identity=cast("Any", {"versions": sorted(schema_versions)}),
+        prompt_identity=prompt_identity,
+        schema_identity=schema_identity,
         media_identity={
             "compilerVersion": edit.compilerVersion if isinstance(edit, TopicEditSpec) else None,
             "evidenceConfig": evidence_config,
         },
         execution_identity={
-            "config": run["config"],
+            "config": {
+                key: value for key, value in run["config"].items() if key != "routeSnapshotId"
+            },
             "initialBudgetMicros": route_wrapper.get("initialBudgetMicros"),
         },
+        intended_program=intended_program,
+        intended_program_sha256=route_wrapper.get("evaluationProgramSha256"),
+        observed_call_identities=cast("Any", tuple(observed_calls)),
+        retained_run_configuration=run["config"],
     )
     bundle = TopicEvaluationBundle(
         source_id=source_id,
@@ -479,6 +564,16 @@ async def export_topic_bundle(
                 "Provider responses and binary media are immutable references; "
                 "this export does not claim playback inspection."
             ),
+        )
+        + (
+            (
+                (
+                    "Intended programme/prompt/schema roster was not frozen; "
+                    "observed calls cannot establish controlled programme identity."
+                ),
+            )
+            if intended_program is None
+            else ()
         ),
     )
     validate_topic_bundle(bundle)
