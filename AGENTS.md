@@ -39,6 +39,16 @@ comparison uses Astra and Kimi authors with fixed Gemini review; both role pools
 all three qualified families. The unavailable Opus design and all original failures
 remain recorded. Qualification is still separate from full-source editorial acceptance.
 
+The full-source runs are now retained: Astra's author stream failed with an early
+handle and an unknown fence; Kimi/Gemini produced eleven review videos after a
+rejected repair; a separately declared Gemini/Kimi configuration retained four
+initial candidates but failed on a length-truncated repair before rendering. No
+editorial winner follows. The [evidence record](docs/design/openrouter-topic-model-evaluation-2026-09-11.md)
+documents observed omission/completion problems, conflicting critic judgments, the
+repair prompt/schema/validator mismatch and absent direct trimming. These are
+measured execution outcomes and source-grounded diagnostic hypotheses, not human
+publication scores. All experiment workers stopped; no unknown request was replayed.
+
 **2026-09-11 — Model auditions freeze the programme and use the production workflow.**
 Rajesh requested model evaluation after merging PR #36 (`a96b571`). The
 [model evaluation plan](docs/plans/topic-model-evaluation.md) keeps the observed staging

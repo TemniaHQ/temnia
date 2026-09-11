@@ -8,6 +8,34 @@ remains useful standalone discussion selection, with independent comprehension,
 source fidelity and actual playback. Transport qualification alone is not that
 measurement.
 
+## Outcome
+
+Three exact routes qualified, then three full-source configurations ran through
+the production workflow on the same 43:56 Karma recording. OpenRouter enabled
+completed authoring and review, but did not eliminate operational failures or
+establish better chapter selection.
+
+| Author / reviewer | Full-source result | Settled model expense |
+| --- | --- | --- |
+| Astra / Gemini | Author stream reported a network error; no selection or renders; original unknown fence retained | $0; separate matching receipt reports zero, original estimated exposure $5.009620 |
+| Kimi / Gemini | Eleven candidates and eleven review videos; patch rejected; final `needs_review` | $1.027687, fourteen calls |
+| Gemini / Kimi | Four initial candidates; repair terminated at output length; workflow failed before compilation or rendering | $0.619309, seven calls |
+
+The strongest findings concern discovery, judgment and repair. Gemini omitted a
+developed prayer discussion until the source critic found it, and left the earlier
+action/stillness answer without an opportunity. Kimi represented more source
+discussions but split some setup and qualifications. Both configurations selected
+the same wealth story with an unfinished ending. Source and individual critics
+disagreed on concrete context requirements. Kimi's actual repair exposed a mismatch
+between the opportunity fields the prompt presents and those the validator allows
+to change. Gemini's larger real repair exhausted its declared output allowance
+despite passing small native-stage qualification.
+
+These are source-grounded development diagnoses, not human precision/recall scores.
+Both native comparisons retain missing human metrics and report no winner. The
+eleven videos are available for review; technical media checks do not establish
+publication readiness. All trial workers have stopped without replaying unknowns.
+
 ## What changed
 
 The existing paid activity now supports an explicitly configured OpenRouter
@@ -279,6 +307,77 @@ This is an observed limit of the frozen repair contract, distinct from model
 selection quality. The actual patch response and its validator outcome must show
 what the model does within that limit; this evaluation does not alter it mid-run.
 
+### Kimi's rejected repair and terminal delivery
+
+The repair request completed in **290.424 seconds** and settled **380,265 micros**.
+It requested a V5 start extension from `s000239` to `s000226` and a V7 end extension
+from `s000348` to `s000357`, preserving candidate IDs, titles, purposes and unrelated
+videos. It also changed O5's required-context and value-evidence spans. The atomic
+validator rejected the first operation with
+`repair cannot rewrite opportunity evidence to evade a finding`; neither candidate
+extension was applied. This was not a trim rejection.
+
+The patch response hashes to
+`83c4d8fb7704a0b54b4e111823f22546441e20264e199a14d733d919717256c7`,
+and the retained rejection to
+`da04ca906e3f673f15f49539ba8de4321cf89dedfc9b6f9ac1df3de5258d8ce2`.
+The final assessment preserves the original selection and required findings. No
+further model reviews occurred because no changed selection was admitted.
+
+This exposes a concrete implementation mismatch: `selection_patch_prompt` asks for
+updated opportunities, and its schema exposes full opportunity objects, while the
+validator permits changes only to `candidateIds`, `disposition` and
+`dispositionReason`. The prompt does not enumerate that restriction. A pure offline
+replay reproduced the rejection. A diagnostic copy restoring the original
+opportunity definitions while retaining the proposed candidate extensions passed
+the validator. That copy was not persisted, dispatched or treated as a model result.
+The refusal is therefore not evidence solely of model inability. A future contract
+change should make its editable projection explicit and preserve original evidence,
+rather than remove protection to accept this response.
+
+There is also an independent editorial problem in the attempted V7 repair:
+`s000358`, immediately after its proposed endpoint, explicitly qualifies the
+preceding affirmation of virtuous action. The repair would still omit that
+qualification. Passing deterministic admission would not prove this edit faithful.
+This is a source-familiar assistant diagnosis, separate from the actual refusal.
+
+Kimi's workflow completed in **`needs_review`**, retaining the eleven original
+candidates. It settled **1,027,687 micros ($1.027687)** across fourteen model calls,
+with no unknown cost or active reservation in this run. The compiler and renderer
+produced eleven video references, totaling 309,293,430 media bytes. Each retained
+render reports all seventeen technical checks passing, including full decode,
+duration, stream properties and caption bounds. These checks do not judge the
+standalone discussion or establish playback acceptance; no human accepted a video.
+
+Terminal bundle SHA-256:
+`ec9a6c127791e44609916ca81f9b110e6f2b3a29c2d4566625fd62f4400e2e88`.
+Final edit:
+`c4f6bad69bd6d95aea2bbff4d75334fd24fdf1db8235465f5666749bd30a9761`.
+Final render descriptor:
+`bb30c2fc433225f3800416986957b68ae3cc3b32d376b50eaadad5816025598f`.
+The production export validated; human labels remain unfilled. The owned worker
+stopped after terminal/no-pending-work checks. Runtime observations retain the early
+generation handles even though the existing evaluation-attempt projection exposes
+`remoteHandle=null`; that export limitation is not evidence of a lost runtime handle.
+
+All twenty-two compiled edges retain speech-coverage uncertainty requiring review.
+The physical cuts add no source sentence outside the selected semantic spans. In
+particular, V5's padding does not bring back its prior prayer antecedent and V7's
+padding does not include the following answer. The deterministic compiler cannot
+repair the semantic omissions merely by finding a cleaner nearby cut.
+
+### Original native comparison
+
+The unchanged native `model_swap` report hashes to
+`0a6d8b2c9d48fb5b727820e2117a8110aa8278b50d99a5f95e7f004ecf901921`.
+It reports `comparable=false`, `productionQualificationReady=false` and no winner.
+Both human primary metrics are unmeasured. Astra also has no observed reviewer or
+compiler, and its failed-before-selection export uses a fallback rubric identity
+that differs from the actual rubric retained by Kimi. Those native missing/mismatch
+reasons were preserved, not filled from the intended configuration to force a pass.
+Source/transcript, declared programme/prompt/schema and execution settings match.
+Operational delivery is observed; a comparative editorial score is not.
+
 ### Additional declared Gemini-author/Kimi-reviewer configuration
 
 After Astra's operational failure, one additional configuration was declared before
@@ -300,6 +399,172 @@ price-derived allowance. The original Astra/Kimi `model_swap` comparison remains
 intact. Both retain normal human editorial precision and opportunity recall as
 primary metrics. Missing human labels remain unmeasured, and neither comparison
 can identify an editorial winner from these runs alone.
+
+Its production preparation created experiment
+`a5176076-1418-4755-b142-1ad99399243c`, run
+`7ff8f391-55ea-5a24-8808-336cb54f32be`, with snapshot
+`8c09dd86db9020126d799fca9fe1f7885da352d57bdecfa132987ee3dec77f64`.
+Packet SHA-256:
+`1d1e4d50f07ab6547aec33e69874db9568d479c58aada2fca8788ba592d28409`.
+Prepared-file SHA-256:
+`39a0c368b600d9e3599cb09595245211af6dd833f44956426dcaa2cc2472dae8`.
+The ordinary `/4` binder and fresh transcript-byte proof passed. The image and
+programme remain identical to the first two arms.
+
+### Gemini selection and Kimi review
+
+Gemini completed authoring in **166.460 seconds** for **132,166 micros**, proposing
+four candidates and six opportunities. Its initial selection hashes to
+`bcad2f8cf1d4df139aa5a0e07263fe1896f5d7cdcacabe20ddd434863c909c63`.
+The four selected discussions were a broad karma primer (`s000036`–`s000201`),
+wealth/bad karma (`s000313`–`s000348`), rock bottom (`s000391`–`s000447`) and the
+fixed-deposit analogy (`s000448`–`s000507`). The wealth candidate has exactly Kimi's
+original speech extent. The broader primer retains follow-ups that Kimi separated;
+its sustained focus is an editorial tradeoff, not a failure inferred from duration.
+
+Content-only diagnoses were frozen before reading this configuration's critic
+opinions. The reviewers already knew the source and Kimi output; this is explicitly
+not a blind comparison. Four outputs alone is not evidence of either good
+selectivity or low recall. The actual opportunity inventory distinguishes three
+different states:
+
+- Prayer/checklist material has no separate authored opportunity; its main exchange
+  is absent from the author's evidence spans. The earlier action/stillness/offering
+  answer at `s000349`–`s000389` has no authored opportunity evidence at all.
+- Practice/mantra choice is discovered but rejected as `not_contiguously_extractable`.
+  Its record cites context, core, follow-up and completion. The claim that an
+  intervening conversational digression prevents a coherent longer treatment needs
+  editorial adjudication; it is not a mechanical impossibility.
+- The book-origin story is discovered and declined for audience value. Its narrower
+  appeal was already a caveat in the independent source inventory; it is not an
+  automatically required output.
+
+All four Kimi individual reviews and its source review settled. The first assessment
+hashes to `4aa895073f7c951359df684f06011dbeac2f287fd54f51587c5b3ea9597e88e0`.
+The individual wealth review again catches the unfinished ending. The source
+review discovers a new prayer/perfection opportunity, a real contribution beyond
+the author's inventory, but leaves the action/stillness omission unresolved and
+agrees with the mantra exclusion. In that agreement it treats the later positive
+qualification as part of a digression; the frozen independent reading identified
+that qualification as relevant to the warning's meaning.
+
+The critics also make conflicting context judgments. Individual review passes the
+wealth opening, while source review demands the affluent-friend setup over seven
+minutes earlier, across the intervening prayer and practice discussions. Both
+independent content inspections found a clear self-contained paradox and concrete
+story at the selected opening. Conversely, individual review fails the rock-bottom
+opening for residual percentage/show framing while source review finds its explicit
+question sufficient. These are calibration questions, not adjudicated false-positive
+rates. One individual-review takeaway also recommends keeping only positive people
+close although the selected answer challenges that premise; critic summaries must
+not substitute for source text.
+
+The newly discovered prayer opportunity labels `s000239`–`s000240` as completion,
+but `s000240` asks another awareness question answered afterward. Discovery has not
+yet produced a faithful replacement. Its evidence annotations need the same
+scrutiny as author annotations. The source review declines wealth, leaving three
+recommendations in the evaluator's projection, while the immutable initial
+selection still contains all four candidates.
+
+### Gemini repair length termination and final comparison
+
+The seventh request, Gemini's scoped repair, returned a retained response with
+**`finish_reason=length`**, including the provider-native finish reason. It records
+**32,754 output tokens, including 31,454 reasoning tokens**, against the frozen
+32,768 allowance. The paid activity settled **159,216 micros** before its stream
+normalization guard raised
+`UnexpectedModelBehavior: streamed model response did not finish successfully`.
+This was a complete but truncated paid response, not a timeout or unknown expense.
+No patch was admitted or applied; no compiler or renderer ran. It is not evidence
+that the patch validator rejected a submitted edit.
+
+The visible incomplete JSON proposes dropping wealth: it adopts the source critic's
+distant-setup demand, then says that adding all intervening discussion would destroy
+coherence. It starts adding the discovered prayer opportunity, but stops before
+defining a replacement candidate. This traces a questionable dependency claim into
+a proposed exclusion; it does not establish an applied drop or the missing patch's
+eventual extents. The prefix also mixes raw and aggregated finding IDs, a latent
+authority-interface concern. Neither that ambiguity nor the repair vocabulary is
+proved to have caused the observed length termination.
+
+The run ended **`failed`**, with all seven calls settled at **619,309 micros
+($0.619309)** and no active reservation. It preserves the original four-candidate
+selection and first assessment. Its terminal bundle hashes to
+`f4729850479a487a6cdb5f8aa0b8e992ec540b240ec70044ecf9c24d97cfb054`.
+The original response and finish metadata remain private retained artifacts. The
+native export, unfilled-label template and unlabelled report validated. The owned
+worker stopped at 19:35:48.747 UTC after terminal/no-pending-work checks.
+
+The declared native configuration comparison hashes to
+`ecc110425caefac23e28d547a54c3409d213a6136dfbcb90142b24c2daa6346c`.
+It reports `comparable=false`, `productionQualificationReady=false`, `winner=null`:
+Gemini never reached a compiler observation and both human primary metrics remain
+unmeasured. Source, transcript, rubric, programme, prompts, schemas and evidence
+configuration match. Both role identities change as declared; the only execution
+difference is the price-derived admission allowance. Gemini's delivery yield remains
+unmeasured because rendering did not run, while the factual delivered count is zero.
+Neither missing factor nor metric was rewritten to manufacture a comparison pass.
+
+## What to test next for production quality
+
+The next programme should address these related intelligence gaps as one measured
+change, keeping this programme as the baseline:
+
+1. **Find and preserve worthwhile discussions.** Independently map viewer purposes
+   and developed answers before comparing the author's selected portfolio. Evaluate
+   never-discovered opportunities separately from discovered-but-declined ones.
+   Review claimed non-extractability against a complete contiguous treatment and
+   distinguish necessary context from merely earlier related discussion. Test
+   whether withholding author rationale during an initial source pass improves
+   omission detection; this trial does not establish anchoring as the cause.
+2. **Calibrate comprehension, completion and faithfulness judgments.** Adjudicate
+   critics against human source and cold-viewer judgments, including valid excerpts
+   as well as deliberately incomplete controls. Test preservation of qualifications
+   and disagreement, and whether proposed completion spans actually finish the
+   answer. A model-family difference alone did not ensure reliable criticism here.
+3. **Make useful repairs expressible and their authority clear.** Expose only
+   editable opportunity fields, or separately version an evidence correction with
+   retained lineage. Support a scoped replacement of both extent edges, including
+   contraction, and reassess changed content. Today's one-edge/one-touch rule also
+   makes simultaneous opening and ending repairs awkward. These interface limits
+   are distinct from Kimi's observed immutable-field rejection and Gemini's length
+   termination; do not weaken evidence protection to make either result pass.
+4. **Audition roles on representative full repair and review inputs.** Tiny exact
+   schema probes establish transport admission, not completion at real task size.
+   Compare declared reasoning/output configurations per role with costs, complete
+   valid responses, repair improvement and regression measured. Raising every
+   ceiling would be an untested configuration change. Explicitly assess usable
+   reviewable output after known repair failures: the rejected Kimi patch retained
+   rendered originals, whereas Gemini's truncation stopped before any rendering.
+   Establish the editorial win
+   with independent human labels and fresh full sources before promotion.
+
+These are a focused follow-up design, not implemented improvements or permission
+to tune against Karma and call the result general. Keep the source inventory and
+critic diagnoses out of production trial prompts. No arbitrary duration or output
+count is needed; judge useful discussions and faithful completion.
+
+## Final accounting scope
+
+The two OpenRouter qualification cohorts and three full-source runs contain
+**43 physical model requests**: 21 qualification requests and 22 workflow requests.
+Original journals and ledgers report **2,235,700 settled micros ($2.235700)**.
+Two original unresolved calls retain **6,001,793 micros ($6.001793) of estimated
+exposure**: the first cohort's identity-failed Opus call and Astra's full-source
+stream error. The separately retained raw observations are $0.040225 for Opus and
+$0 for Astra; they are not added to settled totals or used to clear those fences.
+Older Vercel expenses are outside this OpenRouter scope. These are model expenses,
+not a complete infrastructure/rendering bill or a measured cost per accepted video.
+
+## Implementation validation
+
+The full clean-commit `pnpm ci:local` gate passed for implementation checkpoint
+`e7cf00b60ca4e5b74a08aff263f63ba915afa424` at 19:17:43.687 UTC on September 11.
+It passed all sixteen package tasks, **1,590 Python tests** with one optional
+detector-agreement test skipped, both production image builds and **twenty browser
+tests**. This includes the new OpenRouter wire, accounting, early-handle/unknown
+ledger and qualification-binding cases. Final evidence-document additions require
+their own exact-commit receipt before the verified PR is delivered.
 
 ## Retained evidence and acceptance limits
 
