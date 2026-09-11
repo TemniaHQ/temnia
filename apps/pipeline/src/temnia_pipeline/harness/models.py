@@ -68,6 +68,7 @@ from temnia_pipeline.harness.gateway import (
     observe_generation_cost,
 )
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
+from temnia_pipeline.harness.topic_editorial import TOPIC_PROMPT
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -81,6 +82,7 @@ HTTP_REQUEST_TIMEOUT = 408
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
 COMPACT_PROPOSAL_SCHEMA_VERSION = "chapter-proposal-compact/1"
+TOPIC_ID_NORMALIZATION_VERSION = "initial-topic-identifiers/1"
 
 
 class ModelPersistenceError(RuntimeError):
@@ -469,6 +471,58 @@ def _normalize_summary_response(deps: HarnessModelDeps, response: ModelResponse)
     return _replace_summary_text(response, text_index, text_part, body)
 
 
+def normalize_initial_topic_response(
+    response: ModelResponse, *, schema_version: str, stage: str
+) -> ModelResponse:
+    """Name empty initial candidate IDs without changing any editorial field or receipt."""
+    if schema_version != TOPIC_PROMPT or stage != "proposal:topic:0":
+        return response
+    text_indexes = [
+        index for index, part in enumerate(response.parts) if isinstance(part, TextPart)
+    ]
+    if len(text_indexes) != 1:
+        return response
+    text_index = text_indexes[0]
+    text_part = cast("TextPart", response.parts[text_index])
+    body = _summary_body(text_part.content)
+    candidates = body.get("candidates") if body is not None else None
+    if not isinstance(candidates, list) or not all(
+        isinstance(candidate, dict) for candidate in cast("list[object]", candidates)
+    ):
+        return response
+    values = cast("list[dict[str, Any]]", candidates)
+    used = {candidate["id"] for candidate in values if isinstance(candidate.get("id"), str)}
+    changed = False
+    for index, candidate in enumerate(values):
+        if candidate.get("id") != "":
+            continue
+        first, last = candidate.get("firstSentenceId"), candidate.get("lastSentenceId")
+        if not isinstance(first, str) or not isinstance(last, str):
+            return response
+        collision = 0
+        while True:
+            suffix = f"-{collision}" if collision else ""
+            label = f"topic-{index:04d}{suffix}"
+            if label not in used:
+                break
+            collision += 1
+        candidate["id"] = label
+        used.add(label)
+        changed = True
+    if body is None or not changed:
+        return response
+    return _replace_summary_text(response, text_index, text_part, body)
+
+
+def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
+    """Apply only the named schema's mechanical normalization after raw settlement."""
+    return normalize_initial_topic_response(
+        _normalize_summary_response(deps, response),
+        schema_version=deps.schema_version,
+        stage=deps.stage,
+    )
+
+
 async def _heartbeat(attempt_id: UUID) -> None:
     while True:
         await asyncio.sleep(10)
@@ -661,7 +715,7 @@ class BudgetedModel(WrapperModel):
                 store=runtime.store,
                 artifact_id=artifact_id,
             )
-            return _normalize_summary_response(self.deps, _response_from_artifact(stored))
+            return _normalize_response(self.deps, _response_from_artifact(stored))
         owner_token = _owner_token(runtime)
         recovery_attempt = await ledger.find_recoverable_attempt(
             runtime.database_url,
@@ -739,7 +793,7 @@ class BudgetedModel(WrapperModel):
             )
             if self.deps.cassette_mode == CassetteMode.RECORD:
                 runtime.cassette_store.record(request_hash, _cassette_metadata(self.deps), response)
-            return _normalize_summary_response(self.deps, response)
+            return _normalize_response(self.deps, response)
         if recovery_attempt is not None:
             raise ledger.OutcomeUnknown(
                 "a prior dispatched attempt has no durable response and cannot be repeated"
@@ -872,7 +926,7 @@ class BudgetedModel(WrapperModel):
                 response=response,
                 max_output_tokens=requested_max,
             )
-            return _normalize_summary_response(self.deps, accepted)
+            return _normalize_response(self.deps, accepted)
         except asyncio.CancelledError:
             await self._record_unknown(
                 runtime=runtime,
