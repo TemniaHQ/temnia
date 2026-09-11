@@ -167,6 +167,46 @@ def known_effective_outputs(configuration: TopicConfiguration) -> bool:
     )
 
 
+def transport_projection(route_snapshot: dict[str, JSONValue] | None) -> dict[str, JSONValue]:
+    """Project only frozen explicit transport facts, leaving legacy process settings unknown."""
+    unknown: dict[str, JSONValue] = {"author": None, "reviewer": None}
+    if (
+        route_snapshot is None
+        or not {"version", "snapshot_id", "routes", "seats"} <= route_snapshot.keys()
+    ):
+        return unknown
+    snapshot = RouteSnapshot.model_validate_json(canonical_json(route_snapshot), strict=True)
+    if not {"propose", "verify"} <= snapshot.seats.keys():
+        return unknown
+    author, reviewer = editorial_routes(snapshot)
+    return {
+        # Provider-specific wire spelling stays in the complete role route identity.
+        # It does not change the shared effective output allowance or request deadline.
+        name: route.transport.model_dump(mode="json", exclude={"output_token_parameter"})
+        if route.transport is not None
+        else None
+        for name, route in (("author", author), ("reviewer", reviewer))
+    }
+
+
+def known_transport(configuration: TopicConfiguration) -> bool:
+    """Both intended roles must carry an explicit, source-bound transport projection."""
+    value = configuration.execution_identity.get("transport")
+    return (
+        isinstance(value, dict)
+        and set(value) == {"author", "reviewer"}
+        and all(isinstance(policy, dict) for policy in value.values())
+        and value == transport_projection(configuration.route_snapshot)
+    )
+
+
+def _validate_transport(configuration: TopicConfiguration) -> None:
+    if "transport" in configuration.execution_identity and configuration.execution_identity[
+        "transport"
+    ] != transport_projection(configuration.route_snapshot):
+        raise ValueError("transport projection contradicts its frozen route configuration")
+
+
 def _validate_effective_outputs(configuration: TopicConfiguration) -> None:
     """Refuse explicit projection contradictions; do not populate archived export bytes."""
     if "effectiveOutputTokens" not in configuration.execution_identity:
@@ -685,6 +725,7 @@ def validate_topic_bundle(bundle: TopicEvaluationBundle) -> None:
     ):
         raise ValueError("route snapshot canonical hash differs")
     _validate_effective_outputs(bundle.configuration)
+    _validate_transport(bundle.configuration)
     intended = bundle.configuration.intended_program
     if intended is not None:
         if (

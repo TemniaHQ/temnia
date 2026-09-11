@@ -499,6 +499,108 @@ async def test_export_to_compare_keeps_output_profile_as_fixed_execution_factor(
         assert result.comparable, result.reasons
 
 
+def _explicit_transport(value: exporter._TopicSnapshot, *, author_timeout: float = 300.0) -> None:
+    frozen = value.run["route_snapshot"]["snapshot"]
+    for route in frozen["routes"]:
+        route["transport"] = {
+            "version": "gateway-transport/1",
+            "gateway": "openrouter",
+            "mode": "streaming",
+            "request_timeout_seconds": author_timeout
+            if route["id"].startswith("author-")
+            else 300.0,
+            "total_timeout_seconds": 540.0,
+        }
+        route["provider_accounting_name"] = "Fixture Provider"
+    for attempt in value.attempts:
+        attempt["route"].update(
+            next(route for route in frozen["routes"] if route["id"] == attempt["route"]["id"])
+        )
+    frozen["snapshot_id"] = digest(
+        {key: item for key, item in frozen.items() if key not in {"snapshot_id", "signature"}}
+    )
+    value.run["config"]["routeSnapshotId"] = frozen["snapshot_id"]
+
+
+@pytest.mark.parametrize("author_timeout", [240.0, 300.0])
+async def test_transport_change_is_an_execution_factor_through_real_export_and_compare(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, author_timeout: float
+) -> None:
+    pairs = [_snapshot(_bundle(), author=name) for name in ("author-a", "author-b")]
+    _explicit_transport(pairs[0][0])
+    _explicit_transport(pairs[1][0], author_timeout=author_timeout)
+    bundles = [await _export(monkeypatch, *pair) for pair in pairs]
+    report = _compare(tmp_path, bundles)
+    assert report.comparable is (author_timeout == 300.0), report.reasons
+    if author_timeout != 300.0:
+        assert any("changed_fixed_factor:execution_identity" in reason for reason in report.reasons)
+        declared = tmp_path / "configuration"
+        declared.mkdir()
+        assert _compare(declared, bundles, configuration=True).comparable
+
+
+async def test_missing_historical_transport_stays_unknown_in_new_transport_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pairs = [_snapshot(_bundle(), author=name) for name in ("author-a", "author-b")]
+    _explicit_transport(pairs[1][0])
+    bundles = [await _export(monkeypatch, *pair) for pair in pairs]
+    report = _compare(tmp_path, bundles, configuration=True)
+    assert not report.comparable
+    assert any("unobserved_transport:" in reason for reason in report.reasons)
+    assert bundles[0].configuration.execution_identity["transport"] == {
+        "author": None,
+        "reviewer": None,
+    }
+
+
+async def test_bundle_refuses_forged_transport_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot, bodies = _snapshot(_bundle())
+    _explicit_transport(snapshot)
+    bundle = await _export(monkeypatch, snapshot, bodies)
+    execution = deepcopy(bundle.configuration.execution_identity)
+    cast("dict[str, Any]", execution["transport"])["author"]["request_timeout_seconds"] = 240.0
+    changed = bundle.model_copy(
+        update={
+            "configuration": bundle.configuration.model_copy(
+                update={"execution_identity": execution}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="transport projection contradicts"):
+        validate_topic_bundle(changed)
+
+
+async def test_provider_required_output_spelling_stays_with_role_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pairs = [_snapshot(_bundle(), author=name) for name in ("author-a", "author-b")]
+    for value, _ in pairs:
+        _explicit_transport(value)
+        frozen = value.run["route_snapshot"]["snapshot"]
+        for route in frozen["routes"]:
+            route["transport"]["version"] = "gateway-transport/2"
+            route["transport"]["output_token_parameter"] = (
+                "max_completion_tokens" if route["id"] == "author-a" else "max_tokens"
+            )
+            route["accounting_model"] = route["gateway_model"] + "-dated"
+        for attempt in value.attempts:
+            attempt["route"].update(
+                next(route for route in frozen["routes"] if route["id"] == attempt["route"]["id"])
+            )
+        frozen["snapshot_id"] = digest(
+            {key: item for key, item in frozen.items() if key not in {"snapshot_id", "signature"}}
+        )
+        value.run["config"]["routeSnapshotId"] = frozen["snapshot_id"]
+    bundles = [await _export(monkeypatch, *pair) for pair in pairs]
+    assert (
+        bundles[0].configuration.execution_identity == bundles[1].configuration.execution_identity
+    )
+    assert bundles[0].configuration.author_identity != bundles[1].configuration.author_identity
+    report = _compare(tmp_path, bundles)
+    assert report.comparable, report.reasons
+
+
 @pytest.mark.parametrize("tamper", ["projection", "raw_config", "execution_config", "route_cap"])
 async def test_effective_output_projection_cannot_contradict_frozen_inputs(
     monkeypatch: pytest.MonkeyPatch, tamper: str

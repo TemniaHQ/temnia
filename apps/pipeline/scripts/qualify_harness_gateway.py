@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from temnia_pipeline.harness.qualification import (
     QualificationLimits,
     QualificationRefusal,
+    qualification_gateway,
     reconcile_journal,
     run_qualification,
 )
@@ -33,6 +34,11 @@ def parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="make a new create-only qualification session")
     run.add_argument("--candidates", required=True, type=Path)
+    run.add_argument(
+        "--gateway",
+        choices=("vercel", "openrouter"),
+        help="must match candidate transport; otherwise derived",
+    )
     run.add_argument("--journal", required=True, type=Path)
     run.add_argument("--receipts", required=True, type=Path)
     run.add_argument("--report", required=True, type=Path)
@@ -51,6 +57,11 @@ def parser() -> argparse.ArgumentParser:
         "reconcile", help="read known generation costs without dispatching a model"
     )
     reconcile.add_argument("--journal", required=True, type=Path)
+    reconcile.add_argument(
+        "--gateway",
+        choices=("vercel", "openrouter"),
+        help="must match the original journal transport",
+    )
     reconcile.add_argument("--journal-sha256", required=True)
     reconcile.add_argument("--report", required=True, type=Path)
     bind = commands.add_parser(
@@ -60,6 +71,11 @@ def parser() -> argparse.ArgumentParser:
     bind.add_argument("--reports", required=True, nargs="+", type=Path)
     bind.add_argument("--output", required=True, type=Path)
     bind.add_argument("--max-output-tokens", required=True, type=int)
+    bind.add_argument(
+        "--bind-transport",
+        action="store_true",
+        help="explicitly bind version 4 route transport, accounting identity and effective outputs",
+    )
     bind.add_argument(
         "--per-route-output",
         action="store_true",
@@ -76,17 +92,28 @@ async def _run(args: argparse.Namespace) -> int:
             args.output,
             max_output_tokens=args.max_output_tokens,
             per_route_output=args.per_route_output,
+            transport_bound=args.bind_transport,
         )
         return 0
-    api_key = os.environ.get("AI_GATEWAY_API_KEY")
+    if not os.environ.get("AI_GATEWAY_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):
+        raise QualificationRefusal("a gateway API key is required in the environment")
+    selected_gateway = qualification_gateway(
+        args.journal if args.command == "reconcile" else args.candidates,
+        journal=args.command == "reconcile",
+    )
+    if args.gateway is not None and args.gateway != selected_gateway:
+        raise QualificationRefusal("selected gateway differs from immutable input transport")
+    key_name = "OPENROUTER_API_KEY" if selected_gateway == "openrouter" else "AI_GATEWAY_API_KEY"
+    api_key = os.environ.get(key_name)
     if not api_key:
-        raise QualificationRefusal("AI_GATEWAY_API_KEY is required in the environment")
+        raise QualificationRefusal("the selected gateway API key is required in the environment")
     if args.command == "reconcile":
         await reconcile_journal(
             journal_path=args.journal,
             expected_sha256=args.journal_sha256,
             api_key=api_key,
             report_path=args.report,
+            gateway=selected_gateway,
         )
         return 0
     limits = QualificationLimits(
@@ -106,6 +133,7 @@ async def _run(args: argparse.Namespace) -> int:
         receipts_path=args.receipts,
         report_path=args.report,
         limits=limits,
+        gateway=selected_gateway,
     )
     return 0 if report.get("status") == "completed" and report.get("passed") is True else 1
 

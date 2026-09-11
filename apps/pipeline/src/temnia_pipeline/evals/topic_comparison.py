@@ -19,6 +19,8 @@ from temnia_pipeline.evals.topics import (
     TopicHumanLabels,
     digest,
     known_effective_outputs,
+    known_transport,
+    transport_projection,
 )
 
 
@@ -143,6 +145,18 @@ def compare_topics(manifest: TopicComparisonManifest, *, directory: Path) -> Top
                 f"unobserved_effective_outputs:{bundle.recording_group}:"
                 f"{bundle.configuration.configuration_id}"
             )
+    if any(
+        any(
+            value is not None
+            for value in transport_projection(bundle.configuration.route_snapshot).values()
+        )
+        for bundle in bundles
+    ):
+        reasons.extend(
+            f"unobserved_transport:{bundle.recording_group}:{bundle.configuration.configuration_id}"
+            for bundle in bundles
+            if not known_transport(bundle.configuration)
+        )
     by_key = {
         (bundle.recording_group, bundle.configuration.configuration_id): (bundle, report)
         for bundle, report in zip(bundles, reports, strict=True)
