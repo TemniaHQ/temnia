@@ -626,6 +626,44 @@
         "missingOpportunities": [],
         "findings": []
       }
+    },
+    "topic_selection_source_selected_v3": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic V3 source selection exercises strict publication mechanics without claiming editorial quality.",
+        "candidates": [],
+        "opportunities": [
+          {
+            "opportunityId": "timestamp-value",
+            "candidateIds": [
+              "timestamp-search"
+            ],
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "status": "represented",
+            "reason": "The synthetic treatment contains the inventory opportunity's core evidence."
+          }
+        ],
+        "selection": [
+          {
+            "candidateId": "timestamp-search",
+            "disposition": "select",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "reason": "The deterministic fixture selects one structurally complete treatment for workflow testing."
+          }
+        ],
+        "missingOpportunities": [],
+        "findings": []
+      }
     }
   },
   "synthetic": true

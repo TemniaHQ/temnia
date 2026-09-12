@@ -686,7 +686,7 @@
           "maximum": 4
         },
         "maxRepairs": {
-          "default": 1,
+          "default": 3,
           "type": "integer",
           "minimum": 0,
           "maximum": 3

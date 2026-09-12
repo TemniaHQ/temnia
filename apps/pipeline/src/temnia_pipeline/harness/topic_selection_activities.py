@@ -293,9 +293,13 @@ class TopicSelectionActivities:
             stage = f"verify:selection:source:{context.iteration}"
             version = SELECTION_SOURCE_PROMPT_V3 if v3 else SELECTION_SOURCE_PROMPT
             synthetic = (
-                "topic_selection_source_selected"
-                if selection.draft.proposal.candidates
-                else "topic_selection_source"
+                "topic_selection_source_selected_v3"
+                if v3 and selection.draft.proposal.candidates
+                else (
+                    "topic_selection_source_selected"
+                    if selection.draft.proposal.candidates
+                    else "topic_selection_source"
+                )
             )
             dependencies.append(context.selection)
         elif selection is not None:
@@ -651,6 +655,7 @@ class TopicSelectionActivities:
             verifier_family=verifier.family,
             response_artifacts=tuple(response_refs),
             reasons=reasons,
+            require_source_candidate_reviews=context.program_version != TOPIC_SELECTION_POLICY_V3,
         )
         if request.execution_limited:
             assessment = TopicSelectionAssessment.model_validate(
@@ -724,7 +729,11 @@ class TopicSelectionActivities:
             or context.assessment is None
         ):
             raise HarnessValidationError("selection compilation requires exact assessed state")
-        proposal = selection_candidates_for_render(record, assessment)
+        proposal = selection_candidates_for_render(
+            record,
+            assessment,
+            require_complete_review=context.program_version == TOPIC_SELECTION_POLICY_V3,
+        )
         videos: list[TopicCompiledVideo] = []
         refusals: list[str] = []
         compiled = compile_topics_v2(

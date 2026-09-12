@@ -153,7 +153,9 @@ def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
             ],
         }
     )
-    extended = original.model_copy(update={"firstSentenceId": "s000000"})
+    extended = original.model_copy(
+        update={"firstSentenceId": "s000000", "requiredContextSpans": [_span(0)]}
+    )
     patch = TopicSelectionPatch.model_validate(
         {
             "baseSelectionSha256": selection_sha,
@@ -175,6 +177,25 @@ def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
     )
     output = apply_selection_patch(EVIDENCE, record, selection_sha, assessment, patch)
     assert output.proposal.candidates[0] == extended
+    drifted = extended.model_copy(
+        update={"title": "A model-authored title drift", "purpose": "A changed purpose."}
+    )
+    opportunity_drift = selected.opportunities[0].model_copy(update={"coreSpans": [_span(0)]})
+    prose_drift = patch.model_copy(
+        update={
+            "operations": [
+                patch.operations[0].model_copy(
+                    update={
+                        "replacementCandidates": [drifted],
+                        "opportunities": [opportunity_drift],
+                    }
+                )
+            ]
+        }
+    )
+    normalized = apply_selection_patch(EVIDENCE, record, selection_sha, assessment, prose_drift)
+    assert normalized.proposal.candidates[0] == extended
+    assert normalized.opportunities[0] == selected.opportunities[0]
     rewritten = extended.model_copy(update={"completionSpans": [_span(0)]})
     corrupt = patch.model_copy(
         update={

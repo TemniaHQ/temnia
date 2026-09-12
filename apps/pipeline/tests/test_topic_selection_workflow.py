@@ -151,6 +151,15 @@ def portfolio(*, selected: bool, missing: bool = False, weak: bool = False) -> T
     )
 
 
+def v3_portfolio(
+    *, selected: bool, missing: bool = False, weak: bool = False
+) -> TopicPortfolioReview:
+    """V3 source review decides the portfolio without repeating cold reviews."""
+    return portfolio(selected=selected, missing=missing, weak=weak).model_copy(
+        update={"candidates": []}
+    )
+
+
 class AgentDouble:
     def __init__(self, name: str, outputs: list[object], call_order: list[str]) -> None:
         self.name = name
@@ -549,7 +558,7 @@ async def test_v3_inventory_precedes_author_and_source_review_hides_rationale(
         monkeypatch,
         initial=draft(selected=True),
         inventory=inventory,
-        sources=[portfolio(selected=True)],
+        sources=[v3_portfolio(selected=True)],
         patches=[],
         policy=TOPIC_SELECTION_POLICY_V3,
         workflow_type=TopicSelectionWorkflowV3,
@@ -565,20 +574,21 @@ async def test_v3_inventory_precedes_author_and_source_review_hides_rationale(
     )
     source_payload = json.loads(run.source.prompts[0].split("SOURCE DATA\n", 1)[1])
     assert "selectionWithoutAuthorRationale" in source_payload
+    assert "Leave candidates as an empty array" in run.source.prompts[0]
     projected = source_payload["selectionWithoutAuthorRationale"]
     assert "reason" not in projected["candidates"][0]
     assert "dispositionReason" not in projected["opportunities"][0]
     assert run.render_count == 1
 
 
-async def test_v3_invalid_repair_keeps_last_valid_video_renderable(
+async def test_v3_invalid_repair_withholds_the_known_invalid_video(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inventory = TopicSelectionDraft(
         proposal=TopicProposal(version=1, candidates=[], summary="One source opportunity."),
         opportunities=[opportunity(selected=False)],
     )
-    unresolved_payload = portfolio(selected=True, weak=True).model_dump(mode="json")
+    unresolved_payload = v3_portfolio(selected=True, weak=True).model_dump(mode="json")
     unresolved_payload["selection"][0]["disposition"] = "unresolved"
     unresolved = TopicPortfolioReview.model_validate(unresolved_payload)
     run = Program(
@@ -592,5 +602,5 @@ async def test_v3_invalid_repair_keeps_last_valid_video_renderable(
     )
     result = await TopicSelectionWorkflowV3().program(run.request)
     assert run.call_order == ["inventory", "author", "cold", "source", "patch"]
-    assert run.render_count == 1
+    assert run.render_count == 0
     assert "prior assessed selection is retained" in (result.errorMessage or "")

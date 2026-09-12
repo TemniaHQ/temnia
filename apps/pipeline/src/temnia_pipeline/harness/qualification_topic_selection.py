@@ -303,6 +303,7 @@ def validate_topic_selection_qualification_output(
         source_review=output if isinstance(output, TopicPortfolioReview) else None,
         author_family="synthetic-author",
         verifier_family="synthetic-reviewer",
+        require_source_candidate_reviews=program_version != TOPIC_SELECTION_POLICY_V3,
     )
     if stage == "topic_cold" and len(judged.coldReviews) != 1:
         raise ValueError("topic qualification cold observation is not source-grounded")

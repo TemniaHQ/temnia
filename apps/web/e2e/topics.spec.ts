@@ -144,7 +144,7 @@ for (const policy of TOPIC_POLICIES) {
         "unknown"
       );
       expect(assessment.portfolioReview?.selection[0]?.disposition).toBe(
-        "unresolved"
+        policy === TOPIC_SELECTION_POLICY_V3 ? "select" : "unresolved"
       );
       expect(assessment.executionStatus).toBe("needs_review");
       expect(edit.compilerVersion).toBe("topic-compiler/2");
@@ -162,7 +162,7 @@ for (const policy of TOPIC_POLICIES) {
     await expect(video).toHaveCount(1);
     await expect(
       video.getByText("Technical checks passed", { exact: true })
-    ).toBeVisible();
+    ).toBeVisible({ timeout: STAGE_TIMEOUT });
     await expect(
       panel.getByRole("link", { name: "Download accepted manifest" })
     ).toHaveCount(0);

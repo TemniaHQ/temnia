@@ -148,7 +148,9 @@ def _outputs() -> list[dict[str, Any]]:
 
 
 def _outputs_v3() -> list[dict[str, Any]]:
-    return [topic_selection_qualification_inventory().model_dump(mode="json"), *_outputs()]
+    outputs = _outputs()
+    outputs[2]["candidates"] = []
+    return [topic_selection_qualification_inventory().model_dump(mode="json"), *outputs]
 
 
 async def _qualified(

@@ -120,7 +120,7 @@ class HarnessSettings:
                 DEFAULT_MAX_RUN_BUDGET_MICROS,
             ),
             max_dispatches=_positive(values, "HARNESS_MAX_DISPATCHES", 32),
-            max_repairs=int(values.get("HARNESS_MAX_REPAIRS", "1")),
+            max_repairs=int(values.get("HARNESS_MAX_REPAIRS", "3")),
             max_output_tokens=_positive(values, "HARNESS_MAX_OUTPUT_TOKENS", 8192),
             evidence_window_sentences=_positive(values, "HARNESS_EVIDENCE_WINDOW_SENTENCES", 80),
             max_render_concurrency=_positive(values, "HARNESS_MAX_RENDER_CONCURRENCY", 2),
