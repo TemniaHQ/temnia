@@ -36,6 +36,7 @@ from temnia_pipeline.evals.topics import (
     digest,
     effective_output_projection,
     program_identity_projections,
+    transport_projection,
     validate_program_observation,
     validate_topic_bundle,
 )
@@ -511,6 +512,7 @@ async def export_topic_bundle(
             },
             "initialBudgetMicros": route_wrapper.get("initialBudgetMicros"),
             "effectiveOutputTokens": effective_output_projection(policy, run["config"], snapshot),
+            "transport": transport_projection(snapshot),
         },
         intended_program=intended_program,
         intended_program_sha256=route_wrapper.get("evaluationProgramSha256"),

@@ -13,6 +13,11 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from temnia_pipeline.harness.gateway_policy import (  # noqa: TC001
+    GatewayName,
+    GatewayTransportPolicy,
+)
+
 MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024
 TOKENS_PER_PRICE_UNIT = 1_000_000
 PROTOCOL_OVERHEAD_BYTES = 8192
@@ -77,9 +82,35 @@ class RouteEntry(BaseModel):
     reasoning_effort: ReasoningEffort | None = None
     service_tier: ServiceTier | None = None
     cache_enabled: bool = False
+    transport: GatewayTransportPolicy | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    provider_accounting_name: Annotated[str | None, Field(min_length=1, max_length=128)] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    accounting_model: Annotated[str | None, Field(min_length=1, max_length=256)] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _qualified_options(self) -> Self:
+        if self.transport is not None and self.transport.gateway == "openrouter":
+            if self.provider_accounting_name is None:
+                raise ValueError(
+                    "OpenRouter routes require their observed accounting provider name"
+                )
+        elif self.provider_accounting_name is not None:
+            raise ValueError("accounting provider names require an explicit OpenRouter transport")
+        canonical_accounting = (
+            self.transport is not None
+            and self.transport.gateway == "openrouter"
+            and self.transport.version == "gateway-transport/2"
+        )
+        if canonical_accounting != (self.accounting_model is not None):
+            raise ValueError(
+                "OpenRouter transport version 2 requires a frozen accounting model; "
+                "earlier transports preserve request-model accounting"
+            )
         if self.id.casefold() == "default":
             raise ValueError("a route may not be named default")
         if not self.eligibility.zero_data_retention or not self.eligibility.strict_json_schema:
@@ -170,6 +201,17 @@ class CostEstimate(BaseModel):
 def load_route_snapshot(path: Path) -> RouteSnapshot:
     """Load one strict immutable JSON snapshot; absence or corruption is loud."""
     return RouteSnapshot.model_validate_json(path.read_bytes(), strict=True)
+
+
+def snapshot_gateway(snapshot: RouteSnapshot) -> GatewayName:
+    """Resolve the one process gateway required by this immutable worker snapshot."""
+    gateways = {
+        route.transport.gateway if route.transport is not None else "vercel"
+        for route in snapshot.routes
+    }
+    if len(gateways) != 1:
+        raise ValueError("one worker snapshot must use one gateway")
+    return "openrouter" if "openrouter" in gateways else "vercel"
 
 
 def select_route(

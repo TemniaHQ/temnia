@@ -2,6 +2,15 @@
 
 **Implementation amendment (2026-09-08, PR #24):** [Pipeline architecture](pipeline-architecture.md) supersedes older harness schema, budget, review-lifetime and gateway-probe claims below. PydanticAI is pinned to 2.40.0, ONNX Runtime to 1.29.0, atomic reservations cover physical attempts, and finite review workflows operate on immutable revisions. No saved gateway probe artifact was found; transport and seat qualification must produce evidence before live routing is enabled.
 
+**Transport audition amendment (2026-09-11):** Rajesh requested OpenRouter after
+the Vercel full-source author timeout and configured its staging key. The
+[OpenRouter trial](plans/openrouter-model-evaluation.md) adds explicit transport
+identity, internal streaming with early generation persistence and its own native
+request/accounting qualification. It keeps the existing SDK, Temporal workflow and
+ledger. Earlier Vercel receipts remain evidence for their original conditions;
+OpenRouter is an experiment candidate, and neither gateway nor model superiority
+has been established. Historical candidate rows below are not live routing defaults.
+
 **Metric dependency amendment (2026-09-08, PR #24):** The pipeline preserves the Pk,
 WindowDiff and GHD conventions through a narrow attributed adaptation of NLTK 3.10.3's
 pure algorithms. NLTK is removed from the frozen dependency tree. The alternative was

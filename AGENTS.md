@@ -2,6 +2,53 @@
 
 ## Decisions
 
+**2026-09-11 — OpenRouter is an explicit model-audition transport.** Rajesh merged
+PR #37 and configured the staging pipeline key. The
+[transport plan](docs/plans/openrouter-model-evaluation.md) qualifies new requests
+through OpenRouter while preserving the existing editorial programme and paid-call
+ledger. Routes freeze gateway, streaming mode, idle/aggregate deadlines and accounting
+provider identity; legacy routes and receipts keep their original interpretation.
+The first condition uses high effort, 32,768 output tokens, 300-second idle and
+540-second aggregate deadlines. Internal streaming records an observed generation ID
+before content when available, drains the complete response, and keeps incomplete
+outcomes fenced. Actual provider receipts determine expense. No unknown request is
+replayed by switching gateways, and no model or gateway winner is inferred from
+qualification.
+
+The initial four routes are Astra/Azure, Opus/Amazon Bedrock, Gemini/Google Vertex
+global and Kimi/Fireworks. This is a declared comparison, not a production default.
+Provider changes from Vercel and base-slug regional routing remain explicit factors;
+the Vercel Opus output restriction is not assumed for OpenRouter/Bedrock. Whole-source
+development runs follow successful exact qualification. Human opportunity and
+publication acceptance measurements remain necessary.
+
+The first OpenRouter cohort stopped at five requests: four Astra parameter-admission
+404s and one complete Opus/Bedrock response whose canonical accounting model differed
+from the request alias; its prose also failed the required JSON contract. Preserve
+that original report and expense fence. `gateway-transport/2` binds endpoint-specific
+output-token spelling and catalogue-bound canonical accounting model separately from
+the request alias. The second declared cohort substitutes Opus/Vertex global and
+tests its actual schema capability, retaining the catalogue's support uncertainty.
+Neither an accounting correction nor a catalogue flag can turn the Bedrock prose
+into qualifying output. Details and source/image verification are in the transport plan.
+
+The second cohort completed sixteen requests: Astra, Gemini and Kimi passed all four
+native stages, while Opus/Vertex returned four conclusive parameter-admission 404s.
+It settled $0.588704 with no new unknowns. A separately declared full-Karma development
+comparison uses Astra and Kimi authors with fixed Gemini review; both role pools retain
+all three qualified families. The unavailable Opus design and all original failures
+remain recorded. Qualification is still separate from full-source editorial acceptance.
+
+The full-source runs are now retained: Astra's author stream failed with an early
+handle and an unknown fence; Kimi/Gemini produced eleven review videos after a
+rejected repair; a separately declared Gemini/Kimi configuration retained four
+initial candidates but failed on a length-truncated repair before rendering. No
+editorial winner follows. The [evidence record](docs/design/openrouter-topic-model-evaluation-2026-09-11.md)
+documents observed omission/completion problems, conflicting critic judgments, the
+repair prompt/schema/validator mismatch and absent direct trimming. These are
+measured execution outcomes and source-grounded diagnostic hypotheses, not human
+publication scores. All experiment workers stopped; no unknown request was replayed.
+
 **2026-09-11 — Model auditions freeze the programme and use the production workflow.**
 Rajesh requested model evaluation after merging PR #36 (`a96b571`). The
 [model evaluation plan](docs/plans/topic-model-evaluation.md) keeps the observed staging

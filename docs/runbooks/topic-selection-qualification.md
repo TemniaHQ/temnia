@@ -44,7 +44,10 @@ From `apps/pipeline`, in the synchronized environment:
 ```
 
 This command dispatches inference and needs the existing authorized gateway
-credential in `AI_GATEWAY_API_KEY`. The operator supplies the experiment's execution
+credential in `AI_GATEWAY_API_KEY` for legacy Vercel routes, or `OPENROUTER_API_KEY`
+for explicit OpenRouter routes. Candidate transport determines the gateway;
+optional `--gateway openrouter` verifies that identity rather than overriding it.
+The operator supplies the experiment's execution
 settings explicitly; the new suite introduces no fixed experiment-spend, candidate
 count or dispatch ceiling. The historical suites retain their historical ceilings.
 A candidate requires four calls for a complete qualification. Do not restart a
@@ -87,6 +90,39 @@ Each value must equal the smaller of that run ceiling and the immutable route's
 ceiling creates a new snapshot; preserve its original advertised capacity evidence.
 Missing/extra keys, stale ceilings and other-setting receipts refuse admission.
 The flag does not dispatch inference or infer capacity from observed token usage.
+
+Explicit gateway transports require `--bind-transport`, which produces
+`topic-selection-qualification/4`. Each candidate carries a complete `transport`
+(`version`, `gateway`, `mode`, `request_timeout_seconds`, `total_timeout_seconds`)
+and OpenRouter's catalogue-bound `providerAccountingName`. The snapshot uses
+`provider_accounting_name`. `/4` binds these fields and effective route outputs,
+then validates the actual URL, stream mode, HTTP deadlines, provider/privacy/cache
+controls, complete response and retained generation-accounting receipt. `/2` and
+`/3` cannot qualify an explicit transport. See the
+[declared initial OpenRouter condition](../plans/openrouter-model-evaluation.md).
+
+New OpenRouter candidates use `gateway-transport/2` with an explicit
+`output_token_parameter` chosen from the endpoint's advertised parameters. Freeze
+`accountingModel` from the model catalogue's canonical slug; the snapshot field is
+`accounting_model`. The API request still uses `gatewayModel`, which may be an alias.
+Accounting must match its declared canonical identity exactly. Transport version 1
+keeps its original encoding and request-model accounting; do not retrofit its saved
+records or treat earlier failures as successful qualification.
+
+An experiment worker uses one gateway. Set `HARNESS_GATEWAY=openrouter` and supply
+the matching key in the pipeline process; keep secrets out of route files and CLI
+arguments. The experiment launcher emits the gateway from its frozen snapshot.
+Boot rejects a gateway/snapshot mismatch or a missing matching credential. Absence
+of `HARNESS_GATEWAY` preserves existing Vercel workers. Keep the manifest, original
+reports and all referenced response/accounting files together at their recorded
+paths. Never fill historical transport settings from the current environment.
+
+Streaming is consumed inside the existing paid activity. An observed header or
+chunk generation ID is persisted before further content is read when available.
+Incomplete EOF, stream error or deadline expiry keeps the unknown fence and any
+handle; a complete truncated output retains its receipt and expense before being
+rejected. Read-only generation reconciliation can recover reported cost, but cannot
+recover a missing model response or authorize duplicate inference.
 
 V2 uses the same effective allowance in preparation, all four native requests,
 expense reservations and response-reuse identity. Older workflows still require

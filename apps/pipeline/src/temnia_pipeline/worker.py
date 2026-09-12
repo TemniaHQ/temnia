@@ -107,7 +107,9 @@ async def run_worker(settings: TemporalSettings) -> None:
         )
     if snapshot is not None:
         gateway = (
-            GatewayConfig(api_key=harness_settings.gateway_api_key)
+            GatewayConfig(
+                api_key=harness_settings.gateway_api_key, gateway=harness_settings.gateway
+            )
             if harness_settings.gateway_api_key is not None
             and harness_settings.backend == "gateway"
             else None

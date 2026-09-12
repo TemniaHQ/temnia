@@ -19,6 +19,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
+from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noqa: TC001
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -58,6 +60,13 @@ class CassetteMetadata(BaseModel):
     prompt_version: Annotated[str, Field(min_length=1)]
     program_version: Annotated[str, Field(min_length=1)]
     synthetic: bool = False
+    transport: GatewayTransportPolicy | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    provider_accounting_name: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    accounting_model: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CassetteEnvelope(BaseModel):

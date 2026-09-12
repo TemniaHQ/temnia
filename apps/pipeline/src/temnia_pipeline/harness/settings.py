@@ -18,11 +18,14 @@ from temnia_pipeline.harness.routes import (
     RouteSnapshot,
     estimate_cost,
     load_route_snapshot,
+    snapshot_gateway,
 )
 from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from temnia_pipeline.harness.gateway_policy import GatewayName
 
 HarnessBackend = Literal["gateway", "recorded"]
 TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
@@ -64,6 +67,7 @@ class HarnessSettings:
     evidence_window_sentences: int
     max_render_concurrency: int
     gateway_api_key: str | None
+    gateway: GatewayName = "vercel"
     recorded_fixture_path: Path | None = None
     chapter_llama_config: ChapterLlamaConfig | None = None
     topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
@@ -77,6 +81,9 @@ class HarnessSettings:
         raw_backend = values.get("HARNESS_BACKEND") or None
         if raw_backend not in {None, "gateway", "recorded"}:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
+        raw_gateway = values.get("HARNESS_GATEWAY", "vercel")
+        if raw_gateway not in {"vercel", "openrouter"}:
+            raise ValueError("HARNESS_GATEWAY must be vercel or openrouter")
         raw_shot_detector = values.get("HARNESS_TOPIC_SHOT_DETECTOR", "pyscenedetect-adaptive")
         if raw_shot_detector not in {"pyscenedetect-adaptive", "scdet"}:
             raise ValueError("HARNESS_TOPIC_SHOT_DETECTOR must be pyscenedetect-adaptive or scdet")
@@ -109,7 +116,11 @@ class HarnessSettings:
             max_output_tokens=_positive(values, "HARNESS_MAX_OUTPUT_TOKENS", 8192),
             evidence_window_sentences=_positive(values, "HARNESS_EVIDENCE_WINDOW_SENTENCES", 80),
             max_render_concurrency=_positive(values, "HARNESS_MAX_RENDER_CONCURRENCY", 2),
-            gateway_api_key=values.get("AI_GATEWAY_API_KEY") or None,
+            gateway=cast("GatewayName", raw_gateway),
+            gateway_api_key=values.get(
+                "OPENROUTER_API_KEY" if raw_gateway == "openrouter" else "AI_GATEWAY_API_KEY"
+            )
+            or None,
             recorded_fixture_path=(
                 Path(values["HARNESS_RECORDED_FIXTURE_PATH"])
                 if values.get("HARNESS_RECORDED_FIXTURE_PATH")
@@ -144,7 +155,10 @@ class HarnessSettings:
                 "HARNESS_ROUTE_SNAPSHOT_ID and HARNESS_ROUTE_SNAPSHOT_PATH are required"
             )
         if self.backend == "gateway" and self.gateway_api_key is None:
-            raise RuntimeError("AI_GATEWAY_API_KEY is required for the gateway backend")
+            key_name = (
+                "OPENROUTER_API_KEY" if self.gateway == "openrouter" else "AI_GATEWAY_API_KEY"
+            )
+            raise RuntimeError(f"{key_name} is required for the selected gateway backend")
         if self.backend == "recorded" and not self.allow_recorded:
             raise RuntimeError("recorded backend requires HARNESS_ALLOW_RECORDED=1")
         if self.backend == "recorded" and self.recorded_fixture_path is None:
@@ -186,6 +200,8 @@ class HarnessSettings:
             raise RuntimeError("recorded backend requires a visibly synthetic route snapshot")
         if self.backend == "gateway" and snapshot.synthetic:
             raise RuntimeError("gateway backend requires a production route snapshot")
+        if self.backend == "gateway" and snapshot_gateway(snapshot) != self.gateway:
+            raise RuntimeError("loaded route transport differs from HARNESS_GATEWAY")
         if self.topic_selection_enabled and self.backend == "gateway":
             # Qualification imports native schemas; defer until settings/route loading finishes.
             from temnia_pipeline.harness.qualification_topic_selection import (  # noqa: PLC0415

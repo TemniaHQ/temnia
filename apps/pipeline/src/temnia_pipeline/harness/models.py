@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext, TextPart
 from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import (
     Model,
@@ -69,6 +69,7 @@ from temnia_pipeline.harness.gateway import (
     GatewayConfig,
     GatewayError,
     build_gateway_model,
+    observe_gateway_generation,
     observe_generation_cost,
 )
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
@@ -352,6 +353,9 @@ def _cassette_metadata(deps: HarnessModelDeps) -> CassetteMetadata:
         prompt_version=deps.prompt_version,
         program_version=deps.program_version,
         synthetic=deps.synthetic_payload is not None,
+        transport=deps.route.transport,
+        provider_accounting_name=deps.route.provider_accounting_name,
+        accounting_model=deps.route.accounting_model,
     )
 
 
@@ -519,7 +523,13 @@ def normalize_initial_topic_response(
 
 
 def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
-    """Apply only the named schema's mechanical normalization after raw settlement."""
+    """Reject terminal truncation after settlement, then normalize named cosmetic fields."""
+    if (
+        deps.route.transport is not None
+        and deps.route.transport.mode == "streaming"
+        and response.finish_reason != "stop"
+    ):
+        raise UnexpectedModelBehavior("streamed model response did not finish successfully")
     return normalize_initial_topic_response(
         _normalize_summary_response(deps, response),
         schema_version=deps.schema_version,
@@ -865,8 +875,28 @@ class BudgetedModel(WrapperModel):
             current = asyncio.current_task()
             if current is not None:
                 current.add_done_callback(lambda _: pulse.cancel())
+
+        async def remember_generation(identity: str) -> None:
+            save = asyncio.create_task(
+                ledger.attach_remote_handle(
+                    runtime.database_url,
+                    scope=self.deps.scope,
+                    source_id=self.deps.source_id,
+                    operation_id=acquired.operation.id,
+                    attempt_id=attempt.id,
+                    owner_token=owner_token,
+                    remote_handle=identity,
+                )
+            )
+            try:
+                await asyncio.shield(save)
+            except asyncio.CancelledError:
+                await save
+                raise
+
         try:
-            response = await super().request(messages, model_settings, model_request_parameters)
+            with observe_gateway_generation(remember_generation):
+                response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
             conclusive = (
                 HTTP_CLIENT_ERROR_MIN <= error.status_code < HTTP_CLIENT_ERROR_MAX
@@ -930,7 +960,6 @@ class BudgetedModel(WrapperModel):
                 response=response,
                 max_output_tokens=requested_max,
             )
-            return _normalize_response(self.deps, accepted)
         except asyncio.CancelledError:
             await self._record_unknown(
                 runtime=runtime,
@@ -951,6 +980,7 @@ class BudgetedModel(WrapperModel):
                 error_message="response acceptance did not reach a durable terminal state",
             )
             raise ledger.OutcomeUnknown("response persistence outcome is unknown") from error
+        return _normalize_response(self.deps, accepted)
 
     async def _accept_response(  # noqa: PLR0913
         self,

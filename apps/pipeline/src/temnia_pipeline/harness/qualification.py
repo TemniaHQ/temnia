@@ -40,8 +40,11 @@ from temnia_pipeline.harness.gateway import (
     GatewayError,
     GenerationIdentityError,
     lookup_generation,
+    observe_gateway_generation,
     observe_generation_cost,
+    validate_gateway_request,
 )
+from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noqa: TC001
 from temnia_pipeline.harness.models import (
     COMPACT_PROPOSAL_SCHEMA_VERSION,
     CompactChapterProposal,
@@ -148,6 +151,8 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.settings import ModelSettings
 
+    from temnia_pipeline.harness.gateway_policy import GatewayName
+
 
 class QualificationRefusal(RuntimeError):
     """The qualification cannot safely dispatch or continue."""
@@ -196,6 +201,39 @@ class CandidateRoute(BaseModel):
     prices: CandidatePrices
     reasoning_effort: ReasoningEffort | None = Field(default=None, alias="reasoningEffort")
     service_tier: ServiceTier | None = Field(default=None, alias="serviceTier")
+    transport: GatewayTransportPolicy | None = Field(default=None, exclude_if=lambda v: v is None)
+    provider_accounting_name: str | None = Field(
+        default=None,
+        alias="providerAccountingName",
+        min_length=1,
+        max_length=128,
+        exclude_if=lambda v: v is None,
+    )
+    accounting_model: str | None = Field(
+        default=None,
+        alias="accountingModel",
+        min_length=1,
+        max_length=256,
+        exclude_if=lambda v: v is None,
+    )
+
+    @model_validator(mode="after")
+    def _transport_identity(self) -> CandidateRoute:
+        if self.transport is not None and self.transport.gateway == "openrouter":
+            if not self.provider_accounting_name:
+                raise ValueError("OpenRouter candidate requires its accounting provider identity")
+        elif self.provider_accounting_name is not None:
+            raise ValueError("accounting provider identity requires OpenRouter transport")
+        if (
+            self.transport is not None
+            and self.transport.gateway == "openrouter"
+            and self.transport.version == "gateway-transport/2"
+        ):
+            if self.accounting_model is None:
+                raise ValueError("OpenRouter version 2 candidate requires its accounting model")
+        elif self.accounting_model is not None:
+            raise ValueError("accounting model identity requires OpenRouter transport version 2")
+        return self
 
 
 class CandidateCatalogue(BaseModel):
@@ -215,7 +253,25 @@ class CandidateCatalogue(BaseModel):
         identities = [(route.gateway_model, route.provider) for route in self.candidates]
         if len(set(identities)) != len(identities):
             raise ValueError("candidate model/provider identities must be unique")
+        if len({candidate_gateway(route) for route in self.candidates}) != 1:
+            raise ValueError("one qualification cohort must use one gateway")
         return self
+
+
+def candidate_gateway(candidate: CandidateRoute) -> GatewayName:
+    """Legacy candidates retain the original Vercel transport identity."""
+    return candidate.transport.gateway if candidate.transport is not None else "vercel"
+
+
+def qualification_gateway(path: Path, *, journal: bool = False) -> GatewayName:
+    """Resolve credentials from immutable candidate intent without reading any credential."""
+    if journal:
+        value = json.loads(_bounded_read(path, MAX_JOURNAL_BYTES))
+        _validate_reconciliation_journal(value)
+        catalogue = CandidateCatalogue.model_validate_json(canonical_json(value["catalogue"]))
+    else:
+        catalogue = load_candidates(path)
+    return candidate_gateway(catalogue.candidates[0])
 
 
 class QualificationLimits(BaseModel):
@@ -289,8 +345,13 @@ def _reject_sensitive_keys(value: object) -> None:
 
 
 def _private_create(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     body = canonical_json(value) + b"\n"
+    _private_create_raw(path, body)
+
+
+def _private_create_raw(path: Path, body: bytes) -> None:
+    """Retain received accounting bytes without changing their monetary representation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as handle:
@@ -537,6 +598,11 @@ class _QualificationJournal:
         call = self._call(candidate_id, stage)
         if call["state"] != "request_sent":
             raise QualificationRefusal("model response arrived without a sent request")
+        if call.get("generationId") not in {None, response.provider_response_id}:
+            self.failure(
+                candidate_id, stage, state="identity_failed", code="generation-id-conflict"
+            )
+            raise QualificationHalt("response generation differs from the observed stream")
         body = _RESPONSE_ADAPTER.dump_python(response, mode="json", by_alias=True)
         raw = canonical_json(body) + b"\n"
         if self.forbidden in raw:
@@ -580,6 +646,21 @@ class _QualificationJournal:
         self.save()
         return digest, len(raw), path
 
+    def generation_observed(self, candidate_id: str, stage: str, generation_id: str) -> None:
+        """Persist an early handle without claiming a complete model response."""
+        call = self._call(candidate_id, stage)
+        if call["state"] != "request_sent" or not generation_id:
+            raise QualificationHalt("generation identity arrived outside an active request")
+        previous = call.get("generationId")
+        if previous not in {None, generation_id}:
+            self.failure(
+                candidate_id, stage, state="identity_failed", code="generation-id-conflict"
+            )
+            raise QualificationHalt("stream generation identity changed")
+        if previous is None:
+            call.update({"generationId": generation_id, "generationObservedAt": _now()})
+            self.save()
+
     def http_failure_saved(self, candidate_id: str, stage: str, error: ModelHTTPError) -> None:
         call = self._call(candidate_id, stage)
         if call["state"] != "request_sent":
@@ -593,6 +674,30 @@ class _QualificationJournal:
             "sha256": hashlib.sha256(raw).hexdigest(),
             "sizeBytes": len(raw),
         }
+        self.save()
+
+    def cost_receipt_saved(self, candidate_id: str, stage: str, response: httpx.Response) -> None:
+        """Accounting GETs are finite JSON responses, separate from model streaming."""
+        call = self._call(candidate_id, stage)
+        identity = response.request.url.params.get("id")
+        if call.get("generationId") != identity or call["state"] != "response_saved":
+            raise QualificationHalt("cost receipt differs from the completed request identity")
+        raw = response.content
+        if self.forbidden in raw:
+            raise QualificationHalt("accounting receipt contains a credential marker")
+        receipts = cast("list[dict[str, Any]]", call.setdefault("costReceipts", []))
+        path = self.receipts / f"{candidate_id}.{stage}.cost-{len(receipts) + 1}.json"
+        _private_create_raw(path, raw)
+        receipts.append(
+            {
+                "path": str(path),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "sizeBytes": len(raw),
+                "generationId": identity,
+                "statusCode": response.status_code,
+                "url": str(response.request.url.copy_with(query=None)),
+            }
+        )
         self.save()
 
     def cost_observed(self, candidate_id: str, stage: str, observation: CostObservation) -> bool:
@@ -666,6 +771,9 @@ def _provisional_route(candidate: CandidateRoute, observed: date) -> RouteEntry:
         prices=candidate.prices.route_prices(),
         reasoning_effort=candidate.reasoning_effort,
         service_tier=candidate.service_tier,
+        transport=candidate.transport,
+        provider_accounting_name=candidate.provider_accounting_name,
+        accounting_model=candidate.accounting_model,
         cache_enabled=False,
     )
 
@@ -822,19 +930,24 @@ def _validate_grounding(
 
 
 def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, Any]:
-    if (
+    if route.transport is not None:
+        body = validate_gateway_request(request, route)
+    elif (
         request.method != "POST"
         or str(request.url) != "https://ai-gateway.vercel.sh/v1/chat/completions"
     ):
         raise QualificationRefusal("gateway SDK used an unexpected request endpoint")
-    raw = cast("object", json.loads(request.content))
-    if not isinstance(raw, dict):
-        raise QualificationRefusal("gateway SDK request is not a JSON object")
-    body = cast("dict[str, Any]", raw)
+    else:
+        raw = cast("object", json.loads(request.content))
+        if not isinstance(raw, dict):
+            raise QualificationRefusal("gateway SDK request is not a JSON object")
+        body = cast("dict[str, Any]", raw)
     expected_options = {"gateway": {"only": [route.provider], "zeroDataRetention": True}}
     if body.get("model") != route.gateway_model:
         raise QualificationRefusal("outgoing gateway model differs from the candidate")
-    if body.get("store") is not False or body.get("providerOptions") != expected_options:
+    if route.transport is None and (
+        body.get("store") is not False or body.get("providerOptions") != expected_options
+    ):
         raise QualificationRefusal(
             "outgoing gateway privacy controls differ from the qualification"
         )
@@ -849,7 +962,7 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
     if not isinstance(messages_value, list):
         raise QualificationRefusal("outgoing request has no messages")
     messages = cast("list[object]", messages_value)
-    return {
+    result = {
         "method": request.method,
         "url": str(request.url),
         "model": body["model"],
@@ -857,7 +970,7 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
         "maxCompletionTokens": body.get("max_completion_tokens"),
         "reasoningEffort": body.get("reasoning_effort"),
         "serviceTier": body.get("service_tier"),
-        "providerOptions": body["providerOptions"],
+        "providerOptions": body.get("providerOptions"),
         "responseFormat": {
             "type": response_format_values.get("type"),
             "name": cast("dict[str, Any]", schema).get("name"),
@@ -870,6 +983,26 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
             "sizeBytes": len(canonical_json(messages)),
         },
     }
+    if route.transport is not None:
+        result.update(
+            {
+                "transport": route.transport.model_dump(mode="json"),
+                "providerAccountingName": route.provider_accounting_name,
+                "stream": body.get("stream"),
+                "httpTimeout": request.extensions.get("timeout"),
+                "maxTokens": body.get("max_tokens"),
+                "provider": body.get("provider"),
+                "reasoning": body.get("reasoning"),
+                "headers": {
+                    name: request.headers[name]
+                    for name in ("x-openrouter-cache", "x-openrouter-metadata")
+                    if name in request.headers
+                },
+            }
+        )
+    if route.accounting_model is not None:
+        result["accountingModel"] = route.accounting_model
+    return result
 
 
 def _request_capture(
@@ -920,6 +1053,9 @@ class _QualificationModel(WrapperModel):
             prompt_version=prompts[self.stage][2],
             program_version="gateway-qualification/1",
             synthetic=False,
+            transport=self.route.transport,
+            provider_accounting_name=self.route.provider_accounting_name,
+            accounting_model=self.route.accounting_model,
         )
         request_hash, payload_bytes = request_fingerprint(
             messages, model_settings, model_request_parameters, metadata
@@ -961,12 +1097,20 @@ class _QualificationModel(WrapperModel):
                 }
             )
             self.journal.save()
+
+        async def observed_generation(generation_id: str) -> None:
+            self.journal.generation_observed(self.candidate_id, self.stage, generation_id)
+
         try:
-            response = await super().request(messages, model_settings, model_request_parameters)
+            with observe_gateway_generation(observed_generation):
+                response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
             conclusive = (
                 HTTP_CLIENT_ERROR_MIN <= error.status_code < HTTP_CLIENT_ERROR_MAX
                 and error.status_code != HTTP_REQUEST_TIMEOUT
+                and not self.journal.call_identity(self.candidate_id, self.stage).get(
+                    "generationId"
+                )
             )
             try:
                 self.journal.http_failure_saved(self.candidate_id, self.stage, error)
@@ -1020,15 +1164,32 @@ class _QualificationModel(WrapperModel):
                 self.candidate_id, self.stage, state="outcome_unknown", code="missing-generation-id"
             )
             raise QualificationHalt("gateway response has no reconcilable generation ID")
+
+        async def capture_cost(receipt: httpx.Response) -> None:
+            if (
+                receipt.request.method != "GET"
+                or str(receipt.request.url.copy_with(query=None))
+                != self.gateway_config.base_url + "/generation"
+            ):
+                raise QualificationHalt("unexpected accounting request endpoint")
+            await receipt.aread()
+            self.journal.cost_receipt_saved(self.candidate_id, self.stage, receipt)
+
         try:
-            observation = await _poll_cost(
-                self.lookup_client,
-                config=self.gateway_config,
-                route=self.route,
-                generation_id=response.provider_response_id,
-                wait_seconds=self.limits.lookup_wait_seconds,
-                sleep=self.sleep,
-            )
+            if self.route.transport is not None:
+                self.lookup_client.event_hooks["response"].append(capture_cost)
+            try:
+                observation = await _poll_cost(
+                    self.lookup_client,
+                    config=self.gateway_config,
+                    route=self.route,
+                    generation_id=response.provider_response_id,
+                    wait_seconds=self.limits.lookup_wait_seconds,
+                    sleep=self.sleep,
+                )
+            finally:
+                if self.route.transport is not None:
+                    self.lookup_client.event_hooks["response"].remove(capture_cost)
         except GenerationIdentityError:
             self.journal.failure(
                 self.candidate_id,
@@ -1037,7 +1198,7 @@ class _QualificationModel(WrapperModel):
                 code="generation-identity-mismatch",
             )
             raise
-        except (GatewayError, httpx.HTTPError, ValueError) as error:
+        except (GatewayError, httpx.HTTPError, ValueError, OSError, QualificationRefusal) as error:
             self.journal.failure(
                 self.candidate_id,
                 self.stage,
@@ -1052,6 +1213,12 @@ class _QualificationModel(WrapperModel):
             raise QualificationHalt("reported gateway charges exceed the qualification cap")
         if estimate_exceeded:
             raise QualificationHalt("reported charge exceeds the candidate price reservation")
+        if (
+            self.route.transport is not None
+            and self.route.transport.mode == "streaming"
+            and response.finish_reason != "stop"
+        ):
+            raise UnexpectedModelBehavior("streamed qualification did not finish successfully")
         return response
 
 
@@ -1085,10 +1252,11 @@ async def run_qualification(
     request_transport: httpx2.AsyncBaseTransport | None = None,
     lookup_transport: httpx.AsyncBaseTransport | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    gateway: GatewayName | None = None,
 ) -> dict[str, Any]:
     """Run the selected finite strict-schema suite sequentially with durable spend evidence."""
     if not api_key:
-        raise QualificationRefusal("AI_GATEWAY_API_KEY is required")
+        raise QualificationRefusal("the selected gateway credential is required")
     resolved_journal = journal_path.resolve()
     resolved_report = report_path.resolve()
     resolved_receipts = receipts_path.resolve()
@@ -1104,6 +1272,9 @@ async def run_qualification(
     if receipts_path.exists() and any(receipts_path.iterdir()):
         raise QualificationRefusal("qualification receipt directory is not empty")
     candidates = _load_candidate_source(candidate_path)
+    selected_gateway = candidate_gateway(candidates.catalogue.candidates[0])
+    if gateway is not None and gateway != selected_gateway:
+        raise QualificationRefusal("selected gateway differs from candidate transport")
     if limits.suite != "topic-selection" and len(candidates.catalogue.candidates) > MAX_CANDIDATES:
         raise QualificationRefusal("historical qualification exceeds its candidate ceiling")
     journal = _QualificationJournal.create(
@@ -1116,6 +1287,7 @@ async def run_qualification(
     )
     gateway_config = GatewayConfig(
         api_key=api_key,
+        gateway=selected_gateway,
         request_timeout_seconds=limits.request_timeout_seconds,
         lookup_timeout_seconds=limits.lookup_timeout_seconds,
     )
@@ -1217,6 +1389,7 @@ async def reconcile_journal(
     api_key: str,
     report_path: Path,
     lookup_transport: httpx.AsyncBaseTransport | None = None,
+    gateway: GatewayName | None = None,
 ) -> dict[str, Any]:
     """Read generation state for durable handles without making a model request."""
     body = _bounded_read(journal_path, MAX_JOURNAL_BYTES)
@@ -1233,8 +1406,11 @@ async def reconcile_journal(
         canonical_json(value["catalogue"]), strict=True
     )
     candidates = {row.id: row for row in catalogue.candidates}
+    selected_gateway = candidate_gateway(catalogue.candidates[0])
+    if gateway is not None and gateway != selected_gateway:
+        raise QualificationRefusal("selected gateway differs from journal transport")
     results: list[dict[str, Any]] = []
-    config = GatewayConfig(api_key=api_key)
+    config = GatewayConfig(api_key=api_key, gateway=selected_gateway)
     async with httpx.AsyncClient(transport=lookup_transport) as client:
         for call in cast("list[dict[str, Any]]", value["calls"]):
             generation_id = call.get("generationId")
@@ -1242,6 +1418,8 @@ async def reconcile_journal(
                 "response_saved",
                 "cost_reported",
                 "cost_unresolved",
+                "outcome_unknown",
+                "request_sent",
             } or not isinstance(generation_id, str):
                 continue
             if call.get("state") == "cost_reported":

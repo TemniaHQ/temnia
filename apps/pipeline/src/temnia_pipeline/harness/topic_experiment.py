@@ -45,7 +45,7 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     topic_selection_qualification_prompts,
 )
 from temnia_pipeline.harness.queues import control_task_queue
-from temnia_pipeline.harness.routes import RouteSnapshot, load_route_snapshot
+from temnia_pipeline.harness.routes import RouteSnapshot, load_route_snapshot, snapshot_gateway
 from temnia_pipeline.harness.runtime_types import (
     PinnedSource,
     PinnedTranscript,
@@ -305,6 +305,7 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
         "HARNESS_ENABLED": "1",
         "HARNESS_TOPIC_SELECTION_ENABLED": "1",
         "HARNESS_BACKEND": config.backend.value,
+        "HARNESS_GATEWAY": snapshot_gateway(arm.snapshot),
         "HARNESS_ALLOW_RECORDED": "1" if config.backend == Backend.recorded else "0",
         "HARNESS_ROUTE_SNAPSHOT_ID": config.routeSnapshotId,
         "HARNESS_ROUTE_SNAPSHOT_PATH": arm.snapshot_file.path,
