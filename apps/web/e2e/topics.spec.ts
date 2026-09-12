@@ -17,6 +17,7 @@ import {
   TOPIC_POLICIES,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
 } from "../lib/harness/topic-defaults";
 import { uploadFixture } from "./helpers/upload";
 
@@ -37,6 +38,16 @@ async function artifact(page: Page, view: ChapterView, id: string) {
   const response = await page.request.get(ref?.url ?? "");
   expect(response.ok()).toBe(true);
   return response.json();
+}
+
+function expectedDispatches(policy: string): number {
+  if (policy === TOPIC_POLICY) {
+    return 3;
+  }
+  if (policy === TOPIC_SELECTION_POLICY_V3) {
+    return 4;
+  }
+  return 5;
 }
 
 for (const policy of TOPIC_POLICIES) {
@@ -98,7 +109,7 @@ for (const policy of TOPIC_POLICIES) {
       })
     );
     expect(view.run?.synthetic).toBe(true);
-    expect(view.run?.dispatchCount).toBe(policy === TOPIC_POLICY ? 3 : 5);
+    expect(view.run?.dispatchCount).toBe(expectedDispatches(policy));
     expect(view.run?.acceptedRevision).toBeNull();
     const edit = TopicEditSpecSchema.parse(
       await artifact(page, view, view.currentEdit?.id ?? "")

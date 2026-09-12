@@ -47,7 +47,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--max-output-tokens", required=True, type=int)
     run.add_argument("--proposal-wire", choices=("canonical", "compact"), default="canonical")
     run.add_argument(
-        "--suite", choices=("legacy", "editorial", "topic-selection"), default="legacy"
+        "--suite",
+        choices=("legacy", "editorial", "topic-selection", "topic-selection-v3"),
+        default="legacy",
     )
     run.add_argument("--request-timeout-seconds", type=float, default=300)
     run.add_argument("--lookup-timeout-seconds", type=float, default=10)
@@ -72,6 +74,11 @@ def parser() -> argparse.ArgumentParser:
     bind.add_argument("--output", required=True, type=Path)
     bind.add_argument("--max-output-tokens", required=True, type=int)
     bind.add_argument(
+        "--program-version",
+        choices=("standalone-topics/2", "standalone-topics/3"),
+        default="standalone-topics/2",
+    )
+    bind.add_argument(
         "--bind-transport",
         action="store_true",
         help="explicitly bind version 4 route transport, accounting identity and effective outputs",
@@ -93,6 +100,7 @@ async def _run(args: argparse.Namespace) -> int:
             max_output_tokens=args.max_output_tokens,
             per_route_output=args.per_route_output,
             transport_bound=args.bind_transport,
+            program_version=args.program_version,
         )
         return 0
     if not os.environ.get("AI_GATEWAY_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):

@@ -71,6 +71,8 @@ from temnia_pipeline.harness.qualification_editorial import (
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_SCHEMAS,
     TOPIC_SELECTION_STAGES,
+    TOPIC_SELECTION_V3_SCHEMAS,
+    TOPIC_SELECTION_V3_STAGES,
     topic_selection_qualification_prompts,
     validate_topic_selection_qualification_output,
 )
@@ -96,7 +98,7 @@ _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
 _STAGES = ("summary", "proposal", "verify")
-QualificationSuite = Literal["legacy", "editorial", "topic-selection"]
+QualificationSuite = Literal["legacy", "editorial", "topic-selection", "topic-selection-v3"]
 _EDITORIAL_PROMPT_GENERATION = 4
 _EDITORIAL_PROMPT_VERSIONS = {
     1: {
@@ -119,12 +121,16 @@ _EDITORIAL_PROMPT_VERSIONS = {
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
+    if suite == "topic-selection-v3":
+        return TOPIC_SELECTION_V3_STAGES
     if suite == "topic-selection":
         return TOPIC_SELECTION_STAGES
     return ("editorial_assess", "editorial_repair") if suite == "editorial" else _STAGES
 
 
 def _schema_version(stage: str, limits: QualificationLimits) -> str:
+    if limits.suite == "topic-selection-v3":
+        return TOPIC_SELECTION_V3_SCHEMAS[stage]
     if limits.suite == "topic-selection":
         return TOPIC_SELECTION_SCHEMAS[stage]
     if limits.suite == "editorial":
@@ -290,7 +296,7 @@ class QualificationLimits(BaseModel):
 
     @model_validator(mode="after")
     def _suite_wire(self) -> QualificationLimits:
-        if self.suite != "topic-selection" and (
+        if not self.suite.startswith("topic-selection") and (
             self.max_exposure_micros > MAX_EXPOSURE_MICROS
             or self.max_dispatches > MAX_DISPATCHES
             or self.max_output_tokens > MAX_OUTPUT_TOKENS
@@ -828,6 +834,8 @@ def qualification_prompts(
     suite: QualificationSuite = "legacy",
 ) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the three seats."""
+    if suite == "topic-selection-v3":
+        return dict(topic_selection_qualification_prompts("standalone-topics/3"))
     if suite == "topic-selection":
         return dict(topic_selection_qualification_prompts())
     if suite == "editorial":
@@ -872,6 +880,11 @@ def _validate_grounding(
     proposal_wire: Literal["canonical", "compact"] = "canonical",
     suite: QualificationSuite = "legacy",
 ) -> None:
+    if suite == "topic-selection-v3":
+        validate_topic_selection_qualification_output(
+            stage, output, program_version="standalone-topics/3"
+        )
+        return
     if suite == "topic-selection":
         validate_topic_selection_qualification_output(stage, output)
         return
@@ -1081,7 +1094,7 @@ class _QualificationModel(WrapperModel):
                 else None
             ),
         )
-        if self.limits.suite == "topic-selection":
+        if self.limits.suite.startswith("topic-selection"):
             prompt, output_type, _ = prompts[self.stage]
             output_object = self.customize_request_parameters(
                 model_request_parameters
@@ -1275,7 +1288,10 @@ async def run_qualification(
     selected_gateway = candidate_gateway(candidates.catalogue.candidates[0])
     if gateway is not None and gateway != selected_gateway:
         raise QualificationRefusal("selected gateway differs from candidate transport")
-    if limits.suite != "topic-selection" and len(candidates.catalogue.candidates) > MAX_CANDIDATES:
+    if (
+        not limits.suite.startswith("topic-selection")
+        and len(candidates.catalogue.candidates) > MAX_CANDIDATES
+    ):
         raise QualificationRefusal("historical qualification exceeds its candidate ceiling")
     journal = _QualificationJournal.create(
         path=journal_path,
@@ -1493,7 +1509,7 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
     if not isinstance(calls_value, list):
         raise QualificationRefusal("qualification journal call list is invalid")
     calls = cast("list[object]", calls_value)
-    if limits.suite != "topic-selection" and len(calls) > MAX_DISPATCHES:
+    if not limits.suite.startswith("topic-selection") and len(calls) > MAX_DISPATCHES:
         raise QualificationRefusal("qualification journal call list is invalid")
     expected = {
         (candidate.id, stage)

@@ -8,7 +8,11 @@ import {
 } from "@temnia/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { scoped } from "@/lib/db";
-import { TOPIC_POLICY, TOPIC_SELECTION_POLICY } from "./topic-defaults";
+import {
+  TOPIC_POLICY,
+  TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
+} from "./topic-defaults";
 
 export interface ChapterArtifactRef {
   id: string;
@@ -134,7 +138,7 @@ export function getTopicEditorialContext(
         and(
           eq(harnessRun.id, runId),
           eq(harnessRun.sourceId, sourceId),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);
@@ -197,8 +201,8 @@ function getHarnessView(
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one scoped snapshot keeps run pointers, bounded events, and exact immutable descriptors mutually consistent
   return scoped(async (tx) => {
     const policy = topics
-      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
-      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`;
+      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
+      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`;
     const rows = await tx
       .select()
       .from(harnessRun)

@@ -51,6 +51,7 @@ from temnia_pipeline.contracts import (
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionPatch,
+    TopicSelectionPatchV3,
     TopicSourceReview,
 )
 from temnia_pipeline.harness import artifacts, ledger
@@ -1139,6 +1140,11 @@ topic_selection_author_v2 = _agent("topic_selection_author_v2", TopicSelectionDr
 topic_selection_cold_v2 = _agent("topic_selection_cold_v2", TopicSelectionColdReview)
 topic_selection_source_v2 = _agent("topic_selection_source_v2", TopicPortfolioReview)
 topic_selection_patch_v2 = _agent("topic_selection_patch_v2", TopicSelectionPatch)
+topic_opportunity_inventory_v3 = _agent("topic_opportunity_inventory_v3", TopicSelectionDraft)
+topic_selection_author_v3 = _agent("topic_selection_author_v3", TopicSelectionDraft)
+topic_selection_cold_v3 = _agent("topic_selection_cold_v3", TopicSelectionColdReview)
+topic_selection_source_v3 = _agent("topic_selection_source_v3", TopicPortfolioReview)
+topic_selection_patch_v3 = _agent("topic_selection_patch_v3", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
 CHAPTER_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
@@ -1160,7 +1166,19 @@ TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_selection_source_v2,
     topic_selection_patch_v2,
 )
-HARNESS_AGENTS = (*CHAPTER_AGENTS, *TOPIC_AGENTS, *TOPIC_SELECTION_AGENTS)
+TOPIC_SELECTION_V3_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
+    topic_opportunity_inventory_v3,
+    topic_selection_author_v3,
+    topic_selection_cold_v3,
+    topic_selection_source_v3,
+    topic_selection_patch_v3,
+)
+HARNESS_AGENTS = (
+    *CHAPTER_AGENTS,
+    *TOPIC_AGENTS,
+    *TOPIC_SELECTION_AGENTS,
+    *TOPIC_SELECTION_V3_AGENTS,
+)
 
 
 def harness_pydantic_ai_plugin() -> PydanticAIPlugin:

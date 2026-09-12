@@ -21,11 +21,14 @@ from temnia_pipeline.contracts import (
     TopicEditSpec,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
+    TopicSelectionDraft,
     TopicSelectionPatch,
+    TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.qualification_topic_selection import (
     validate_topic_selection_qualification,
 )
@@ -36,25 +39,35 @@ from temnia_pipeline.harness.topic_compiler import compile_topics_v2, validate_t
 from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
+    SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_COLD_PROMPT,
+    SELECTION_COLD_PROMPT_V3,
+    SELECTION_INVENTORY_PROMPT,
     SELECTION_PATCH_PROMPT,
+    SELECTION_PATCH_PROMPT_V3,
     SELECTION_POLICY,
     SELECTION_PROMPT,
     SELECTION_SOURCE_PROMPT,
+    SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
     assess_selection,
     content_hash,
     make_rubric,
+    opportunity_inventory_prompt,
     selection_candidates_for_render,
     selection_cold_key,
     selection_cold_prompt,
     selection_patch_prompt,
+    selection_patch_prompt_v3,
     selection_prompt,
     selection_semantic_key,
     selection_source_prompt,
+    validate_opportunity_inventory,
     validate_selection,
+    validate_selection_against_inventory,
 )
 from temnia_pipeline.harness.topic_selection_runtime import (
+    OpportunityInventorySaveRequest,
     SelectionAssessmentResult,
     SelectionCallPlan,
     SelectionContext,
@@ -128,11 +141,12 @@ class TopicSelectionActivities:
             run_id=context.run.run_id,
         )
         if (
-            run.editorial_policy != SELECTION_POLICY
+            run.editorial_policy != context.program_version
+            or context.program_version not in {SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}
             or run.evidence_artifact_id != context.evidence.id
         ):
             raise HarnessValidationError(
-                "selection activity requires its frozen v2 policy and evidence"
+                "selection activity requires its exact frozen policy and evidence"
             )
         evidence = HarnessEvidence.model_validate(await self.read(context, context.evidence))
         if evidence.sourceId != run.source_id:
@@ -198,6 +212,23 @@ class TopicSelectionActivities:
             raise HarnessValidationError("assessment differs from its exact selection inputs")
         return result
 
+    async def inventory(self, context: SelectionContext) -> TopicSelectionDraft | None:
+        """Load the exact independent source map before author packaging."""
+        if context.inventory is None:
+            return None
+        if context.rubric is None:
+            raise HarnessValidationError("opportunity inventory requires a rubric identity")
+        await self.require_record(
+            context,
+            context.inventory,
+            format_name="topic-opportunity-inventory/1",
+            dependencies=(context.evidence, context.rubric),
+        )
+        _, evidence, _, _ = await self.load(context.model_copy(update={"inventory": None}))
+        result = TopicSelectionDraft.model_validate(await self.read(context, context.inventory))
+        validate_opportunity_inventory(evidence, result)
+        return result
+
     @activity.defn(name="prepare_topic_selection_rubric")
     async def rubric(self, context: SelectionContext) -> HarnessArtifactRef:
         """Freeze deterministic audience defaults before any paid editorial operation."""
@@ -208,7 +239,7 @@ class TopicSelectionActivities:
             format_name="topic-editorial-rubric/1",
             content=make_rubric(run.brief),
             dependencies=(context.evidence,),
-            metadata={"programVersion": SELECTION_POLICY},
+            metadata={"programVersion": run.editorial_policy},
         )
 
     @activity.defn(name="prepare_topic_selection_call")
@@ -218,16 +249,22 @@ class TopicSelectionActivities:
         if rubric is None or context.rubric is None:
             raise HarnessValidationError("editorial calls require a frozen rubric")
         if str(run.config.backend) == "gateway":
-            qualification = self.owner.harness_settings.topic_selection_qualification_path
+            qualification = (
+                self.owner.harness_settings.topic_selection_v3_qualification_path
+                if context.program_version == TOPIC_SELECTION_POLICY_V3
+                else self.owner.harness_settings.topic_selection_qualification_path
+            )
             if qualification is None:
                 raise HarnessValidationError("topic selection requires exact route qualification")
             validate_topic_selection_qualification(
                 run.route_snapshot,
                 qualification,
                 max_output_tokens=run.config.maxOutputTokens,
+                program_version=context.program_version,
             )
         author, verifier = editorial_routes(run.route_snapshot)
         dependencies = [context.evidence, context.rubric]
+        v3 = context.program_version == TOPIC_SELECTION_POLICY_V3
         if context.candidate_id is not None:
             candidate = (
                 next(
@@ -245,14 +282,16 @@ class TopicSelectionActivities:
                 raise HarnessValidationError("cold review candidate is absent from the selection")
             prompt = selection_cold_prompt(evidence, candidate, rubric)
             stage = f"verify:selection:cold:{selection_cold_key(candidate, context.rubric.sha256)}"
-            version = SELECTION_COLD_PROMPT
+            version = SELECTION_COLD_PROMPT_V3 if v3 else SELECTION_COLD_PROMPT
             synthetic = "topic_selection_cold"
         elif selection is not None and context.assessment is None:
             if context.selection is None:
                 raise HarnessValidationError("source review requires its exact selection artifact")
-            prompt = selection_source_prompt(evidence, selection.draft, rubric)
+            prompt = selection_source_prompt(
+                evidence, selection.draft, rubric, independent_projection=v3
+            )
             stage = f"verify:selection:source:{context.iteration}"
-            version = SELECTION_SOURCE_PROMPT
+            version = SELECTION_SOURCE_PROMPT_V3 if v3 else SELECTION_SOURCE_PROMPT
             synthetic = (
                 "topic_selection_source_selected"
                 if selection.draft.proposal.candidates
@@ -263,14 +302,26 @@ class TopicSelectionActivities:
             assessment = await self.assessment(context)
             if assessment is None or context.selection is None or context.assessment is None:
                 raise HarnessValidationError("selection repair requires exact assessed state")
-            prompt = selection_patch_prompt(
-                evidence, selection, assessment, context.selection.sha256
+            prompt = (
+                selection_patch_prompt_v3(evidence, selection, assessment, context.selection.sha256)
+                if v3
+                else selection_patch_prompt(
+                    evidence, selection, assessment, context.selection.sha256
+                )
             )
             stage = f"repair:selection:{context.iteration}"
-            version = SELECTION_PATCH_PROMPT
+            version = SELECTION_PATCH_PROMPT_V3 if v3 else SELECTION_PATCH_PROMPT
             synthetic = "topic_selection_patch"
             dependencies.extend((context.selection, context.assessment))
+        elif v3 and context.inventory is None and not context.inventory_attempted:
+            prompt = opportunity_inventory_prompt(evidence, rubric)
+            stage = "verify:selection:inventory:0"
+            version = SELECTION_INVENTORY_PROMPT
+            synthetic = "topic_opportunity_inventory"
         else:
+            inventory = await self.inventory(context) if v3 and context.inventory else None
+            if inventory is not None and context.inventory is not None:
+                dependencies.append(context.inventory)
             navigation = None
             if context.navigation is not None:
                 payload = CandidatePayload.model_validate(
@@ -283,7 +334,7 @@ class TopicSelectionActivities:
                 navigation = candidate_hints(payload, evidence, context.evidence)
                 dependencies.append(context.navigation)
             rejected = None
-            diagnostics: tuple[str, ...] = ()
+            diagnostics: tuple[str, ...] = context.inventory_diagnostics
             if context.rejection is not None:
                 await self.require_record(
                     context,
@@ -294,18 +345,20 @@ class TopicSelectionActivities:
                 refusal = SelectionRejection.model_validate(
                     await self.read(context, context.rejection)
                 )
-                rejected, diagnostics = refusal.draft, refusal.diagnostics
+                rejected = refusal.draft
+                diagnostics = (*diagnostics, *refusal.diagnostics)
                 dependencies.append(context.rejection)
             prompt = selection_prompt(
                 evidence,
                 rubric,
                 navigation=navigation,
+                source_inventory=inventory,
                 rejected_output=rejected,
                 diagnostics=diagnostics,
             )
             stage = f"proposal:selection:{context.iteration}"
-            version = SELECTION_PROMPT
-            synthetic = "topic_selection_author"
+            version = SELECTION_AUTHOR_PROMPT_V3 if v3 else SELECTION_PROMPT
+            synthetic = "topic_selection_author_v3" if v3 else "topic_selection_author"
         route = verifier if stage.startswith("verify:") else author
         estimate_cost(
             route,
@@ -313,9 +366,13 @@ class TopicSelectionActivities:
             max_output_tokens=effective_topic_output_tokens(run.config.maxOutputTokens, route),
         )
         synthetic_payload = self.owner._recorded_output(synthetic)
-        if synthetic_payload is not None and version == SELECTION_PATCH_PROMPT:
+        if synthetic_payload is not None and version in {
+            SELECTION_PATCH_PROMPT,
+            SELECTION_PATCH_PROMPT_V3,
+        }:
             # Fixture operations remain authored test data; only run-local immutable hashes vary.
-            patch = TopicSelectionPatch.model_validate(synthetic_payload["output"])
+            patch_type = TopicSelectionPatchV3 if v3 else TopicSelectionPatch
+            patch = patch_type.model_validate(synthetic_payload["output"])
             if context.selection is None:
                 raise HarnessValidationError("recorded patch requires its exact selection")
             synthetic_payload = {
@@ -331,9 +388,13 @@ class TopicSelectionActivities:
             prompt=prompt,
             stage=stage,
             prompt_version=version,
+            program_version=context.program_version,
             schema_version={
                 SELECTION_PROMPT: "topic-selection-draft/2",
+                SELECTION_AUTHOR_PROMPT_V3: "topic-selection-draft/2",
+                SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT: "topic-selection-portfolio/2",
+                SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/2",
             }.get(version, version),
             author=author,
             verifier=verifier,
@@ -379,7 +440,7 @@ class TopicSelectionActivities:
         if (
             retained.kind != "model_response"
             or metadata.get("runId") != str(run.id)
-            or metadata.get("programVersion") != SELECTION_POLICY
+            or metadata.get("programVersion") != plan.program_version
             or metadata.get("promptVersion") != plan.prompt_version
             or metadata.get("schemaVersion") != plan.schema_version
             or metadata.get("route") != route.model_dump(mode="json")
@@ -393,7 +454,7 @@ class TopicSelectionActivities:
             inputs={**selection_call_inputs(plan), "requestHash": metadata["requestHash"]},
             config={
                 **selection_call_config(plan, run.config.maxOutputTokens),
-                "programVersion": SELECTION_POLICY,
+                "programVersion": plan.program_version,
                 "promptVersion": plan.prompt_version,
                 "schemaVersion": plan.schema_version,
                 "route": route.model_dump(mode="json"),
@@ -410,8 +471,48 @@ class TopicSelectionActivities:
             raise HarnessValidationError("selection output differs from its original paid response")
         return reference
 
+    @activity.defn(name="save_topic_opportunity_inventory_v3")
+    async def save_inventory(self, request: OpportunityInventorySaveRequest) -> SelectionSaveResult:
+        """Retain the verifier's source map before exposing any author selection."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V3
+            or rubric is None
+            or context.rubric is None
+            or context.inventory is not None
+            or selection is not None
+        ):
+            raise HarnessValidationError("inventory saving requires a fresh v3 source-map state")
+        plan = await self.prepare(context)
+        if request.schema_error is None and request.inventory is None:
+            raise HarnessValidationError("inventory saving requires a typed output or diagnostic")
+        response = await self.response_ref(context, plan, request.inventory)
+        if request.schema_error is not None or request.inventory is None:
+            return SelectionSaveResult(
+                diagnostics=(request.schema_error or "Opportunity inventory is unavailable.",)
+            )
+        try:
+            validate_opportunity_inventory(evidence, request.inventory)
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            return SelectionSaveResult(diagnostics=(str(error),))
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name="topic-opportunity-inventory/1",
+            content=request.inventory,
+            dependencies=(*plan.input_artifacts, response),
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamily": plan.verifier.family,
+            },
+        )
+        return SelectionSaveResult(selection=reference, draft=request.inventory)
+
     @activity.defn(name="save_topic_selection")
-    async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
+    async def save(  # noqa: C901
+        self, request: SelectionSaveRequest
+    ) -> SelectionSaveResult:
         """Apply a known response atomically, retaining refused patches beside prior work."""
         context = request.context
         _, evidence, rubric, previous = await self.load(context)
@@ -440,6 +541,10 @@ class TopicSelectionActivities:
             if draft is None:
                 raise HarnessValidationError("selection response contains no draft")  # noqa: TRY301
             validate_selection(evidence, draft)
+            if previous is None and context.program_version == TOPIC_SELECTION_POLICY_V3:
+                inventory = await self.inventory(context)
+                if inventory is not None:
+                    validate_selection_against_inventory(inventory, draft)
         except (HarnessValidationError, ValidationError, ValueError) as error:
             diagnostics = (str(error),)
         if diagnostics:
@@ -456,7 +561,7 @@ class TopicSelectionActivities:
                 format_name=rejection.format,
                 content=rejection,
                 dependencies=dependencies,
-                metadata={"programVersion": SELECTION_POLICY},
+                metadata={"programVersion": context.program_version},
             )
             return SelectionSaveResult(
                 selection=context.selection, rejection=ref, diagnostics=diagnostics
@@ -481,7 +586,10 @@ class TopicSelectionActivities:
             format_name=record.format,
             content=record,
             dependencies=dependencies,
-            metadata={"programVersion": SELECTION_POLICY, "generatorFamily": plan.author.family},
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamily": plan.author.family,
+            },
         )
         return SelectionSaveResult(
             selection=ref, semantic_key=selection_semantic_key(draft), draft=draft
@@ -655,11 +763,19 @@ class TopicSelectionActivities:
                 "selectionSha256": context.selection.sha256,
                 "assessmentArtifactId": str(context.assessment.id),
                 "rubricArtifactId": str(context.rubric.id),
-                "programVersion": SELECTION_POLICY,
+                "programVersion": context.program_version,
             },
         )
         return TopicCompilation(artifact=reference, edit=edit, refusals=tuple(refusals))
 
     def activities(self) -> Sequence[Callable[..., object]]:
-        """Register the v2 activities without replacing historical names."""
-        return (self.rubric, self.prepare, self.save, self.save_assessment, self.stop, self.compile)
+        """Register versioned selection activities without replacing historical names."""
+        return (
+            self.rubric,
+            self.prepare,
+            self.save_inventory,
+            self.save,
+            self.save_assessment,
+            self.stop,
+            self.compile,
+        )

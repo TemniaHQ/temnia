@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from temporalio import workflow
@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from temnia_pipeline.harness.activities import HarnessActivities
+    from temnia_pipeline.harness.topic_selection_runtime import SelectionProgramVersion
 
 RETRY = RetryPolicy(maximum_attempts=3)
 MAX_REVIEW_REASON = 2000
@@ -207,9 +208,13 @@ class TopicReviewActivities:
             ):
                 raise ReviewRefused("selection portfolio differs from its editorial lineage")
             selections = TopicSelectionActivities(self.owner)
+            program_version = metadata.get("programVersion", "standalone-topics/2")
+            if program_version not in {"standalone-topics/2", "standalone-topics/3"}:
+                raise ReviewRefused("selection portfolio has an unknown programme version")
             lineage = SelectionContext(
                 run=context.run,
                 evidence=context.evidence,
+                program_version=cast("SelectionProgramVersion", program_version),
                 rubric=rubric,
                 selection=selection,
                 assessment=assessment,

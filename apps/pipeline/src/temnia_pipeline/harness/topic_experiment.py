@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import os
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, Self, cast
+from typing import Annotated, Any, Literal, Protocol, Self, cast
 from uuid import UUID, uuid4, uuid5
 
 from pydantic import Field, model_validator
@@ -41,6 +42,7 @@ from temnia_pipeline.harness.ledger import IdentityConflict
 from temnia_pipeline.harness.qualification_topic_selection import (
     STAGE_SEATS,
     TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_V3_SCHEMAS,
     native_schema_sha256,
     topic_selection_qualification_prompts,
 )
@@ -61,7 +63,11 @@ from temnia_pipeline.settings import TemporalSettings
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 Nonempty = Annotated[str, Field(min_length=1)]
-WORKFLOW_TYPE = "TopicSelectionWorkflow"
+WORKFLOW_TYPES = {
+    "standalone-topics/2": "TopicSelectionWorkflow",
+    "standalone-topics/3": "TopicSelectionWorkflowV3",
+}
+WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/2"]
 MEMO_KEY = "temniaExperimentSha256"
 INTENT_MEMO_KEY = "temniaIntentSha256"
 RPC_TIMEOUT = timedelta(seconds=30)
@@ -121,6 +127,7 @@ class ExperimentSpec(EvaluationModel):
     temporal_address: Nonempty
     temporal_namespace: Nonempty
     topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
+    program_version: Literal["standalone-topics/2", "standalone-topics/3"] = "standalone-topics/2"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]
 
@@ -166,6 +173,7 @@ class PreparedExecution(EvaluationModel):
     arm_id: Identifier
     case_id: Identifier
     workflow_id: Nonempty
+    workflow_type: Nonempty = WORKFLOW_TYPE
     request: ChapterRunInput
 
     @property
@@ -212,8 +220,8 @@ class PreparedExperiment(EvaluationModel):
             raise ValueError("prepared sources differ from experiment intent")
         if self.rubric.originalInstructions != self.spec.brief:
             raise ValueError("prepared rubric differs from the frozen brief")
-        if self.program.policy != topic_selection.SELECTION_POLICY:
-            raise ValueError("experiment requires the standalone-topics/2 programme")
+        if self.program.policy != self.spec.program_version:
+            raise ValueError("experiment programme differs from its frozen generation")
         expected_executions = tuple(
             make_execution(self.id, arm, source, self.spec, self.scope)
             for arm in self.arms
@@ -232,18 +240,29 @@ class PreparedExperiment(EvaluationModel):
         return self
 
 
-def current_program() -> TopicProgramManifest:
+def current_program(
+    program_version: Literal["standalone-topics/2", "standalone-topics/3"] = (
+        "standalone-topics/2"
+    ),
+) -> TopicProgramManifest:
     """Freeze actual template functions/native schemas, including unused repair stages."""
+    v3 = program_version == "standalone-topics/3"
     functions = {
+        **({"topic_inventory": topic_selection.opportunity_inventory_prompt} if v3 else {}),
         "topic_author": topic_selection.selection_prompt,
         "topic_cold": topic_selection.selection_cold_prompt,
         "topic_source": topic_selection.selection_source_prompt,
-        "topic_patch": topic_selection.selection_patch_prompt,
+        "topic_patch": (
+            topic_selection.selection_patch_prompt_v3
+            if v3
+            else topic_selection.selection_patch_prompt
+        ),
     }
-    prompts = topic_selection_qualification_prompts()
+    prompts = topic_selection_qualification_prompts(program_version)
+    schemas = TOPIC_SELECTION_V3_SCHEMAS if v3 else TOPIC_SELECTION_SCHEMAS
     return TopicProgramManifest(
-        policy=topic_selection.SELECTION_POLICY,
-        program_version=topic_selection.SELECTION_POLICY,
+        policy=program_version,
+        program_version=program_version,
         implementation_sha256=source_build_id(),
         stages={
             stage: TopicProgramStage(
@@ -252,7 +271,7 @@ def current_program() -> TopicProgramManifest:
                 prompt_template_sha256=hashlib.sha256(
                     inspect.getsource(function).encode()
                 ).hexdigest(),
-                schema_version=TOPIC_SELECTION_SCHEMAS[stage],
+                schema_version=schemas[stage],
                 native_schema_sha256=native_schema_sha256(prompts[stage][1]),
             )
             for stage, function in functions.items()
@@ -286,6 +305,7 @@ def make_execution(
         arm_id=arm.spec.id,
         case_id=source.case.id,
         workflow_id=f"topic-experiment/{uuid5(experiment_id, f'workflow/{key}')}",
+        workflow_type=WORKFLOW_TYPES[spec.program_version],
         request=ChapterRunInput(
             brief=spec.brief,
             budgetMicros=spec.budget_micros,
@@ -303,7 +323,8 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
     config = arm.spec.config
     return {
         "HARNESS_ENABLED": "1",
-        "HARNESS_TOPIC_SELECTION_ENABLED": "1",
+        "HARNESS_TOPIC_SELECTION_ENABLED": "1" if spec.program_version.endswith("/2") else "0",
+        "HARNESS_TOPIC_SELECTION_V3_ENABLED": ("1" if spec.program_version.endswith("/3") else "0"),
         "HARNESS_BACKEND": config.backend.value,
         "HARNESS_GATEWAY": snapshot_gateway(arm.snapshot),
         "HARNESS_ALLOW_RECORDED": "1" if config.backend == Backend.recorded else "0",
@@ -317,7 +338,14 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
         "HARNESS_MAX_RENDER_CONCURRENCY": str(config.maxRenderConcurrency),
         "HARNESS_TOPIC_SHOT_DETECTOR": spec.topic_shot_detector,
         "HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH": (
-            arm.qualification_file.path if arm.qualification_file else ""
+            arm.qualification_file.path
+            if arm.qualification_file and spec.program_version.endswith("/2")
+            else ""
+        ),
+        "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH": (
+            arm.qualification_file.path
+            if arm.qualification_file and spec.program_version.endswith("/3")
+            else ""
         ),
         "HARNESS_RECORDED_FIXTURE_PATH": arm.fixture_file.path if arm.fixture_file else "",
         "HARNESS_CHAPTER_LLAMA_CONFIG_JSON": "",
@@ -401,7 +429,7 @@ async def prepare_experiment(
         spec=spec,
         scope=scope,
         rubric=topic_selection.make_rubric(spec.brief),
-        program=current_program(),
+        program=current_program(spec.program_version),
         arms=tuple(arms),
         sources=sources,
         executions=tuple(
@@ -433,9 +461,17 @@ def read_prepared(path: Path) -> PreparedExperiment:
         sha256: SHA256
         experiment: PreparedExperiment
 
-    envelope = Envelope.model_validate_json(path.read_bytes())
-    if envelope.experiment.sha256 != envelope.sha256:
+    parsed: object = json.loads(path.read_bytes())
+    if not isinstance(parsed, dict):
         raise IdentityConflict("prepared experiment checksum differs from its frozen intent")
+    raw = cast("dict[str, object]", parsed)
+    raw_experiment = raw.get("experiment")
+    if set(raw) != {"sha256", "experiment"} or not isinstance(raw_experiment, dict):
+        raise IdentityConflict("prepared experiment checksum differs from its frozen intent")
+    experiment_payload = cast("dict[str, object]", raw_experiment)
+    if digest(experiment_payload) != raw.get("sha256"):
+        raise IdentityConflict("prepared experiment checksum differs from its frozen intent")
+    envelope = Envelope.model_validate_json(path.read_bytes())
     return envelope.experiment
 
 
@@ -452,7 +488,7 @@ def assert_runtime(
         prepared.spec.temporal_address, prepared.spec.temporal_namespace, arm.pipeline_queue
     ):
         raise IdentityConflict("Temporal runtime is not the experiment's isolated arm queue")
-    if prepared.program != current_program():
+    if prepared.program != current_program(prepared.spec.program_version):
         raise IdentityConflict(
             "current implementation/prompt/schema differs from prepared programme"
         )
@@ -461,7 +497,11 @@ def assert_runtime(
             pin.verify()
     if (
         not settings.enabled
-        or not settings.topic_selection_enabled
+        or not (
+            settings.topic_selection_v3_enabled
+            if prepared.spec.program_version.endswith("/3")
+            else settings.topic_selection_enabled
+        )
         or settings.chapter_llama_config is not None
         or settings.allowed_config() != arm.spec.config
         or settings.topic_shot_detector != prepared.spec.topic_shot_detector
@@ -470,7 +510,12 @@ def assert_runtime(
         raise IdentityConflict("worker runtime settings differ from the frozen experiment")
     for actual_path, expected_file in (
         (settings.route_snapshot_path, arm.snapshot_file),
-        (settings.topic_selection_qualification_path, arm.qualification_file),
+        (
+            settings.topic_selection_v3_qualification_path
+            if prepared.spec.program_version.endswith("/3")
+            else settings.topic_selection_qualification_path,
+            arm.qualification_file,
+        ),
         (settings.recorded_fixture_path, arm.fixture_file),
     ):
         if (actual_path is None) != (expected_file is None) or (
@@ -578,7 +623,7 @@ class TemporalDriver:
     async def start(self, execution: PreparedExecution, queue: str, experiment_sha256: str) -> None:
         """Never select ALLOW_DUPLICATE: closed executions retain the same logical run."""
         await self.client.start_workflow(
-            WORKFLOW_TYPE,
+            execution.workflow_type,
             execution.request,
             id=execution.workflow_id,
             task_queue=queue,
@@ -599,7 +644,7 @@ def assert_workflow(
     queue = next(arm.pipeline_queue for arm in prepared.arms if arm.spec.id == execution.arm_id)
     if (
         observed.workflow_id != execution.workflow_id
-        or observed.workflow_type != WORKFLOW_TYPE
+        or observed.workflow_type != execution.workflow_type
         or observed.task_queue != queue
         or observed.experiment_sha256 != prepared.sha256
         or observed.intent_sha256 != digest(execution.request.model_dump(mode="json"))
@@ -779,7 +824,7 @@ async def run_execution(  # noqa: PLR0913
             start=StartRunRequest(
                 request=execution.request,
                 workflow=execution.preparation_identity,
-                editorial_policy=topic_selection.SELECTION_POLICY,
+                editorial_policy=cast("Any", prepared.spec.program_version),
                 evaluation_program=prepared.program.model_dump(mode="json", by_alias=True),
             ),
             settings=settings,

@@ -23,6 +23,7 @@ import {
   isTopicPolicy,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
 } from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
 
@@ -317,7 +318,7 @@ export async function reviewChapterCommand(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);
@@ -486,7 +487,7 @@ export async function getPendingChapterWorkflowStatus(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);

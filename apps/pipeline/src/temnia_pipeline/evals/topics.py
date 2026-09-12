@@ -81,7 +81,7 @@ class TopicProgramManifest(EvaluationModel):
     """Frozen runtime identity captured before dispatch, never inferred from current code."""
 
     format: Literal["temnia-topic-evaluation-program/1"] = "temnia-topic-evaluation-program/1"
-    policy: Literal["standalone-topics/1", "standalone-topics/2"]
+    policy: Literal["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"]
     implementation_sha256: SHA256
     program_version: Identifier
     stages: Annotated[dict[Identifier, TopicProgramStage], Field(min_length=1)]
@@ -97,6 +97,16 @@ class TopicProgramManifest(EvaluationModel):
             "topic_patch": "author",
         }:
             raise ValueError("v2 intended programme requires its complete four-stage seat roster")
+        if self.policy == "standalone-topics/3" and {
+            name: stage.seat for name, stage in self.stages.items()
+        } != {
+            "topic_inventory": "reviewer",
+            "topic_author": "author",
+            "topic_cold": "reviewer",
+            "topic_source": "reviewer",
+            "topic_patch": "author",
+        }:
+            raise ValueError("v3 intended programme requires its complete five-stage seat roster")
         return self
 
 
@@ -104,7 +114,7 @@ class TopicConfiguration(EvaluationModel):
     """Unknown deployment details stay null; no vendor is implicitly selected."""
 
     configuration_id: Identifier
-    policy: Literal["standalone-topics/1", "standalone-topics/2"]
+    policy: Literal["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"]
     source_sha256: SHA256 | None = None
     transcript_sha256: SHA256 | None = None
     rubric_sha256: SHA256 | None = None
@@ -149,7 +159,7 @@ def effective_output_projection(
     author, reviewer = editorial_routes(snapshot)
     return {
         name: effective_topic_output_tokens(requested, route)
-        if policy == "standalone-topics/2"
+        if policy in {"standalone-topics/2", "standalone-topics/3"}
         else requested
         if requested <= route.max_output_tokens
         else None

@@ -222,6 +222,107 @@
         ]
       }
     },
+    "topic_opportunity_inventory": {
+      "synthetic": true,
+      "output": {
+        "proposal": {
+          "version": 1,
+          "summary": "Synthetic inventory defers packaging of one source opportunity.",
+          "candidates": []
+        },
+        "opportunities": [
+          {
+            "id": "timestamp-value",
+            "viewerPurpose": "Explain why aligned words make editing searchable.",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "meaningChangingFollowups": [],
+            "valueEvidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "candidateIds": [],
+            "disposition": "needs_evidence",
+            "dispositionReason": "Packaging is intentionally deferred to the author stage."
+          }
+        ]
+      }
+    },
+    "topic_selection_author_v3": {
+      "synthetic": true,
+      "output": {
+        "proposal": {
+          "version": 1,
+          "summary": "Synthetic selection packages the independently inventoried discussion.",
+          "candidates": [
+            {
+              "id": "timestamp-search",
+              "title": "Timestamps turn editing into search",
+              "purpose": "Explain why aligned words make editing searchable.",
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008",
+              "coreSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ],
+              "requiredContextSpans": [],
+              "completionSpans": [
+                {
+                  "firstSentenceId": "s000008",
+                  "lastSentenceId": "s000008"
+                }
+              ],
+              "meaningChangingFollowups": [],
+              "reason": "Explicit deterministic fixture, not an editorial quality measurement."
+            }
+          ]
+        },
+        "opportunities": [
+          {
+            "id": "timestamp-value",
+            "viewerPurpose": "Explain why aligned words make editing searchable.",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "meaningChangingFollowups": [],
+            "valueEvidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "candidateIds": ["timestamp-search"],
+            "disposition": "proposed",
+            "dispositionReason": "The contiguous treatment contains the complete synthetic explanation."
+          }
+        ]
+      }
+    },
     "topic_selection_author": {
       "synthetic": true,
       "output": {

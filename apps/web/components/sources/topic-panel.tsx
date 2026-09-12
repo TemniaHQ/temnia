@@ -29,6 +29,7 @@ import {
   DEFAULT_TOPIC_BRIEF_VERSION,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
 } from "@/lib/harness/topic-defaults";
 import {
   restoreTopicIntent,
@@ -38,6 +39,11 @@ import {
   TopicStartIntentSchema,
 } from "@/lib/harness/topic-pending";
 import { formatDuration } from "@/lib/sources/labels";
+
+type TopicPolicy =
+  | typeof TOPIC_POLICY
+  | typeof TOPIC_SELECTION_POLICY
+  | typeof TOPIC_SELECTION_POLICY_V3;
 
 function remember(key: string, value: unknown) {
   try {
@@ -221,10 +227,16 @@ export function TopicPanel({
     if (busy || (!intent && blocked)) {
       return;
     }
+    let defaultBriefVersion: TopicPolicy = TOPIC_SELECTION_POLICY_V3;
+    if (program === TOPIC_POLICY) {
+      defaultBriefVersion = TOPIC_POLICY;
+    }
+    if (program === TOPIC_SELECTION_POLICY) {
+      defaultBriefVersion = TOPIC_SELECTION_POLICY;
+    }
     const request = intent ?? {
       brief: brief.trim(),
-      defaultBriefVersion:
-        program === TOPIC_POLICY ? TOPIC_POLICY : TOPIC_SELECTION_POLICY,
+      defaultBriefVersion,
       requestKey: crypto.randomUUID(),
       runId: crypto.randomUUID(),
       sourceId,
@@ -362,8 +374,11 @@ export function TopicPanel({
             onChange={(event) => setProgram(event.target.value)}
             value={program}
           >
+            <NativeSelectOption value={TOPIC_SELECTION_POLICY_V3}>
+              Source inventory, selection and independent review
+            </NativeSelectOption>
             <NativeSelectOption value={TOPIC_SELECTION_POLICY}>
-              Selection and missed-discussion review
+              Previous selection program · comparison
             </NativeSelectOption>
             <NativeSelectOption value={TOPIC_POLICY}>
               Earlier program · comparison

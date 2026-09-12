@@ -13,6 +13,12 @@ existing runs and their review surfaces. The production-image local gate enables
 both policies with explicitly synthetic model fixtures; those fixtures are not
 an editorial benchmark.
 
+`standalone-topics/3` adds an independent pre-author opportunity inventory,
+rationale-hidden source review, a scoped repair projection and both-edge extent
+replacement. It uses the separate `HARNESS_TOPIC_SELECTION_V3_ENABLED` switch and
+`HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH`. Its implementation record is
+[standalone topic production quality v3](../design/standalone-topic-production-quality-v3-2026-09-12.md).
+
 ## Exact request qualification
 
 For the gateway backend, the worker also requires
@@ -54,6 +60,11 @@ A candidate requires four calls for a complete qualification. Do not restart a
 session to evade an unknown outcome: the existing journal and read-only
 reconciliation command retain unresolved exposure. Journal, report and receipt
 paths are create-only; use a distinct directory for a genuinely new experiment.
+
+For v3, use `--suite topic-selection-v3`. A candidate requires five calls because
+the independent inventory is a separate reviewer request. Bind it with
+`--program-version standalone-topics/3 --bind-transport`; this produces
+`topic-selection-qualification/5` and cannot be substituted for a v2 proof.
 
 The synthetic source is deliberately small. A passing suite proves this request
 shape, structured output admission and settled cost observation. It does not prove

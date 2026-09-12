@@ -200,6 +200,47 @@ export const TopicSelectionPatchSchema = z
   .meta({ id: "TopicSelectionPatch", title: "TopicSelectionPatch" });
 export type TopicSelectionPatch = z.infer<typeof TopicSelectionPatchSchema>;
 
+/** V3 may replace both semantic boundaries in one accountable operation. */
+export const TopicSelectionPatchOperationV3Schema = z
+  .object({
+    affectedCandidateIds: z.array(z.string()),
+    findingIds: z.array(z.string()).min(1),
+    id: identifier(),
+    kind: z.enum([
+      "extend_start",
+      "extend_end",
+      "replace_extent",
+      "retitle",
+      "merge",
+      "split",
+      "drop",
+      "add_opportunity",
+    ]),
+    opportunities: z.array(TopicOpportunitySchema),
+    reason: reason(),
+    replacementCandidates: z.array(TopicCandidateSchema),
+  })
+  .strict()
+  .meta({
+    id: "TopicSelectionPatchOperationV3",
+    title: "TopicSelectionPatchOperationV3",
+  });
+export type TopicSelectionPatchOperationV3 = z.infer<
+  typeof TopicSelectionPatchOperationV3Schema
+>;
+
+export const TopicSelectionPatchV3Schema = z
+  .object({
+    baseSelectionSha256: sha256(),
+    evidenceSha256: sha256(),
+    operations: z.array(TopicSelectionPatchOperationV3Schema),
+    rubricSha256: sha256(),
+    summary: reason(),
+  })
+  .strict()
+  .meta({ id: "TopicSelectionPatchV3", title: "TopicSelectionPatchV3" });
+export type TopicSelectionPatchV3 = z.infer<typeof TopicSelectionPatchV3Schema>;
+
 /** Persisted identity is supplied by code, never trusted from a model's answer. */
 export const TopicSelectionRecordSchema = z
   .object({

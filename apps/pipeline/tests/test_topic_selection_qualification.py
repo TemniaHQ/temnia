@@ -20,9 +20,12 @@ from temnia_pipeline.harness.qualification import (
 )
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_V3_SCHEMAS,
+    TOPIC_SELECTION_V3_STAGES,
     bind_topic_selection_qualification,
     native_schema_sha256,
     topic_selection_qualification_case,
+    topic_selection_qualification_inventory,
     topic_selection_qualification_prompts,
     validate_topic_selection_qualification,
 )
@@ -99,7 +102,25 @@ def _outputs() -> list[dict[str, Any]]:
             }
         ],
         "missingOpportunities": [],
-        "findings": [],
+        "findings": [
+            {
+                "id": "unused-fragment",
+                "kind": "transcript_uncertainty",
+                "severity": "unknown",
+                "affectedCandidateIds": [],
+                "opportunityIds": [],
+                "evidenceSpans": [
+                    {
+                        "firstSentenceId": "s000004",
+                        "lastSentenceId": "s000004",
+                    }
+                ],
+                "reason": (
+                    "The unused trailing source fragment is uncertain but does not affect "
+                    "a selected candidate or a worthwhile opportunity."
+                ),
+            }
+        ],
     }
     patch = {
         "baseSelectionSha256": content_hash(record),
@@ -124,6 +145,10 @@ def _outputs() -> list[dict[str, Any]]:
         ],
     }
     return [record.draft.model_dump(mode="json"), cold, source, patch]
+
+
+def _outputs_v3() -> list[dict[str, Any]]:
+    return [topic_selection_qualification_inventory().model_dump(mode="json"), *_outputs()]
 
 
 async def _qualified(
@@ -199,6 +224,36 @@ async def test_qualification_captures_four_real_native_shapes_and_effective_sett
         HarnessSettings.from_env(configured).validate_boot()
     configured["HARNESS_TOPIC_SELECTION_ENABLED"] = "0"
     assert HarnessSettings.from_env(configured).validate_boot() == frozen
+
+
+async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) -> None:
+    request_transport, requests = _request_transport(_outputs_v3() * 3)
+    lookup_transport, _ = _three_candidate_lookup_transport(stages_per_candidate=5)
+    paths = _paths(tmp_path)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=3),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=QualificationLimits(
+            suite="topic-selection-v3",
+            max_exposure_micros=100_000,
+            max_dispatches=15,
+            max_output_tokens=256,
+            lookup_wait_seconds=0,
+        ),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    assert report["status"] == "completed"
+    assert report["passed"] is True
+    assert len(requests) == 15
+    assert {call["stage"] for call in report["calls"]} == set(TOPIC_SELECTION_V3_STAGES)
+    assert all(
+        call["schemaVersion"] == TOPIC_SELECTION_V3_SCHEMAS[call["stage"]]
+        for call in report["calls"]
+    )
 
 
 @pytest.mark.parametrize(

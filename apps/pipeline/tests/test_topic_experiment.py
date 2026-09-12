@@ -31,6 +31,7 @@ from test_topic_selection_qualification import _qualified  # pyright: ignore[rep
 
 if TYPE_CHECKING:
     from temnia_pipeline.contracts import Scope
+    from temnia_pipeline.evals.topics import TopicProgramManifest
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 SOURCE_ID = UUID(int=111)
@@ -218,7 +219,7 @@ class FakeDriver:
             self.observed = experiment.WorkflowObservation(
                 workflow_id=execution.workflow_id,
                 run_id="actual-temporal-run",
-                workflow_type=experiment.WORKFLOW_TYPE,
+                workflow_type=execution.workflow_type,
                 task_queue=queue,
                 status="RUNNING",
                 experiment_sha256=experiment_sha256,
@@ -269,8 +270,42 @@ async def test_private_create_only_manifest_freezes_matrix_and_complete_program(
     body = json.loads(path.read_bytes())
     body["experiment"]["executions"][0]["workflowId"] = "different"
     path.write_text(json.dumps(body))
-    with pytest.raises(ValidationError, match="execution identities"):
+    with pytest.raises(IdentityConflict, match="checksum differs"):
         experiment.read_prepared(path)
+
+
+async def test_v3_experiment_freezes_inventory_workflow_and_worker_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = await prepare(
+        spec(tmp_path).model_copy(update={"program_version": "standalone-topics/3"}),
+        monkeypatch,
+    )
+    assert prepared.program.policy == "standalone-topics/3"
+    assert "topic_inventory" in prepared.program.stages
+    assert prepared.executions[0].workflow_type == "TopicSelectionWorkflowV3"
+    settings, _ = runtime(prepared)
+    assert settings.topic_selection_v3_enabled is True
+    assert settings.topic_selection_enabled is False
+
+
+async def test_legacy_prepared_experiment_defaults_to_v2_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = await prepare(spec(tmp_path), monkeypatch)
+    path = tmp_path / "legacy-prepared.json"
+    experiment.write_prepared(path, prepared)
+    body = json.loads(path.read_bytes())
+    body["experiment"]["spec"].pop("programVersion")
+    for execution in body["experiment"]["executions"]:
+        execution.pop("workflowType")
+    body["sha256"] = digest(body["experiment"])
+    path.write_text(json.dumps(body))
+
+    restored = experiment.read_prepared(path)
+
+    assert restored.spec.program_version == "standalone-topics/2"
+    assert restored.executions[0].workflow_type == "TopicSelectionWorkflow"
 
 
 @pytest.mark.parametrize("field", ["arms", "sources"])
@@ -367,10 +402,14 @@ async def test_incompatible_runtime_refuses_before_precreation(
     elif change == "detector":
         settings = replace(settings, topic_shot_detector="scdet")
     elif change == "programme":
+
+        def stale_program(_version: str) -> TopicProgramManifest:
+            return prepared.program.model_copy(update={"implementation_sha256": "f" * 64})
+
         monkeypatch.setattr(
             experiment,
             "current_program",
-            lambda: prepared.program.model_copy(update={"implementation_sha256": "f" * 64}),
+            stale_program,
         )
     elif change == "file":
         path = Path(prepared.arms[0].snapshot_file.path)

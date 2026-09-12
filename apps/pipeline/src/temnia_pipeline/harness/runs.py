@@ -24,7 +24,11 @@ from temnia_pipeline.contracts import (
     TopicEditorialPatchInput,
     TranscriptRevisionAnnotations,
 )
-from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY, is_topic_policy
+from temnia_pipeline.harness.editorial_policy import (
+    TOPIC_SELECTION_POLICY,
+    TOPIC_SELECTION_POLICY_V3,
+    is_topic_policy,
+)
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
 from temnia_pipeline.harness.routes import ContextWindowExceeded, RouteSnapshot, estimate_cost
 from temnia_pipeline.harness.runtime_types import (
@@ -202,7 +206,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         raise IdentityConflict("requested run config differs from worker allowed config")
     if route_snapshot.snapshot_id != request.config.routeSnapshotId:
         raise IdentityConflict("requested route snapshot differs from loaded immutable snapshot")
-    if start.editorial_policy != TOPIC_SELECTION_POLICY:
+    if start.editorial_policy not in {TOPIC_SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}:
         required_routes = {
             route_id
             for seat in REQUIRED_ROUTE_SEATS & route_snapshot.seats.keys()
@@ -298,10 +302,14 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             elif existing["status"] == "running" and not same_execution:
                 raise IdentityConflict("run resume is already owned by another execution")
             return StartRunResult(run=_snapshot(existing), created=False)
-        if (
+        topic_policy_disabled = (
             start.editorial_policy == TOPIC_SELECTION_POLICY
             and not settings.topic_selection_enabled
-        ):
+        ) or (
+            start.editorial_policy == TOPIC_SELECTION_POLICY_V3
+            and not settings.topic_selection_v3_enabled
+        )
+        if topic_policy_disabled:
             raise IdentityConflict(
                 "new topic selection runs are disabled until deployment qualification"
             )

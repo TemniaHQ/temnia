@@ -2962,6 +2962,107 @@
       "additionalProperties": false,
       "title": "TopicSelectionPatchOperation"
     },
+    "TopicSelectionPatchOperationV3": {
+      "$id": "#/$defs/TopicSelectionPatchOperationV3",
+      "type": "object",
+      "properties": {
+        "affectedCandidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "findingIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "extend_start",
+            "extend_end",
+            "replace_extent",
+            "retitle",
+            "merge",
+            "split",
+            "drop",
+            "add_opportunity"
+          ]
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replacementCandidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidate"
+          }
+        }
+      },
+      "required": [
+        "affectedCandidateIds",
+        "findingIds",
+        "id",
+        "kind",
+        "opportunities",
+        "reason",
+        "replacementCandidates"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionPatchOperationV3"
+    },
+    "TopicSelectionPatchV3": {
+      "$id": "#/$defs/TopicSelectionPatchV3",
+      "type": "object",
+      "properties": {
+        "baseSelectionSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionPatchOperationV3"
+          }
+        },
+        "rubricSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "baseSelectionSha256",
+        "evidenceSha256",
+        "operations",
+        "rubricSha256",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionPatchV3"
+    },
     "TopicSelectionRecord": {
       "$id": "#/$defs/TopicSelectionRecord",
       "type": "object",
