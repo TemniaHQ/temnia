@@ -290,6 +290,7 @@ class QualificationLimits(BaseModel):
     max_output_tokens: Annotated[int, Field(ge=256)]
     proposal_wire: Literal["canonical", "compact"] = "canonical"
     suite: QualificationSuite = "legacy"
+    stages: tuple[str, ...] | None = None
     request_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 300
     lookup_timeout_seconds: Annotated[float, Field(gt=0, le=10)] = 10
     lookup_wait_seconds: Annotated[float, Field(ge=0, le=MAX_LOOKUP_WAIT_SECONDS)] = 30
@@ -304,7 +305,17 @@ class QualificationLimits(BaseModel):
             raise ValueError("historical qualification suite exceeds its fixed ceilings")
         if self.suite != "legacy" and self.proposal_wire != "canonical":
             raise ValueError("the editorial suite has no proposal-wire selection")
+        if self.stages is not None and (
+            not self.stages
+            or len(set(self.stages)) != len(self.stages)
+            or any(stage not in _suite_stages(self.suite) for stage in self.stages)
+        ):
+            raise ValueError("qualification stages must be a unique subset of the selected suite")
         return self
+
+
+def _selected_stages(limits: QualificationLimits) -> tuple[str, ...]:
+    return limits.stages or _suite_stages(limits.suite)
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,7 +485,7 @@ class _QualificationJournal:
                 "state": "planned",
             }
             for candidate in catalogue.candidates
-            for stage in _suite_stages(limits.suite)
+            for stage in _selected_stages(limits)
         ]
         if limits.proposal_wire == "compact" or limits.suite != "legacy":
             prompts = qualification_prompts(limits.proposal_wire, limits.suite)
@@ -492,6 +503,8 @@ class _QualificationJournal:
                     }
                 )
         serialized_limits = limits.model_dump(mode="json")
+        if limits.stages is None:
+            serialized_limits.pop("stages")
         if limits.suite == "legacy":
             serialized_limits.pop("suite")
         if limits.proposal_wire == "canonical":
@@ -1316,7 +1329,7 @@ async def run_qualification(
             for candidate in catalogue.candidates:
                 route = _provisional_route(candidate, catalogue.catalogue_observed_at.date())
                 candidate_failed = False
-                for stage in _suite_stages(limits.suite):
+                for stage in _selected_stages(limits):
                     if candidate_failed:
                         journal.failure(
                             candidate.id, stage, state="skipped", code="candidate-failed"
@@ -1514,7 +1527,7 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
     expected = {
         (candidate.id, stage)
         for candidate in catalogue.candidates
-        for stage in _suite_stages(limits.suite)
+        for stage in _selected_stages(limits)
     }
     observed: set[tuple[str, str]] = set()
     dispatched = 0

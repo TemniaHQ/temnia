@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "TopicCandidateHandoffJudgment": {
+      "$id": "#/$defs/TopicCandidateHandoffJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "clean_handoff",
+            "misallocated_topic_extent",
+            "unresolved"
+          ]
+        },
+        "leftContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendedLeftLastSentenceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recommendedRightFirstSentenceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rightContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "classification",
+        "leftContextSpan",
+        "reason",
+        "recommendedLeftLastSentenceId",
+        "recommendedRightFirstSentenceId",
+        "rightContextSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateHandoffJudgment"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicCandidateHandoffJudgment.json",
+  "$ref": "#/$defs/TopicCandidateHandoffJudgment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,417 @@
+{
+  "$defs": {
+    "TopicCandidateOverlapJudgment": {
+      "$id": "#/$defs/TopicCandidateOverlapJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "necessary_shared_context",
+            "misallocated_topic_extent",
+            "duplicate_core",
+            "unresolved"
+          ]
+        },
+        "overlapSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "classification",
+        "overlapSpan",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateOverlapJudgment"
+    },
+    "TopicCriterion": {
+      "$id": "#/$defs/TopicCriterion",
+      "type": "object",
+      "properties": {
+        "evidenceSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "evidenceSpans",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCriterion"
+    },
+    "TopicOpportunity": {
+      "$id": "#/$defs/TopicOpportunity",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completionSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "needs_evidence"
+          ]
+        },
+        "dispositionReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "valueEvidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "viewerPurpose": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "completionSpans",
+        "coreSpans",
+        "disposition",
+        "dispositionReason",
+        "id",
+        "meaningChangingFollowups",
+        "requiredContextSpans",
+        "valueEvidenceSpans",
+        "viewerPurpose"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunity"
+    },
+    "TopicOpportunityJudgment": {
+      "$id": "#/$defs/TopicOpportunityJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "opportunityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "represented",
+            "missing_candidate",
+            "duplicate_core",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "unresolved"
+          ]
+        }
+      },
+      "required": [
+        "candidateIds",
+        "evidenceSpans",
+        "opportunityId",
+        "reason",
+        "status"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunityJudgment"
+    },
+    "TopicPortfolioReviewV3": {
+      "$id": "#/$defs/TopicPortfolioReviewV3",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceJudgment"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionFinding"
+          }
+        },
+        "missingOpportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunityJudgment"
+          }
+        },
+        "selection": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionDecision"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
+          }
+        }
+      },
+      "required": [
+        "candidates",
+        "findings",
+        "missingOpportunities",
+        "opportunities",
+        "selection",
+        "summary",
+        "overlaps"
+      ],
+      "additionalProperties": false,
+      "title": "TopicPortfolioReviewV3"
+    },
+    "TopicSelectionDecision": {
+      "$id": "#/$defs/TopicSelectionDecision",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "select",
+            "decline",
+            "unresolved"
+          ]
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateId",
+        "disposition",
+        "evidenceSpans",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionDecision"
+    },
+    "TopicSelectionFinding": {
+      "$id": "#/$defs/TopicSelectionFinding",
+      "type": "object",
+      "properties": {
+        "affectedCandidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "missing_setup",
+            "missing_qualification",
+            "unfinished_discussion",
+            "unsupported_title",
+            "weak_viewer_value",
+            "unfocused_extent",
+            "duplicate_core",
+            "missed_opportunity",
+            "transcript_uncertainty",
+            "physical_boundary_constraint"
+          ]
+        },
+        "opportunityIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "required",
+            "preference",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "affectedCandidateIds",
+        "evidenceSpans",
+        "id",
+        "kind",
+        "opportunityIds",
+        "reason",
+        "severity"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionFinding"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceJudgment": {
+      "$id": "#/$defs/TopicSourceJudgment",
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "completeContext": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "distinctPurpose": {
+          "$ref": "#/$defs/TopicCriterion"
+        },
+        "faithfulMeaning": {
+          "$ref": "#/$defs/TopicCriterion"
+        }
+      },
+      "required": [
+        "candidateId",
+        "completeContext",
+        "distinctPurpose",
+        "faithfulMeaning"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceJudgment"
+    }
+  },
+  "$id": "TopicPortfolioReviewV3.json",
+  "$ref": "#/$defs/TopicPortfolioReviewV3",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

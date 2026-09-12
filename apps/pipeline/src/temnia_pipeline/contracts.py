@@ -403,6 +403,19 @@ class TopicBoundaryIssue(BaseModel):
     supportingSentenceIds: Annotated[list[SupportingSentenceId], Field(min_length=1)]
 
 
+class Classification(StrEnum):
+    clean_handoff = "clean_handoff"
+    misallocated_topic_extent = "misallocated_topic_extent"
+    unresolved = "unresolved"
+
+
+class Classification1(StrEnum):
+    necessary_shared_context = "necessary_shared_context"
+    misallocated_topic_extent = "misallocated_topic_extent"
+    duplicate_core = "duplicate_core"
+    unresolved = "unresolved"
+
+
 class Status3(StrEnum):
     pass_ = "pass"
     fail = "fail"
@@ -512,6 +525,7 @@ class Kind6(StrEnum):
     extend_start = "extend_start"
     extend_end = "extend_end"
     replace_extent = "replace_extent"
+    replace_candidate = "replace_candidate"
     retitle = "retitle"
     merge = "merge"
     split = "split"  # pyright: ignore[reportAssignmentType]
@@ -959,6 +973,29 @@ class TopicCandidate(BaseModel):
     title: Annotated[str, Field(min_length=1)]
 
 
+class TopicCandidateHandoffJudgment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[str], Field(max_length=2, min_length=2)]
+    classification: Classification
+    leftContextSpan: TopicSentenceSpan
+    reason: Annotated[str, Field(min_length=1)]
+    recommendedLeftLastSentenceId: str | None
+    recommendedRightFirstSentenceId: str | None
+    rightContextSpan: TopicSentenceSpan
+
+
+class TopicCandidateOverlapJudgment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[str], Field(max_length=2, min_length=2)]
+    classification: Classification1
+    overlapSpan: TopicSentenceSpan
+    reason: Annotated[str, Field(min_length=1)]
+
+
 class TopicCompiledVideo(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1287,6 +1324,33 @@ class TopicPortfolioReview(BaseModel):
     summary: Annotated[str, Field(min_length=1)]
 
 
+class TopicPortfolioReviewV3(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicSourceJudgment]
+    findings: list[TopicSelectionFinding]
+    missingOpportunities: list[TopicOpportunity]
+    opportunities: list[TopicOpportunityJudgment]
+    selection: list[TopicSelectionDecision]
+    summary: Annotated[str, Field(min_length=1)]
+    overlaps: list[TopicCandidateOverlapJudgment]
+
+
+class TopicPortfolioReviewV4(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidates: list[TopicSourceJudgment]
+    findings: list[TopicSelectionFinding]
+    missingOpportunities: list[TopicOpportunity]
+    opportunities: list[TopicOpportunityJudgment]
+    selection: list[TopicSelectionDecision]
+    summary: Annotated[str, Field(min_length=1)]
+    overlaps: list[TopicCandidateOverlapJudgment]
+    handoffs: list[TopicCandidateHandoffJudgment]
+
+
 class TopicSelectionColdReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1379,7 +1443,9 @@ class TopicSelectionAssessment(BaseModel):
     executionStatus: ExecutionStatus
     findings: list[TopicSelectionFinding]
     format: Literal["topic-selection-assessment/2"]
-    portfolioReview: TopicPortfolioReview | None
+    portfolioReview: (
+        TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4 | None
+    )
     proposerFamily: Annotated[str, Field(min_length=1)]
     reasons: list[str]
     responseArtifacts: list[HarnessArtifactRef]

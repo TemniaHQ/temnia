@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "TopicCandidateOverlapJudgment": {
+      "$id": "#/$defs/TopicCandidateOverlapJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "necessary_shared_context",
+            "misallocated_topic_extent",
+            "duplicate_core",
+            "unresolved"
+          ]
+        },
+        "overlapSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "classification",
+        "overlapSpan",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateOverlapJudgment"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicCandidateOverlapJudgment.json",
+  "$ref": "#/$defs/TopicCandidateOverlapJudgment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -181,6 +181,7 @@
             "extend_start",
             "extend_end",
             "replace_extent",
+            "replace_candidate",
             "retitle",
             "merge",
             "split",

@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     TopicPortfolioReview,
+    TopicPortfolioReviewV3,
+    TopicPortfolioReviewV4,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -110,7 +112,9 @@ class SelectionReviewRequest(BaseModel):
     cold_candidate_ids: tuple[str, ...] = ()
     cold_stages: tuple[str, ...] = ()
     unavailable_cold_ids: tuple[str, ...] = ()
-    source_review: TopicPortfolioReview | None = None
+    source_review: TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4 | None = (
+        None
+    )
     source_dispatched: bool = True
     reasons: tuple[str, ...] = ()
     execution_limited: bool = False

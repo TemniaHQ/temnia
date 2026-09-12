@@ -662,7 +662,9 @@
           }
         ],
         "missingOpportunities": [],
-        "findings": []
+        "findings": [],
+        "overlaps": [],
+        "handoffs": []
       }
     }
   },

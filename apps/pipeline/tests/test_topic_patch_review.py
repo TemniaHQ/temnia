@@ -21,6 +21,7 @@ from temnia_pipeline.harness.topic_compiler import (
     augment_topic_evidence,
     compile_topics,
     compile_topics_v2,
+    compile_topics_v3,
 )
 from temnia_pipeline.harness.topic_patch_review import (
     TopicEditorialPatchActivities,
@@ -40,16 +41,16 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.activities import HarnessActivities
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 @pytest.mark.parametrize("identity", ["matching", "stale", "hidden_id_collision"])
 async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_reviews(  # noqa: C901, PLR0915
     monkeypatch: pytest.MonkeyPatch, version: int, identity: str
 ) -> None:
-    evidence = augment_topic_evidence(_case()) if version == 2 else _case()
+    evidence = augment_topic_evidence(_case()) if version in {2, 3} else _case()
     evidence_ref = ref(HarnessArtifactKind.evidence, evidence.model_dump(mode="json"))
     candidates = [_candidate("one", 0, 1), _candidate("two", 2, 3)]
     proposed = TopicProposal(version=1, summary="Source discussions.", candidates=candidates)
-    compiler = compile_topics_v2 if version == 2 else compile_topics
+    compiler = {1: compile_topics, 2: compile_topics_v2, 3: compile_topics_v3}[version]
     portfolio = compiler(
         evidence,
         proposed,
@@ -107,7 +108,7 @@ async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_rev
     rubric = make_rubric("Find independently useful discussions.")
     rubric_ref = retain(HarnessArtifactKind.checks, rubric.model_dump(mode="json"))
     assessment: dict[str, Any]
-    if version == 2:
+    if version in {2, 3}:
         record = {
             "format": "topic-selection/2",
             "draft": {
@@ -261,7 +262,7 @@ async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_rev
     )
     assert provenance["origin"] == "human"
     assert published["topic-editorial-patch/1"][1]["candidateLineage"] == {"one": ["one"]}
-    if version == 2:
+    if version in {2, 3}:
         selected = published["topic-selection/2"][0]
         assert selected["origin"] == "human"
         assert selected["rubric"] == rubric.model_dump(mode="json")

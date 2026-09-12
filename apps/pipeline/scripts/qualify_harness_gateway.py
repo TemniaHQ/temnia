@@ -51,6 +51,12 @@ def parser() -> argparse.ArgumentParser:
         choices=("legacy", "editorial", "topic-selection", "topic-selection-v3"),
         default="legacy",
     )
+    run.add_argument(
+        "--stage",
+        action="append",
+        dest="stages",
+        help="qualify only this suite stage; repeat for more stages",
+    )
     run.add_argument("--request-timeout-seconds", type=float, default=300)
     run.add_argument("--lookup-timeout-seconds", type=float, default=10)
     run.add_argument("--lookup-wait-seconds", type=float, default=30)
@@ -130,6 +136,7 @@ async def _run(args: argparse.Namespace) -> int:
         max_output_tokens=args.max_output_tokens,
         proposal_wire=args.proposal_wire,
         suite=args.suite,
+        stages=tuple(args.stages) if args.stages else None,
         request_timeout_seconds=args.request_timeout_seconds,
         lookup_timeout_seconds=args.lookup_timeout_seconds,
         lookup_wait_seconds=args.lookup_wait_seconds,

@@ -1985,6 +1985,99 @@
       "additionalProperties": false,
       "title": "TopicCandidate"
     },
+    "TopicCandidateHandoffJudgment": {
+      "$id": "#/$defs/TopicCandidateHandoffJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "clean_handoff",
+            "misallocated_topic_extent",
+            "unresolved"
+          ]
+        },
+        "leftContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendedLeftLastSentenceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recommendedRightFirstSentenceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rightContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "classification",
+        "leftContextSpan",
+        "reason",
+        "recommendedLeftLastSentenceId",
+        "recommendedRightFirstSentenceId",
+        "rightContextSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateHandoffJudgment"
+    },
+    "TopicCandidateOverlapJudgment": {
+      "$id": "#/$defs/TopicCandidateOverlapJudgment",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "necessary_shared_context",
+            "misallocated_topic_extent",
+            "duplicate_core",
+            "unresolved"
+          ]
+        },
+        "overlapSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "classification",
+        "overlapSpan",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateOverlapJudgment"
+    },
     "TopicColdReview": {
       "$id": "#/$defs/TopicColdReview",
       "type": "object",
@@ -2521,6 +2614,127 @@
       "additionalProperties": false,
       "title": "TopicPortfolioReview"
     },
+    "TopicPortfolioReviewV3": {
+      "$id": "#/$defs/TopicPortfolioReviewV3",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceJudgment"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionFinding"
+          }
+        },
+        "missingOpportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunityJudgment"
+          }
+        },
+        "selection": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionDecision"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
+          }
+        }
+      },
+      "required": [
+        "candidates",
+        "findings",
+        "missingOpportunities",
+        "opportunities",
+        "selection",
+        "summary",
+        "overlaps"
+      ],
+      "additionalProperties": false,
+      "title": "TopicPortfolioReviewV3"
+    },
+    "TopicPortfolioReviewV4": {
+      "$id": "#/$defs/TopicPortfolioReviewV4",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceJudgment"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionFinding"
+          }
+        },
+        "missingOpportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunityJudgment"
+          }
+        },
+        "selection": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionDecision"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
+          }
+        },
+        "handoffs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateHandoffJudgment"
+          }
+        }
+      },
+      "required": [
+        "candidates",
+        "findings",
+        "missingOpportunities",
+        "opportunities",
+        "selection",
+        "summary",
+        "overlaps",
+        "handoffs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicPortfolioReviewV4"
+    },
     "TopicProposal": {
       "$id": "#/$defs/TopicProposal",
       "type": "object",
@@ -2639,7 +2853,17 @@
         "portfolioReview": {
           "anyOf": [
             {
-              "$ref": "#/$defs/TopicPortfolioReview"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TopicPortfolioReview"
+                },
+                {
+                  "$ref": "#/$defs/TopicPortfolioReviewV3"
+                },
+                {
+                  "$ref": "#/$defs/TopicPortfolioReviewV4"
+                }
+              ]
             },
             {
               "type": "null"
@@ -2990,6 +3214,7 @@
             "extend_start",
             "extend_end",
             "replace_extent",
+            "replace_candidate",
             "retitle",
             "merge",
             "split",

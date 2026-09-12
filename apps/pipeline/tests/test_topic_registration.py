@@ -62,5 +62,5 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
     assert "agent__topic_opportunity_inventory_v3__model_request" in names
     assert "agent__topic_selection_author_v3__model_request" in names
     assert "agent__topic_selection_cold_v3__model_request" in names
-    assert "agent__topic_selection_source_v3__model_request" in names
+    assert "agent__topic_selection_source_v4__model_request" in names
     assert "agent__topic_selection_patch_v3__model_request" in names

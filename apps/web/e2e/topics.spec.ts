@@ -147,7 +147,11 @@ for (const policy of TOPIC_POLICIES) {
         policy === TOPIC_SELECTION_POLICY_V3 ? "select" : "unresolved"
       );
       expect(assessment.executionStatus).toBe("needs_review");
-      expect(edit.compilerVersion).toBe("topic-compiler/2");
+      expect(edit.compilerVersion).toBe(
+        policy === TOPIC_SELECTION_POLICY_V3
+          ? "topic-compiler/3"
+          : "topic-compiler/2"
+      );
     }
     const renderRef = view.artifacts.find(
       (item) => item.metadata.format === "topic-renders/1"

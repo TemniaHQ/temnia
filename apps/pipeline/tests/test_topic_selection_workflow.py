@@ -21,6 +21,7 @@ from temnia_pipeline.contracts import (
     TopicEditorialRubric,
     TopicOpportunity,
     TopicPortfolioReview,
+    TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -153,10 +154,15 @@ def portfolio(*, selected: bool, missing: bool = False, weak: bool = False) -> T
 
 def v3_portfolio(
     *, selected: bool, missing: bool = False, weak: bool = False
-) -> TopicPortfolioReview:
+) -> TopicPortfolioReviewV4:
     """V3 source review decides the portfolio without repeating cold reviews."""
-    return portfolio(selected=selected, missing=missing, weak=weak).model_copy(
-        update={"candidates": []}
+    return TopicPortfolioReviewV4.model_validate(
+        {
+            **portfolio(selected=selected, missing=missing, weak=weak).model_dump(mode="json"),
+            "candidates": [],
+            "overlaps": [],
+            "handoffs": [],
+        }
     )
 
 
@@ -590,7 +596,7 @@ async def test_v3_invalid_repair_withholds_the_known_invalid_video(
     )
     unresolved_payload = v3_portfolio(selected=True, weak=True).model_dump(mode="json")
     unresolved_payload["selection"][0]["disposition"] = "unresolved"
-    unresolved = TopicPortfolioReview.model_validate(unresolved_payload)
+    unresolved = TopicPortfolioReviewV4.model_validate(unresolved_payload)
     run = Program(
         monkeypatch,
         initial=draft(selected=True),

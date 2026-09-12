@@ -20,6 +20,8 @@ from temnia_pipeline.contracts import (
     TopicCandidate,
     TopicOpportunity,
     TopicPortfolioReview,
+    TopicPortfolioReviewV3,
+    TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
@@ -90,7 +92,7 @@ TOPIC_SELECTION_V3_SCHEMAS = {
     "topic_inventory": "topic-selection-draft/2",
     "topic_author": "topic-selection-draft/2",
     "topic_cold": SELECTION_COLD_PROMPT_V3,
-    "topic_source": "topic-selection-portfolio/2",
+    "topic_source": "topic-selection-portfolio/4",
     "topic_patch": SELECTION_PATCH_PROMPT_V3,
 }
 STAGE_SEATS = {
@@ -103,19 +105,23 @@ STAGE_SEATS = {
 _RESPONSE = TypeAdapter(ModelResponse)
 
 
-def topic_selection_qualification_case() -> tuple[
-    HarnessEvidence, TopicSelectionRecord, TopicSelectionAssessment
-]:
+def topic_selection_qualification_case(
+    *, combined_patch: bool = False
+) -> tuple[HarnessEvidence, TopicSelectionRecord, TopicSelectionAssessment]:
     """An invented complete discussion with a separate incomplete ending; never customer gold."""
     evidence, _, _, _ = editorial_qualification_case()
     evidence = augment_topic_evidence(evidence)
     span = TopicSentenceSpan(
         firstSentenceId=evidence.sentences[1].id,
-        lastSentenceId=evidence.sentences[3].id,
+        lastSentenceId=evidence.sentences[2 if combined_patch else 3].id,
     )
     candidate = TopicCandidate(
         id="garden-care",
-        title="How regular watering supports garden roots",
+        title=(
+            "A complete method for successful gardening"
+            if combined_patch
+            else "How regular watering supports garden roots"
+        ),
         purpose="Explain a basic garden-care practice.",
         reason="A developed explanation available independently of the greeting.",
         firstSentenceId=span.firstSentenceId,
@@ -123,8 +129,8 @@ def topic_selection_qualification_case() -> tuple[
         coreSpans=[span],
         completionSpans=[
             TopicSentenceSpan(
-                firstSentenceId=evidence.sentences[3].id,
-                lastSentenceId=evidence.sentences[3].id,
+                firstSentenceId=evidence.sentences[2 if combined_patch else 3].id,
+                lastSentenceId=evidence.sentences[2 if combined_patch else 3].id,
             )
         ],
         requiredContextSpans=[],
@@ -144,6 +150,41 @@ def topic_selection_qualification_case() -> tuple[
             "dispositionReason": "This short explanation can stand independently.",
         }
     )
+    candidates = [candidate]
+    opportunities = [opportunity]
+    if combined_patch:
+        fragment_span = TopicSentenceSpan(
+            firstSentenceId=evidence.sentences[4].id,
+            lastSentenceId=evidence.sentences[4].id,
+        )
+        fragment = TopicCandidate(
+            id="unfinished-followup",
+            title="A follow-up condition",
+            purpose="Assess whether the source contains another independent follow-up.",
+            reason="The source appears to begin a follow-up after the garden explanation.",
+            firstSentenceId=fragment_span.firstSentenceId,
+            lastSentenceId=fragment_span.lastSentenceId,
+            coreSpans=[fragment_span],
+            completionSpans=[fragment_span],
+            requiredContextSpans=[],
+            meaningChangingFollowups=[],
+        )
+        fragment_opportunity = TopicOpportunity.model_validate(
+            {
+                "id": "unfinished-followup-value",
+                "candidateIds": [fragment.id],
+                "coreSpans": [fragment_span],
+                "completionSpans": [fragment_span],
+                "requiredContextSpans": [],
+                "meaningChangingFollowups": [],
+                "valueEvidenceSpans": [fragment_span],
+                "viewerPurpose": fragment.purpose,
+                "disposition": "proposed",
+                "dispositionReason": "The apparent follow-up requires independent review.",
+            }
+        )
+        candidates.append(fragment)
+        opportunities.append(fragment_opportunity)
     rubric = make_rubric("Find worthwhile independent explanations for beginning gardeners.")
     record = TopicSelectionRecord.model_validate(
         {
@@ -155,14 +196,48 @@ def topic_selection_qualification_case() -> tuple[
             "origin": "model",
             "parentSelectionSha256": None,
             "draft": TopicSelectionDraft(
-                opportunities=[opportunity],
+                opportunities=opportunities,
                 proposal=TopicProposal(
-                    version=1, candidates=[candidate], summary="One useful discussion."
+                    version=1,
+                    candidates=candidates,
+                    summary="One useful discussion and one explicit ending fragment.",
                 ),
             ),
         }
     )
-    # The patch fixture grants only a title correction. It supplies no pretend critic results.
+    findings: list[dict[str, object]] = [
+        {
+            "id": "synthetic-title",
+            "kind": "unsupported_title",
+            "severity": "required",
+            "affectedCandidateIds": [candidate.id],
+            "opportunityIds": [opportunity.id],
+            "evidenceSpans": [span],
+            "reason": (
+                "The title claims a complete gardening method, but the source only states that "
+                "a garden needs attention and that water supports healthy roots."
+            ),
+        }
+    ]
+    if combined_patch:
+        findings.insert(
+            0,
+            {
+                "id": "synthetic-ending",
+                "kind": "unfinished_discussion",
+                "severity": "required",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [opportunity.id],
+                "evidenceSpans": [
+                    TopicSentenceSpan(
+                        firstSentenceId=evidence.sentences[2].id,
+                        lastSentenceId=evidence.sentences[3].id,
+                    )
+                ],
+                "reason": "The selected discussion omits its explicit completion sentence.",
+            },
+        )
+    # The fixture supplies no pretend critic results. V3 requires one coupled correction.
     assessment = TopicSelectionAssessment.model_validate(
         {
             "format": "topic-selection-assessment/2",
@@ -177,19 +252,7 @@ def topic_selection_qualification_case() -> tuple[
             "executionStatus": "needs_review",
             "responseArtifacts": [],
             "reasons": ["Synthetic title-correction fixture; no media or model judgment."],
-            "findings": [
-                {
-                    "id": "synthetic-title",
-                    "kind": "unsupported_title",
-                    "severity": "required",
-                    "affectedCandidateIds": [candidate.id],
-                    "opportunityIds": [opportunity.id],
-                    "evidenceSpans": [span],
-                    "reason": (
-                        "The discussion supports regular watering, not a general gardening method."
-                    ),
-                }
-            ],
+            "findings": findings,
         }
     )
     return evidence, record, assessment
@@ -197,7 +260,7 @@ def topic_selection_qualification_case() -> tuple[
 
 def topic_selection_qualification_inventory() -> TopicSelectionDraft:
     """Return the frozen pre-author source map used by the v3 transport proof."""
-    _, record, _ = topic_selection_qualification_case()
+    _, record, _ = topic_selection_qualification_case(combined_patch=True)
     payload = record.draft.model_dump(mode="json")
     payload["proposal"]["candidates"] = []
     for item in payload["opportunities"]:
@@ -213,7 +276,9 @@ def topic_selection_qualification_prompts(
     program_version: str = SELECTION_POLICY,
 ) -> dict[str, tuple[str, type[BaseModel], str]]:
     """Use the exact production prompts and native output types for one generation."""
-    evidence, record, assessment = topic_selection_qualification_case()
+    evidence, record, assessment = topic_selection_qualification_case(
+        combined_patch=program_version == TOPIC_SELECTION_POLICY_V3
+    )
     if program_version == TOPIC_SELECTION_POLICY_V3:
         inventory = topic_selection_qualification_inventory()
         return {
@@ -236,7 +301,7 @@ def topic_selection_qualification_prompts(
                 selection_source_prompt(
                     evidence, record.draft, record.rubric, independent_projection=True
                 ),
-                TopicPortfolioReview,
+                TopicPortfolioReviewV4,
                 SELECTION_SOURCE_PROMPT_V3,
             ),
             "topic_patch": (
@@ -275,7 +340,9 @@ def validate_topic_selection_qualification_output(
     stage: str, output: object, *, program_version: str = SELECTION_POLICY
 ) -> None:
     """Source admission is measured separately from schema transport and publication quality."""
-    evidence, record, assessment = topic_selection_qualification_case()
+    evidence, record, assessment = topic_selection_qualification_case(
+        combined_patch=program_version == TOPIC_SELECTION_POLICY_V3
+    )
     if stage == "topic_inventory" and isinstance(output, TopicSelectionDraft):
         if program_version != TOPIC_SELECTION_POLICY_V3:
             raise ValueError("inventory output belongs only to topic selection v3")
@@ -293,14 +360,25 @@ def validate_topic_selection_qualification_output(
         raise ValueError("topic qualification output has the wrong stage or type")
     if stage == "topic_cold" and not isinstance(output, TopicSelectionColdReview):
         raise ValueError("topic qualification cold output has the wrong type")
-    if stage == "topic_source" and not isinstance(output, TopicPortfolioReview):
+    expected_source_type = (
+        TopicPortfolioReviewV4
+        if program_version == TOPIC_SELECTION_POLICY_V3
+        else TopicPortfolioReview
+    )
+    if stage == "topic_source" and not isinstance(output, expected_source_type):
         raise ValueError("topic qualification source output has the wrong type")
     judged = assess_selection(
         evidence,
         record,
         content_hash(record),
         cold_reviews=[output] if isinstance(output, TopicSelectionColdReview) else [],
-        source_review=output if isinstance(output, TopicPortfolioReview) else None,
+        source_review=(
+            output
+            if isinstance(
+                output, (TopicPortfolioReview, TopicPortfolioReviewV3, TopicPortfolioReviewV4)
+            )
+            else None
+        ),
         author_family="synthetic-author",
         verifier_family="synthetic-reviewer",
         require_source_candidate_reviews=program_version != TOPIC_SELECTION_POLICY_V3,
@@ -609,6 +687,8 @@ def validate_topic_selection_qualification(
             if stage not in prompts or call["state"] != "passed":
                 continue
             prompt, output_type, version = prompts[stage]
+            if call.get("promptVersion") != version:
+                continue
             candidate = catalogue[call["candidateId"]]
             request = call["request"]
             # These agents have no hidden instruction/tool messages. Match the pinned
@@ -621,7 +701,6 @@ def validate_topic_selection_qualification(
             }
             if (
                 request.get("messages") != expected_messages
-                or call.get("promptVersion") != version
                 or call.get("schemaVersion") != schemas[stage]
                 or call.get("outputContractSha256") != _sha(output_type.model_json_schema())
                 or call.get("promptSha256") != hashlib.sha256(prompt.encode()).hexdigest()

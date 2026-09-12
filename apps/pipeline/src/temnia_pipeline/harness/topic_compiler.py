@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
 TOPIC_COMPILER_VERSION = "topic-compiler/1"
 TOPIC_COMPILER_VERSION_V2 = "topic-compiler/2"
+TOPIC_COMPILER_VERSION_V3 = "topic-compiler/3"
 _SPAN_FIELDS = (
     "coreSpans",
     "requiredContextSpans",
@@ -305,6 +306,56 @@ def _safe_candidates(
     return candidates
 
 
+def _pause_ownership_constraints(
+    evidence: HarnessEvidence,
+    candidate: TopicCandidate,
+    candidates: list[HarnessBoundaryCandidate],
+) -> dict[tuple[str, str], str]:
+    """Give each inter-utterance pause to the speech that precedes it.
+
+    Topic videos are independent timelines, so a midpoint split leaves the tail of the
+    previous speaker's pause at the next video's opening. The latest admissible media-grid
+    instant keeps that pause with the preceding utterance while preserving every selected word.
+    """
+    membership = _membership(evidence, candidate)
+
+    def latest(window: tuple[Fraction, Fraction]) -> HarnessBoundaryCandidate:
+        available = [
+            item
+            for item in candidates
+            if item.kind != Kind2.edge and window[0] <= candidate_time(evidence, item) <= window[1]
+        ]
+        if not available:
+            _refuse(f"topic {candidate.id}: no safe pause-ownership boundary")
+        trusted = [item for item in available if not item.requiresReview]
+        return max(
+            trusted or available,
+            key=lambda item: (
+                candidate_time(evidence, item),
+                item.clearanceMs,
+                item.score,
+                item.id,
+            ),
+        )
+
+    constraints: dict[tuple[str, str], str] = {}
+    if membership.before:
+        constraints[
+            (
+                evidence.sentences[membership.first - 1].id,
+                evidence.sentences[membership.first].id,
+            )
+        ] = latest(membership.start_window).id
+    if membership.after:
+        constraints[
+            (
+                evidence.sentences[membership.last].id,
+                evidence.sentences[membership.last + 1].id,
+            )
+        ] = latest(membership.end_window).id
+    return constraints
+
+
 def _mark_unknown_coverage(evidence: HarnessEvidence, edit: ChapterEditSpec) -> ChapterEditSpec:
     if evidence.speechCoverage.status.value != "unknown":
         return edit
@@ -323,26 +374,34 @@ def _mark_unknown_coverage(evidence: HarnessEvidence, edit: ChapterEditSpec) -> 
     )
 
 
-def compile_topics(
+def _compile_topics(  # noqa: PLR0913
     evidence: HarnessEvidence,
     proposal: TopicProposal,
     *,
     evidence_artifact_id: UUID,
     evidence_sha256: str,
     config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
+    compiler_version: str,
+    own_trailing_pauses: bool,
 ) -> TopicEditSpec:
     """Compile independent videos without silently removing their selected speech."""
     validate_topic_proposal(evidence, proposal)
     videos: list[TopicCompiledVideo] = []
     for candidate in proposal.candidates:
         execution = topic_execution_proposal(evidence, candidate)
-        eligible = frozenset(item.id for item in _safe_candidates(evidence, candidate))
+        safe = _safe_candidates(evidence, candidate)
+        eligible = frozenset(item.id for item in safe)
         edit = compile_chapters(
             evidence,
             execution,
             evidence_artifact_id=evidence_artifact_id,
             evidence_sha256=evidence_sha256,
             config=config,
+            boundary_constraints=(
+                _pause_ownership_constraints(evidence, candidate, safe)
+                if own_trailing_pauses
+                else None
+            ),
             eligible_candidate_ids=eligible,
         )
         videos.append(
@@ -353,7 +412,7 @@ def compile_topics(
             )
         )
     result = TopicEditSpec(
-        compilerVersion=TOPIC_COMPILER_VERSION,
+        compilerVersion=compiler_version,
         durationMs=evidence.durationMs,
         evidenceArtifactId=evidence_artifact_id,
         evidenceSha256=evidence_sha256,
@@ -364,6 +423,26 @@ def compile_topics(
     )
     validate_topic_edit(evidence, result, expected_evidence_sha256=evidence_sha256)
     return result
+
+
+def compile_topics(
+    evidence: HarnessEvidence,
+    proposal: TopicProposal,
+    *,
+    evidence_artifact_id: UUID,
+    evidence_sha256: str,
+    config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
+) -> TopicEditSpec:
+    """Compile the historical topic contract without changing its output bytes."""
+    return _compile_topics(
+        evidence,
+        proposal,
+        evidence_artifact_id=evidence_artifact_id,
+        evidence_sha256=evidence_sha256,
+        config=config,
+        compiler_version=TOPIC_COMPILER_VERSION,
+        own_trailing_pauses=False,
+    )
 
 
 def compile_topics_v2(
@@ -377,15 +456,37 @@ def compile_topics_v2(
     """Compile against already-persisted v2 physical evidence, never an unrecorded grid."""
     if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
         _refuse("v2 compilation requires persisted derived boundary evidence")
-    result = compile_topics(
+    return _compile_topics(
         evidence,
         proposal,
         evidence_artifact_id=evidence_artifact_id,
         evidence_sha256=evidence_sha256,
         config=config,
-    ).model_copy(update={"compilerVersion": TOPIC_COMPILER_VERSION_V2})
-    validate_topic_edit(evidence, result, expected_evidence_sha256=evidence_sha256)
-    return result
+        compiler_version=TOPIC_COMPILER_VERSION_V2,
+        own_trailing_pauses=False,
+    )
+
+
+def compile_topics_v3(
+    evidence: HarnessEvidence,
+    proposal: TopicProposal,
+    *,
+    evidence_artifact_id: UUID,
+    evidence_sha256: str,
+    config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
+) -> TopicEditSpec:
+    """Compile standalone videos with complete trailing-pause ownership."""
+    if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
+        _refuse("v3 compilation requires persisted derived boundary evidence")
+    return _compile_topics(
+        evidence,
+        proposal,
+        evidence_artifact_id=evidence_artifact_id,
+        evidence_sha256=evidence_sha256,
+        config=config,
+        compiler_version=TOPIC_COMPILER_VERSION_V3,
+        own_trailing_pauses=True,
+    )
 
 
 def _validate_video(evidence: HarnessEvidence, video: TopicCompiledVideo) -> None:
@@ -449,13 +550,17 @@ def validate_topic_edit(
 ) -> None:
     """Verify portfolio lineage and every video's independent semantic membership."""
     edit = TopicEditSpec.model_validate(edit.model_dump(), strict=True)
-    if edit.compilerVersion not in {TOPIC_COMPILER_VERSION, TOPIC_COMPILER_VERSION_V2}:
+    if edit.compilerVersion not in {
+        TOPIC_COMPILER_VERSION,
+        TOPIC_COMPILER_VERSION_V2,
+        TOPIC_COMPILER_VERSION_V3,
+    }:
         _refuse("topic portfolio names an unsupported compiler version")
     if (
-        edit.compilerVersion == TOPIC_COMPILER_VERSION_V2
+        edit.compilerVersion in {TOPIC_COMPILER_VERSION_V2, TOPIC_COMPILER_VERSION_V3}
         and evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION
     ):
-        _refuse("v2 topic portfolio lacks its persisted derived boundary evidence")
+        _refuse("versioned topic portfolio lacks its persisted derived boundary evidence")
     proposal = TopicProposal(
         candidates=[video.candidate for video in edit.videos], summary=edit.summary, version=1
     )

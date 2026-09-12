@@ -32,7 +32,7 @@ with workflow.unsafe.imports_passed_through():
         topic_selection_patch_v2,
         topic_selection_patch_v3,
         topic_selection_source_v2,
-        topic_selection_source_v3,
+        topic_selection_source_v4,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -496,7 +496,7 @@ class TopicSelectionWorkflowV3(TopicSelectionWorkflow):
     selection_program: SelectionProgramVersion = "standalone-topics/3"
     author_agent = topic_selection_author_v3
     cold_agent = topic_selection_cold_v3
-    source_agent = topic_selection_source_v3
+    source_agent = topic_selection_source_v4
     patch_agent = topic_selection_patch_v3
 
     @workflow.run
