@@ -101,6 +101,166 @@ review from silently producing a publishable-looking batch. A fresh Karma run us
 three bounded repair attempts; every repaired candidate must pass a subsequent cold
 and source review before rendering.
 
+## Human playback follow-up
+
+Rajesh's first playback review of the nine-video r11 set found the cuts sentence-complete
+and the independent treatments close to production quality. It also exposed two narrower
+release defects. The compiler split inter-utterance silence at its midpoint, leaving the
+tail of Sakala Maa's pause at the next video's opening. In the portfolio, the prayer video
+retained the opening of the mantra discussion while the mantra-and-karma video began after
+that premise. This is semantic extent misallocation: the later treatment needs the premise,
+and the earlier treatment should stop before it.
+
+`topic-compiler/3` now chooses the latest admissible source-grid instant before the next
+utterance for both standalone-video edges. The preceding video therefore owns all available
+trailing pause; at 25 fps any residue before the next word is strictly less than one frame.
+The compiler still refuses to remove speech for a cosmetically exact boundary.
+
+The inventory-first author prompt remains `topic-selection-author/6`; the latest independent
+source review is `topic-selection-source/8`, and paired repair is `topic-selection-patch/9`.
+Together they require one clear owner for each developed discussion, identify a premise
+stranded in a neighbouring video's tail as a required `unfocused_extent` affecting both
+candidates, and apply coordinated extent replacements: trim the earlier video and extend
+the later video to the earliest necessary premise. Exact repeated core remains a separate
+`duplicate_core` defect; context may still overlap when both videos need it to stand alone.
+
+The first follow-up run exposed a stronger control requirement. The author moved the mantra
+candidate's start to s237 but left the prayer candidate ending at s247. Although the source prompt
+explicitly described this failure, the independent reviewer accepted both overlapping extents.
+Prompt emphasis therefore did not make the review exhaustive. The program now computes every exact
+candidate overlap and includes it separately from author prose. A V3 source response must classify
+each supplied pair exactly once as necessary shared context, misallocated topic extent, duplicate
+core or unresolved, while copying the exact overlap span. Misallocation and duplication are invalid
+without a grounded required finding naming both candidates. Missing, altered or duplicate overlap
+decisions make the entire portfolio observation unavailable. V2 retains its historical response
+contract; the stricter shape is `topic-selection-portfolio/3` for V3 only.
+
+The next full Karma run supplied a clean initial handoff: prayer ended at s239 and mantra began at
+s240. Its review found that the karma-foundations candidate needed both a longer ending and a title
+correction. The repair represented those as `replace_extent` and `retitle` operations on the same
+candidate, so the atomic validator correctly refused a multiply affected candidate and retained the
+initial selection. That was a missing edit primitive. V3 now supports one `replace_candidate`
+operation for a coupled content-and-title or content-and-purpose correction. It preserves identity,
+cannot cross the finding-authorized source window, and accepts each changed axis only when a cited
+finding grants that exact authority. It does not weaken the single-operation-per-candidate rule.
+
+The following r16 run exposed the remaining ownership loophole. Its initial selection had no
+prayer/mantra overlap, but the mantra video began with “And depends…”. Cold review correctly rejected
+that dependent opening. Repair repeatedly extended backward to recover its antecedent, eventually
+starting mantra at s232 and overlapping the prayer candidate through s247. An intermediate source
+review classified s245–s247 as necessary shared context even though the prayer candidate called it
+completion and only the mantra candidate called it context. The final source response was invalid,
+so the strict gate rendered zero videos.
+
+V3 now accepts `necessary_shared_context` only when the entire exact overlap is inside
+`requiredContextSpans` for both candidates. Core development and completion must have one owner.
+Authoring and repair also distinguish two cures for a dependent opening: extend backward only for a
+same-topic antecedent that changes meaning; otherwise trim connective runway and start at the first
+self-contained statement of the new topic. This prevents a local intelligibility repair from
+annexing a completed neighbouring discussion.
+
+The r18 run proved that this was still insufficient for adjacent extents. The initial prayer video
+ended at s247 and the mantra video began at the dependent s248. Cold review trimmed the opening to
+s251; source review then demanded s248–s250 as setup; repair restored s248 and recreated the cold
+failure. The third repair converged at the independently intelligible s249 and the final review
+reported no findings. It nevertheless left s240–s247 in the prayer video and explicitly described
+that material as belonging there. The run spent $0.922924 over 22 settled attempts and rendered 11
+videos with `topic-compiler/3`, but it did not implement Rajesh's requested topic ownership. This is
+a measured false acceptance, not a reason to reject the already measured sentence-complete cuts.
+
+The source program now derives `candidateHandoffs` for every adjacent non-overlapping pair after
+ordering candidate extents by source position. Each row contains the last 16 selected sentences of
+the left candidate and first 16 of the right candidate. `topic-selection-portfolio/4` requires one
+typed judgment per row: `clean_handoff`, `misallocated_topic_extent`, or `unresolved`. A
+misallocation must provide exact recommended left-ending and right-opening sentence IDs inside the
+supplied window, keep the final left edge before the right edge, and carry a required
+`unfocused_extent` finding naming both candidates. Patch `/9` must implement those two reviewed
+edges exactly in one transaction. A repair cannot turn evidence cited to explain a problem into a
+literal instruction to include every cited sentence. The overlap-only V3 response remains readable
+for historical artifacts; new V3 runs request the V4 portfolio shape.
+
+Exact OpenRouter qualification then exercised all five current stages on Astra, Gemini and Kimi.
+The main cohort passed 14 of 15 requests for $0.629171; Gemini's author request ended in a conclusive
+HTTP 429 with no charge or unknown outcome. One replacement Gemini-author request passed for
+$0.011006. The bound accepted qualification therefore contains 15 passing stage/route observations,
+costs $0.640177, and retains the failed transport observation separately. This proves exact request,
+schema, grounding and accounting admission. It is not editorial acceptance.
+
+The r20 full Karma run (`b6393525-f373-5683-b0fa-86c9dc01a8ef`) supplied the required negative
+model result. Kimi K3 authored and repaired while Gemini 3.8 Flash inventoried and reviewed, with the
+same source, fingerprint, evidence, rubric, PySceneDetect detector, compiler and execution settings.
+It spent $0.907369 across 19 settled attempts and retained no reservation. The first source review
+used the V4 handoff contract correctly to trim the Shani candidate to s201 and move the following
+perfection premise into the next candidate at s202. However, the inventory and author had already
+merged the entire prayer and mantra discussions into one candidate, s202–s312. Every later review
+preserved that compound candidate; the final reviewer called it one distinct high-value video and
+reported a clean handoff only at s312/s313.
+
+That is a failed editorial arm against Rajesh's explicit target: prayer must end before the mantra
+discussion and the mantra-and-karmic-collision video must own that discussion from its beginning.
+The run ended `needs_review` because a separate wealth candidate retained an unresolved required
+completion finding. It rendered seven videos, but rendering does not rescue the failed topic split.
+The result identifies the remaining model-selection problem precisely: typed adjacent handoffs can
+enforce ownership only after two discussions exist as separate candidates. They cannot recover an
+internal split that both the inventory and source reviewer fail to discover.
+
+A controlled r22 arm changed only the author route from Kimi K3 to Astra and kept Gemini review and
+all other fixed factors identical. The fixed Gemini inventory settled for $0.057453. Astra then
+opened an HTTP 200 stream but did not produce a complete response inside the frozen 540-second
+aggregate deadline. No generation handle was available for receipt lookup. The run
+(`294dcaff-4b8c-5ebe-8974-5cabf3b6fd1e`) is `outcome_unknown`; its $5.271530 reservation remains
+active and inference was not replayed. This is Astra's second full-Karma transport failure even
+though its short qualification requests pass. It is therefore unavailable for the production
+full-source author seat under this transport.
+
+The next declared configuration arm, r23, assigned Gemini to authoring and Kimi to independent
+inventory/review. This changed both role identities, so it was a configuration comparison rather
+than a pure author substitution. It preserved the source, program, prompts, schemas, detector,
+compiler and execution settings. The Kimi inventory settled for $0.235307, then Gemini returned an
+HTTP 200 stream followed by an upstream rate-limit error before a complete author response. Run
+`6f156f15-b07a-5f00-a3ce-cfc0412d4d3b` is `outcome_unknown` with its $0.213370 reservation retained.
+No inference was replayed, and the arm produced no selection to judge.
+
+The next declared challenger uses DeepSeek V4 Pro 0813 through Fireworks for authoring and repair,
+with Kimi retaining independent inventory and review. Its exact five-stage qualification passed for
+$0.144163. The catalogue-bound route records the canonical accounting model
+`deepseek/deepseek-v4-pro-20260813`, 1,048,576 context tokens, 943,718 maximum output tokens and the
+provider's advertised structured-output capability. Qualification establishes request admission;
+the full-source arm remains the editorial test.
+
+Full Karma run r24 (`02ad8512-6cca-5248-b845-1aa59a5380ae`) settled 22 calls for $1.235900 with no
+unsettled expense among them: Kimi inventory, DeepSeek authoring and all 20 Kimi cold reviews. The
+proposal represented prayer separately at s223–s240, unlike r20's compound span, but did not satisfy
+the human ownership criterion. It overlapped the next sadhana/mantra-risk candidate at s238–s267 and
+then split the connected discussion into spiritual window-shopping at s268–s292 and mantra/karmic
+collision at s293–s312. That is useful author evidence, not an accepted selection.
+
+Kimi's full-source review opened HTTP 200 but crossed the frozen 540-second aggregate deadline
+without a complete response or generation handle. The run is `outcome_unknown` with its $1.015747
+reservation retained. It committed no source assessment, patch, final review, edit or render; the
+initial proposal is not promoted to a final selection, and the unknown request is not replayed. A
+final r25 configuration keeps DeepSeek as author and changes the reviewer from Kimi to Gemini. This
+isolates the unavailable full-source reviewer while retaining the stronger proposal family; Gemini
+previously completed this exact full-source review shape on Karma.
+
+R25 (`919ecbcc-e41b-5e10-8479-a18304bc22e0`) completed 13 model calls for $0.430738 with no active
+reservation and rendered nine videos. It still failed the target. DeepSeek proposed one s223–s308
+candidate titled “From Morning Prayer to Continuous Sadhana and the Danger of Unguided Mantras.”
+That candidate combines the completed prayer discussion with the later mantra and karmic-collision
+discussion instead of transferring ownership between two videos. Gemini's full-source review
+explicitly accepted it as complete and distinct, reported no overlap or misallocated handoff, and
+called every external handoff clean. Its only required finding concerned the opening of a different
+candidate. DeepSeek's attempted repair of that finding was invalid, so the original selection was
+retained and the run ended `needs_review`. Final selection SHA-256 is
+`dbd9229b395b32c82f929595a12d1e62a5b7cc0308a6fdb66582768faa96361f`; render descriptor SHA-256 is
+`0819b418956e1aad771cca95fe302785681783efe0d7959cb6618d46fcf176e4`.
+
+The evaluated model configurations therefore produce no editorial winner. The program now handles
+ownership errors between represented neighbouring candidates, but it cannot force review of an
+internal topic seam when author and reviewer both label a compound span as one topic. That is the
+measured next program problem. More model arms under the same representation would repeat the blind
+spot rather than resolve it.
+
 The database start fence selects the enable flag by exact editorial generation.
 `standalone-topics/2` requires its v2 flag and `standalone-topics/3` requires its v3
 flag. This keeps a qualified v3 rollout independently startable without enabling v2

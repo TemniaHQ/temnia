@@ -9,13 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from typing import TYPE_CHECKING, Any, Never
+from itertools import pairwise
+from typing import TYPE_CHECKING, Any, Never, TypedDict
 
 from pydantic import BaseModel
 
 from temnia_pipeline.contracts import (
     TopicColdReview,
     TopicEditorialRubric,
+    TopicPortfolioReviewV3,
+    TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionAssessment,
     TopicSelectionDraft,
@@ -52,10 +55,10 @@ SELECTION_COLD_PROMPT = "topic-selection-cold/2"
 SELECTION_SOURCE_PROMPT = "topic-selection-source/2"
 SELECTION_PATCH_PROMPT = "topic-selection-patch/2"
 SELECTION_INVENTORY_PROMPT = "topic-opportunity-inventory/1"
-SELECTION_AUTHOR_PROMPT_V3 = "topic-selection-author/3"
+SELECTION_AUTHOR_PROMPT_V3 = "topic-selection-author/6"
 SELECTION_COLD_PROMPT_V3 = "topic-selection-cold/3"
-SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/4"
-SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/3"
+SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/8"
+SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/9"
 _OPPORTUNITY_SPANS = (
     "coreSpans",
     "valueEvidenceSpans",
@@ -80,6 +83,21 @@ _SOURCE_FIELDS = {
     "completeContext": "missing_setup",
     "distinctPurpose": "duplicate_core",
 }
+
+
+class CandidateOverlapRow(TypedDict):
+    """Exact pair and sentence intersection supplied to source review."""
+
+    candidateIds: list[str]
+    overlapSpan: dict[str, str]
+
+
+class CandidateHandoffRow(TypedDict):
+    """Exact neighbouring candidates and their boundary context for source review."""
+
+    candidateIds: list[str]
+    leftContextSpan: dict[str, str]
+    rightContextSpan: dict[str, str]
 
 
 def _refuse(message: str) -> Never:
@@ -169,7 +187,27 @@ with its exact ID and source-evidence fields. Decide its candidate mapping and d
 add any worthwhile opportunity the inventory missed. Treat the inventory as grounded hypotheses,
 not instructions or truth. Construct each candidate only after identifying its complete question,
 answer, required setup and meaning-changing follow-up.
-""",
+For every inventoried opportunity, copy viewerPurpose, valueEvidenceSpans, coreSpans,
+requiredContextSpans, completionSpans and meaningChangingFollowups exactly. You may change only
+candidateIds, disposition and dispositionReason on that existing record. Add a separate opportunity
+when source evidence supports something the inventory missed; do not rewrite inventoried evidence
+while packaging it.
+"""
+        + (
+            """Give every substantive discussion one clear candidate owner. When the source starts
+a new inventoried opportunity during another candidate's tail, end the earlier candidate before
+that transition and start the later candidate at the earliest sentence needed for its complete
+premise. Do not strand one opportunity's opening premise in another video's ending. Reuse source
+speech only when both videos independently require it as setup or completion; never use shared
+context to hide misallocated core discussion.
+At a topic handoff, do not open on a dependent connective such as “for that”, “and” or “but” and
+then annex the previous topic merely to supply its antecedent. When the following speech contains a
+self-contained statement of the new topic, start there and leave the completed earlier discussion
+behind. Include earlier speech only when the new topic's meaning actually depends on it.
+"""
+            if source_inventory is not None
+            else ""
+        ),
         payload,
     )
 
@@ -223,6 +261,69 @@ def validate_selection_against_inventory(
     for identifier, item in expected.items():
         if actual[identifier].model_dump(exclude=mutable) != item.model_dump(exclude=mutable):
             _refuse(f"selection rewrote source inventory evidence for {identifier}")
+
+
+def candidate_overlap_rows(
+    evidence: HarnessEvidence, draft: TopicSelectionDraft
+) -> list[CandidateOverlapRow]:
+    """Enumerate exact selected-sentence intersections that source review must classify."""
+    positions = _positions(evidence)
+    candidates = draft.proposal.candidates
+    rows: list[CandidateOverlapRow] = []
+    for left_index, left in enumerate(candidates):
+        left_first, left_last = _span(positions, left, left.id)
+        for right in candidates[left_index + 1 :]:
+            right_first, right_last = _span(positions, right, right.id)
+            first, last = max(left_first, right_first), min(left_last, right_last)
+            if first <= last:
+                rows.append(
+                    {
+                        "candidateIds": [left.id, right.id],
+                        "overlapSpan": {
+                            "firstSentenceId": evidence.sentences[first].id,
+                            "lastSentenceId": evidence.sentences[last].id,
+                        },
+                    }
+                )
+    return rows
+
+
+def candidate_handoff_rows(
+    evidence: HarnessEvidence,
+    draft: TopicSelectionDraft,
+    *,
+    context_sentences: int = 16,
+) -> list[CandidateHandoffRow]:
+    """Enumerate source-adjacent non-overlapping extents whose ownership must be reviewed."""
+    positions = _positions(evidence)
+    ordered = sorted(
+        draft.proposal.candidates,
+        key=lambda candidate: (*_span(positions, candidate, candidate.id), candidate.id),
+    )
+    rows: list[CandidateHandoffRow] = []
+    for left, right in pairwise(ordered):
+        left_first, left_last = _span(positions, left, left.id)
+        right_first, right_last = _span(positions, right, right.id)
+        if left_last >= right_first:
+            continue
+        rows.append(
+            {
+                "candidateIds": [left.id, right.id],
+                "leftContextSpan": {
+                    "firstSentenceId": evidence.sentences[
+                        max(left_first, left_last - context_sentences + 1)
+                    ].id,
+                    "lastSentenceId": evidence.sentences[left_last].id,
+                },
+                "rightContextSpan": {
+                    "firstSentenceId": evidence.sentences[right_first].id,
+                    "lastSentenceId": evidence.sentences[
+                        min(right_last, right_first + context_sentences - 1)
+                    ].id,
+                },
+            }
+        )
+    return rows
 
 
 def selection_cold_prompt(
@@ -289,6 +390,37 @@ reviewed independently. Leave candidates as an empty array instead of repeating 
 Use selection and findings to report every source-relative candidate problem, including omitted
 context or qualifications, compound treatments, duplicate core value and unsupported meaning.
 Return one selection decision for every current candidate exactly once.
+Check semantic ownership across the portfolio, especially handoffs between nearby candidates. If an
+earlier candidate contains the opening premise of a later candidate's named discussion while the
+later candidate starts after that premise, treat this as misallocated extent rather than ordinary
+duplication. Emit one required unfocused_extent finding naming every candidate and opportunity whose
+edge must move, with the transition speech as evidence. The repair must trim the earlier candidate
+and extend the later candidate so the complete discussion has one owner. Use duplicate_core only
+when substantially the same core argument would remain in more than one final video; shared setup
+needed for independent comprehension is allowed.
+The program supplies candidateOverlaps computed from the exact candidate extents. Return one
+overlaps judgment for every supplied pair, in the supplied candidate order, and copy overlapSpan
+exactly. Classify each as necessary_shared_context, misallocated_topic_extent, duplicate_core or
+unresolved. A misallocated_topic_extent judgment requires one required unfocused_extent finding
+that names both candidates and cites the exact overlapSpan. A duplicate_core judgment requires the
+equivalent required duplicate_core finding. `necessary_shared_context` is admissible only when the
+entire overlap is already inside requiredContextSpans for both candidates: both standalone videos
+must become unintelligible or meaning-changing without it. Completion, core development, a smooth
+transition or useful related setup has one candidate owner. Do not classify developed transition
+speech as shared context merely because the independent inventory assigned it to both opportunities.
+
+The program also supplies candidateHandoffs for every adjacent pair whose selected extents do not
+overlap. Return one handoffs judgment for every supplied pair, in order, and copy both context spans
+exactly. Classify each as clean_handoff, misallocated_topic_extent or unresolved. For a clean or
+unresolved handoff, both recommended sentence IDs must be null. For misallocated_topic_extent,
+provide the exact final lastSentenceId for the left candidate and exact final firstSentenceId for
+the right candidate. The recommendations may trim conversational bridge speech, leave a deliberate
+gap, or transfer a premise from one candidate to the other, but the final left edge must precede the
+final right edge. Ground the decision in one required unfocused_extent finding that names both
+candidates and cites the supplied handoff context. Judge topic ownership, independent opening and
+completion together: a grammatical later opening is insufficient if its premise remains in the
+earlier video, and preserving setup is insufficient if it forces the later video to open on a
+dependent connective.
 """
         if independent_projection
         else """Review every current candidate exactly once for faithfulMeaning, completeContext
@@ -342,6 +474,14 @@ the source or narrating the review process.
             (
                 "selectionWithoutAuthorRationale" if independent_projection else "selection"
             ): selection,
+            **(
+                {
+                    "candidateOverlaps": candidate_overlap_rows(evidence, draft),
+                    "candidateHandoffs": candidate_handoff_rows(evidence, draft),
+                }
+                if independent_projection
+                else {}
+            ),
         },
     )
 
@@ -479,11 +619,41 @@ def selection_patch_prompt_v3(
 opportunities. Return one atomic patch with the supplied base/evidence/rubric hashes unchanged.
 Operations: replace_extent may move either or both edges of one candidate, including trimming or
 extension, while retaining its ID, title and viewer purpose; extend_start/end preserve the opposite
-edge and all selected speech; retitle changes only title; merge combines named parents into one
-candidate; split makes independently meaningful children; drop removes affected candidates;
+edge and all selected speech; replace_candidate combines several grounded corrections to one
+candidate, such as an extent change plus a retitle, in one operation while retaining its ID; retitle
+changes only title; merge combines named parents into one candidate; split makes independently
+meaningful children; drop removes affected candidates;
 add_opportunity creates a treatment only for an explicitly identified missing opportunity. New
-candidates get unique IDs; replace_extent, extend and retitle keep the existing ID. One operation
+candidates get unique IDs; replace_extent, replace_candidate, extend and retitle keep the existing
+ID. One operation
 may cite several findings for the same candidate so both edges can be repaired together.
+
+Because one candidate may appear in only one operation, use one replace_candidate operation and cite
+all of that candidate's findings when its extent and title, purpose or semantic annotations must
+change together. Do not express the same candidate as separate extent and retitle operations.
+
+For a context-dependent opening finding, do not assume the repair must extend backward. If the
+following authorized sentences contain the first self-contained statement of the candidate's topic,
+use replace_extent to trim the connective or anaphoric runway and start there. Extend backward only
+when the omitted antecedent belongs to the same topic and changes its meaning. Never annex a
+neighbouring completed discussion merely to explain an opening such as “for that”, “and” or “but”.
+
+When one finding identifies a topic handoff across two candidates, return coordinated
+replace_extent operations that both cite that finding: trim the earlier candidate before the new
+topic begins and extend the later candidate to the earliest premise it needs. Preserve the
+contiguous discussion in the later candidate. Do not leave that premise in the earlier candidate,
+drop it between candidates, or retain it as duplicated core.
+
+When portfolioReview.handoffs classifies a handoff as misallocated_topic_extent, its two recommended
+sentence IDs are the reviewed semantic boundary. The final replacement for the left candidate must
+end at recommendedLeftLastSentenceId and the final replacement for the right candidate must start at
+recommendedRightFirstSentenceId. Apply both in the same atomic patch, citing the shared finding.
+Do not substitute a nearby connective, restore an already rejected opening, or treat finding
+evidence spans as literal instructions to include every cited sentence.
+
+A retitle replacement must copy every candidate field exactly, including reason and all extents and
+evidence spans, and change title alone. The operation reason explains the correction; do not rewrite
+the candidate's stored author rationale.
 
 Each operation cites aggregate assessment finding IDs exactly as supplied and precisely names its
 affected candidate set. Do not cite nested raw reviewer IDs. A passed neighbour can change only
@@ -698,12 +868,14 @@ def _ground_cold(
         _refuse("cold value reconstruction must be explicit")
 
 
-def _ground_portfolio(  # noqa: C901, PLR0912
+def _ground_portfolio(  # noqa: C901, PLR0912, PLR0913, PLR0915
     evidence: HarnessEvidence,
     draft: TopicSelectionDraft,
-    review: TopicPortfolioReview,
+    review: TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4,
     *,
     require_candidate_reviews: bool = True,
+    require_overlap_reviews: bool = False,
+    require_handoff_reviews: bool = False,
 ) -> None:
     candidates = {c.id: c for c in draft.proposal.candidates}
     opportunities = {o.id: o for o in draft.opportunities}
@@ -758,6 +930,97 @@ def _ground_portfolio(  # noqa: C901, PLR0912
             _refuse("source-text reviewer cannot manufacture physical constraints")
         for value in finding.evidenceSpans:
             _span(positions, value, "source finding evidence")
+    if require_overlap_reviews:
+        if not isinstance(review, (TopicPortfolioReviewV3, TopicPortfolioReviewV4)):
+            _refuse("inventory-first portfolio review omitted candidate overlap judgments")
+        expected_rows = candidate_overlap_rows(evidence, draft)
+        expected = {
+            (row["candidateIds"][0], row["candidateIds"][1]): row["overlapSpan"]
+            for row in expected_rows
+        }
+        observed_pairs = [(item.candidateIds[0], item.candidateIds[1]) for item in review.overlaps]
+        if len(observed_pairs) != len(set(observed_pairs)) or set(observed_pairs) != set(expected):
+            _refuse("candidate overlap review must assess every supplied pair exactly once")
+        for judgment in review.overlaps:
+            pair = (judgment.candidateIds[0], judgment.candidateIds[1])
+            if judgment.overlapSpan.model_dump(mode="json") != expected[pair]:
+                _refuse("candidate overlap review changed the supplied overlap span")
+            classification = str(judgment.classification)
+            if classification == "necessary_shared_context":
+                overlap_indices = _covered_span_indices(positions, [judgment.overlapSpan])
+                for identifier in judgment.candidateIds:
+                    required_context = _covered_span_indices(
+                        positions, candidates[identifier].requiredContextSpans
+                    )
+                    if not overlap_indices <= required_context:
+                        _refuse(
+                            "necessary shared context must be explicit required context for both "
+                            "candidates"
+                        )
+            required_kind = {
+                "misallocated_topic_extent": "unfocused_extent",
+                "duplicate_core": "duplicate_core",
+            }.get(classification)
+            if required_kind is not None and not any(
+                str(finding.kind) == required_kind
+                and str(finding.severity) == "required"
+                and set(judgment.candidateIds) <= set(finding.affectedCandidateIds)
+                and judgment.overlapSpan in finding.evidenceSpans
+                for finding in review.findings
+            ):
+                _refuse(f"{classification} overlap lacks its required two-candidate finding")
+    if require_handoff_reviews:
+        if not isinstance(review, TopicPortfolioReviewV4):
+            _refuse("inventory-first portfolio review omitted candidate handoff judgments")
+        expected_rows = candidate_handoff_rows(evidence, draft)
+        expected = {(row["candidateIds"][0], row["candidateIds"][1]): row for row in expected_rows}
+        expected_pairs = list(expected)
+        observed_pairs = [(item.candidateIds[0], item.candidateIds[1]) for item in review.handoffs]
+        if observed_pairs != expected_pairs:
+            _refuse(
+                "candidate handoff review must assess every supplied pair exactly once in order"
+            )
+        for judgment in review.handoffs:
+            pair = (judgment.candidateIds[0], judgment.candidateIds[1])
+            row = expected[pair]
+            if (
+                judgment.leftContextSpan.model_dump(mode="json") != row["leftContextSpan"]
+                or judgment.rightContextSpan.model_dump(mode="json") != row["rightContextSpan"]
+            ):
+                _refuse("candidate handoff review changed supplied context spans")
+            classification = str(judgment.classification)
+            recommended = (
+                judgment.recommendedLeftLastSentenceId,
+                judgment.recommendedRightFirstSentenceId,
+            )
+            if classification != "misallocated_topic_extent":
+                if recommended != (None, None):
+                    _refuse("clean or unresolved handoff cannot recommend replacement edges")
+                continue
+            if None in recommended:
+                _refuse("misallocated handoff requires both exact replacement edges")
+            left_target = positions.get(judgment.recommendedLeftLastSentenceId or "")
+            right_target = positions.get(judgment.recommendedRightFirstSentenceId or "")
+            context_first, _ = _span(positions, judgment.leftContextSpan, "left handoff context")
+            _, context_last = _span(positions, judgment.rightContextSpan, "right handoff context")
+            if (
+                left_target is None
+                or right_target is None
+                or not context_first <= left_target < right_target <= context_last
+            ):
+                _refuse("handoff replacement edges must be ordered inside supplied context")
+            if not any(
+                str(finding.kind) == "unfocused_extent"
+                and str(finding.severity) == "required"
+                and set(pair) <= set(finding.affectedCandidateIds)
+                and any(
+                    context_first <= _span(positions, span, "handoff finding evidence")[1]
+                    and _span(positions, span, "handoff finding evidence")[0] <= context_last
+                    for span in finding.evidenceSpans
+                )
+                for finding in review.findings
+            ):
+                _refuse("misallocated handoff lacks its required two-candidate finding")
     selections = {decision.candidateId: decision for decision in review.selection}
     for decision in review.selection:
         for value in decision.evidenceSpans:
@@ -829,7 +1092,7 @@ def assess_selection(  # noqa: C901, PLR0912, PLR0913, PLR0915
     selection_sha: str,
     *,
     cold_reviews: Sequence[TopicSelectionColdReview],
-    source_review: TopicPortfolioReview | None,
+    source_review: TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4 | None,
     author_family: str,
     verifier_family: str | None,
     response_artifacts: Sequence[HarnessArtifactRef] = (),
@@ -889,6 +1152,8 @@ def assess_selection(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 record.draft,
                 source_review,
                 require_candidate_reviews=require_source_candidate_reviews,
+                require_overlap_reviews=not require_source_candidate_reviews,
+                require_handoff_reviews=not require_source_candidate_reviews,
             )
         except HarnessValidationError as error:
             problems.append(f"Source/portfolio review is unavailable: {error}")
@@ -967,6 +1232,18 @@ def assess_selection(  # noqa: C901, PLR0912, PLR0913, PLR0915
             for judgment in source_review.opportunities
         )
         or any(str(decision.disposition) == "unresolved" for decision in source_review.selection)
+        or (
+            isinstance(source_review, (TopicPortfolioReviewV3, TopicPortfolioReviewV4))
+            and any(
+                str(overlap.classification) == "unresolved" for overlap in source_review.overlaps
+            )
+        )
+        or (
+            isinstance(source_review, TopicPortfolioReviewV4)
+            and any(
+                str(handoff.classification) == "unresolved" for handoff in source_review.handoffs
+            )
+        )
     )
     complete = (
         not problems
@@ -1001,13 +1278,22 @@ def _validate_operation_shape(  # noqa: C901, PLR0912
     affected = operation.affectedCandidateIds
     replacements = operation.replacementCandidates
     counts = (len(affected), len(replacements))
-    if kind in {"extend_start", "extend_end", "replace_extent", "retitle"}:
+    if kind in {
+        "extend_start",
+        "extend_end",
+        "replace_extent",
+        "replace_candidate",
+        "retitle",
+    }:
         if counts != (1, 1) or replacements[0].id != affected[0]:
             _refuse(f"{kind} must retain exactly one existing candidate ID")
         original, replacement = previous[affected[0]], replacements[0]
         if kind == "retitle":
             if original.model_dump(exclude={"title"}) != replacement.model_dump(exclude={"title"}):
                 _refuse("retitle changed content or semantic annotations")
+        elif kind == "replace_candidate":
+            if original == replacement:
+                _refuse("replace_candidate did not change the candidate")
         else:
             positions = _positions(evidence)
             first, last = _span(positions, original, original.id)
@@ -1065,7 +1351,12 @@ def _normalize_opportunity_updates(
     known: dict[str, TopicOpportunity],
 ) -> TopicSelectionPatchOperation | TopicSelectionPatchOperationV3:
     """Keep discovery evidence immutable while accepting authorized mapping decisions."""
-    if str(operation.kind) not in {"extend_start", "extend_end", "replace_extent"}:
+    if str(operation.kind) not in {
+        "extend_start",
+        "extend_end",
+        "replace_extent",
+        "replace_candidate",
+    }:
         return operation
     normalized: list[TopicOpportunity] = []
     for proposed in operation.opportunities:
@@ -1085,7 +1376,48 @@ def _normalize_opportunity_updates(
     return operation.model_copy(update={"opportunities": normalized})
 
 
-def _patch_authority(  # noqa: C901
+def _validate_replace_candidate_authority(
+    operation: TopicSelectionPatchOperation | TopicSelectionPatchOperationV3,
+    findings: list[TopicSelectionFinding],
+    previous: dict[str, TopicCandidate],
+) -> None:
+    """Require separate findings for each axis changed by a combined correction."""
+    original = previous[operation.affectedCandidateIds[0]]
+    replacement = operation.replacementCandidates[0]
+    changed_title = original.title != replacement.title
+    changed_purpose = original.purpose != replacement.purpose
+    content_fields = {
+        "firstSentenceId",
+        "lastSentenceId",
+        "coreSpans",
+        "requiredContextSpans",
+        "completionSpans",
+        "meaningChangingFollowups",
+    }
+    changed_content = original.model_dump(include=content_fields) != replacement.model_dump(
+        include=content_fields
+    )
+    if not changed_content or not (changed_title or changed_purpose):
+        _refuse(
+            "replace_candidate requires both a content correction and a title or purpose correction"
+        )
+    kinds = {str(f.kind) for f in findings}
+    if changed_title and "unsupported_title" not in kinds:
+        _refuse("replace_candidate changed title without an unsupported-title finding")
+    if changed_purpose and not kinds & {"weak_viewer_value", "unfocused_extent"}:
+        _refuse("replace_candidate changed purpose without a value or focus finding")
+    if changed_content and not kinds & {
+        "missing_setup",
+        "missing_qualification",
+        "unfinished_discussion",
+        "unfocused_extent",
+        "duplicate_core",
+        "transcript_uncertainty",
+    }:
+        _refuse("replace_candidate changed content without an extent-related finding")
+
+
+def _patch_authority(  # noqa: C901, PLR0912
     operation: TopicSelectionPatchOperation | TopicSelectionPatchOperationV3,
     findings: dict[str, TopicSelectionFinding],
     previous: dict[str, TopicCandidate],
@@ -1107,6 +1439,8 @@ def _patch_authority(  # noqa: C901
         str(f.kind) == "missed_opportunity" for f in valid
     ):
         _refuse("new opportunity treatment requires an omission finding")
+    if str(operation.kind) == "replace_candidate":
+        _validate_replace_candidate_authority(operation, valid, previous)
     if all(str(f.kind) == "physical_boundary_constraint" for f in valid):
         if str(operation.kind) not in {"extend_start", "extend_end"}:
             _refuse(
@@ -1168,6 +1502,10 @@ def apply_selection_patch(  # noqa: C901, PLR0912, PLR0915
     ):
         _refuse("patch base, evidence, rubric or assessment identity differs")
     if not patch.operations:
+        if isinstance(patch, TopicSelectionPatchV3) and any(
+            str(finding.severity) == "required" for finding in assessment.findings
+        ):
+            _refuse("v3 patch with required findings cannot return an empty repair")
         return record.draft
     _unique([operation.id for operation in patch.operations], "patch operation")
     _unique([finding.id for finding in assessment.findings], "assessment finding")
@@ -1271,6 +1609,20 @@ def apply_selection_patch(  # noqa: C901, PLR0912, PLR0915
         opportunities=list(opportunities.values()),
     )
     validate_selection(evidence, result)
+    if isinstance(assessment.portfolioReview, TopicPortfolioReviewV4):
+        final_candidates = {candidate.id: candidate for candidate in result.proposal.candidates}
+        for handoff in assessment.portfolioReview.handoffs:
+            if str(handoff.classification) != "misallocated_topic_extent":
+                continue
+            left = final_candidates.get(handoff.candidateIds[0])
+            right = final_candidates.get(handoff.candidateIds[1])
+            if (
+                left is None
+                or right is None
+                or left.lastSentenceId != handoff.recommendedLeftLastSentenceId
+                or right.firstSentenceId != handoff.recommendedRightFirstSentenceId
+            ):
+                _refuse("patch did not implement the reviewed handoff boundaries exactly")
     return result
 
 

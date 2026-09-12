@@ -147,6 +147,52 @@ export type TopicSelectionDecision = z.infer<
   typeof TopicSelectionDecisionSchema
 >;
 
+/** A source reviewer must account for every exact overlap supplied by the program. */
+export const TopicCandidateOverlapJudgmentSchema = z
+  .object({
+    candidateIds: z.array(z.string()).length(2),
+    classification: z.enum([
+      "necessary_shared_context",
+      "misallocated_topic_extent",
+      "duplicate_core",
+      "unresolved",
+    ]),
+    overlapSpan: TopicSentenceSpanSchema,
+    reason: reason(),
+  })
+  .strict()
+  .meta({
+    id: "TopicCandidateOverlapJudgment",
+    title: "TopicCandidateOverlapJudgment",
+  });
+export type TopicCandidateOverlapJudgment = z.infer<
+  typeof TopicCandidateOverlapJudgmentSchema
+>;
+
+/** A source reviewer fixes semantic ownership at each adjacent, non-overlapping handoff. */
+export const TopicCandidateHandoffJudgmentSchema = z
+  .object({
+    candidateIds: z.array(z.string()).length(2),
+    classification: z.enum([
+      "clean_handoff",
+      "misallocated_topic_extent",
+      "unresolved",
+    ]),
+    leftContextSpan: TopicSentenceSpanSchema,
+    reason: reason(),
+    recommendedLeftLastSentenceId: z.string().nullable(),
+    recommendedRightFirstSentenceId: z.string().nullable(),
+    rightContextSpan: TopicSentenceSpanSchema,
+  })
+  .strict()
+  .meta({
+    id: "TopicCandidateHandoffJudgment",
+    title: "TopicCandidateHandoffJudgment",
+  });
+export type TopicCandidateHandoffJudgment = z.infer<
+  typeof TopicCandidateHandoffJudgmentSchema
+>;
+
 /** Original source access makes new opportunities admissible, not automatically true. */
 export const TopicPortfolioReviewSchema = z
   .object({
@@ -160,6 +206,28 @@ export const TopicPortfolioReviewSchema = z
   .strict()
   .meta({ id: "TopicPortfolioReview", title: "TopicPortfolioReview" });
 export type TopicPortfolioReview = z.infer<typeof TopicPortfolioReviewSchema>;
+
+/** V3 makes omission of a material candidate-overlap decision structurally invalid. */
+export const TopicPortfolioReviewV3Schema = TopicPortfolioReviewSchema.extend({
+  overlaps: z.array(TopicCandidateOverlapJudgmentSchema),
+})
+  .strict()
+  .meta({ id: "TopicPortfolioReviewV3", title: "TopicPortfolioReviewV3" });
+export type TopicPortfolioReviewV3 = z.infer<
+  typeof TopicPortfolioReviewV3Schema
+>;
+
+/** V4 makes every adjacent non-overlapping topic handoff an exact, executable decision. */
+export const TopicPortfolioReviewV4Schema = TopicPortfolioReviewV3Schema.extend(
+  {
+    handoffs: z.array(TopicCandidateHandoffJudgmentSchema),
+  }
+)
+  .strict()
+  .meta({ id: "TopicPortfolioReviewV4", title: "TopicPortfolioReviewV4" });
+export type TopicPortfolioReviewV4 = z.infer<
+  typeof TopicPortfolioReviewV4Schema
+>;
 
 export const TopicSelectionPatchOperationSchema = z
   .object({
@@ -210,6 +278,7 @@ export const TopicSelectionPatchOperationV3Schema = z
       "extend_start",
       "extend_end",
       "replace_extent",
+      "replace_candidate",
       "retitle",
       "merge",
       "split",
@@ -264,7 +333,13 @@ export const TopicSelectionAssessmentSchema = z
     executionStatus: z.enum(["complete", "needs_review", "execution_limited"]),
     findings: z.array(TopicSelectionFindingSchema),
     format: z.literal("topic-selection-assessment/2"),
-    portfolioReview: TopicPortfolioReviewSchema.nullable(),
+    portfolioReview: z
+      .union([
+        TopicPortfolioReviewSchema,
+        TopicPortfolioReviewV3Schema,
+        TopicPortfolioReviewV4Schema,
+      ])
+      .nullable(),
     proposerFamily: reason(),
     reasons: z.array(z.string()),
     responseArtifacts: z.array(HarnessArtifactRefSchema),

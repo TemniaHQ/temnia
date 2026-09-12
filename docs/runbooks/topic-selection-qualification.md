@@ -65,6 +65,11 @@ For v3, use `--suite topic-selection-v3`. A candidate requires five calls becaus
 the independent inventory is a separate reviewer request. Bind it with
 `--program-version standalone-topics/3 --bind-transport`; this produces
 `topic-selection-qualification/5` and cannot be substituted for a v2 proof.
+When only one production prompt or schema changes, add `--stage` for that exact
+stage and bind the resulting report together with the earlier terminal reports.
+The binder replays each receipt against the current request identity, so unchanged
+settled stages remain usable while stale stages are ignored. This avoids repeating
+unchanged paid requests and never authorizes resetting an unknown outcome.
 
 The synthetic source is deliberately small. A passing suite proves this request
 shape, structured output admission and settled cost observation. It does not prove
@@ -177,7 +182,11 @@ connected interval. Exact rational instants are encoded in reserved candidate ID
 inventory, and the compiler chooses from an eligible subset without mutating it.
 A 1.818 ms safe audio sample must not become an unsafe integer-ms cut.
 
-V2 edits carry `topic-compiler/2`. Historical source evidence and v1 edits keep
-their original identities. Unknown acoustic coverage remains a review concern;
+V2 edits carry `topic-compiler/2`. V3 edits carry `topic-compiler/3`, which assigns
+each speech-free transition to the preceding utterance by choosing the latest safe
+source-grid instant before the next speech. At 25 fps, any unavoidable residue at a
+new video's opening is less than one frame; selected speech is never removed to make
+the pause exact. Historical source evidence and earlier edits keep their original
+identities. Unknown acoustic coverage remains a review concern;
 absence of a feasible cut remains a physical failure with grounded context. Neither
 condition authorizes silently removing selected speech or rewriting the discussion.

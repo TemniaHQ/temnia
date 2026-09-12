@@ -14,22 +14,27 @@ from temnia_pipeline.contracts import (
     TopicBoundaryIssue,
     TopicOpportunity,
     TopicPortfolioReview,
+    TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionFinding,
     TopicSelectionPatch,
+    TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection import (
     apply_selection_patch,
     assess_selection,
+    candidate_handoff_rows,
+    candidate_overlap_rows,
     content_hash,
     make_rubric,
     selection_candidates_for_render,
     selection_cold_key,
     selection_cold_prompt,
+    selection_patch_prompt_v3,
     selection_prompt,
     selection_source_prompt,
 )
@@ -163,6 +168,30 @@ def _source(record: TopicSelectionRecord) -> TopicPortfolioReview:
     )
 
 
+def _source_v3(record: TopicSelectionRecord) -> TopicPortfolioReviewV4:
+    payload = _source(record).model_dump(mode="json")
+    payload["candidates"] = []
+    payload["overlaps"] = [
+        {
+            **row,
+            "classification": "necessary_shared_context",
+            "reason": "Both standalone treatments independently require this shared setup.",
+        }
+        for row in candidate_overlap_rows(EVIDENCE, record.draft)
+    ]
+    payload["handoffs"] = [
+        {
+            **row,
+            "classification": "clean_handoff",
+            "recommendedLeftLastSentenceId": None,
+            "recommendedRightFirstSentenceId": None,
+            "reason": "The neighbouring topics have a clean semantic handoff.",
+        }
+        for row in candidate_handoff_rows(EVIDENCE, record.draft)
+    ]
+    return TopicPortfolioReviewV4.model_validate(payload)
+
+
 def _assess(
     record: TopicSelectionRecord,
     *,
@@ -243,10 +272,12 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
     instruction, payload_text = prompt.split("SOURCE DATA\n", 1)
     payload = json.loads(payload_text)
     assert "Leave candidates as an empty array" in instruction
+    assert "misallocated extent" in instruction
     assert "selectionWithoutAuthorRationale" in payload
     assert "reason" not in payload["selectionWithoutAuthorRationale"]["candidates"][0]
+    assert payload["candidateOverlaps"] == []
 
-    compact = _source(record).model_copy(update={"candidates": []})
+    compact = _source_v3(record)
     assessment = assess_selection(
         EVIDENCE,
         record,
@@ -261,6 +292,373 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
     assert selection_candidates_for_render(
         record, assessment, require_complete_review=True
     ).candidates == [candidate]
+    author_instruction = selection_prompt(
+        EVIDENCE,
+        record.rubric,
+        source_inventory=record.draft,
+    ).split("SOURCE DATA\n", 1)[0]
+    assert "one clear candidate owner" in author_instruction
+    assert "self-contained statement of the new topic" in author_instruction
+    assert "copy viewerPurpose" in author_instruction
+    assert "do not rewrite inventoried evidence" in author_instruction
+    repair_instruction = selection_patch_prompt_v3(
+        EVIDENCE,
+        record,
+        assessment,
+        content_hash(record),
+    ).split("SOURCE DATA\n", 1)[0]
+    assert "coordinated" in repair_instruction
+    assert "trim the earlier candidate" in repair_instruction
+    assert "copy every candidate field exactly" in repair_instruction
+    assert "replace_candidate" in repair_instruction
+    assert "extent and title" in repair_instruction
+    assert "trim the connective or anaphoric runway" in repair_instruction
+
+
+def test_inventory_first_review_must_classify_every_exact_candidate_overlap() -> None:
+    earlier = _candidate("prayer", 0, 4)
+    later = _candidate("mantra", 3, 7)
+    record = _record(earlier, later)
+    expected_overlap = _span(3, 4)
+    prompt_payload = json.loads(
+        selection_source_prompt(
+            EVIDENCE, record.draft, record.rubric, independent_projection=True
+        ).split("SOURCE DATA\n", 1)[1]
+    )
+    assert prompt_payload["candidateOverlaps"] == [
+        {
+            "candidateIds": [earlier.id, later.id],
+            "overlapSpan": expected_overlap.model_dump(mode="json"),
+        }
+    ]
+
+    omitted = _source_v3(record).model_copy(update={"overlaps": []})
+    unavailable = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=omitted,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert unavailable.portfolioReview is None
+    assert "must assess every supplied pair exactly once" in " ".join(unavailable.reasons)
+
+    unsupported_shared = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=_source_v3(record),
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert unsupported_shared.portfolioReview is None
+    assert "explicit required context for both" in " ".join(unsupported_shared.reasons)
+
+    review = _source_v3(record)
+    review.overlaps[0] = review.overlaps[0].model_copy(
+        update={
+            "classification": "misallocated_topic_extent",
+            "reason": "The later topic's opening premise remains in the earlier video's tail.",
+        }
+    )
+    missing_finding = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=review,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert missing_finding.portfolioReview is None
+    assert "lacks its required two-candidate finding" in " ".join(missing_finding.reasons)
+    review.findings = [
+        TopicSelectionFinding.model_validate(
+            {
+                "id": "prayer-mantra-handoff",
+                "kind": "unfocused_extent",
+                "severity": "required",
+                "affectedCandidateIds": [earlier.id, later.id],
+                "opportunityIds": [item.id for item in record.draft.opportunities],
+                "evidenceSpans": [expected_overlap],
+                "reason": "Trim prayer before the mantra premise and let mantra own it.",
+            }
+        )
+    ]
+    assessed = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=review,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert assessed.portfolioReview is not None
+    assert [(str(item.kind), item.affectedCandidateIds) for item in assessed.findings] == [
+        ("unfocused_extent", [earlier.id, later.id])
+    ]
+
+    shared_earlier = earlier.model_copy(update={"requiredContextSpans": [expected_overlap]})
+    shared_later = later.model_copy(update={"requiredContextSpans": [expected_overlap]})
+    shared_record = _record(shared_earlier, shared_later)
+    accepted_shared = assess_selection(
+        EVIDENCE,
+        shared_record,
+        content_hash(shared_record),
+        cold_reviews=[_cold(shared_earlier), _cold(shared_later)],
+        source_review=_source_v3(shared_record),
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert accepted_shared.portfolioReview is not None
+
+
+def test_inventory_first_review_must_classify_every_adjacent_handoff() -> None:
+    earlier = _candidate("prayer", 0, 3)
+    later = _candidate("mantra", 5, 7)
+    record = _record(earlier, later)
+    expected = candidate_handoff_rows(EVIDENCE, record.draft)
+    prompt_payload = json.loads(
+        selection_source_prompt(
+            EVIDENCE, record.draft, record.rubric, independent_projection=True
+        ).split("SOURCE DATA\n", 1)[1]
+    )
+    assert prompt_payload["candidateHandoffs"] == expected
+
+    omitted = _source_v3(record).model_copy(update={"handoffs": []})
+    unavailable = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=omitted,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert unavailable.portfolioReview is None
+    assert "must assess every supplied pair exactly once in order" in " ".join(unavailable.reasons)
+
+    first = _candidate("prayer", 0, 1)
+    second = _candidate("mantra", 3, 4)
+    third = _candidate("practice", 6, 7)
+    three = _record(first, second, third)
+    reordered_source = _source_v3(three)
+    reordered = reordered_source.model_copy(
+        update={"handoffs": list(reversed(reordered_source.handoffs))}
+    )
+    unavailable = assess_selection(
+        EVIDENCE,
+        three,
+        content_hash(three),
+        cold_reviews=[_cold(first), _cold(second), _cold(third)],
+        source_review=reordered,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert unavailable.portfolioReview is None
+    assert "must assess every supplied pair exactly once in order" in " ".join(unavailable.reasons)
+
+
+def test_one_source_handoff_finding_can_move_both_candidate_edges_atomically() -> None:
+    earlier = _candidate("earlier", 0, 4).model_copy(
+        update={"coreSpans": [_span(0, 3)], "completionSpans": [_span(3)]}
+    )
+    later = _candidate("later", 5, 7)
+    record = _record(earlier, later)
+    later_opportunity = record.draft.opportunities[1].model_copy(
+        update={"requiredContextSpans": [_span(4)]}
+    )
+    record = record.model_copy(
+        update={
+            "draft": record.draft.model_copy(
+                update={"opportunities": [record.draft.opportunities[0], later_opportunity]}
+            )
+        }
+    )
+    selection_sha = content_hash(record)
+    source = _source_v3(record).model_copy(
+        update={
+            "candidates": [],
+            "findings": [
+                TopicSelectionFinding.model_validate(
+                    {
+                        "id": "topic-handoff",
+                        "kind": "unfocused_extent",
+                        "severity": "required",
+                        "affectedCandidateIds": [earlier.id, later.id],
+                        "opportunityIds": [
+                            record.draft.opportunities[0].id,
+                            later_opportunity.id,
+                        ],
+                        "evidenceSpans": [_span(4)],
+                        "reason": "The later discussion's premise is stranded in the earlier tail.",
+                    }
+                )
+            ],
+            "handoffs": [
+                _source_v3(record)
+                .handoffs[0]
+                .model_copy(
+                    update={
+                        "classification": "misallocated_topic_extent",
+                        "recommendedLeftLastSentenceId": "s000003",
+                        "recommendedRightFirstSentenceId": "s000004",
+                        "reason": (
+                            "Trim the earlier bridge and give its premise to the later topic."
+                        ),
+                    }
+                )
+            ],
+        }
+    )
+    assessment = assess_selection(
+        EVIDENCE,
+        record,
+        selection_sha,
+        cold_reviews=[_cold(earlier), _cold(later)],
+        source_review=source,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    repaired_earlier = earlier.model_copy(update={"lastSentenceId": "s000003"})
+    repaired_later = later.model_copy(
+        update={
+            "firstSentenceId": "s000004",
+            "requiredContextSpans": [_span(4)],
+        }
+    )
+    patch = TopicSelectionPatchV3.model_validate(
+        {
+            "baseSelectionSha256": selection_sha,
+            "evidenceSha256": record.evidenceSha256,
+            "rubricSha256": record.rubricSha256,
+            "summary": "Give the complete later discussion one candidate owner.",
+            "operations": [
+                {
+                    "id": "trim-earlier",
+                    "kind": "replace_extent",
+                    "findingIds": ["source:topic-handoff"],
+                    "affectedCandidateIds": [earlier.id],
+                    "replacementCandidates": [repaired_earlier],
+                    "opportunities": [],
+                    "reason": "End before the later topic begins.",
+                },
+                {
+                    "id": "extend-later",
+                    "kind": "replace_extent",
+                    "findingIds": ["source:topic-handoff"],
+                    "affectedCandidateIds": [later.id],
+                    "replacementCandidates": [repaired_later],
+                    "opportunities": [],
+                    "reason": "Start with the premise that makes the later discussion complete.",
+                },
+            ],
+        }
+    )
+    repaired = apply_selection_patch(EVIDENCE, record, selection_sha, assessment, patch)
+    by_id = {candidate.id: candidate for candidate in repaired.proposal.candidates}
+    assert by_id[earlier.id].lastSentenceId == "s000003"
+    assert by_id[later.id].firstSentenceId == "s000004"
+
+    wrong_later = repaired_later.model_copy(update={"firstSentenceId": "s000003"})
+    wrong_patch = patch.model_copy(
+        update={
+            "operations": [
+                patch.operations[0],
+                patch.operations[1].model_copy(update={"replacementCandidates": [wrong_later]}),
+            ]
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="reviewed handoff boundaries exactly"):
+        apply_selection_patch(EVIDENCE, record, selection_sha, assessment, wrong_patch)
+
+
+def test_one_replace_candidate_can_change_extent_and_title_atomically() -> None:
+    candidate = _candidate("combined", 0, 3)
+    record = _record(candidate)
+    findings = [
+        TopicSelectionFinding.model_validate(
+            {
+                "id": "cold:combined:completeDiscussion",
+                "kind": "unfinished_discussion",
+                "severity": "required",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [record.draft.opportunities[0].id],
+                "evidenceSpans": [_span(3, 4)],
+                "reason": "The answer completes one sentence later.",
+            }
+        ),
+        TopicSelectionFinding.model_validate(
+            {
+                "id": "cold:combined:titleFaithful",
+                "kind": "unsupported_title",
+                "severity": "required",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [record.draft.opportunities[0].id],
+                "evidenceSpans": [_span(1, 4)],
+                "reason": "The title must describe the completed claim.",
+            }
+        ),
+    ]
+    assessment = _assess(record).model_copy(
+        update={"executionStatus": "needs_review", "findings": findings}
+    )
+    replacement = candidate.model_copy(
+        update={
+            "title": "The completed source explanation",
+            "lastSentenceId": "s000004",
+            "completionSpans": [_span(4)],
+            "reason": "The expanded treatment includes the final answer.",
+        }
+    )
+    patch = TopicSelectionPatchV3.model_validate(
+        {
+            "baseSelectionSha256": content_hash(record),
+            "evidenceSha256": record.evidenceSha256,
+            "rubricSha256": record.rubricSha256,
+            "summary": "Apply the coupled extent and title correction once.",
+            "operations": [
+                {
+                    "id": "combined-correction",
+                    "kind": "replace_candidate",
+                    "affectedCandidateIds": [candidate.id],
+                    "findingIds": [item.id for item in findings],
+                    "opportunities": [],
+                    "replacementCandidates": [replacement],
+                    "reason": "Both findings concern one inseparable candidate correction.",
+                }
+            ],
+        }
+    )
+    updated = apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, patch)
+    assert updated.proposal.candidates == [replacement]
+
+    extent_only_assessment = assessment.model_copy(update={"findings": [findings[0]]})
+    unauthorized_title_patch = patch.model_copy(
+        update={
+            "operations": [patch.operations[0].model_copy(update={"findingIds": [findings[0].id]})]
+        }
+    )
+    with pytest.raises(HarnessValidationError, match="unsupported-title finding"):
+        apply_selection_patch(
+            EVIDENCE,
+            record,
+            content_hash(record),
+            extent_only_assessment,
+            unauthorized_title_patch,
+        )
 
 
 def test_render_gate_withholds_unreviewed_or_known_invalid_candidates() -> None:
@@ -362,7 +760,7 @@ def test_opening_preference_does_not_erase_an_otherwise_complete_selection() -> 
 def test_source_unfocused_extent_is_a_required_publication_correction() -> None:
     candidate = _candidate("sprawling", 0, 3)
     record = _record(candidate)
-    source = _source(record)
+    source = _source_v3(record)
     source.findings = [
         TopicSelectionFinding.model_validate(
             {

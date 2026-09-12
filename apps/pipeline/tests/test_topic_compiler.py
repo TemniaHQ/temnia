@@ -24,7 +24,10 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.rendering import kept_sections
 from temnia_pipeline.harness.topic_compiler import (
+    augment_topic_evidence,
     compile_topics,
+    compile_topics_v2,
+    compile_topics_v3,
     topic_execution_proposal,
     topic_source_usage,
     validate_topic_edit,
@@ -100,6 +103,49 @@ def test_overlapping_videos_have_independent_edges_and_reuse_renderer() -> None:
     assert usage.used_duration == 4
     assert usage.unused_duration == 0
     assert usage.repeated_duration == 2
+
+
+def test_v3_assigns_the_complete_available_pause_to_the_preceding_utterance() -> None:
+    evidence = augment_topic_evidence(
+        _evidence(
+            _transcript(
+                [
+                    _word("Previous thought.", 100, 400),
+                    _word("Selected thought.", 1000, 1400),
+                    _word("Following thought.", 3017, 3400),
+                ],
+                4000,
+            ),
+            [(0, 0), (1, 1), (2, 2)],
+            frame_rate=PositiveRational(numerator=25, denominator=1),
+        )
+    )
+    proposal = TopicProposal(
+        candidates=[_candidate("selected", 1, 1)],
+        summary="Select the middle discussion.",
+        version=1,
+    )
+    previous = compile_topics_v2(
+        evidence,
+        proposal,
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+    )
+    owned = compile_topics_v3(
+        evidence,
+        proposal,
+        evidence_artifact_id=ARTIFACT_ID,
+        evidence_sha256=SHA,
+    )
+    previous_range = kept_sections(previous.videos[0].edit)[0]
+    owned_range = kept_sections(owned.videos[0].edit)[0]
+
+    assert owned.compilerVersion == "topic-compiler/3"
+    assert owned_range.start == 1
+    assert owned_range.end == 3
+    assert owned_range.start > previous_range.start
+    assert owned_range.end > previous_range.end
+    assert Fraction(0) <= Fraction(3017, 1000) - owned_range.end < Fraction(1, 25)
 
 
 def test_omissions_remain_outside_execution_drops_and_usage_is_separate() -> None:

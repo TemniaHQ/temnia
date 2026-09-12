@@ -30,7 +30,11 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     validate_topic_selection_qualification,
 )
 from temnia_pipeline.harness.settings import HarnessSettings
-from temnia_pipeline.harness.topic_selection import content_hash
+from temnia_pipeline.harness.topic_selection import (
+    SELECTION_AUTHOR_PROMPT_V3,
+    candidate_handoff_rows,
+    content_hash,
+)
 from test_harness_gateway_qualification import (
     API_KEY,
     _candidate_file,
@@ -45,8 +49,8 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 
-def _outputs() -> list[dict[str, Any]]:
-    _, record, _ = topic_selection_qualification_case()
+def _outputs(*, combined_patch: bool = False) -> list[dict[str, Any]]:
+    _, record, _ = topic_selection_qualification_case(combined_patch=combined_patch)
     candidate = record.draft.proposal.candidates[0]
     opportunity = record.draft.opportunities[0]
     criterion = {
@@ -74,7 +78,7 @@ def _outputs() -> list[dict[str, Any]]:
             ),
         },
     }
-    source = {
+    source: dict[str, Any] = {
         "summary": "Invented source judgment checks schema and grounding only.",
         "candidates": [
             {
@@ -122,6 +126,43 @@ def _outputs() -> list[dict[str, Any]]:
             }
         ],
     }
+    if combined_patch:
+        fragment = record.draft.proposal.candidates[1]
+        fragment_opportunity = record.draft.opportunities[1]
+        source["candidates"].append(
+            {
+                "candidateId": fragment.id,
+                **dict.fromkeys(
+                    ("faithfulMeaning", "completeContext", "distinctPurpose"), criterion
+                ),
+            }
+        )
+        source["opportunities"].append(
+            {
+                "opportunityId": fragment_opportunity.id,
+                "candidateIds": [fragment.id],
+                "evidenceSpans": [fragment.coreSpans[0].model_dump(mode="json")],
+                "status": "unresolved",
+                "reason": criterion["reason"],
+            }
+        )
+        source["selection"].append(
+            {
+                "candidateId": fragment.id,
+                "disposition": "unresolved",
+                "evidenceSpans": [fragment.coreSpans[0].model_dump(mode="json")],
+                "reason": criterion["reason"],
+            }
+        )
+    replacement = {
+        **candidate.model_dump(mode="json"),
+        "title": "Regular watering and garden roots",
+    }
+    if combined_patch:
+        replacement.update(
+            lastSentenceId="s000003",
+            completionSpans=[{"firstSentenceId": "s000003", "lastSentenceId": "s000003"}],
+        )
     patch = {
         "baseSelectionSha256": content_hash(record),
         "evidenceSha256": record.evidenceSha256,
@@ -130,17 +171,16 @@ def _outputs() -> list[dict[str, Any]]:
         "operations": [
             {
                 "id": "title-fix",
-                "kind": "retitle",
+                "kind": "replace_candidate" if combined_patch else "retitle",
                 "affectedCandidateIds": [candidate.id],
-                "findingIds": ["synthetic-title"],
+                "findingIds": (
+                    ["synthetic-ending", "synthetic-title"]
+                    if combined_patch
+                    else ["synthetic-title"]
+                ),
                 "opportunities": [],
-                "replacementCandidates": [
-                    {
-                        **candidate.model_dump(mode="json"),
-                        "title": "Regular watering and garden roots",
-                    }
-                ],
-                "reason": "The narrower title matches the source discussion.",
+                "replacementCandidates": [replacement],
+                "reason": "The complete extent and narrower title match the source discussion.",
             }
         ],
     }
@@ -148,8 +188,20 @@ def _outputs() -> list[dict[str, Any]]:
 
 
 def _outputs_v3() -> list[dict[str, Any]]:
-    outputs = _outputs()
+    outputs = _outputs(combined_patch=True)
+    evidence, record, _ = topic_selection_qualification_case(combined_patch=True)
     outputs[2]["candidates"] = []
+    outputs[2]["overlaps"] = []
+    outputs[2]["handoffs"] = [
+        {
+            **row,
+            "classification": "clean_handoff",
+            "recommendedLeftLastSentenceId": None,
+            "recommendedRightFirstSentenceId": None,
+            "reason": "The supplied adjacent extents do not reassign topic ownership.",
+        }
+        for row in candidate_handoff_rows(evidence, record.draft)
+    ]
     return [topic_selection_qualification_inventory().model_dump(mode="json"), *outputs]
 
 
@@ -256,6 +308,34 @@ async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) ->
         call["schemaVersion"] == TOPIC_SELECTION_V3_SCHEMAS[call["stage"]]
         for call in report["calls"]
     )
+
+
+async def test_v3_qualification_can_refresh_only_a_changed_stage(tmp_path: Path) -> None:
+    request_transport, requests = _request_transport([_outputs_v3()[1]])
+    lookup_transport, _ = _three_candidate_lookup_transport(stages_per_candidate=1)
+    paths = _paths(tmp_path)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=1),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=QualificationLimits(
+            suite="topic-selection-v3",
+            stages=("topic_author",),
+            max_exposure_micros=100_000,
+            max_dispatches=1,
+            max_output_tokens=256,
+            lookup_wait_seconds=0,
+        ),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+    assert report["passed"] is True
+    assert len(requests) == 1
+    assert [(call["stage"], call["promptVersion"]) for call in report["calls"]] == [
+        ("topic_author", SELECTION_AUTHOR_PROMPT_V3)
+    ]
 
 
 @pytest.mark.parametrize(

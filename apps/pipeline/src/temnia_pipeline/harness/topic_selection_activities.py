@@ -35,7 +35,11 @@ from temnia_pipeline.harness.qualification_topic_selection import (
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.topic_activities import TopicActivities
-from temnia_pipeline.harness.topic_compiler import compile_topics_v2, validate_topic_edit
+from temnia_pipeline.harness.topic_compiler import (
+    compile_topics_v2,
+    compile_topics_v3,
+    validate_topic_edit,
+)
 from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
@@ -398,7 +402,7 @@ class TopicSelectionActivities:
                 SELECTION_AUTHOR_PROMPT_V3: "topic-selection-draft/2",
                 SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT: "topic-selection-portfolio/2",
-                SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/2",
+                SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
             }.get(version, version),
             author=author,
             verifier=verifier,
@@ -734,9 +738,14 @@ class TopicSelectionActivities:
             assessment,
             require_complete_review=context.program_version == TOPIC_SELECTION_POLICY_V3,
         )
+        compiler = (
+            compile_topics_v3
+            if context.program_version == TOPIC_SELECTION_POLICY_V3
+            else compile_topics_v2
+        )
         videos: list[TopicCompiledVideo] = []
         refusals: list[str] = []
-        compiled = compile_topics_v2(
+        compiled = compiler(
             evidence,
             proposal.model_copy(update={"candidates": []}),
             evidence_artifact_id=context.evidence.id,
@@ -744,7 +753,7 @@ class TopicSelectionActivities:
         )
         for candidate in proposal.candidates:
             try:
-                single = compile_topics_v2(
+                single = compiler(
                     evidence,
                     proposal.model_copy(update={"candidates": [candidate]}),
                     evidence_artifact_id=context.evidence.id,

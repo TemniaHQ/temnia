@@ -47,6 +47,7 @@ from temnia_pipeline.contracts import (
     Scope,
     TopicColdReview,
     TopicPortfolioReview,
+    TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -1143,7 +1144,7 @@ topic_selection_patch_v2 = _agent("topic_selection_patch_v2", TopicSelectionPatc
 topic_opportunity_inventory_v3 = _agent("topic_opportunity_inventory_v3", TopicSelectionDraft)
 topic_selection_author_v3 = _agent("topic_selection_author_v3", TopicSelectionDraft)
 topic_selection_cold_v3 = _agent("topic_selection_cold_v3", TopicSelectionColdReview)
-topic_selection_source_v3 = _agent("topic_selection_source_v3", TopicPortfolioReview)
+topic_selection_source_v4 = _agent("topic_selection_source_v4", TopicPortfolioReviewV4)
 topic_selection_patch_v3 = _agent("topic_selection_patch_v3", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
@@ -1170,7 +1171,7 @@ TOPIC_SELECTION_V3_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_opportunity_inventory_v3,
     topic_selection_author_v3,
     topic_selection_cold_v3,
-    topic_selection_source_v3,
+    topic_selection_source_v4,
     topic_selection_patch_v3,
 )
 HARNESS_AGENTS = (

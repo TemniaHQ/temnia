@@ -37,8 +37,10 @@ with workflow.unsafe.imports_passed_through():
         WorkflowIdentity,
     )
     from temnia_pipeline.harness.topic_compiler import (
+        TOPIC_COMPILER_VERSION_V3,
         compile_topics,
         compile_topics_v2,
+        compile_topics_v3,
         topic_boundary_issues,
     )
     from temnia_pipeline.harness.topic_patch import (
@@ -136,7 +138,12 @@ class TopicEditorialPatchActivities:
                     await self.topics.read(context, proposal_ref)
                 )
                 complete_patch = apply_human_topic_patch(evidence, prior_proposal, command)
-            compiler = compile_topics_v2 if metadata.get("selectionArtifactId") else compile_topics
+            if edit.compilerVersion == TOPIC_COMPILER_VERSION_V3:
+                compiler = compile_topics_v3
+            elif metadata.get("selectionArtifactId"):
+                compiler = compile_topics_v2
+            else:
+                compiler = compile_topics
             compiled = compiler(
                 evidence,
                 patched.proposal,
