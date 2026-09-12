@@ -56,6 +56,7 @@ from temnia_pipeline.harness.editorial_activities import EditorialActivities
 from temnia_pipeline.harness.editorial_policy import (
     EDITORIAL_POLICY,
     TOPIC_SELECTION_POLICY,
+    TOPIC_SELECTION_POLICY_V3,
     is_topic_policy,
 )
 from temnia_pipeline.harness.evidence import build_evidence
@@ -473,7 +474,7 @@ class HarnessActivities:
                 ),
             },
         )
-        if run.editorial_policy == TOPIC_SELECTION_POLICY:
+        if run.editorial_policy in {TOPIC_SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}:
             evidence = augment_topic_evidence(evidence)
         fingerprint = artifacts.fingerprint_for(
             kind="evidence",

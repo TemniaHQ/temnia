@@ -11,7 +11,6 @@ import pytest
 
 from temnia_pipeline import db
 from temnia_pipeline.harness import ledger, runs
-from temnia_pipeline.harness import topic_selection_workflow as workflow_module
 from temnia_pipeline.harness.routes import RouteSnapshot, SeatRoutePool
 from temnia_pipeline.harness.runtime_types import StartRunRequest, WorkflowIdentity
 from temnia_pipeline.harness.settings import HarnessSettings
@@ -126,7 +125,7 @@ async def test_all_four_workflow_calls_use_their_prepared_route_profile(
         for name in ("author", "cold", "source", "patch")
     }
     for name, agent in agents.items():
-        monkeypatch.setattr(workflow_module, f"topic_selection_{name}_v2", agent)
+        monkeypatch.setattr(TopicSelectionWorkflow, f"{name}_agent", agent)
     result = await TopicSelectionWorkflow().program(program.request)
     assert result.revision == 1
     assert agents["author"].outputs == agents["patch"].outputs == [8192]

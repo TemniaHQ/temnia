@@ -11,6 +11,7 @@ import {
   resolveTopicBrief,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
 } from "@/lib/harness/topic-defaults";
 import {
   restoreTopicIntent,
@@ -20,6 +21,7 @@ import {
 
 const SOURCE = "01992ffe-0a00-7000-8000-000000000001";
 const RUN = "01992ffe-0a00-7000-8000-000000000004";
+const SHA256 = /^[a-f0-9]{64}$/;
 const scope = {
   organizationId: "01992ffe-0a00-7000-8000-000000000002",
   userId: "01992ffe-0a00-7000-8000-000000000003",
@@ -69,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.HARNESS_ENABLED = "1";
   delete process.env.HARNESS_TOPIC_SELECTION_ENABLED;
+  delete process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED;
   process.env.HARNESS_BACKEND = "gateway";
   process.env.HARNESS_ROUTE_SNAPSHOT_ID = "qualified-snapshot";
   process.env.HARNESS_MAX_RUN_BUDGET_MICROS = "50000000";
@@ -216,7 +219,7 @@ describe("topic workflow admission and pending identity", () => {
 
 describe("versioned selection rollout and human corrections", () => {
   it("keeps the new program gated without blocking a restored v1 intent", async () => {
-    expect(DEFAULT_TOPIC_BRIEF_VERSION).toBe(TOPIC_SELECTION_POLICY);
+    expect(DEFAULT_TOPIC_BRIEF_VERSION).toBe(TOPIC_SELECTION_POLICY_V3);
     expect(
       await startTopicRun({
         ...intent,
@@ -243,6 +246,19 @@ describe("versioned selection rollout and human corrections", () => {
     readySource();
     await startTopicRun(intent);
     expect(mocks.start.mock.calls[1]?.[1].memo).not.toEqual(nextMemo);
+  });
+
+  it("dispatches v3 with its inventory-first workflow and memo identity", async () => {
+    process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED = "1";
+    readySource();
+    await startTopicRun({
+      ...intent,
+      defaultBriefVersion: TOPIC_SELECTION_POLICY_V3,
+    });
+    const [name, options] = mocks.start.mock.calls[0] ?? [];
+    expect(name).toBe(WORKFLOWS.topicSelectionV3);
+    expect(options.workflowId).toBe(`topic-selection-v3/${RUN}`);
+    expect(options.memo.temniaIntentSha256).toMatch(SHA256);
   });
 
   it("uses the separate human mutation workflow and persists the complete command", async () => {

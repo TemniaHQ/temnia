@@ -15,7 +15,6 @@ from temnia_pipeline.contracts import (
     TopicSelectionPatch,
     TranscriptV1,
 )
-from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from test_harness_compiler import _evidence
@@ -70,15 +69,15 @@ async def test_recorded_selection_fixture_recovers_one_discussion_through_all_fo
 
     monkeypatch.setattr(run.activities.owner, "_recorded_output", payload)
     agents = [
-        ("topic_selection_author_v2", TopicSelectionDraft),
-        ("topic_selection_cold_v2", TopicSelectionColdReview),
-        ("topic_selection_source_v2", TopicPortfolioReview),
-        ("topic_selection_patch_v2", TopicSelectionPatch),
+        ("author_agent", TopicSelectionDraft),
+        ("cold_agent", TopicSelectionColdReview),
+        ("source_agent", TopicPortfolioReview),
+        ("patch_agent", TopicSelectionPatch),
     ]
     registered: list[RecordedAgent] = []
     for name, output_type in agents:
         agent = RecordedAgent(output_type)
-        monkeypatch.setattr(module, name, agent)
+        monkeypatch.setattr(TopicSelectionWorkflow, name, agent)
         registered.append(agent)
     result = await TopicSelectionWorkflow().program(run.request)
     assert [len(agent.calls) for agent in registered] == [1, 1, 2, 1]

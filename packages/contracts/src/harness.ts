@@ -545,7 +545,7 @@ export const ChapterRunConfigSchema = z
     maxDispatches: z.int().min(1).max(128).default(32),
     maxOutputTokens: z.int().min(256).max(32_768).default(8192),
     maxRenderConcurrency: z.int().min(1).max(4).default(2),
-    maxRepairs: z.int().min(0).max(3).default(1),
+    maxRepairs: z.int().min(0).max(3).default(3),
     routeSnapshotId: z.string().min(1).max(256),
   })
   .strict()

@@ -89,7 +89,7 @@ describe("chapter server configuration", () => {
       settings: {
         config: {
           maxDispatches: 32,
-          maxRepairs: 1,
+          maxRepairs: 3,
           routeSnapshotId: "snapshot-v1",
         },
         maxRunBudgetMicros: 20_000_000,

@@ -132,7 +132,11 @@ async def _read_topic_snapshot(database_url: str, *, scope: Scope, run_id: UUID)
         if run is None:
             raise ValueError("topic run is absent from the current scope")
         policy = run["route_snapshot"].get("editorialPolicy")
-        if policy not in {"standalone-topics/1", "standalone-topics/2"}:
+        if policy not in {
+            "standalone-topics/1",
+            "standalone-topics/2",
+            "standalone-topics/3",
+        }:
             raise ValueError("requested run is not a standalone-topic policy")
         source_id = run["source_id"]
         source = await (

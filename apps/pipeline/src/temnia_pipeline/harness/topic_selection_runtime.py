@@ -17,9 +17,12 @@ from temnia_pipeline.contracts import (
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionPatch,
+    TopicSelectionPatchV3,
 )
 from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
+
+SelectionProgramVersion = Literal["standalone-topics/2", "standalone-topics/3"]
 
 
 class SelectionContext(BaseModel):
@@ -28,7 +31,11 @@ class SelectionContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     run: RunRef
     evidence: HarnessArtifactRef
+    program_version: SelectionProgramVersion = "standalone-topics/2"
     rubric: HarnessArtifactRef | None = None
+    inventory: HarnessArtifactRef | None = None
+    inventory_attempted: bool = False
+    inventory_diagnostics: tuple[str, ...] = ()
     selection: HarnessArtifactRef | None = None
     assessment: HarnessArtifactRef | None = None
     navigation: HarnessArtifactRef | None = None
@@ -44,6 +51,7 @@ class SelectionCallPlan(BaseModel):
     prompt: str
     stage: str
     prompt_version: str
+    program_version: SelectionProgramVersion = "standalone-topics/2"
     schema_version: str
     author: RouteEntry
     verifier: RouteEntry
@@ -57,7 +65,7 @@ class SelectionSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     context: SelectionContext
     draft: TopicSelectionDraft | None = None
-    patch: TopicSelectionPatch | None = None
+    patch: TopicSelectionPatch | TopicSelectionPatchV3 | None = None
     schema_error: str | None = None
 
 
@@ -72,6 +80,15 @@ class SelectionSaveResult(BaseModel):
     draft: TopicSelectionDraft | None = None
 
 
+class OpportunityInventorySaveRequest(BaseModel):
+    """A settled source-wide map before the author sees any packaging choice."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    inventory: TopicSelectionDraft | None = None
+    schema_error: str | None = None
+
+
 class SelectionRejection(BaseModel):
     """Source/schema rejection bound to a known successful provider response."""
 
@@ -80,7 +97,7 @@ class SelectionRejection(BaseModel):
     response: HarnessArtifactRef
     stage: str
     draft: TopicSelectionDraft | None = None
-    patch: TopicSelectionPatch | None = None
+    patch: TopicSelectionPatch | TopicSelectionPatchV3 | None = None
     diagnostics: tuple[str, ...]
 
 

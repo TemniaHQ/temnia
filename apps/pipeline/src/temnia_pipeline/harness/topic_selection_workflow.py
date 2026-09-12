@@ -11,8 +11,6 @@ from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-
     from temnia_pipeline.contracts import (
         ChapterRunInput,
         ChapterRunOutput,
@@ -21,13 +19,20 @@ with workflow.unsafe.imports_passed_through():
         TopicSelectionDraft,
     )
     from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
+    from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3, EditorialPolicy
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
+        TOPIC_SELECTION_V3_AGENTS,
         HarnessModelDeps,
+        topic_opportunity_inventory_v3,
         topic_selection_author_v2,
+        topic_selection_author_v3,
         topic_selection_cold_v2,
+        topic_selection_cold_v3,
         topic_selection_patch_v2,
+        topic_selection_patch_v3,
         topic_selection_source_v2,
+        topic_selection_source_v3,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -44,9 +49,11 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
     from temnia_pipeline.harness.topic_selection import SELECTION_POLICY, selection_cold_key
     from temnia_pipeline.harness.topic_selection_runtime import (
+        OpportunityInventorySaveRequest,
         SelectionAssessmentResult,
         SelectionCallPlan,
         SelectionContext,
+        SelectionProgramVersion,
         SelectionReviewRequest,
         SelectionSaveRequest,
         SelectionSaveResult,
@@ -65,7 +72,7 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         source_id=request.sourceId,
         run_id=request.runId,
         stage=plan.stage,
-        program_version=SELECTION_POLICY,
+        program_version=plan.program_version,
         prompt_version=plan.prompt_version,
         schema_version=plan.schema_version,
         route=plan.verifier if plan.stage.startswith("verify:") else plan.author,
@@ -84,11 +91,24 @@ def execution_limit(error: Exception) -> bool:
     return name in {"BudgetExceeded", "DispatchLimitExceeded", "ContextWindowExceeded"}
 
 
+def invalid_model_output(error: Exception) -> bool:
+    """Recognize a retained paid response that failed typed normalization across Temporal."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name == "UnexpectedModelBehavior"
+
+
 @workflow.defn
 class TopicSelectionWorkflow(TopicRunWorkflow):
     """New history and model activity names leave the original program replayable."""
 
     __pydantic_ai_agents__ = TOPIC_SELECTION_AGENTS
+    policy: EditorialPolicy = SELECTION_POLICY
+    selection_program: SelectionProgramVersion = "standalone-topics/2"
+    author_agent = topic_selection_author_v2
+    cold_agent = topic_selection_cold_v2
+    source_agent = topic_selection_source_v2
+    patch_agent = topic_selection_patch_v2
 
     @workflow.run
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
@@ -133,6 +153,15 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=SelectionSaveResult,
         )
 
+    async def prepare_author_context(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+    ) -> SelectionContext:
+        """V2 has no independent pre-author opportunity pass."""
+        _ = request
+        return context
+
     async def review_selection(  # noqa: C901
         self,
         request: ChapterRunInput,
@@ -156,7 +185,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 cold_context = context.model_copy(update={"candidate_id": candidate.id})
                 try:
                     plan = await self.prepare_selection(cold_context)
-                    result = await topic_selection_cold_v2.run(
+                    result = await self.cold_agent.run(
                         plan.prompt,
                         deps=selection_model_deps(request, plan),
                         model_settings={
@@ -165,13 +194,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                             )
                         },
                     )
-                except UnexpectedModelBehavior:
-                    unavailable.append(candidate.id)
-                    reasons.append(
-                        f"Cold review of {candidate.id} did not match its required schema."
-                    )
-                    continue
                 except Exception as error:
+                    if invalid_model_output(error):
+                        unavailable.append(candidate.id)
+                        reasons.append(
+                            f"Cold review of {candidate.id} did not match its required schema."
+                        )
+                        continue
                     if not execution_limit(error):
                         raise
                     limited = True
@@ -187,7 +216,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         if not limited:
             try:
                 source_plan = await self.prepare_selection(context)
-                result = await topic_selection_source_v2.run(
+                result = await self.source_agent.run(
                     source_plan.prompt,
                     deps=selection_model_deps(request, source_plan),
                     model_settings={
@@ -198,14 +227,19 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 )
                 source_dispatched = True
                 source_review = result.output
-            except UnexpectedModelBehavior:
-                source_dispatched = True
-                reasons.append("Source and opportunity review did not match its required schema.")
             except Exception as error:
-                if not execution_limit(error):
+                if invalid_model_output(error):
+                    source_dispatched = True
+                    reasons.append(
+                        "Source and opportunity review did not match its required schema."
+                    )
+                elif not execution_limit(error):
                     raise
-                limited = True
-                reasons.append("Execution capacity prevented the source and opportunity review.")
+                else:
+                    limited = True
+                    reasons.append(
+                        "Execution capacity prevented the source and opportunity review."
+                    )
         return await workflow.execute_activity(
             "save_topic_selection_assessment",
             SelectionReviewRequest(
@@ -232,7 +266,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             "start_chapter_run",
             StartRunRequest(
                 request=request,
-                editorial_policy=SELECTION_POLICY,
+                editorial_policy=self.policy,
                 workflow=WorkflowIdentity(
                     workflow_id=info.workflow_id, workflow_run_id=info.run_id
                 ),
@@ -243,7 +277,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=StartRunResult,
         )
         run = started.run
-        if run.editorial_policy != SELECTION_POLICY:
+        if run.editorial_policy != self.policy:
             raise RuntimeError("selection workflow cannot reinterpret another program generation")
         if run.current_revision:
             assets = await workflow.execute_activity(
@@ -273,7 +307,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 revision=0,
                 message="The accepted transcript has no words to ground topic discovery.",
             )
-        context = SelectionContext(run=self.ref(request), evidence=evidence.artifact)
+        context = SelectionContext(
+            run=self.ref(request),
+            evidence=evidence.artifact,
+            program_version=self.selection_program,
+        )
         rubric = await workflow.execute_activity(
             "prepare_topic_selection_rubric",
             context,
@@ -296,11 +334,12 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 result_type=CandidateResult,
             )
             context = context.model_copy(update={"navigation": navigation.artifact})
+        context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:
             plan = await self.prepare_selection(context)
             try:
-                result = await topic_selection_author_v2.run(
+                result = await self.author_agent.run(
                     plan.prompt,
                     deps=selection_model_deps(request, plan),
                     model_settings={
@@ -310,7 +349,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     },
                 )
                 save = SelectionSaveRequest(context=context, draft=result.output)
-            except UnexpectedModelBehavior:
+            except Exception as error:
+                if not invalid_model_output(error):
+                    raise
                 save = SelectionSaveRequest(
                     context=context,
                     schema_error="Author response did not match the selection schema.",
@@ -356,7 +397,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
             try:
                 plan = await self.prepare_selection(patch_context)
-                result = await topic_selection_patch_v2.run(
+                result = await self.patch_agent.run(
                     plan.prompt,
                     deps=selection_model_deps(request, plan),
                     model_settings={
@@ -366,12 +407,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     },
                 )
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
-            except UnexpectedModelBehavior:
-                save = SelectionSaveRequest(
-                    context=patch_context,
-                    schema_error="Repair response did not match the patch schema.",
-                )
             except Exception as error:
+                if invalid_model_output(error):
+                    stop_reasons.append(
+                        "Repair response was incomplete or invalid; the prior assessed selection "
+                        "is retained for review."
+                    )
+                    break
                 if not execution_limit(error):
                     raise
                 limited = True
@@ -442,4 +484,80 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             edit=compiled.artifact,
             revision=1,
             reasons=(*compiled.refusals, *stop_reasons),
+        )
+
+
+@workflow.defn(name="TopicSelectionWorkflowV3")
+class TopicSelectionWorkflowV3(TopicSelectionWorkflow):
+    """Inventory-first selection with independent projection and complete extent repair."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V3_AGENTS
+    policy = TOPIC_SELECTION_POLICY_V3
+    selection_program: SelectionProgramVersion = "standalone-topics/3"
+    author_agent = topic_selection_author_v3
+    cold_agent = topic_selection_cold_v3
+    source_agent = topic_selection_source_v3
+    patch_agent = topic_selection_patch_v3
+
+    @workflow.run
+    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
+        """Execute the inventory-first programme under its own history type."""
+        return await super().run(request)
+
+    async def prepare_author_context(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+    ) -> SelectionContext:
+        """Run one independent source inventory, then degrade visibly if it is unavailable."""
+        plan = await self.prepare_selection(context)
+        diagnostics: tuple[str, ...] = ()
+        inventory = None
+        try:
+            result = await topic_opportunity_inventory_v3.run(
+                plan.prompt,
+                deps=selection_model_deps(request, plan),
+                model_settings={
+                    "max_tokens": effective_topic_output_tokens(
+                        request.config.maxOutputTokens, plan.verifier
+                    )
+                },
+            )
+            inventory = result.output
+        except Exception as error:
+            if invalid_model_output(error):
+                diagnostics = (
+                    (
+                        "Independent source opportunity inventory did not match its required "
+                        "schema; authoring continued with that missing observation explicit."
+                    ),
+                )
+            elif execution_limit(error):
+                diagnostics = (
+                    (
+                        "Execution capacity prevented independent source opportunity inventory; "
+                        "authoring continued with that missing observation explicit."
+                    ),
+                )
+            else:
+                raise
+        saved = await workflow.execute_activity(
+            "save_topic_opportunity_inventory_v3",
+            OpportunityInventorySaveRequest(
+                context=context,
+                inventory=inventory,
+                schema_error=diagnostics[0] if diagnostics else None,
+            ),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=SelectionSaveResult,
+        )
+        if saved.selection is None:
+            diagnostics = (*diagnostics, *saved.diagnostics)
+        return context.model_copy(
+            update={
+                "inventory": saved.selection,
+                "inventory_attempted": True,
+                "inventory_diagnostics": tuple(dict.fromkeys(diagnostics)),
+            }
         )

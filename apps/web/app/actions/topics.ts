@@ -19,6 +19,7 @@ import {
   resolveTopicBrief,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
   TopicStartInstructionsSchema,
 } from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
@@ -73,17 +74,29 @@ function stableJson(value: unknown): string {
 }
 
 function topicGeneration(policy: string, input: unknown) {
-  return policy === TOPIC_SELECTION_POLICY
-    ? {
-        intent: {
-          editorialPolicy: policy,
-          input,
-          workflow: WORKFLOWS.topicSelection,
-        },
-        prefix: "topic-selection",
+  if (policy === TOPIC_SELECTION_POLICY_V3) {
+    return {
+      intent: {
+        editorialPolicy: policy,
+        input,
+        workflow: WORKFLOWS.topicSelectionV3,
+      },
+      prefix: "topic-selection-v3",
+      workflow: WORKFLOWS.topicSelectionV3,
+    };
+  }
+  if (policy === TOPIC_SELECTION_POLICY) {
+    return {
+      intent: {
+        editorialPolicy: policy,
+        input,
         workflow: WORKFLOWS.topicSelection,
-      }
-    : { intent: input, prefix: "topic-run", workflow: WORKFLOWS.topicRun };
+      },
+      prefix: "topic-selection",
+      workflow: WORKFLOWS.topicSelection,
+    };
+  }
+  return { intent: input, prefix: "topic-run", workflow: WORKFLOWS.topicRun };
 }
 
 function intentSha256(value: unknown): string {
@@ -176,10 +189,11 @@ export async function startTopicRun(
   }
   const brief = resolveTopicBrief(parsed.data);
   const policy = parsed.data.defaultBriefVersion;
-  if (
-    policy === TOPIC_SELECTION_POLICY &&
-    process.env.HARNESS_TOPIC_SELECTION_ENABLED !== "1"
-  ) {
+  const enabled =
+    policy === TOPIC_SELECTION_POLICY_V3
+      ? process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED === "1"
+      : process.env.HARNESS_TOPIC_SELECTION_ENABLED === "1";
+  if (policy !== TOPIC_POLICY && !enabled) {
     return {
       message:
         "The new selection program awaits deployment qualification. Existing topic runs remain reviewable; the earlier program is available for comparison.",
@@ -342,7 +356,7 @@ export async function reviewTopicCommand(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);
@@ -460,7 +474,7 @@ export async function editTopicPortfolio(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);
@@ -638,7 +652,7 @@ export async function getPendingTopicWorkflowStatus(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
         )
       )
       .limit(1);

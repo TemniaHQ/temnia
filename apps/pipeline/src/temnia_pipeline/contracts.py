@@ -508,6 +508,17 @@ class Kind5(StrEnum):
     add_opportunity = "add_opportunity"
 
 
+class Kind6(StrEnum):
+    extend_start = "extend_start"
+    extend_end = "extend_end"
+    replace_extent = "replace_extent"
+    retitle = "retitle"
+    merge = "merge"
+    split = "split"  # pyright: ignore[reportAssignmentType]
+    drop = "drop"
+    add_opportunity = "add_opportunity"
+
+
 class Origin(StrEnum):
     model = "model"
     human = "human"
@@ -1079,6 +1090,30 @@ class TopicSelectionPatchOperation(BaseModel):
     opportunities: list[TopicOpportunity]
     reason: Annotated[str, Field(min_length=1)]
     replacementCandidates: list[TopicCandidate]
+
+
+class TopicSelectionPatchOperationV3(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    affectedCandidateIds: list[str]
+    findingIds: Annotated[list[str], Field(min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    kind: Kind6
+    opportunities: list[TopicOpportunity]
+    reason: Annotated[str, Field(min_length=1)]
+    replacementCandidates: list[TopicCandidate]
+
+
+class TopicSelectionPatchV3(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    baseSelectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    operations: list[TopicSelectionPatchOperationV3]
+    rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    summary: Annotated[str, Field(min_length=1)]
 
 
 class TopicSelectionRecord(BaseModel):

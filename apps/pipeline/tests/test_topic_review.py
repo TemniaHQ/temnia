@@ -48,6 +48,7 @@ from temnia_pipeline.harness.topic_review import (
     validate_topic_command,
 )
 from temnia_pipeline.harness.topic_runtime import TopicContext, TopicRenderResult
+from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
 from test_topic_compiler import _candidate, _case, _compile
 
 if TYPE_CHECKING:
@@ -541,6 +542,69 @@ async def test_editorial_lineage_keeps_exact_resolvable_original_references(
     else:
         with pytest.raises(ReviewRefused):
             await handler.editorial_lineage(context, edit, metadata)
+
+
+async def test_selection_editorial_lineage_preserves_v3_program_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = command()
+    evidence = ref(HarnessArtifactKind.evidence, {"source": "evidence"})
+    rubric = ref(HarnessArtifactKind.checks, {"source": "rubric"})
+    selection = ref(HarnessArtifactKind.proposal, {"source": "selection"})
+    assessment = ref(HarnessArtifactKind.checks, {"source": "assessment"})
+    edit = ref(HarnessArtifactKind.edit, {"source": "portfolio"})
+    context = TopicContext(run=topic_run_ref(decision), evidence=evidence)
+    metadata: dict[str, object] = {
+        "selectionArtifactId": str(selection.id),
+        "assessmentArtifactId": str(assessment.id),
+        "rubricArtifactId": str(rubric.id),
+        "selectionSha256": selection.sha256,
+        "programVersion": "standalone-topics/3",
+    }
+    records = {
+        rubric.id: SimpleNamespace(reference=rubric, dependency_ids=[evidence.id], metadata={}),
+        selection.id: SimpleNamespace(
+            reference=selection,
+            dependency_ids=[evidence.id, rubric.id],
+            metadata={"format": "topic-selection/2", "runId": str(decision.runId)},
+        ),
+        assessment.id: SimpleNamespace(
+            reference=assessment,
+            dependency_ids=[evidence.id, rubric.id, selection.id],
+            metadata={"format": "topic-selection-assessment/2", "runId": str(decision.runId)},
+        ),
+        edit.id: SimpleNamespace(
+            reference=edit,
+            dependency_ids=[evidence.id, rubric.id, selection.id, assessment.id],
+            metadata=metadata,
+        ),
+    }
+
+    def artifact_ref(record: SimpleNamespace) -> HarnessArtifactRef:
+        return cast("HarnessArtifactRef", record.reference)
+
+    owner = cast(
+        "HarnessActivities",
+        SimpleNamespace(
+            ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test")),
+            _artifact_ref=artifact_ref,
+        ),
+    )
+    handler = TopicReviewActivities(owner)
+    observed: list[str] = []
+
+    async def accepted_record(_database_url: str, **kwargs: object) -> SimpleNamespace:
+        return records[cast("Any", kwargs["artifact_id"])]
+
+    async def load_selection(_activities: TopicSelectionActivities, lineage: object) -> None:
+        observed.append(cast("Any", lineage).program_version)
+
+    monkeypatch.setattr(artifacts, "_artifact_for_read", accepted_record)
+    monkeypatch.setattr(TopicSelectionActivities, "load", load_selection)
+    monkeypatch.setattr(TopicSelectionActivities, "assessment", load_selection)
+
+    assert await handler.editorial_lineage(context, edit, metadata) == (selection, assessment)
+    assert observed == ["standalone-topics/3", "standalone-topics/3"]
 
 
 async def test_human_revision_preserves_editorial_metadata_and_dependencies(

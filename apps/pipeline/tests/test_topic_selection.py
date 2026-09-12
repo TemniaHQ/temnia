@@ -11,11 +11,13 @@ from uuid import UUID
 import pytest
 
 from temnia_pipeline.contracts import (
+    TopicBoundaryIssue,
     TopicOpportunity,
     TopicPortfolioReview,
     TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
+    TopicSelectionFinding,
     TopicSelectionPatch,
     TopicSelectionRecord,
 )
@@ -25,6 +27,7 @@ from temnia_pipeline.harness.topic_selection import (
     assess_selection,
     content_hash,
     make_rubric,
+    selection_candidates_for_render,
     selection_cold_key,
     selection_cold_prompt,
     selection_prompt,
@@ -228,6 +231,110 @@ def test_frozen_audience_refinements_reach_each_stage_without_author_leakage() -
     )
 
 
+def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None:
+    candidate = _candidate("useful", 0, 3)
+    record = _record(candidate)
+    prompt = selection_source_prompt(
+        EVIDENCE,
+        record.draft,
+        record.rubric,
+        independent_projection=True,
+    )
+    instruction, payload_text = prompt.split("SOURCE DATA\n", 1)
+    payload = json.loads(payload_text)
+    assert "Leave candidates as an empty array" in instruction
+    assert "selectionWithoutAuthorRationale" in payload
+    assert "reason" not in payload["selectionWithoutAuthorRationale"]["candidates"][0]
+
+    compact = _source(record).model_copy(update={"candidates": []})
+    assessment = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(candidate)],
+        source_review=compact,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert str(assessment.executionStatus) == "complete"
+    assert selection_candidates_for_render(
+        record, assessment, require_complete_review=True
+    ).candidates == [candidate]
+
+
+def test_render_gate_withholds_unreviewed_or_known_invalid_candidates() -> None:
+    candidate = _candidate("useful", 0, 3)
+    record = _record(candidate)
+    incomplete = _assess(record).model_copy(update={"portfolioReview": None})
+    assert (
+        selection_candidates_for_render(record, incomplete, require_complete_review=True).candidates
+        == []
+    )
+
+    source = _source(record).model_copy(
+        update={
+            "findings": [
+                TopicSelectionFinding.model_validate(
+                    {
+                        "id": "compound",
+                        "kind": "duplicate_core",
+                        "severity": "required",
+                        "affectedCandidateIds": [candidate.id],
+                        "opportunityIds": [record.draft.opportunities[0].id],
+                        "evidenceSpans": candidate.coreSpans,
+                        "reason": "The candidate duplicates another treatment's core value.",
+                    }
+                )
+            ]
+        }
+    )
+    blocked = _assess(record, source=source)
+    assert (
+        selection_candidates_for_render(record, blocked, require_complete_review=True).candidates
+        == []
+    )
+
+
+def test_physical_findings_unwrap_strict_supporting_sentence_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate("unsafe-edge", 0, 3)
+    record = _record(candidate)
+    issue = TopicBoundaryIssue.model_validate(
+        {
+            "code": "no-safe-cut",
+            "edge": "opening",
+            "reason": "No safe opening cut exists before the selected speech.",
+            "supportingSentenceIds": ["s000000", "s000001"],
+        }
+    )
+
+    def boundary_issues(_evidence: object, _candidate: object) -> tuple[TopicBoundaryIssue, ...]:
+        return (issue,)
+
+    monkeypatch.setattr(
+        "temnia_pipeline.harness.topic_compiler.topic_boundary_issues_v2",
+        boundary_issues,
+    )
+    assessment = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(candidate)],
+        source_review=_source(record),
+        author_family="author",
+        verifier_family="reviewer",
+    )
+    physical = next(
+        finding
+        for finding in assessment.findings
+        if str(finding.kind) == "physical_boundary_constraint"
+    )
+    assert physical.evidenceSpans[0].firstSentenceId == "s000000"
+    assert physical.evidenceSpans[1].lastSentenceId == "s000001"
+
+
 def test_coherent_complete_speech_can_still_fail_viewer_value() -> None:
     candidate = _candidate("coherent", 0, 3)
     cold = _cold(candidate)
@@ -250,6 +357,40 @@ def test_opening_preference_does_not_erase_an_otherwise_complete_selection() -> 
     assessment = _assess(_record(candidate), cold=[cold])
     assert str(assessment.executionStatus) == "complete"
     assert [str(f.severity) for f in assessment.findings] == ["preference"]
+
+
+def test_source_unfocused_extent_is_a_required_publication_correction() -> None:
+    candidate = _candidate("sprawling", 0, 3)
+    record = _record(candidate)
+    source = _source(record)
+    source.findings = [
+        TopicSelectionFinding.model_validate(
+            {
+                "id": "off-purpose-tail",
+                "kind": "unfocused_extent",
+                "severity": "preference",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [record.draft.opportunities[0].id],
+                "evidenceSpans": [_span(3)],
+                "reason": "The final sentence starts a separate discussion.",
+            }
+        )
+    ]
+    source.candidates = []
+    assessment = assess_selection(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        cold_reviews=[_cold(candidate)],
+        source_review=source,
+        author_family="author",
+        verifier_family="reviewer",
+        require_source_candidate_reviews=False,
+    )
+    assert str(assessment.executionStatus) == "needs_review"
+    assert [(str(f.kind), str(f.severity)) for f in assessment.findings] == [
+        ("unfocused_extent", "required")
+    ]
 
 
 def test_unknown_source_finding_neither_completes_selection_nor_authorizes_a_patch() -> None:
@@ -358,7 +499,7 @@ def _compound() -> tuple[TopicSelectionRecord, TopicSelectionAssessment, TopicSe
                 {
                     "id": "add",
                     "kind": "add_opportunity",
-                    "affectedCandidateIds": [],
+                    "affectedCandidateIds": [added.id],
                     "findingIds": ["source:omission"],
                     "replacementCandidates": [added],
                     "opportunities": [_opportunity(added)],

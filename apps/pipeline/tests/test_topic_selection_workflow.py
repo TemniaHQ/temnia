@@ -28,13 +28,17 @@ from temnia_pipeline.contracts import (
     TopicSelectionRecord,
 )
 from temnia_pipeline.harness import topic_selection_workflow as module
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection import SELECTION_POLICY, content_hash, make_rubric
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
-from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
+from temnia_pipeline.harness.topic_selection_workflow import (
+    TopicSelectionWorkflow,
+    TopicSelectionWorkflowV3,
+)
 from test_harness_hierarchy_workflow import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
 from test_topic_compiler import _candidate, _case, _span
 from test_topic_editorial import _cold, _criterion, _source
@@ -51,6 +55,10 @@ if TYPE_CHECKING:
 
 EVIDENCE = augment_topic_evidence(_case().model_copy(update={"sourceId": SOURCE_ID}))
 CANDIDATE = _candidate("discussion", 0, 3)
+
+
+class UnexpectedModelBehavior(Exception):  # noqa: N818
+    """A local double for the retained invalid-output failure name."""
 
 
 def opportunity(*, selected: bool) -> TopicOpportunity:
@@ -143,13 +151,27 @@ def portfolio(*, selected: bool, missing: bool = False, weak: bool = False) -> T
     )
 
 
+def v3_portfolio(
+    *, selected: bool, missing: bool = False, weak: bool = False
+) -> TopicPortfolioReview:
+    """V3 source review decides the portfolio without repeating cold reviews."""
+    return portfolio(selected=selected, missing=missing, weak=weak).model_copy(
+        update={"candidates": []}
+    )
+
+
 class AgentDouble:
-    def __init__(self, outputs: list[object]) -> None:
+    def __init__(self, name: str, outputs: list[object], call_order: list[str]) -> None:
+        self.name = name
         self.outputs = outputs
         self.calls: list[HarnessModelDeps] = []
+        self.prompts: list[str] = []
+        self.call_order = call_order
 
     async def run(self, prompt: str, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+        self.call_order.append(self.name)
         self.calls.append(kwargs["deps"])
+        self.prompts.append(prompt)
         assert self.outputs, "unexpected extra editorial call"
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
@@ -160,7 +182,7 @@ class AgentDouble:
 
 
 class Program:
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         monkeypatch: pytest.MonkeyPatch,
         *,
@@ -168,7 +190,13 @@ class Program:
         sources: list[object],
         patches: list[object],
         colds: list[object] | None = None,
+        inventory: object | None = None,
+        policy: str = SELECTION_POLICY,
+        workflow_type: type[TopicSelectionWorkflow] = TopicSelectionWorkflow,
     ) -> None:
+        self.policy = policy
+        self.workflow_type = workflow_type
+        self.call_order: list[str] = []
         _, self.routes = _settings()
         self.request = _request().model_copy(update={"brief": "A specialist audience."})
         self.request = self.request.model_copy(
@@ -176,21 +204,20 @@ class Program:
         )
         start = module.StartRunRequest(
             request=self.request,
-            editorial_policy=SELECTION_POLICY,
+            editorial_policy=cast("Any", policy),
             workflow=module.WorkflowIdentity(workflow_id="selection", workflow_run_id="run"),
         )
-        self.run = _snapshot(start, self.routes).model_copy(
-            update={"editorial_policy": SELECTION_POLICY}
-        )
+        self.run = _snapshot(start, self.routes).model_copy(update={"editorial_policy": policy})
         self.objects: dict[UUID, BaseModel] = {}
         self.saved: list[tuple[str, HarnessArtifactRef]] = []
         self.compiled: TopicCompilation | None = None
         self.final_context: SelectionContext | None = None
         self.render_count = 0
-        self.author = AgentDouble([initial])
-        self.cold = AgentDouble(colds if colds is not None else [cold()])
-        self.source = AgentDouble(sources)
-        self.patch = AgentDouble(patches)
+        self.inventory = AgentDouble("inventory", [inventory], self.call_order)
+        self.author = AgentDouble("author", [initial], self.call_order)
+        self.cold = AgentDouble("cold", colds if colds is not None else [cold()], self.call_order)
+        self.source = AgentDouble("source", sources, self.call_order)
+        self.patch = AgentDouble("patch", patches, self.call_order)
         self.activities = TopicSelectionActivities(
             cast("HarnessActivities", SimpleNamespace(_recorded_output=lambda _name: None))  # pyright: ignore[reportUnknownLambdaType]
         )
@@ -199,10 +226,12 @@ class Program:
         monkeypatch.setattr(self.activities, "require_record", self.require_record)
         monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
         monkeypatch.setattr(self.activities.topics, "publish", self.publish)
-        monkeypatch.setattr(module, "topic_selection_author_v2", self.author)
-        monkeypatch.setattr(module, "topic_selection_cold_v2", self.cold)
-        monkeypatch.setattr(module, "topic_selection_source_v2", self.source)
-        monkeypatch.setattr(module, "topic_selection_patch_v2", self.patch)
+        monkeypatch.setattr(workflow_type, "author_agent", self.author)
+        monkeypatch.setattr(workflow_type, "cold_agent", self.cold)
+        monkeypatch.setattr(workflow_type, "source_agent", self.source)
+        monkeypatch.setattr(workflow_type, "patch_agent", self.patch)
+        if workflow_type is TopicSelectionWorkflowV3:
+            monkeypatch.setattr(module, "topic_opportunity_inventory_v3", self.inventory)
         monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
         monkeypatch.setattr(
             module.workflow,
@@ -271,7 +300,7 @@ class Program:
 
     async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, PLR0911
         if name == "start_chapter_run":
-            assert value.editorial_policy == SELECTION_POLICY
+            assert value.editorial_policy == self.policy
             return StartRunResult(run=self.run, created=True)
         if name == "build_chapter_evidence":
             return EvidenceResult(
@@ -287,6 +316,7 @@ class Program:
         operations: dict[str, Callable[..., Any]] = {
             "prepare_topic_selection_rubric": self.activities.rubric,
             "prepare_topic_selection_call": self.activities.prepare,
+            "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -515,3 +545,62 @@ async def test_cold_review_with_foreign_candidate_id_is_retained_as_unavailable(
     assert str(assessment.executionStatus) == "needs_review"
     assert any("different candidate" in reason for reason in assessment.reasons)
     assert run.render_count == 1
+
+
+async def test_v3_inventory_precedes_author_and_source_review_hides_rationale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = TopicSelectionDraft(
+        proposal=TopicProposal(version=1, candidates=[], summary="One source opportunity."),
+        opportunities=[opportunity(selected=False)],
+    )
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        inventory=inventory,
+        sources=[v3_portfolio(selected=True)],
+        patches=[],
+        policy=TOPIC_SELECTION_POLICY_V3,
+        workflow_type=TopicSelectionWorkflowV3,
+    )
+    result = await TopicSelectionWorkflowV3().program(run.request)
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "cold", "source"]
+    assert run.inventory.calls[0].route.family == run.source.calls[0].route.family
+    assert run.inventory.calls[0].route.family != run.author.calls[0].route.family
+    author_payload = json.loads(run.author.prompts[0].split("SOURCE DATA\n", 1)[1])
+    assert author_payload["independentSourceOpportunityInventory"] == inventory.model_dump(
+        mode="json"
+    )
+    source_payload = json.loads(run.source.prompts[0].split("SOURCE DATA\n", 1)[1])
+    assert "selectionWithoutAuthorRationale" in source_payload
+    assert "Leave candidates as an empty array" in run.source.prompts[0]
+    projected = source_payload["selectionWithoutAuthorRationale"]
+    assert "reason" not in projected["candidates"][0]
+    assert "dispositionReason" not in projected["opportunities"][0]
+    assert run.render_count == 1
+
+
+async def test_v3_invalid_repair_withholds_the_known_invalid_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = TopicSelectionDraft(
+        proposal=TopicProposal(version=1, candidates=[], summary="One source opportunity."),
+        opportunities=[opportunity(selected=False)],
+    )
+    unresolved_payload = v3_portfolio(selected=True, weak=True).model_dump(mode="json")
+    unresolved_payload["selection"][0]["disposition"] = "unresolved"
+    unresolved = TopicPortfolioReview.model_validate(unresolved_payload)
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        inventory=inventory,
+        sources=[unresolved],
+        patches=[UnexpectedModelBehavior("truncated patch")],
+        policy=TOPIC_SELECTION_POLICY_V3,
+        workflow_type=TopicSelectionWorkflowV3,
+    )
+    result = await TopicSelectionWorkflowV3().program(run.request)
+    assert run.call_order == ["inventory", "author", "cold", "source", "patch"]
+    assert run.render_count == 0
+    assert "prior assessed selection is retained" in (result.errorMessage or "")

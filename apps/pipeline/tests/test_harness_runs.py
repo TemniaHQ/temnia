@@ -471,7 +471,10 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
         await db.close_pool()
 
 
-@pytest.mark.parametrize("original_policy", ["standalone-topics/1", "standalone-topics/2"])
+@pytest.mark.parametrize(
+    "original_policy",
+    ["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"],
+)
 async def test_topic_generation_is_exact_and_rollout_does_not_fence_existing_runs(
     original_policy: str,
 ) -> None:
@@ -480,9 +483,13 @@ async def test_topic_generation_is_exact_and_rollout_does_not_fence_existing_run
     source_id = await ready_source(url)
     start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
     disabled = settings(value)
-    enabled = replace(disabled, topic_selection_enabled=True)
+    enabled = replace(
+        disabled,
+        topic_selection_enabled=original_policy == "standalone-topics/2",
+        topic_selection_v3_enabled=original_policy == "standalone-topics/3",
+    )
     try:
-        if original_policy == "standalone-topics/2":
+        if original_policy in {"standalone-topics/2", "standalone-topics/3"}:
             with pytest.raises(IdentityConflict, match="disabled until deployment qualification"):
                 await start_or_refetch_run(
                     url, start=start, settings=disabled, route_snapshot=value

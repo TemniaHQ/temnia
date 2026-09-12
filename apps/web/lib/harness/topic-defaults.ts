@@ -2,11 +2,16 @@ import { z } from "zod";
 
 export const TOPIC_POLICY = "standalone-topics/1";
 export const TOPIC_SELECTION_POLICY = "standalone-topics/2";
-export const TOPIC_POLICIES = [TOPIC_POLICY, TOPIC_SELECTION_POLICY] as const;
-export const DEFAULT_TOPIC_BRIEF_VERSION = TOPIC_SELECTION_POLICY;
+export const TOPIC_SELECTION_POLICY_V3 = "standalone-topics/3";
+export const TOPIC_POLICIES = [
+  TOPIC_POLICY,
+  TOPIC_SELECTION_POLICY,
+  TOPIC_SELECTION_POLICY_V3,
+] as const;
+export const DEFAULT_TOPIC_BRIEF_VERSION = TOPIC_SELECTION_POLICY_V3;
 
 export function isTopicPolicy(value: unknown): boolean {
-  return value === TOPIC_POLICY || value === TOPIC_SELECTION_POLICY;
+  return TOPIC_POLICIES.some((policy) => policy === value);
 }
 
 const DEFAULT_TOPIC_BRIEF =

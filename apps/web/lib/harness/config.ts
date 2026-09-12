@@ -13,7 +13,7 @@ const HarnessEnvironmentSchema = z.object({
   HARNESS_MAX_DISPATCHES: z.coerce.number().int().default(32),
   HARNESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().default(8192),
   HARNESS_MAX_RENDER_CONCURRENCY: z.coerce.number().int().default(2),
-  HARNESS_MAX_REPAIRS: z.coerce.number().int().default(1),
+  HARNESS_MAX_REPAIRS: z.coerce.number().int().default(3),
   HARNESS_MAX_RUN_BUDGET_MICROS: z.coerce
     .number()
     .int()

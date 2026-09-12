@@ -72,7 +72,9 @@ class HarnessSettings:
     chapter_llama_config: ChapterLlamaConfig | None = None
     topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
     topic_selection_enabled: bool = False
+    topic_selection_v3_enabled: bool = False
     topic_selection_qualification_path: Path | None = None
+    topic_selection_v3_qualification_path: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -90,9 +92,15 @@ class HarnessSettings:
         snapshot_path = values.get("HARNESS_ROUTE_SNAPSHOT_PATH") or None
         return cls(
             topic_selection_enabled=_flag(values, "HARNESS_TOPIC_SELECTION_ENABLED"),
+            topic_selection_v3_enabled=_flag(values, "HARNESS_TOPIC_SELECTION_V3_ENABLED"),
             topic_selection_qualification_path=(
                 Path(values["HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH"])
                 if values.get("HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH")
+                else None
+            ),
+            topic_selection_v3_qualification_path=(
+                Path(values["HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH"])
+                if values.get("HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH")
                 else None
             ),
             topic_shot_detector=cast("TopicShotDetector", raw_shot_detector),
@@ -112,7 +120,7 @@ class HarnessSettings:
                 DEFAULT_MAX_RUN_BUDGET_MICROS,
             ),
             max_dispatches=_positive(values, "HARNESS_MAX_DISPATCHES", 32),
-            max_repairs=int(values.get("HARNESS_MAX_REPAIRS", "1")),
+            max_repairs=int(values.get("HARNESS_MAX_REPAIRS", "3")),
             max_output_tokens=_positive(values, "HARNESS_MAX_OUTPUT_TOKENS", 8192),
             evidence_window_sentences=_positive(values, "HARNESS_EVIDENCE_WINDOW_SENTENCES", 80),
             max_render_concurrency=_positive(values, "HARNESS_MAX_RENDER_CONCURRENCY", 2),
@@ -202,19 +210,43 @@ class HarnessSettings:
             raise RuntimeError("gateway backend requires a production route snapshot")
         if self.backend == "gateway" and snapshot_gateway(snapshot) != self.gateway:
             raise RuntimeError("loaded route transport differs from HARNESS_GATEWAY")
-        if self.topic_selection_enabled and self.backend == "gateway":
+        if (
+            self.topic_selection_enabled or self.topic_selection_v3_enabled
+        ) and self.backend == "gateway":
             # Qualification imports native schemas; defer until settings/route loading finishes.
             from temnia_pipeline.harness.qualification_topic_selection import (  # noqa: PLC0415
                 validate_topic_selection_qualification,
             )
 
-            if self.topic_selection_qualification_path is None:
-                raise RuntimeError("HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH is required for v2")
-            validate_topic_selection_qualification(
-                snapshot,
-                self.topic_selection_qualification_path,
-                max_output_tokens=self.max_output_tokens,
-            )
+            if self.topic_selection_enabled:
+                if self.topic_selection_qualification_path is None:
+                    raise RuntimeError(
+                        "HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH is required for v2"
+                    )
+                validate_topic_selection_qualification(
+                    snapshot,
+                    self.topic_selection_qualification_path,
+                    max_output_tokens=self.max_output_tokens,
+                )
+            if (
+                self.topic_selection_v3_enabled
+                and self.topic_selection_v3_qualification_path is None
+            ):
+                raise RuntimeError(
+                    "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH is required for v3"
+                )
+            if self.topic_selection_v3_enabled:
+                qualification = self.topic_selection_v3_qualification_path
+                if qualification is None:
+                    raise RuntimeError(
+                        "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH is required for v3"
+                    )
+                validate_topic_selection_qualification(
+                    snapshot,
+                    qualification,
+                    max_output_tokens=self.max_output_tokens,
+                    program_version="standalone-topics/3",
+                )
         missing_seats = REQUIRED_ROUTE_SEATS - snapshot.seats.keys()
         if missing_seats:
             raise RuntimeError(
