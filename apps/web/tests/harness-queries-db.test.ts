@@ -170,7 +170,7 @@ suite("chapter view Postgres dependency ownership", () => {
         "d".repeat(64),
         JSON.stringify({
           editSha256,
-          format: "chapter-renders/1",
+          format: "topic-renders/1",
           renderCount: checkCount,
           runId,
         }),
