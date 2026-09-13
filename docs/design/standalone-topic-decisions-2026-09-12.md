@@ -728,6 +728,15 @@ The alternation happened. Results, none of which is a winner:
 | r24 | DeepSeek V4 Pro 0813 (Fireworks) / Kimi | 20-candidate proposal separated prayer but divided mantra across three candidates; Kimi's full-source review crossed the deadline; `outcome_unknown`, $1.015747 retained. |
 | r25 | DeepSeek / Gemini | $0.430738, 13 calls, nine renders; author merged prayer, sadhana, mantra and karmic effects into one s223–s308 candidate; Gemini called it complete and distinct. `needs_review`. |
 
+### Settled on 13 September (technical reliability, not editorial)
+
+Rajesh asked for the roster that consistently completes without technical failure. On the
+run record above and the r20/r25 bundles: Kimi K3 author/repair (no transport failure in five
+runs), Gemini 3.8 Flash inventory/review (finished five times; its failures were in-stream rate
+limits and output exhaustion, both now handled), DeepSeek V4 Pro as alternate author, Astra out.
+Recorded in the 2026-09-13 AGENTS.md entry. The editorial audition this section describes is
+still owed.
+
 Two consequences for this section. First, the transport ceiling is now a
 selection criterion in its own right: a route that cannot finish a 44-minute
 full-source call inside 540 s (Astra twice, Kimi review once) cannot be

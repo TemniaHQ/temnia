@@ -14,6 +14,16 @@ worker that ingests and transcribes. Chapter creation is paused on the web
 manifest exists; a route that refuses a request ends the run with a message naming the
 route, stage and HTTP status.
 
+## The roster (settled 13 September on technical reliability)
+
+Author and repair: Kimi K3/Fireworks (five completed full-source runs, no transport failure in
+that seat); alternate author: DeepSeek V4 Pro 0813/Fireworks (two completed). Inventory, cold
+and source review: Gemini 3.8 Flash/Vertex at medium effort (the only reviewer that has finished
+this call shape on Karma, five times). Astra is excluded. Gemini's two known failure modes are
+handled: an upstream rate limit inside a stream is settled against the receipt and retried
+twice, and the output allowance is Gemini's route maximum, 65,536. This is a reliability
+selection, not an editorial winner.
+
 ## The route snapshot
 
 One immutable file, root-owned `0444`, bind-mounted into the pipeline container at
@@ -37,7 +47,7 @@ On `pipeline` (secrets stay here):
 | `OPENROUTER_API_KEY` | the staging key |
 | `HARNESS_ROUTE_SNAPSHOT_PATH` | `/etc/temnia/topic-routes.json` |
 | `HARNESS_ROUTE_SNAPSHOT_ID` | the file's ID |
-| `HARNESS_MAX_OUTPUT_TOKENS` | `32768` |
+| `HARNESS_MAX_OUTPUT_TOKENS` | `65536` |
 | `HARNESS_MAX_DISPATCHES` | `64` |
 | `HARNESS_MAX_REPAIRS` | `3` |
 | `HARNESS_MAX_RUN_BUDGET_MICROS` | `20000000` |
@@ -75,6 +85,7 @@ mismatch ends the run with a message that says so.
 | `failed`, "… exceeds the context window of route X" | source too large for that route | a larger-window route, or wait for the topic hierarchy |
 | `budget_paused` | the next call would exceed the run budget | cancel; new run with a larger budget |
 | `outcome_unknown` | a provider call ended without a confirmed outcome; the reservation is retained | reconcile read-only; never replay |
+| `failed`, "… ended without a response; its charge … is settled … Three attempts ended the same way" | the route kept failing inside its stream after two automatic retries | wait and start a new run, or change the route |
 | `cancelled` | you cancelled | — |
 
 Never deploy `pipeline` while a topic run is active: a model call in flight becomes

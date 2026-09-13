@@ -2,6 +2,35 @@
 
 ## Decisions
 
+**2026-09-13 — Staging roster settled on technical reliability; chapters are gone; the
+harness is the only goal until results are satisfactory.** Rajesh: Temnia is not live, existing
+chapter and topic runs need no compatibility, chapters are gone and only standalone topic videos
+remain, work is done without delegation, and the model selection is settled on what completes
+without technical failure. Evidence from the full-source Karma runs: Kimi K3/Fireworks completed
+every author and repair call in r11, r15, r16, r18 and r20 (zero transport failures in the
+author seat); Gemini 3.8 Flash/Vertex at medium effort completed inventory, cold and source
+review in r11, r18, r20, r22 and r25 (37 settled calls in the r20/r25 bundles alone) and failed
+only by an upstream rate limit delivered inside an HTTP 200 stream (r13 cold review, r23 as
+author) and by exhausting a 32,768 output allowance on reasoning (first v3 source review, a v2
+repair); DeepSeek V4 Pro 0813/Fireworks completed authoring in r24 and authoring plus repair in
+r25; Kimi as full-source reviewer crossed the 540 s deadline once in one attempt (r24); Astra
+failed two full-source author calls on the deadline. Settled roster: verify pool Gemini 3.8
+Flash first, propose pool Kimi K3 first and DeepSeek V4 Pro second, Astra excluded, all through
+OpenRouter with `gateway-transport/2`. This is a reliability selection recorded with its
+evidence, not an editorial audition; the no-default-vendor rule's audition is still owed on a
+calibration set. Two technical fixes make the roster hold: a lost stream whose generation
+receipt reports a settled charge is now a known failure (`TransientProviderFailure`) that the
+workflow retries twice with 30 s and 90 s backoff before ending the run with route, stage and
+cost named, while a pending receipt keeps the unknown fence; and staging runs with
+`HARNESS_MAX_OUTPUT_TOKENS=65536` (Gemini's route maximum, clamped per route) and
+`HARNESS_MAX_DISPATCHES=64`. The chapter lane (navigation partitions, `chapter-editorial/1`,
+Chapter-Llama) and the v1/v2 topic programs are deleted rather than hidden; deletion follows on
+the same PR in stages, each gated. Prompts were read in full on 13 September: they are user-turn
+rule lists with no system instructions, negative-heavy, example-free, repeating the no-count rule
+across seats, carrying jargon and ruff line-wrap artifacts, and each incident added a paragraph;
+the decisions doc §4 findings stand. The rewrite is measured against the first staging run as
+the baseline, not before it.
+
 **2026-09-13 — Topic generation on staging is one button, one program, one worker; the
 qualification manifest is no longer a gate.** Rajesh could not start the current program on
 staging: the default button refused for want of a per-version flag on two processes and a
