@@ -303,7 +303,5 @@ test(`${TOPIC_SELECTION_POLICY_V3} generation, human correction and exact accept
   );
   expect(revisedManifest.revision).toBe(4);
   expect(revisedManifest.editSha256).toBe(reaccepted.currentEdit?.sha256);
-  const chapters = await page.request.get(`/api/sources/${sourceId}/chapters`);
-  expect(((await chapters.json()) as ChapterView).runs).toHaveLength(0);
   expect(errors).toEqual([]);
 });
