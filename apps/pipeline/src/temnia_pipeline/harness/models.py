@@ -22,7 +22,18 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext, TextPart
 from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.durable_exec import DurableOperationBackend
+
+# The per-call activity deadline (D6) has no public seam: the durable runtime binds one
+# `ActivityConfig` per agent at construction, before any payload exists. The bound model
+# request operation is the one place that sees both that config and the call's own
+# messages, so `PayloadScaledDurability` below subclasses these three.
+from pydantic_ai.durable_exec._base import (
+    _BoundModelOperations,  # pyright: ignore[reportPrivateUsage]
+)
+from pydantic_ai.durable_exec._operation import ModelRequestParams
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
+from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import (
@@ -63,6 +74,7 @@ from temnia_pipeline.harness.cassettes import (
     CassetteModel,
     CassetteStore,
     request_fingerprint,
+    request_payload_bytes,
     synthetic_function_model,
 )
 from temnia_pipeline.harness.editorial import EditorialRepairV1, EditorialVerdictV2
@@ -71,9 +83,11 @@ from temnia_pipeline.harness.gateway import (
     GatewayConfig,
     GatewayError,
     build_gateway_model,
+    dispatch_payload_bytes,
     observe_gateway_generation,
     observe_generation_cost,
 )
+from temnia_pipeline.harness.gateway_policy import model_activity_timeout_seconds
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
 from temnia_pipeline.harness.topic_editorial import TOPIC_PROMPT
 
@@ -897,7 +911,10 @@ class BudgetedModel(WrapperModel):
                 raise
 
         try:
-            with observe_gateway_generation(remember_generation):
+            with (
+                observe_gateway_generation(remember_generation),
+                dispatch_payload_bytes(payload_bytes),
+            ):
                 response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
             conclusive = (
@@ -1112,6 +1129,55 @@ def resolve_configured_model(
     return BudgetedModel(lazy, context.deps)
 
 
+class PayloadScaledModelRequest(TemporalBoundOperation[ModelRequestParams, Any, ModelResponse]):
+    """One model activity bounded by the deadline its own payload size earns.
+
+    The workflow side sees exactly the messages the activity will send, so it recomputes
+    the canonical serialized size and derives `start_to_close_timeout` from it. The value
+    is a pure function of the request, so replay reproduces it.
+    """
+
+    async def __call__(
+        self, params: ModelRequestParams, *, config: object | None = None
+    ) -> ModelResponse:
+        """Schedule the model activity with this call's own start-to-close timeout."""
+        deps = params.run_context.deps
+        base = cast("dict[str, Any]", config if config is not None else self._config)
+        if not isinstance(deps, HarnessModelDeps):
+            return await super().__call__(params, config=cast("Any", base))
+        payload_bytes = request_payload_bytes(
+            params.messages,
+            params.model_settings,
+            params.model_request_parameters,
+            _cassette_metadata(deps),
+        )
+        scaled = {
+            **base,
+            "start_to_close_timeout": timedelta(
+                seconds=model_activity_timeout_seconds(deps.route.transport, payload_bytes)
+            ),
+        }
+        return await super().__call__(params, config=cast("Any", scaled))
+
+
+class PayloadScaledDurability(TemporalDurability[HarnessModelDeps]):
+    """Temporal durability whose model activity deadline is computed per request."""
+
+    def _bind_model_operations(
+        self, backend: DurableOperationBackend[Any], *, model_id: str | None, model_name: str
+    ) -> _BoundModelOperations:
+        bound = super()._bind_model_operations(backend, model_id=model_id, model_name=model_name)
+        request = bound.request
+        if not isinstance(request, TemporalBoundOperation):  # pragma: no cover - engine invariant
+            return bound
+        scaled = PayloadScaledModelRequest(
+            request.operation,
+            registration=request.registration,
+            config=self._model_activity_config,
+        )
+        return bound._replace(request=scaled)
+
+
 def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
     return Agent(
         model=MODEL_ALIAS,
@@ -1122,8 +1188,9 @@ def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
         retries=0,
         capabilities=[
             ResolveModelId(resolve_configured_model),
-            TemporalDurability(
+            PayloadScaledDurability(
                 model_activity_config={
+                    # The unscaled default: one payload unit keeps exactly ten minutes.
                     "start_to_close_timeout": timedelta(minutes=10),
                     "heartbeat_timeout": timedelta(seconds=30),
                     "retry_policy": RetryPolicy(maximum_attempts=1),

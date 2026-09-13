@@ -140,6 +140,16 @@ def request_fingerprint(
     return hashlib.sha256(payload).hexdigest(), len(payload)
 
 
+def request_payload_bytes(
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    metadata: CassetteMetadata,
+) -> int:
+    """Return only the canonical serialized size, for callers that never hash it."""
+    return len(request_payload(messages, model_settings, model_request_parameters, metadata))
+
+
 class CassetteStore:
     """Filesystem cassette store using exclusive immutable creation."""
 

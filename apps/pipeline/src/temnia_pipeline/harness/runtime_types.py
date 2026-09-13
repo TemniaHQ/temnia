@@ -24,7 +24,7 @@ from temnia_pipeline.contracts import (
     TranscriptRevisionAnnotations,
 )
 from temnia_pipeline.harness.editorial_policy import EditorialPolicy
-from temnia_pipeline.harness.routes import RouteEntry, RouteSnapshot
+from temnia_pipeline.harness.routes import AdmissionVersion, RouteEntry, RouteSnapshot
 
 
 class WorkflowIdentity(BaseModel):
@@ -106,6 +106,9 @@ class RunSnapshot(BaseModel):
     editorial_policy: EditorialPolicy = "legacy"
     chapter_llama_config: ChapterLlamaConfig | None = None
     topic_shot_detector: Literal["pyscenedetect-adaptive", "scdet"] = "scdet"
+    # The admission arithmetic frozen at run start; runs that predate the key used the
+    # one-byte-one-token estimate and keep reading as `admission/1`.
+    admission: AdmissionVersion = "admission/1"
 
 
 class StartRunResult(BaseModel):

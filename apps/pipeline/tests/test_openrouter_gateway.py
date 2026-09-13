@@ -167,6 +167,10 @@ async def test_stream_header_before_content_and_final_usage_is_fully_drained() -
     assert result.response.usage.details["reasoning_tokens"] == 5
     assert result.response.provider_response_id == "generation-stream"
     assert result.response.provider_details["gatewayTransport"]["mode"] == "streaming"
+    # A short prompt is one payload unit, so the effective deadline is the frozen one.
+    deadline = result.response.provider_details["gatewayDeadline"]
+    assert deadline["totalTimeoutSecondsPerUnit"] == 540.0
+    assert deadline["effectiveTotalTimeoutSeconds"] == 540.0
 
 
 @pytest.mark.parametrize(

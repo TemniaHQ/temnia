@@ -53,6 +53,7 @@ from temnia_pipeline.harness.runs import (
     commit_review_mutation,
     get_run,
     mark_run_failed,
+    run_admission_version,
     start_or_refetch_run,
     update_stage,
 )
@@ -537,6 +538,34 @@ async def test_absent_topic_brief_stores_the_single_python_default(supplied: str
             await start_or_refetch_run(
                 url, start=explicit, settings=settings(value), route_snapshot=value
             )
+    finally:
+        await db.close_pool()
+
+
+async def test_run_start_freezes_the_admission_arithmetic_it_used() -> None:
+    """The reservation arithmetic is readable per run; older rows read as admission/1."""
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        assert created.run.admission == "admission/2"
+        async with db.scoped(url, SEEDED) as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT route_snapshot FROM harness_run WHERE id = %s",
+                    (created.run.id,),
+                )
+            ).fetchone()
+        assert row is not None
+        frozen = cast("dict[str, Any]", row["route_snapshot"])
+        assert frozen["admission"] == "admission/2"
+        # A row written before the key existed used the one-byte-one-token estimate.
+        older = {key: frozen[key] for key in frozen if key != "admission"}
+        assert run_admission_version(older) == "admission/1"
     finally:
         await db.close_pool()
 

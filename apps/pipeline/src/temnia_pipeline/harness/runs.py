@@ -30,7 +30,14 @@ from temnia_pipeline.harness.editorial_policy import (
     is_topic_policy,
 )
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
-from temnia_pipeline.harness.routes import ContextWindowExceeded, RouteSnapshot, estimate_cost
+from temnia_pipeline.harness.routes import (
+    ADMISSION_VERSION,
+    ADMISSION_VERSION_LEGACY,
+    AdmissionVersion,
+    ContextWindowExceeded,
+    RouteSnapshot,
+    estimate_cost,
+)
 from temnia_pipeline.harness.runtime_types import (
     ClaimRepairRequest,
     CommitReviewMutationRequest,
@@ -89,6 +96,12 @@ def _pinned(row: Mapping[str, Any]) -> PinnedTranscript:
     )
 
 
+def run_admission_version(route_snapshot: Mapping[str, Any]) -> AdmissionVersion:
+    """Read the admission arithmetic a run froze; rows without the key predate it."""
+    value = route_snapshot.get("admission")
+    return ADMISSION_VERSION if value == ADMISSION_VERSION else ADMISSION_VERSION_LEGACY
+
+
 def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
     route_snapshot = row["route_snapshot"]
     transcript = PinnedTranscript.model_validate_json(
@@ -97,6 +110,7 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
     source = PinnedSource.model_validate_json(json.dumps(route_snapshot["pinnedSource"]))
     frozen_routes = RouteSnapshot.model_validate_json(json.dumps(route_snapshot["snapshot"]))
     return RunSnapshot(
+        admission=run_admission_version(route_snapshot),
         chapter_llama_config=(
             ChapterLlamaConfig.model_validate(route_snapshot["chapterLlama"])
             if route_snapshot.get("chapterLlama") is not None
@@ -340,6 +354,9 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             duration_ms=int(source["duration_ms"]),
         )
         route_value: dict[str, object] = {
+            # The admission arithmetic this run's reservations were computed with. Rows
+            # written before the key exists used `admission/1`; see `run_admission_version`.
+            "admission": ADMISSION_VERSION,
             "initialBudgetMicros": request.budgetMicros,
             "pinnedSource": pinned_source.model_dump(mode="json"),
             "pinnedTranscript": transcript.model_dump(mode="json"),

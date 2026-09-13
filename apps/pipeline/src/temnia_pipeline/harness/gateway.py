@@ -37,7 +37,11 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from temnia_pipeline.harness.gateway_policy import GATEWAY_URLS, GatewayName
+from temnia_pipeline.harness.gateway_policy import (
+    GATEWAY_URLS,
+    GatewayName,
+    effective_total_timeout_seconds,
+)
 from temnia_pipeline.harness.routes import RouteEntry
 
 if TYPE_CHECKING:
@@ -213,6 +217,17 @@ GenerationObserver = Callable[[str], Awaitable[None]]
 _generation_observer: ContextVar[GenerationObserver | None] = ContextVar(
     "gateway_generation_observer", default=None
 )
+_dispatch_payload_bytes: ContextVar[int] = ContextVar("gateway_dispatch_payload_bytes", default=0)
+
+
+@contextlib.contextmanager
+def dispatch_payload_bytes(payload_bytes: int) -> Generator[None]:
+    """Bind the admitted payload size that scales this dispatch's aggregate deadline."""
+    token = _dispatch_payload_bytes.set(payload_bytes)
+    try:
+        yield
+    finally:
+        _dispatch_payload_bytes.reset(token)
 
 
 @contextlib.contextmanager
@@ -646,7 +661,11 @@ class GatewayChatModel(WrapperModel):
                 return await super().request(
                     messages, cast("ModelSettings", settings), model_request_parameters
                 )
-            async with asyncio.timeout(self.route.transport.total_timeout_seconds):
+            payload_bytes = _dispatch_payload_bytes.get()
+            aggregate_deadline = effective_total_timeout_seconds(
+                self.route.transport, payload_bytes
+            )
+            async with asyncio.timeout(aggregate_deadline):
                 if self.route.transport.mode == "streaming":
                     async with super().request_stream(
                         messages, cast("ModelSettings", settings), model_request_parameters
@@ -665,6 +684,11 @@ class GatewayChatModel(WrapperModel):
                 response.provider_details = {
                     **(response.provider_details or {}),
                     "gatewayTransport": self.route.transport.model_dump(mode="json"),
+                    "gatewayDeadline": {
+                        "payloadBytes": payload_bytes,
+                        "totalTimeoutSecondsPerUnit": self.route.transport.total_timeout_seconds,
+                        "effectiveTotalTimeoutSeconds": aggregate_deadline,
+                    },
                     "responseHeaders": observed.response_headers or {},
                 }
                 return response
