@@ -122,6 +122,9 @@ still selects seats, and the roster below is provisional.
 
 ### D3. One worker, one snapshot: the chapter lane is parked on staging
 
+> Superseded the same day: Rajesh decided chapters are gone, and the lane was deleted from
+> web and pipeline (see the 2026-09-13 AGENTS.md entries). One worker, one snapshot stands.
+
 Chapters (a navigation partition of the whole episode, exact cover) and topics
 (independent standalone videos) are two editorial contracts that were built side by side
 when Rajesh clarified the target on 10 September. Only topics are the product now. One

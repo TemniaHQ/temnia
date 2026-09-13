@@ -9,10 +9,9 @@ Reload mechanics are in [staging.md](staging.md) §4b.
 ## What runs
 
 `standalone-topics/3` on `TopicSelectionWorkflowV3`, queue `temnia-pipeline`, the same
-worker that ingests and transcribes. Chapter creation is paused on the web
-(`HARNESS_CHAPTERS_ENABLED=0`); existing chapter runs stay reviewable. No qualification
-manifest exists; a route that refuses a request ends the run with a message naming the
-route, stage and HTTP status.
+worker that ingests and transcribes. The chapter lane no longer exists in the code. No
+qualification manifest exists; a route that refuses a request ends the run with a
+message naming the route, stage and HTTP status.
 
 ## The roster (settled 13 September on technical reliability)
 
@@ -53,15 +52,15 @@ On `pipeline` (secrets stay here):
 | `HARNESS_MAX_RUN_BUDGET_MICROS` | `20000000` |
 | `HARNESS_MAX_RENDER_CONCURRENCY` | `2` |
 | `HARNESS_TOPIC_SHOT_DETECTOR` | `scdet` |
-| `HARNESS_CHAPTER_LLAMA_CONFIG_JSON` | unset |
 | `HARNESS_TOPIC_SELECTION_*` | removed if present |
 
 On `web` (non-secret only): `HARNESS_ENABLED=1`, `HARNESS_BACKEND=gateway`, the same
 `HARNESS_ROUTE_SNAPSHOT_ID`, the same limits (`HARNESS_MAX_OUTPUT_TOKENS`,
 `HARNESS_MAX_DISPATCHES`, `HARNESS_MAX_REPAIRS`, `HARNESS_MAX_RUN_BUDGET_MICROS`,
-`HARNESS_MAX_RENDER_CONCURRENCY`, `HARNESS_EVIDENCE_WINDOW_SENTENCES`), and
-`HARNESS_CHAPTERS_ENABLED=0`. The run config the web sends must equal the worker's; a
-mismatch ends the run with a message that says so.
+`HARNESS_MAX_RENDER_CONCURRENCY`, `HARNESS_EVIDENCE_WINDOW_SENTENCES`). Remove any
+`HARNESS_CHAPTERS_ENABLED` or `HARNESS_CHAPTER_LLAMA_CONFIG_JSON` entries. The run
+config the web sends must equal the worker's; a mismatch ends the run with a message
+that says so.
 
 ## Rollout
 
@@ -69,8 +68,7 @@ mismatch ends the run with a message that says so.
 2. Install the snapshot file and mount.
 3. Set the `pipeline` values, reload, read the boot log: the new snapshot ID, no errors,
    pollers on `temnia-pipeline` and `temnia-pipeline-control` in the Temporal UI.
-4. Set the `web` values, reload, `/api/health`; the button is enabled on a ready source
-   and the chapter control shows the paused message.
+4. Set the `web` values, reload, `/api/health`; the button is enabled on a ready source.
 5. First run: Karma. Expect `needs_review`, nine to eleven renders, about $1, the frozen
    author and reviewer visible in the run's `route_snapshot`. Review every video.
 6. Second run: World Order (151 min). Record settled cost and each full-source call's

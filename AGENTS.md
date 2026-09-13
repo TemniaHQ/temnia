@@ -24,8 +24,16 @@ workflow retries twice with 30 s and 90 s backoff before ending the run with rou
 cost named, while a pending receipt keeps the unknown fence; and staging runs with
 `HARNESS_MAX_OUTPUT_TOKENS=65536` (Gemini's route maximum, clamped per route) and
 `HARNESS_MAX_DISPATCHES=64`. The chapter lane (navigation partitions, `chapter-editorial/1`,
-Chapter-Llama) and the v1/v2 topic programs are deleted rather than hidden; deletion follows on
-the same PR in stages, each gated. Prompts were read in full on 13 September: they are user-turn
+Chapter-Llama) is deleted on 13 September: the web tab, panel, actions, API route and journey
+(5,393 lines) and the pipeline program (workflows, hierarchical summaries, proposal diagnostics,
+editorial verify/repair, Chapter-Llama, chapter evaluation bundle and report, legacy and editorial
+pre-flight suites; 94 files, 24,540 lines). What the topic lane used moved: run failure messages
+to `harness/run_failures.py`, shared evaluation wire models to `evals/common.py`, the synthetic
+pre-flight transcript to `harness/qualification_fixture.py`. Editorial policy is topic-only and a
+replay under another program generation is refused. The `chapter_*` names that remain
+(`ChapterRunInput`, `chapter_revision`, `start_chapter_run`, the per-video `chapter-edit/1`
+execution) are the shared run and render machinery the topic lane is built on; renaming them is
+churn for later. The v1/v2 topic programs are next, in the same manner. Prompts were read in full on 13 September: they are user-turn
 rule lists with no system instructions, negative-heavy, example-free, repeating the no-count rule
 across seats, carrying jargon and ruff line-wrap artifacts, and each incident added a paragraph;
 the decisions doc §4 findings stand. The rewrite is measured against the first staging run as
@@ -62,7 +70,9 @@ activity option reaches pydantic-ai through a subclass of its private durable mo
 the pinned version; an upgrade that renames it fails at import and the gate, never silently. The staging
 roster (Kimi K3/Fireworks author first, DeepSeek V4 Pro/Fireworks second, Gemini 3.8
 Flash/Vertex reviewer first; Astra excluded) is the r25 snapshot reordered and remains
-provisional under the no-default-vendor rule: it finishes runs, it has not won. Acceptance for
+provisional under the no-default-vendor rule: it finishes runs, it has not won. Later the same
+day the chapter lane was deleted outright (web and pipeline, see the entry above), so the
+`HARNESS_CHAPTERS_ENABLED` flag described here no longer exists. Acceptance for
 the first staging run is sentence-complete cuts with the pause owned by the preceding video;
 topic-ownership defects are corrected by hand and the compound-candidate gap is the next
 program problem. Overlap between standalone videos is allowed for setup context both videos
