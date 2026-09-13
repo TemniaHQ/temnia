@@ -213,7 +213,8 @@ def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
         apply_selection_patch(EVIDENCE, record, selection_sha, assessment, corrupt)
 
 
-def test_physical_only_finding_accepts_replace_extent_that_only_extends_the_edge() -> None:
+@pytest.mark.parametrize("kind", ["replace_extent", "replace_candidate"])
+def test_physical_only_finding_accepts_replace_extent_that_only_extends_the_edge(kind: str) -> None:
     """The prompt allows `replace_extent` for an extension; the rule judges the effect.
 
     The first staging run lost a six-operation repair because one physical-only
@@ -281,7 +282,7 @@ def test_physical_only_finding_accepts_replace_extent_that_only_extends_the_edge
                 "operations": [
                     {
                         "id": "widen",
-                        "kind": "replace_extent",
+                        "kind": kind,
                         "findingIds": ["physical:discussion:opening"],
                         "affectedCandidateIds": ["discussion"],
                         "replacementCandidates": [replacement],
@@ -396,7 +397,8 @@ def test_scoped_extent_replacement_can_trim_and_extend_both_edges() -> None:
     assert output.proposal.candidates[0] == replacement
 
 
-def test_scoped_extent_replacement_cannot_cross_omitted_source() -> None:
+@pytest.mark.parametrize("kind", ["replace_extent", "replace_candidate"])
+def test_scoped_extent_replacement_cannot_cross_omitted_source(kind: str) -> None:
     evidence = augment_topic_evidence(
         _evidence(
             _transcript(
@@ -478,7 +480,7 @@ def test_scoped_extent_replacement_cannot_cross_omitted_source() -> None:
             "operations": [
                 {
                     "id": "replace",
-                    "kind": "replace_extent",
+                    "kind": kind,
                     "findingIds": ["extent"],
                     "affectedCandidateIds": [original.id],
                     "replacementCandidates": [replacement],

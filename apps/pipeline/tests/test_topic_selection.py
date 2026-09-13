@@ -308,7 +308,8 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
     assert "trim the earlier candidate" in repair_instruction
     assert "copy every candidate field exactly" in repair_instruction
     assert "replace_candidate" in repair_instruction
-    assert "extent and title" in repair_instruction
+    assert "content and title or purpose" in repair_instruction
+    assert "not the number of findings" in repair_instruction
     assert "trim the connective or anaphoric runway" in repair_instruction
 
 
@@ -644,6 +645,80 @@ def test_one_replace_candidate_can_change_extent_and_title_atomically() -> None:
             extent_only_assessment,
             unauthorized_title_patch,
         )
+
+
+def test_extent_only_replace_candidate_keeps_the_whole_patch_and_raw_output() -> None:
+    """The measured two-edge/annotation label mistake must not discard another repair."""
+    first = _candidate("first", 1, 3).model_copy(update={"coreSpans": [_span(1, 2)]})
+    second = _candidate("second", 5, 6)
+    record = _record(first, second)
+    findings = [
+        TopicSelectionFinding.model_validate(
+            {
+                "id": f"focus:{candidate.id}",
+                "kind": "unfocused_extent",
+                "severity": "required",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [f"opportunity-{candidate.id}"],
+                "evidenceSpans": [_span(0, 7)],
+                "reason": "Correct this candidate's extent and its evidence annotations.",
+            }
+        )
+        for candidate in (first, second)
+    ]
+    assessment = _assess(record).model_copy(
+        update={"executionStatus": "needs_review", "findings": findings}
+    )
+    replacements = [
+        first.model_copy(
+            update={
+                "firstSentenceId": "s000000",
+                "lastSentenceId": "s000002",
+                "requiredContextSpans": [_span(0)],
+                "coreSpans": [_span(1, 2)],
+                "completionSpans": [_span(2)],
+            }
+        ),
+        second.model_copy(update={"lastSentenceId": "s000007", "completionSpans": [_span(7)]}),
+    ]
+    patch = TopicSelectionPatchV3.model_validate(
+        {
+            "baseSelectionSha256": content_hash(record),
+            "evidenceSha256": record.evidenceSha256,
+            "rubricSha256": record.rubricSha256,
+            "summary": "Correct both candidates in one transaction.",
+            "operations": [
+                {
+                    "id": f"repair:{replacement.id}",
+                    "kind": "replace_candidate",
+                    "affectedCandidateIds": [replacement.id],
+                    "findingIds": [finding.id],
+                    "opportunities": [],
+                    "replacementCandidates": [replacement],
+                    "reason": "Apply the cited extent correction.",
+                }
+                for replacement, finding in zip(replacements, findings, strict=True)
+            ],
+        }
+    )
+    original_record, raw_patch = record.model_dump_json(), patch.model_dump_json()
+    output = apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, patch)
+    assert output.proposal.candidates == replacements
+    assert record.model_dump_json() == original_record
+    assert patch.model_dump_json() == raw_patch
+
+    unauthorized = patch.model_copy(deep=True)
+    unauthorized.operations[1].replacementCandidates[0].title = "Unreviewed new claim"
+    with pytest.raises(HarnessValidationError, match="unsupported-title finding"):
+        apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, unauthorized)
+    assert record.model_dump_json() == original_record
+
+    annotation_only = patch.model_copy(deep=True)
+    annotation_only.operations[0].replacementCandidates = [
+        first.model_copy(update={"completionSpans": [_span(2)]})
+    ]
+    with pytest.raises(HarnessValidationError, match="requires both a content correction"):
+        apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, annotation_only)
 
 
 def test_render_gate_withholds_unreviewed_or_known_invalid_candidates() -> None:

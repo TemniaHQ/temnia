@@ -42,6 +42,19 @@ is ignored and the worker's boot log lists the ignored names; stale entries from
 enablements are harmless. An empty `HARNESS_CONFIG_PATH` (the gate, local development, the
 experiment operator) means the environment is the configuration, as before.
 
+To change the roster without rebuilding images, an operator can mount a separate
+configuration file and its immutable, content-addressed route snapshot into both services,
+set `HARNESS_CONFIG_PATH` to that file, and use the supported
+[Dokploy configuration reload](staging.md#4b-apply-runtime-configuration-without-a-code-change).
+The worker reads its snapshot at boot and the web caches configuration, so reload both
+services and verify their effective snapshot IDs before starting a run. Other `HARNESS_*`
+overrides remain ignored while a config file is selected. This is a process restart using
+the same images, not a hot model switch; wait for active topic runs to finish first.
+New runs use the new roster. Existing runs retain their frozen snapshots, and a retry
+whose old run config differs from current worker settings can be refused. The ordinary
+committed-file workflow below remains the default; no mounts or settings are changed by
+this documentation.
+
 The snapshot is the r25 experiment catalogue without Astra, `gateway-transport/2` through
 OpenRouter. A production seat pool must name at least three model families, so every pool
 lists all three routes; only the order differs, and the reviewer is chosen excluding the

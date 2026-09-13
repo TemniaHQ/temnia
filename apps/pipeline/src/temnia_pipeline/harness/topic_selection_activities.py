@@ -221,6 +221,36 @@ class TopicSelectionActivities:
         validate_opportunity_inventory(evidence, result)
         return result
 
+    async def patch_rejection(self, context: SelectionContext) -> SelectionRejection | None:
+        """Load a refused settled patch only for the exact assessed request being corrected."""
+        if context.rejection is None:
+            return None
+        if context.selection is None or context.assessment is None or context.rubric is None:
+            raise HarnessValidationError("patch correction requires its exact assessed inputs")
+        refusal = SelectionRejection.model_validate(await self.read(context, context.rejection))
+        await self.require_record(
+            context,
+            context.rejection,
+            format_name="topic-selection-rejection/2",
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.selection,
+                context.assessment,
+                refusal.response,
+            ),
+        )
+        if (
+            refusal.patch is None
+            or refusal.draft is not None
+            or not refusal.diagnostics
+            or refusal.stage != f"repair:selection:{context.iteration - 1}"
+        ):
+            raise HarnessValidationError("patch correction lacks its preceding typed refusal")
+        # The immutable request dependencies establish authority. Incorrect hashes inside
+        # the rejected model output are admission errors for the next request to correct.
+        return refusal
+
     @activity.defn(name="prepare_topic_selection_rubric")
     async def rubric(self, context: SelectionContext) -> HarnessArtifactRef:
         """Freeze deterministic audience defaults before any paid editorial operation."""
@@ -281,13 +311,21 @@ class TopicSelectionActivities:
             assessment = await self.assessment(context)
             if assessment is None or context.selection is None or context.assessment is None:
                 raise HarnessValidationError("selection repair requires exact assessed state")
+            refusal = await self.patch_rejection(context)
             prompt = selection_patch_prompt_v3(
-                evidence, selection, assessment, context.selection.sha256
+                evidence,
+                selection,
+                assessment,
+                context.selection.sha256,
+                rejected_patch=refusal.patch if refusal is not None else None,
+                diagnostics=refusal.diagnostics if refusal is not None else (),
             )
             stage = f"repair:selection:{context.iteration}"
             version = SELECTION_PATCH_PROMPT_V3
             synthetic = "topic_selection_patch"
             dependencies.extend((context.selection, context.assessment))
+            if context.rejection is not None:
+                dependencies.append(context.rejection)
         elif context.inventory is None and not context.inventory_attempted:
             prompt = opportunity_inventory_prompt(evidence, rubric)
             stage = "verify:selection:inventory:0"

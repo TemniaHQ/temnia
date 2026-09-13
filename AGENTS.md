@@ -2,6 +2,22 @@
 
 ## Decisions
 
+**2026-09-13 — Equivalent extent repairs preserve authority; settled refusals get bounded
+correction.** Karma run `a562673b-6723-47b8-a425-476f061f44dd` withheld four candidates after
+one `replace_candidate` changed both edges and annotations but kept title/purpose. The
+patch prompt suggested that combination while validation required a title/purpose change.
+Patch prompt `/10` distinguishes the operations. The existing in-memory normalizer treats
+this exact extent-only effect as `replace_extent`, preserving raw paid output and every
+finding/source/physical/atomic check. A typed, settled patch rejected by validation now
+uses the remaining shared repair allowance with the rejection artifact and diagnostic
+bound into a distinct request; the unchanged selection is not reviewed again first.
+Rejected-output hashes may themselves be wrong: authority comes from the rejection's
+actual request dependencies. Admitted corrections clear rejection context and receive
+fresh review. Unknown outcomes remain fenced. This repairs admission and bounded
+correction, not the editorial criteria or fresh-execution retry accounting. The original
+four-operation patch passes offline without changing its raw operation labels; its
+editorial adequacy remains unmeasured. Plan: `docs/plans/topic-repair-recovery.md`.
+
 **2026-09-13 — A transient provider failure never ends a run; it retries, falls back, and the
 run can always be resumed.** Rajesh, after three staging runs (one success, a 402, a 429 that
 discarded $0.38 of work): "With such inconsistency how can we even launch our product to the
