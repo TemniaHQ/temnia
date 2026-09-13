@@ -20,7 +20,7 @@ const EVIDENCE = "0192e8a0-0000-7000-8000-000000000030";
 const evidenceSha256 = "a".repeat(64);
 const proposalSha256 = "b".repeat(64);
 
-function fixture(accepted = false, selection = false) {
+function fixture(accepted = false) {
   const bodies = new Map<string, unknown>();
   let counter = 100;
   function put(
@@ -126,13 +126,6 @@ function fixture(accepted = false, selection = false) {
       },
       status: "passed",
     })),
-    evidenceSha256,
-    format: "topic-assessment/1",
-    proposalSha256,
-    proposerFamily: "one",
-    runId: RUN,
-    summary: "Text review passed.",
-    verifierFamily: "two",
   };
   const selectionRecord = put(
     "proposal",
@@ -199,8 +192,10 @@ function fixture(accepted = false, selection = false) {
     portfolioReview: {
       candidates: assessment.candidates.map((item) => item.sourceReview),
       findings: [],
+      handoffs: [],
       missingOpportunities: [],
       opportunities: [],
+      overlaps: [],
       selection: assessment.candidates.map((item) => ({
         candidateId: item.candidateId,
         disposition: "select",
@@ -217,25 +212,17 @@ function fixture(accepted = false, selection = false) {
     selectionSha256: selectionRecord.ref.sha256,
     verifierFamily: "two",
   };
-  const assessmentArtifact = put(
-    "checks",
-    selection ? selectionAssessment : assessment,
-    {
-      format: selection ? "topic-selection-assessment/2" : "topic-assessment/1",
-      runId: RUN,
-    }
-  );
+  const assessmentArtifact = put("checks", selectionAssessment, {
+    format: "topic-selection-assessment/2",
+    runId: RUN,
+  });
   const edit = put("edit", portfolio, {
-    ...(selection
-      ? {
-          selectionArtifactId: selectionRecord.ref.id,
-          selectionSha256: selectionRecord.ref.sha256,
-        }
-      : {}),
     assessmentArtifactId: assessmentArtifact.ref.id,
     format: "topic-edit/1",
     proposalSha256,
     runId: RUN,
+    selectionArtifactId: selectionRecord.ref.id,
+    selectionSha256: selectionRecord.ref.sha256,
   });
   const children = portfolio.videos.map((item) => {
     const execution = put("edit", item.edit);
@@ -311,7 +298,7 @@ function fixture(accepted = false, selection = false) {
       edit.webRef,
       assessmentArtifact.webRef,
       descriptor.webRef,
-      ...(selection ? [selectionRecord.webRef] : []),
+      selectionRecord.webRef,
     ],
     currentEdit: edit.webRef,
     events: [],
@@ -333,17 +320,10 @@ function fixture(accepted = false, selection = false) {
       synthetic: false,
     },
     runs: [],
-    summaryGrounding: {
-      coverageFallbackWindowCount: 0,
-      fallbackQuoteCount: 0,
-      fallbackUnitCount: 0,
-      reports: [],
-    },
   };
   const load = async <T>(ref: ChapterArtifactRef, schema: ZodType<T>) =>
     schema.parse(bodies.get(ref.id));
   return {
-    assessment,
     bodies,
     children,
     descriptor,
@@ -357,8 +337,8 @@ function fixture(accepted = false, selection = false) {
 }
 
 describe("independent topic artifact graph", () => {
-  it("binds v2 judgments to the exact selection and does not hide weak value behind basic passes", async () => {
-    const f = fixture(false, true);
+  it("binds judgments to the exact selection and does not hide weak value behind basic passes", async () => {
+    const f = fixture();
     const [first] = f.selectionAssessment.coldReviews;
     if (!first) {
       throw new Error("Missing fixture review");
@@ -369,7 +349,6 @@ describe("independent topic artifact graph", () => {
       status: "fail",
     };
     const result = await loadTopicRevision(SOURCE, f.view, false, f.load);
-    expect(result?.assessment).toBeNull();
     expect(result?.selectionAssessment?.format).toBe(
       "topic-selection-assessment/2"
     );
@@ -401,9 +380,9 @@ describe("independent topic artifact graph", () => {
       throw new Error("Missing fixture video");
     }
     expect(reusedContextMs(first, [...result.videos, first])).toBe(10_000);
-    expect(topicEditorialStatus(result.assessment, first.assessment)).toBe(
-      "Passed text review"
-    );
+    expect(
+      topicEditorialStatus(result.selectionAssessment ?? null, first.assessment)
+    ).toBe("Passed text review");
     expect(result.exportUrl).toBeNull();
   });
 
@@ -453,18 +432,18 @@ describe("independent topic artifact graph", () => {
 
   it("does not treat absent, same-family or incomplete reviews as passed", async () => {
     const f = fixture();
-    f.assessment.verifierFamily = f.assessment.proposerFamily;
+    f.selectionAssessment.verifierFamily = f.selectionAssessment.proposerFamily;
     const result = await loadTopicRevision(SOURCE, f.view, false, f.load);
     expect(
       topicEditorialStatus(
-        result?.assessment ?? null,
+        result?.selectionAssessment ?? null,
         result?.videos[0]?.assessment ?? null
       )
     ).toBe("Unverified");
     expect(topicEditorialStatus(null, null)).toBe("Unverified");
-    f.assessment.evidenceSha256 = "c".repeat(64);
+    f.selectionAssessment.evidenceSha256 = "c".repeat(64);
     await expect(
       loadTopicRevision(SOURCE, f.view, false, f.load)
-    ).rejects.toThrow("proposal and evidence");
+    ).rejects.toThrow("another source or selection");
   });
 });

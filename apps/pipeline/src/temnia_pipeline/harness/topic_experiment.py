@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import os
 from collections.abc import Mapping
@@ -34,18 +33,11 @@ from temnia_pipeline.contracts import (
     Scope,
     TopicEditorialRubric,
 )
-from temnia_pipeline.evals.chapters import SHA256, EvaluationModel
-from temnia_pipeline.evals.topics import TopicProgramManifest, TopicProgramStage, digest
+from temnia_pipeline.evals.common import SHA256, EvaluationModel
+from temnia_pipeline.evals.topics import TopicProgramManifest, digest
 from temnia_pipeline.harness import runs, topic_selection
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.ledger import IdentityConflict
-from temnia_pipeline.harness.qualification_topic_selection import (
-    STAGE_SEATS,
-    TOPIC_SELECTION_SCHEMAS,
-    TOPIC_SELECTION_V3_SCHEMAS,
-    native_schema_sha256,
-    topic_selection_qualification_prompts,
-)
 from temnia_pipeline.harness.queues import control_task_queue
 from temnia_pipeline.harness.routes import RouteSnapshot, load_route_snapshot, snapshot_gateway
 from temnia_pipeline.harness.runtime_types import (
@@ -57,17 +49,14 @@ from temnia_pipeline.harness.runtime_types import (
 )
 from temnia_pipeline.harness.settings import HarnessSettings, TopicShotDetector
 from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF, editorial_routes
-from temnia_pipeline.modal_build import source_build_id
+from temnia_pipeline.harness.topic_program import current_program
 from temnia_pipeline.scope import resolve_scope
 from temnia_pipeline.settings import TemporalSettings
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 Nonempty = Annotated[str, Field(min_length=1)]
-WORKFLOW_TYPES = {
-    "standalone-topics/2": "TopicSelectionWorkflow",
-    "standalone-topics/3": "TopicSelectionWorkflowV3",
-}
-WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/2"]
+WORKFLOW_TYPES = {"standalone-topics/3": "TopicSelectionWorkflow"}
+WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/3"]
 MEMO_KEY = "temniaExperimentSha256"
 INTENT_MEMO_KEY = "temniaIntentSha256"
 RPC_TIMEOUT = timedelta(seconds=30)
@@ -110,7 +99,6 @@ class ArmSpec(EvaluationModel):
     id: Identifier
     config: ChapterRunConfig
     route_snapshot_path: Nonempty
-    qualification_path: str | None = None
     recorded_fixture_path: str | None = None
     author_route_id: Nonempty
     reviewer_route_id: Nonempty
@@ -126,8 +114,8 @@ class ExperimentSpec(EvaluationModel):
     worker_max_run_budget_micros: Annotated[int, Field(gt=0)]
     temporal_address: Nonempty
     temporal_namespace: Nonempty
-    topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
-    program_version: Literal["standalone-topics/2", "standalone-topics/3"] = "standalone-topics/2"
+    topic_shot_detector: TopicShotDetector = "scdet"
+    program_version: Literal["standalone-topics/3"] = "standalone-topics/3"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]
 
@@ -161,7 +149,6 @@ class FrozenArm(EvaluationModel):
     spec: ArmSpec
     snapshot: RouteSnapshot
     snapshot_file: FilePin
-    qualification_file: FilePin | None
     fixture_file: FilePin | None
     pipeline_queue: Nonempty
     control_queue: Nonempty
@@ -240,45 +227,6 @@ class PreparedExperiment(EvaluationModel):
         return self
 
 
-def current_program(
-    program_version: Literal["standalone-topics/2", "standalone-topics/3"] = (
-        "standalone-topics/2"
-    ),
-) -> TopicProgramManifest:
-    """Freeze actual template functions/native schemas, including unused repair stages."""
-    v3 = program_version == "standalone-topics/3"
-    functions = {
-        **({"topic_inventory": topic_selection.opportunity_inventory_prompt} if v3 else {}),
-        "topic_author": topic_selection.selection_prompt,
-        "topic_cold": topic_selection.selection_cold_prompt,
-        "topic_source": topic_selection.selection_source_prompt,
-        "topic_patch": (
-            topic_selection.selection_patch_prompt_v3
-            if v3
-            else topic_selection.selection_patch_prompt
-        ),
-    }
-    prompts = topic_selection_qualification_prompts(program_version)
-    schemas = TOPIC_SELECTION_V3_SCHEMAS if v3 else TOPIC_SELECTION_SCHEMAS
-    return TopicProgramManifest(
-        policy=program_version,
-        program_version=program_version,
-        implementation_sha256=source_build_id(),
-        stages={
-            stage: TopicProgramStage(
-                seat="author" if STAGE_SEATS[stage] == "propose" else "reviewer",
-                prompt_version=prompts[stage][2],
-                prompt_template_sha256=hashlib.sha256(
-                    inspect.getsource(function).encode()
-                ).hexdigest(),
-                schema_version=schemas[stage],
-                native_schema_sha256=native_schema_sha256(prompts[stage][1]),
-            )
-            for stage, function in functions.items()
-        },
-    )
-
-
 def arm_queue(experiment_id: UUID, arm_id: str) -> str:
     """Different experiments and different arm settings cannot accidentally share queues."""
     return f"temnia-topic-experiment-{experiment_id}-{arm_id}"
@@ -322,9 +270,9 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
     """Return non-secret exact worker overrides; operator retains existing infrastructure env."""
     config = arm.spec.config
     return {
+        # An arm's exact snapshot and limits, never the image's committed deployment file.
+        "HARNESS_CONFIG_PATH": "",
         "HARNESS_ENABLED": "1",
-        "HARNESS_TOPIC_SELECTION_ENABLED": "1" if spec.program_version.endswith("/2") else "0",
-        "HARNESS_TOPIC_SELECTION_V3_ENABLED": ("1" if spec.program_version.endswith("/3") else "0"),
         "HARNESS_BACKEND": config.backend.value,
         "HARNESS_GATEWAY": snapshot_gateway(arm.snapshot),
         "HARNESS_ALLOW_RECORDED": "1" if config.backend == Backend.recorded else "0",
@@ -337,16 +285,6 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
         "HARNESS_EVIDENCE_WINDOW_SENTENCES": str(config.evidenceWindowSentences),
         "HARNESS_MAX_RENDER_CONCURRENCY": str(config.maxRenderConcurrency),
         "HARNESS_TOPIC_SHOT_DETECTOR": spec.topic_shot_detector,
-        "HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH": (
-            arm.qualification_file.path
-            if arm.qualification_file and spec.program_version.endswith("/2")
-            else ""
-        ),
-        "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH": (
-            arm.qualification_file.path
-            if arm.qualification_file and spec.program_version.endswith("/3")
-            else ""
-        ),
         "HARNESS_RECORDED_FIXTURE_PATH": arm.fixture_file.path if arm.fixture_file else "",
         "HARNESS_CHAPTER_LLAMA_CONFIG_JSON": "",
         "TEMPORAL_ADDRESS": spec.temporal_address,
@@ -405,9 +343,6 @@ async def prepare_experiment(
             spec=arm_spec,
             snapshot=snapshot,
             snapshot_file=snapshot_file,
-            qualification_file=(
-                FilePin.read(arm_spec.qualification_path) if arm_spec.qualification_path else None
-            ),
             fixture_file=(
                 FilePin.read(arm_spec.recorded_fixture_path)
                 if arm_spec.recorded_fixture_path
@@ -492,17 +427,11 @@ def assert_runtime(
         raise IdentityConflict(
             "current implementation/prompt/schema differs from prepared programme"
         )
-    for pin in (arm.snapshot_file, arm.qualification_file, arm.fixture_file):
+    for pin in (arm.snapshot_file, arm.fixture_file):
         if pin is not None:
             pin.verify()
     if (
         not settings.enabled
-        or not (
-            settings.topic_selection_v3_enabled
-            if prepared.spec.program_version.endswith("/3")
-            else settings.topic_selection_enabled
-        )
-        or settings.chapter_llama_config is not None
         or settings.allowed_config() != arm.spec.config
         or settings.topic_shot_detector != prepared.spec.topic_shot_detector
         or settings.max_run_budget_micros != prepared.spec.worker_max_run_budget_micros
@@ -510,12 +439,6 @@ def assert_runtime(
         raise IdentityConflict("worker runtime settings differ from the frozen experiment")
     for actual_path, expected_file in (
         (settings.route_snapshot_path, arm.snapshot_file),
-        (
-            settings.topic_selection_v3_qualification_path
-            if prepared.spec.program_version.endswith("/3")
-            else settings.topic_selection_qualification_path,
-            arm.qualification_file,
-        ),
         (settings.recorded_fixture_path, arm.fixture_file),
     ):
         if (actual_path is None) != (expected_file is None) or (
@@ -549,7 +472,6 @@ def assert_pinned_run(
         or run.route_snapshot != arm.snapshot
         or run.editorial_policy != prepared.program.policy
         or run.topic_shot_detector != prepared.spec.topic_shot_detector
-        or run.chapter_llama_config is not None
         or run.evaluation_program != prepared.program.model_dump(mode="json", by_alias=True)
         or run.evaluation_program_sha256
         != digest(prepared.program.model_dump(mode="json", by_alias=True))

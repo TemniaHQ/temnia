@@ -8,7 +8,7 @@ from collections import Counter
 from typing import Literal
 
 from temnia_pipeline.contracts import ChapterChecks, ChapterRenders, TopicRenders
-from temnia_pipeline.evals.chapters import EvaluationModel
+from temnia_pipeline.evals.common import EvaluationModel
 from temnia_pipeline.evals.topics import (
     CandidateJudgment,
     TopicEvaluationBundle,

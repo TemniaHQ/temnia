@@ -543,7 +543,7 @@ export const ChapterRunConfigSchema = z
     backend: z.enum(["recorded", "gateway"]),
     evidenceWindowSentences: z.int().min(1).max(512).default(80),
     maxDispatches: z.int().min(1).max(128).default(32),
-    maxOutputTokens: z.int().min(256).max(32_768).default(8192),
+    maxOutputTokens: z.int().min(256).max(65_536).default(8192),
     maxRenderConcurrency: z.int().min(1).max(4).default(2),
     maxRepairs: z.int().min(0).max(3).default(3),
     routeSnapshotId: z.string().min(1).max(256),
@@ -553,9 +553,51 @@ export const ChapterRunConfigSchema = z
 
 export type ChapterRunConfig = z.infer<typeof ChapterRunConfigSchema>;
 
+/**
+ * One committed file per deployment carries the whole harness configuration; both images
+ * read it, so the web's run config equals the worker's by construction. `routeSnapshot.path`
+ * is relative to the file; `id` is the snapshot's canonical SHA-256, checked at worker boot.
+ */
+export const HarnessConfigSchema = z
+  .object({
+    allowRecorded: z.boolean(),
+    backend: z.enum(["recorded", "gateway"]),
+    enabled: z.boolean(),
+    format: z.literal("harness-config/1"),
+    gateway: z.enum(["vercel", "openrouter"]),
+    limits: z
+      .object({
+        evidenceWindowSentences: z.int().min(1).max(512),
+        maxDispatches: z.int().min(1).max(128),
+        maxOutputTokens: z.int().min(256).max(65_536),
+        maxRenderConcurrency: z.int().min(1).max(4),
+        maxRepairs: z.int().min(0).max(3),
+        maxRunBudgetMicros: z.int().positive(),
+      })
+      .strict()
+      .meta({ id: "HarnessConfigLimits", title: "HarnessConfigLimits" }),
+    recordedFixturePath: z.string().min(1).nullable(),
+    routeSnapshot: z
+      .object({
+        id: z.string().regex(/^[a-f0-9]{64}$/),
+        path: z.string().min(1),
+      })
+      .strict()
+      .meta({
+        id: "HarnessConfigRouteSnapshot",
+        title: "HarnessConfigRouteSnapshot",
+      }),
+    topicShotDetector: z.enum(["pyscenedetect-adaptive", "scdet"]),
+  })
+  .strict()
+  .meta({ id: "HarnessConfig", title: "HarnessConfig" });
+export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
+
 export const ChapterRunInputSchema = z
   .object({
-    brief: z.string().max(100_000),
+    // Absent means the worker applies the lane's single default brief and
+    // freezes the effective text on the run row.
+    brief: z.string().max(100_000).optional(),
     budgetMicros: safePositiveInteger(),
     config: ChapterRunConfigSchema,
     requestKey: z.uuid(),

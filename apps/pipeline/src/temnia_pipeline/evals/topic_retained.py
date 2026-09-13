@@ -180,7 +180,7 @@ def retained_author_diagnostic(
         status="unqualified_downstream_not_run",
         configuration=TopicConfiguration(
             configuration_id=f"retained-author:{request_hash}",
-            policy="standalone-topics/1",
+            policy="standalone-topics/3",
             source_sha256=preparation.get("sourceSha256"),
             transcript_sha256=evidence.transcriptSha256,
             program_identity={

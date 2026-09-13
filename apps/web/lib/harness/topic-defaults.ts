@@ -1,29 +1,13 @@
 import { z } from "zod";
 
-export const TOPIC_POLICY = "standalone-topics/1";
-export const TOPIC_SELECTION_POLICY = "standalone-topics/2";
-export const TOPIC_SELECTION_POLICY_V3 = "standalone-topics/3";
-export const TOPIC_POLICIES = [
-  TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
-] as const;
-export const DEFAULT_TOPIC_BRIEF_VERSION = TOPIC_SELECTION_POLICY_V3;
+/** The one program the button starts; run rows carry it as `editorialPolicy`. */
+export const TOPIC_POLICY = "standalone-topics/3";
 
-export function isTopicPolicy(value: unknown): boolean {
-  return TOPIC_POLICIES.some((policy) => policy === value);
-}
-
-const DEFAULT_TOPIC_BRIEF =
-  "Find worthwhile, complete discussions that can be published as independent topic videos on YouTube or Facebook. Let the source determine their number and length. Each video must orient a new viewer, develop a coherent purpose, and reach the speaker's actual conclusion, including uncertainty. Retain necessary questions, setup, corrections and caveats. Videos may reuse source context when needed to stand alone. Avoid redundant core ideas and do not manufacture a topic from housekeeping or an outro. Use truthful titles, preserve the original language and source meaning, and flag unresolved editorial or audio-edge uncertainty. Do not invent missing speech.";
-
+/**
+ * Instructions are the whole request. An absent brief is not a web default: the
+ * worker applies the single editorial brief and freezes it into the run, so the
+ * web never hashes a brief string of its own into a prompt.
+ */
 export const TopicStartInstructionsSchema = z.object({
   brief: z.string().max(100_000).optional(),
-  defaultBriefVersion: z.enum(TOPIC_POLICIES),
 });
-
-export function resolveTopicBrief(
-  input: z.infer<typeof TopicStartInstructionsSchema>
-): string {
-  return input.brief?.trim() ? input.brief : DEFAULT_TOPIC_BRIEF;
-}

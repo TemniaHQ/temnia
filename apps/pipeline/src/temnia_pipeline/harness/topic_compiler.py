@@ -49,8 +49,6 @@ if TYPE_CHECKING:
         TopicSentenceSpan,
     )
 
-TOPIC_COMPILER_VERSION = "topic-compiler/1"
-TOPIC_COMPILER_VERSION_V2 = "topic-compiler/2"
 TOPIC_COMPILER_VERSION_V3 = "topic-compiler/3"
 _SPAN_FIELDS = (
     "coreSpans",
@@ -277,15 +275,6 @@ def _boundary_constraints(
     return candidates, tuple(issues)
 
 
-def topic_boundary_issues(
-    evidence: HarnessEvidence, candidate: TopicCandidate
-) -> tuple[TopicBoundaryIssue, ...]:
-    """Expose the compiler's exact edge-admission constraints without a model verdict."""
-    validate_evidence(evidence)
-    _validate_candidate(evidence, candidate)
-    return _boundary_constraints(evidence, candidate)[1]
-
-
 def topic_boundary_issues_v2(
     evidence: HarnessEvidence,
     candidate: TopicCandidate,
@@ -293,7 +282,9 @@ def topic_boundary_issues_v2(
     """Inspect the same reproducible feasible inventory used for v2 production."""
     if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
         _refuse("v2 physical review requires persisted derived boundary evidence")
-    return topic_boundary_issues(evidence, candidate)
+    validate_evidence(evidence)
+    _validate_candidate(evidence, candidate)
+    return _boundary_constraints(evidence, candidate)[1]
 
 
 def _safe_candidates(
@@ -425,48 +416,6 @@ def _compile_topics(  # noqa: PLR0913
     return result
 
 
-def compile_topics(
-    evidence: HarnessEvidence,
-    proposal: TopicProposal,
-    *,
-    evidence_artifact_id: UUID,
-    evidence_sha256: str,
-    config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
-) -> TopicEditSpec:
-    """Compile the historical topic contract without changing its output bytes."""
-    return _compile_topics(
-        evidence,
-        proposal,
-        evidence_artifact_id=evidence_artifact_id,
-        evidence_sha256=evidence_sha256,
-        config=config,
-        compiler_version=TOPIC_COMPILER_VERSION,
-        own_trailing_pauses=False,
-    )
-
-
-def compile_topics_v2(
-    evidence: HarnessEvidence,
-    proposal: TopicProposal,
-    *,
-    evidence_artifact_id: UUID,
-    evidence_sha256: str,
-    config: CompilerConfig = _DEFAULT_COMPILER_CONFIG,
-) -> TopicEditSpec:
-    """Compile against already-persisted v2 physical evidence, never an unrecorded grid."""
-    if evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION:
-        _refuse("v2 compilation requires persisted derived boundary evidence")
-    return _compile_topics(
-        evidence,
-        proposal,
-        evidence_artifact_id=evidence_artifact_id,
-        evidence_sha256=evidence_sha256,
-        config=config,
-        compiler_version=TOPIC_COMPILER_VERSION_V2,
-        own_trailing_pauses=False,
-    )
-
-
 def compile_topics_v3(
     evidence: HarnessEvidence,
     proposal: TopicProposal,
@@ -550,14 +499,10 @@ def validate_topic_edit(
 ) -> None:
     """Verify portfolio lineage and every video's independent semantic membership."""
     edit = TopicEditSpec.model_validate(edit.model_dump(), strict=True)
-    if edit.compilerVersion not in {
-        TOPIC_COMPILER_VERSION,
-        TOPIC_COMPILER_VERSION_V2,
-        TOPIC_COMPILER_VERSION_V3,
-    }:
+    if edit.compilerVersion != TOPIC_COMPILER_VERSION_V3:
         _refuse("topic portfolio names an unsupported compiler version")
     if (
-        edit.compilerVersion in {TOPIC_COMPILER_VERSION_V2, TOPIC_COMPILER_VERSION_V3}
+        edit.compilerVersion == TOPIC_COMPILER_VERSION_V3
         and evidence.config.get(CONFIG_KEY) != DERIVATION_VERSION
     ):
         _refuse("versioned topic portfolio lacks its persisted derived boundary evidence")

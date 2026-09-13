@@ -39,9 +39,9 @@ from test_topic_evaluation import NOW, _bundle, _labels
 
 def _programme() -> TopicProgramManifest:
     return TopicProgramManifest(
-        policy="standalone-topics/1",
+        policy="standalone-topics/3",
         implementation_sha256="c" * 64,
-        program_version="standalone-topics/1",
+        program_version="standalone-topics/3",
         stages={
             name: TopicProgramStage(
                 seat=cast("Any", seat),
@@ -51,6 +51,7 @@ def _programme() -> TopicProgramManifest:
                 native_schema_sha256=digest({"schema": name}),
             )
             for name, seat in (
+                ("topic_inventory", "reviewer"),
                 ("topic_author", "author"),
                 ("topic_cold", "reviewer"),
                 ("topic_source", "reviewer"),
@@ -179,7 +180,7 @@ def _snapshot(
             "accepted_revision": None,
             "evidence_artifact_id": evidence.id,
             "route_snapshot": {
-                "editorialPolicy": "standalone-topics/1",
+                "editorialPolicy": "standalone-topics/3",
                 "initialBudgetMicros": 1000,
                 "pinnedSource": {
                     "storage_key": source["master_key"],
@@ -384,11 +385,11 @@ async def test_historical_missing_roster_is_not_inferred_from_observed_response_
     assert any("unobserved_factor:prompt_identity" in reason for reason in report.reasons)
 
 
-def test_v2_programme_cannot_omit_optional_repair_from_frozen_roster() -> None:
+def test_programme_cannot_omit_a_stage_from_its_frozen_roster() -> None:
     body = deepcopy(_programme().model_dump(mode="json", by_alias=True))
-    body["policy"] = "standalone-topics/2"
-    del body["stages"]["topic_patch"]
-    with pytest.raises(ValueError, match="four-stage"):
+    body["policy"] = "standalone-topics/3"
+    del body["stages"]["topic_inventory"]
+    with pytest.raises(ValueError, match="five-stage"):
         TopicProgramManifest.model_validate(body)
 
 
@@ -412,8 +413,8 @@ async def test_archived_null_source_projection_remains_readable_and_unknown(
         ):
             del config[field]
         config["programIdentity"] = {
-            "policy": "standalone-topics/1",
-            "programs": ["standalone-topics/1"],
+            "policy": "standalone-topics/3",
+            "programs": ["standalone-topics/3"],
         }
         config["promptIdentity"] = {"versions": ["standalone-topic-editor/1"]}
         config["schemaIdentity"] = {"versions": ["standalone-topic-editor/1"]}
@@ -454,12 +455,12 @@ def _v2_output_profile(
 ) -> tuple[exporter._TopicSnapshot, dict[UUID, object]]:
     value, bodies = _snapshot(original, author=author)
     wrapper = value.run["route_snapshot"]
-    wrapper["editorialPolicy"] = "standalone-topics/2"
+    wrapper["editorialPolicy"] = "standalone-topics/3"
     program = wrapper["evaluationProgram"]
-    program["policy"] = program["programVersion"] = "standalone-topics/2"
+    program["policy"] = program["programVersion"] = "standalone-topics/3"
     wrapper["evaluationProgramSha256"] = digest(program)
     for row in value.attempts:
-        value.rows[row["result_artifact_id"]]["metadata"]["programVersion"] = "standalone-topics/2"
+        value.rows[row["result_artifact_id"]]["metadata"]["programVersion"] = "standalone-topics/3"
     routes = wrapper["snapshot"]["routes"]
     for route in routes:
         route["context_tokens"] = 131072

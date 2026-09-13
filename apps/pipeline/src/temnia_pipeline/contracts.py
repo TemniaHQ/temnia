@@ -138,7 +138,7 @@ class ChapterRunConfig(BaseModel):
     backend: Backend
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
     maxDispatches: Annotated[int, Field(ge=1, le=128)]
-    maxOutputTokens: Annotated[int, Field(ge=256, le=32768)]
+    maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
     maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
     maxRepairs: Annotated[int, Field(ge=0, le=3)]
     routeSnapshotId: Annotated[str, Field(max_length=256, min_length=1)]
@@ -209,6 +209,36 @@ class HarnessBoundaryCandidate(BaseModel):
     score: float
     sentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
     timeMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class Gateway(StrEnum):
+    vercel = "vercel"
+    openrouter = "openrouter"
+
+
+class TopicShotDetector(StrEnum):
+    pyscenedetect_adaptive = "pyscenedetect-adaptive"
+    scdet = "scdet"
+
+
+class HarnessConfigLimits(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
+    maxDispatches: Annotated[int, Field(ge=1, le=128)]
+    maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
+    maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
+    maxRepairs: Annotated[int, Field(ge=0, le=3)]
+    maxRunBudgetMicros: Annotated[int, Field(gt=0, le=9007199254740991)]
+
+
+class HarnessConfigRouteSnapshot(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: Annotated[str, Field(pattern="^[a-f0-9]{64}$")]
+    path: Annotated[str, Field(min_length=1)]
 
 
 class HarnessEvidencePause(BaseModel):
@@ -512,16 +542,6 @@ class Severity(StrEnum):
 
 
 class Kind5(StrEnum):
-    extend_start = "extend_start"
-    extend_end = "extend_end"
-    retitle = "retitle"
-    merge = "merge"
-    split = "split"  # pyright: ignore[reportAssignmentType]
-    drop = "drop"
-    add_opportunity = "add_opportunity"
-
-
-class Kind6(StrEnum):
     extend_start = "extend_start"
     extend_end = "extend_end"
     replace_extent = "replace_extent"
@@ -868,7 +888,7 @@ class ChapterRunInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    brief: Annotated[str, Field(max_length=100000)]
+    brief: Annotated[str | None, Field(max_length=100000)] = None
     budgetMicros: Annotated[int, Field(ge=1, le=9007199254740991)]
     config: ChapterRunConfig
     requestKey: UUID
@@ -887,6 +907,21 @@ class ChapterRunOutput(BaseModel):
     revision: Annotated[int | None, Field(ge=1, le=9007199254740991)]
     runId: UUID
     status: HarnessRunStatus
+
+
+class HarnessConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    allowRecorded: bool
+    backend: Backend
+    enabled: bool
+    format: Literal["harness-config/1"]
+    gateway: Gateway
+    limits: HarnessConfigLimits
+    recordedFixturePath: Annotated[str | None, Field(min_length=1)]
+    routeSnapshot: HarnessConfigRouteSnapshot
+    topicShotDetector: TopicShotDetector
 
 
 class HelloInput(BaseModel):
@@ -1116,19 +1151,6 @@ class TopicSelectionFinding(BaseModel):
     severity: Severity
 
 
-class TopicSelectionPatchOperation(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    affectedCandidateIds: list[str]
-    findingIds: Annotated[list[str], Field(min_length=1)]
-    id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind5
-    opportunities: list[TopicOpportunity]
-    reason: Annotated[str, Field(min_length=1)]
-    replacementCandidates: list[TopicCandidate]
-
-
 class TopicSelectionPatchOperationV3(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1136,7 +1158,7 @@ class TopicSelectionPatchOperationV3(BaseModel):
     affectedCandidateIds: list[str]
     findingIds: Annotated[list[str], Field(min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind6
+    kind: Kind5
     opportunities: list[TopicOpportunity]
     reason: Annotated[str, Field(min_length=1)]
     replacementCandidates: list[TopicCandidate]
@@ -1324,19 +1346,6 @@ class TopicPortfolioReview(BaseModel):
     summary: Annotated[str, Field(min_length=1)]
 
 
-class TopicPortfolioReviewV3(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    candidates: list[TopicSourceJudgment]
-    findings: list[TopicSelectionFinding]
-    missingOpportunities: list[TopicOpportunity]
-    opportunities: list[TopicOpportunityJudgment]
-    selection: list[TopicSelectionDecision]
-    summary: Annotated[str, Field(min_length=1)]
-    overlaps: list[TopicCandidateOverlapJudgment]
-
-
 class TopicPortfolioReviewV4(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1347,8 +1356,8 @@ class TopicPortfolioReviewV4(BaseModel):
     opportunities: list[TopicOpportunityJudgment]
     selection: list[TopicSelectionDecision]
     summary: Annotated[str, Field(min_length=1)]
-    overlaps: list[TopicCandidateOverlapJudgment]
     handoffs: list[TopicCandidateHandoffJudgment]
+    overlaps: list[TopicCandidateOverlapJudgment]
 
 
 class TopicSelectionColdReview(BaseModel):
@@ -1361,17 +1370,6 @@ class TopicSelectionColdReview(BaseModel):
     intelligibleBeginning: TopicCriterion
     titleFaithful: TopicCriterion
     value: TopicValueReview
-
-
-class TopicSelectionPatch(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    baseSelectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    operations: list[TopicSelectionPatchOperation]
-    rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    summary: Annotated[str, Field(min_length=1)]
 
 
 class TranscriptCorrectionMetadata(BaseModel):
@@ -1443,29 +1441,13 @@ class TopicSelectionAssessment(BaseModel):
     executionStatus: ExecutionStatus
     findings: list[TopicSelectionFinding]
     format: Literal["topic-selection-assessment/2"]
-    portfolioReview: (
-        TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4 | None
-    )
+    portfolioReview: TopicPortfolioReviewV4 | None
     proposerFamily: Annotated[str, Field(min_length=1)]
     reasons: list[str]
     responseArtifacts: list[HarnessArtifactRef]
     rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
     runId: UUID
     selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    verifierFamily: str | None
-
-
-class TopicAssessment(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    candidates: list[TopicAssessmentCandidate]
-    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    format: Literal["topic-assessment/1"]
-    proposalSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    proposerFamily: Annotated[str, Field(min_length=1)]
-    runId: UUID
-    summary: Annotated[str, Field(min_length=1)]
     verifierFamily: str | None
 
 SEEDED_SCOPE = Scope(

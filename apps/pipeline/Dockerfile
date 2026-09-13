@@ -24,6 +24,9 @@ ENV TEMNIA_MODELS_DIR=/opt/temnia-models
 COPY scripts/fetch_models.py ./scripts/
 RUN /app/.venv/bin/python scripts/fetch_models.py
 COPY src ./src
+# The deployment's harness configuration and its route snapshot, so a deploy needs no
+# mount and no HARNESS_* environment: the image knows its own roster and limits.
+COPY harness ./harness
 # The experiment operator and isolated worker use the same image and source-input
 # fingerprint. These declarations are hashed inputs, not runtime build commands.
 COPY Dockerfile Dockerfile.speech ./
@@ -60,7 +63,8 @@ ENV PATH=/app/.venv/bin:${PATH} \
     TEMNIA_MODELS_DIR=/opt/temnia-models \
     HF_HOME=/opt/temnia-models \
     HF_HUB_OFFLINE=1 \
-    TOKENIZERS_PARALLELISM=false
+    TOKENIZERS_PARALLELISM=false \
+    HARNESS_CONFIG_PATH=/app/harness/staging.json
 USER temnia
 VOLUME ["/var/lib/temnia/work"]
 CMD ["python", "-m", "temnia_pipeline.worker"]

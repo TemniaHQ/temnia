@@ -20,19 +20,22 @@ from pydantic_ai import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from temnia_pipeline import db, storage
-from temnia_pipeline.contracts import Scope
+from temnia_pipeline.contracts import ChapterProposal, Scope
 from temnia_pipeline.harness import artifacts, ledger
+from temnia_pipeline.harness import models as harness_models
 from temnia_pipeline.harness.cassettes import CassetteStore
 from temnia_pipeline.harness.gateway import GatewayConfig
 from temnia_pipeline.harness.models import (
     HarnessModelDeps,
     ModelRuntime,
-    chapter_propose_v1,
     clear_model_runtime,
     configure_model_runtime,
 )
 from temnia_pipeline.harness.routes import RouteEligibility, RouteEntry, RoutePrices
 from temnia_pipeline.speech_benchmark import database_experiment_lease
+
+# The chapter agents are gone; the persistence contract is exercised through one local agent.
+persistence_propose = harness_models._agent("persistence_propose", ChapterProposal)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -511,12 +514,16 @@ async def test_attempt_batch_unknown_member_fences_every_missing_member() -> Non
             ).fetchone()
             run = await (
                 await conn.execute(
-                    "SELECT reserved_micros, status FROM harness_run WHERE id = %s",
+                    "SELECT reserved_micros, status, error_message FROM harness_run WHERE id = %s",
                     (case.run_id,),
                 )
             ).fetchone()
         assert attempts == {"count": 1}
-        assert run == {"reserved_micros": 20, "status": "outcome_unknown"}
+        assert run == {
+            "reserved_micros": 20,
+            "status": "outcome_unknown",
+            "error_message": ledger.OUTCOME_UNKNOWN_RUN_MESSAGE,
+        }
     finally:
         await db.close_pool()
 
@@ -894,8 +901,8 @@ async def test_budgeted_model_persists_then_reuses_response_without_second_call(
     )
     configure_model_runtime(runtime)
     try:
-        first = await chapter_propose_v1.run("Return the proposal.", deps=deps)
-        second = await chapter_propose_v1.run("Return the proposal.", deps=deps)
+        first = await persistence_propose.run("Return the proposal.", deps=deps)
+        second = await persistence_propose.run("Return the proposal.", deps=deps)
         assert first.output == second.output
         assert calls == 1
         async with db.scoped(url, SEEDED) as conn:
@@ -936,7 +943,7 @@ async def test_budgeted_model_persists_then_reuses_response_without_second_call(
             update={"stage": "crash-recovery", "operation_inputs": {"window": "crash"}}
         )
         with pytest.raises(asyncio.CancelledError):
-            await chapter_propose_v1.run("Return the proposal.", deps=crash_deps)
+            await persistence_propose.run("Return the proposal.", deps=crash_deps)
         async with db.scoped(url, SEEDED) as conn:
             await conn.execute(
                 "UPDATE harness_run SET status = 'cancelled' WHERE id = %s",
@@ -948,7 +955,7 @@ async def test_budgeted_model_persists_then_reuses_response_without_second_call(
                 " AND state = 'outcome_unknown'",
                 ("prior-workflow-activity-owner", case.run_id),
             )
-        recovered = await chapter_propose_v1.run("Return the proposal.", deps=crash_deps)
+        recovered = await persistence_propose.run("Return the proposal.", deps=crash_deps)
         assert recovered.output == first.output
         assert calls == 2
         async with db.scoped(url, SEEDED) as conn:
@@ -1004,8 +1011,8 @@ async def test_budgeted_model_persists_then_reuses_response_without_second_call(
                 }
             )
             with pytest.raises(asyncio.CancelledError):
-                await chapter_propose_v1.run("Return the proposal.", deps=lookup_deps)
-            lookup_recovered = await chapter_propose_v1.run(
+                await persistence_propose.run("Return the proposal.", deps=lookup_deps)
+            lookup_recovered = await persistence_propose.run(
                 "Return the proposal.", deps=lookup_deps
             )
         assert lookup_recovered.output == first.output
@@ -1132,14 +1139,17 @@ async def test_owned_known_failure_reconciliation_preserves_other_exposure(
         async with db.scoped(url, SEEDED) as conn:
             row = await (
                 await conn.execute(
-                    "SELECT status, spent_micros, reserved_micros FROM harness_run WHERE id = %s",
+                    "SELECT status, spent_micros, reserved_micros, error_message"
+                    " FROM harness_run WHERE id = %s",
                     (case.run_id,),
                 )
             ).fetchone()
+        # An unknown outcome owns a sentence, and recovery clears it.
         assert row == {
             "status": "outcome_unknown" if remaining_unknown else "running",
             "spent_micros": 13,
             "reserved_micros": 20 if remaining_unknown else 0,
+            "error_message": (ledger.OUTCOME_UNKNOWN_RUN_MESSAGE if remaining_unknown else None),
         }
     finally:
         await db.close_pool()

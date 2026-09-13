@@ -13,22 +13,22 @@ import httpx2
 import pytest
 from obstore.store import MemoryStore
 
+from qualification_fixtures import _outputs_v3
 from temnia_pipeline import db
 from temnia_pipeline.harness import ledger, models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.gateway import GatewayChatModel, GatewayConfig
 from temnia_pipeline.harness.models import ModelPersistenceError, ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
-    TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_V3_SCHEMAS,
     topic_selection_qualification_prompts,
 )
 from temnia_pipeline.harness.routes import CostEstimate, RouteEntry, estimate_cost
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY
 from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan
 from temnia_pipeline.harness.topic_selection_workflow import selection_model_deps
 from test_harness_runs import SEEDED, pipeline_url, ready_source, settings, start_request
 from test_topic_output_profiles import profiles
-from test_topic_selection_qualification import _outputs
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,12 +41,12 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
 ) -> None:
     url = pipeline_url()
     routes = profiles()
-    configuration = replace(settings(routes), max_output_tokens=32768, topic_selection_enabled=True)
+    configuration = replace(settings(routes), max_output_tokens=32768)
     source_id = await ready_source(url)
     original = start_request(source_id, routes)
     start = original.model_copy(
         update={
-            "editorial_policy": SELECTION_POLICY,
+            "editorial_policy": TOPIC_SELECTION_POLICY_V3,
             "request": original.request.model_copy(
                 update={"config": configuration.allowed_config()}
             ),
@@ -55,7 +55,7 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
     await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
     wires: list[dict[str, Any]] = []
     estimates: list[tuple[str, CostEstimate]] = []
-    output_bodies = _outputs()
+    output_bodies = _outputs_v3()
     by_model = {route.gateway_model: route for route in routes.routes}
 
     def observe_estimate(
@@ -137,10 +137,16 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
         )
         prompts = topic_selection_qualification_prompts()
         stages = (
-            ("topic_author", "proposal:selection:0", models.topic_selection_author_v2, 8192),
-            ("topic_cold", "verify:selection:cold:fixture", models.topic_selection_cold_v2, 32768),
-            ("topic_source", "verify:selection:source:0", models.topic_selection_source_v2, 32768),
-            ("topic_patch", "repair:selection:1", models.topic_selection_patch_v2, 8192),
+            (
+                "topic_inventory",
+                "verify:selection:inventory:0",
+                models.topic_opportunity_inventory_v3,
+                32768,
+            ),
+            ("topic_author", "proposal:selection:0", models.topic_selection_author_v3, 8192),
+            ("topic_cold", "verify:selection:cold:fixture", models.topic_selection_cold_v3, 32768),
+            ("topic_source", "verify:selection:source:0", models.topic_selection_source_v4, 32768),
+            ("topic_patch", "repair:selection:1", models.topic_selection_patch_v3, 8192),
         )
         try:
             for index, (name, stage, agent, expected_output) in enumerate(stages):
@@ -149,7 +155,7 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
                     prompt=prompt,
                     stage=stage,
                     prompt_version=version,
-                    schema_version=TOPIC_SELECTION_SCHEMAS[name],
+                    schema_version=TOPIC_SELECTION_V3_SCHEMAS[name],
                     author=routes.routes[0],
                     verifier=routes.routes[1],
                     input_artifacts=(),
@@ -202,11 +208,11 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
                         await agent.run(
                             prompt, deps=deps, model_settings={"max_tokens": expected_output + 1}
                         )
-                    assert len(wires) == 1
+                    assert len(wires) == index + 1
             run = await runs.get_run(
                 url, scope=SEEDED, source_id=source_id, run_id=start.request.runId
             )
-            assert run.dispatch_count == run.spent_micros == 4
+            assert run.dispatch_count == run.spent_micros == 5
             assert run.reserved_micros == 0
         finally:
             models.clear_model_runtime()

@@ -10,8 +10,6 @@ from typing import Any
 
 import pytest
 
-from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig, DeploymentIdentity
-from temnia_pipeline.chapter_llama.contracts import ModelConfig, ResourceProfile
 from temnia_pipeline.harness.routes import (
     RouteEligibility,
     RouteEntry,
@@ -19,39 +17,7 @@ from temnia_pipeline.harness.routes import (
     RouteSnapshot,
     SeatRoutePool,
 )
-from temnia_pipeline.harness.settings import HarnessSettings
-
-
-def test_topic_scene_trial_selects_pyscenedetect_and_keeps_explicit_ffmpeg_comparison() -> None:
-    assert HarnessSettings.from_env({}).topic_shot_detector == "pyscenedetect-adaptive"
-    assert (
-        HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": "scdet"}).topic_shot_detector
-        == "scdet"
-    )
-    for invalid in ("", "auto", "opencv", "pyscenedetect"):
-        with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
-            HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": invalid})
-
-
-def test_chapter_llama_is_explicit_and_cannot_dispatch_from_recorded_mode() -> None:
-    assert HarnessSettings.from_env({}).chapter_llama_config is None
-    candidate = ChapterLlamaConfig(
-        app_name="candidate-fixture",
-        environment="fixture",
-        deployment=DeploymentIdentity(
-            build="a" * 64, config=ModelConfig(), resources=ResourceProfile()
-        ),
-    )
-    settings = HarnessSettings.from_env(
-        {
-            "HARNESS_ENABLED": "1",
-            "HARNESS_BACKEND": "recorded",
-            "HARNESS_CHAPTER_LLAMA_CONFIG_JSON": candidate.model_dump_json(),
-        }
-    )
-    assert settings.chapter_llama_config == candidate
-    with pytest.raises(RuntimeError, match="explicit gateway backend"):
-        settings.validate_boot()
+from temnia_pipeline.harness.settings import RECORDED_TOPIC_OUTPUTS, HarnessSettings
 
 
 def route(
@@ -120,8 +86,7 @@ def env(path: Path, value: RouteSnapshot, backend: str) -> dict[str, str]:
         json.dumps(
             {
                 "outputs": {
-                    stage: {"output": {}, "synthetic": True}
-                    for stage in ("propose", "summary", "verify")
+                    stage: {"output": {}, "synthetic": True} for stage in RECORDED_TOPIC_OUTPUTS
                 },
                 "synthetic": True,
             }
@@ -136,6 +101,19 @@ def env(path: Path, value: RouteSnapshot, backend: str) -> dict[str, str]:
         "HARNESS_ROUTE_SNAPSHOT_ID": value.snapshot_id,
         "HARNESS_ROUTE_SNAPSHOT_PATH": str(path),
     }
+
+
+def test_topic_scene_detection_defaults_to_scdet_and_keeps_pyscenedetect_comparison() -> None:
+    assert HarnessSettings.from_env({}).topic_shot_detector == "scdet"
+    assert (
+        HarnessSettings.from_env(
+            {"HARNESS_TOPIC_SHOT_DETECTOR": "pyscenedetect-adaptive"}
+        ).topic_shot_detector
+        == "pyscenedetect-adaptive"
+    )
+    for invalid in ("", "auto", "opencv", "pyscenedetect"):
+        with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
+            HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": invalid})
 
 
 def test_disabled_harness_does_not_require_snapshot() -> None:
@@ -159,45 +137,32 @@ def test_enabled_snapshot_requires_every_workflow_seat(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("routes", "invalid_route_id"),
+    "routes",
     [
-        (
-            (
-                route(route_id="primary", max_output_tokens=4096),
-                route(route_id="failover"),
-            ),
-            "primary",
-        ),
-        (
-            (
-                route(route_id="primary"),
-                route(route_id="failover", max_output_tokens=4096),
-            ),
-            "failover",
-        ),
+        (route(route_id="primary", max_output_tokens=4096), route(route_id="failover")),
+        (route(route_id="primary"), route(route_id="failover", max_output_tokens=4096)),
     ],
 )
-def test_required_route_output_capacity_is_checked_at_boot(
+def test_route_below_the_ceiling_boots_under_its_own_effective_output_cap(
     tmp_path: Path,
     routes: tuple[RouteEntry, ...],
-    invalid_route_id: str,
 ) -> None:
+    # Every route is admitted at min(configured ceiling, route maximum); there is no
+    # per-programme asymmetry left in the boot check.
     value = snapshot(routes=routes)
     path = tmp_path / "routes.json"
     write_snapshot(path, value)
 
-    with pytest.raises(
-        RuntimeError,
-        match=rf"route '{invalid_route_id}'.*HARNESS_MAX_OUTPUT_TOKENS=8192",
-    ):
-        HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
+    assert HarnessSettings.from_env(env(path, value, "recorded")).validate_boot() == value
 
 
-def test_gateway_checks_failover_route_output_capacity(tmp_path: Path) -> None:
+def test_gateway_boot_still_refuses_a_route_without_effective_context_headroom(
+    tmp_path: Path,
+) -> None:
     value = snapshot(
         routes=(
             route(route_id="primary"),
-            route(route_id="failover", max_output_tokens=4096),
+            route(route_id="failover", context_tokens=4096, max_output_tokens=4096),
             route(route_id="third"),
         ),
         synthetic=False,
@@ -247,7 +212,7 @@ def test_committed_recorded_snapshot_has_valid_capacity() -> None:
             "HARNESS_ALLOW_RECORDED": "1",
             "HARNESS_BACKEND": "recorded",
             "HARNESS_ENABLED": "1",
-            "HARNESS_RECORDED_FIXTURE_PATH": str(fixture_dir / "chapter.synthetic.json"),
+            "HARNESS_RECORDED_FIXTURE_PATH": str(fixture_dir / "topic.synthetic.json"),
             "HARNESS_ROUTE_SNAPSHOT_ID": value["snapshot_id"],
             "HARNESS_ROUTE_SNAPSHOT_PATH": str(route_path),
         }

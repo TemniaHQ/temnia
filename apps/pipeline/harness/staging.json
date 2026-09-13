@@ -1,0 +1,21 @@
+{
+  "allowRecorded": false,
+  "backend": "gateway",
+  "enabled": true,
+  "format": "harness-config/1",
+  "gateway": "openrouter",
+  "limits": {
+    "evidenceWindowSentences": 80,
+    "maxDispatches": 64,
+    "maxOutputTokens": 65536,
+    "maxRenderConcurrency": 2,
+    "maxRepairs": 3,
+    "maxRunBudgetMicros": 20000000
+  },
+  "recordedFixturePath": null,
+  "routeSnapshot": {
+    "id": "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",
+    "path": "topic-routes-staging-0df7f78d.json"
+  },
+  "topicShotDetector": "scdet"
+}

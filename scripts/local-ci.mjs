@@ -61,7 +61,7 @@ const STAGES = [
   "fetch immutable substrate model snapshots before offline loading tests",
   "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
-  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, transcript correction, chapter render/review/export)",
+  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, transcript correction, topic render/review/export)",
 ];
 let receivedSignal;
 
@@ -291,12 +291,12 @@ async function runFullGate(sha) {
       );
     }
     const harnessEnv = [
+      // The images default to their committed deployment file; the gate's recorded
+      // backend is environment-configured, so the default is switched off here.
+      "-e",
+      "HARNESS_CONFIG_PATH=",
       "-e",
       "HARNESS_ENABLED=1",
-      "-e",
-      "HARNESS_TOPIC_SELECTION_ENABLED=1",
-      "-e",
-      "HARNESS_TOPIC_SELECTION_V3_ENABLED=1",
       "-e",
       "HARNESS_BACKEND=recorded",
       "-e",
@@ -397,7 +397,7 @@ async function runFullGate(sha) {
       "-e",
       `HARNESS_ROUTE_SNAPSHOT_PATH=${GATE_HARNESS_DIR}/routes.synthetic.json`,
       "-e",
-      `HARNESS_RECORDED_FIXTURE_PATH=${GATE_HARNESS_DIR}/chapter.synthetic.json`,
+      `HARNESS_RECORDED_FIXTURE_PATH=${GATE_HARNESS_DIR}/topic.synthetic.json`,
       "-v",
       `${GATE_HARNESS_FIXTURES}:${GATE_HARNESS_DIR}:ro`,
       ...storageEnv,

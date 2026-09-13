@@ -18,11 +18,26 @@ from temnia_pipeline.harness.gateway_policy import (  # noqa: TC001
     GatewayTransportPolicy,
 )
 
+AdmissionVersion = Literal["admission/1", "admission/2"]
+
 MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024
 TOKENS_PER_PRICE_UNIT = 1_000_000
 PROTOCOL_OVERHEAD_BYTES = 8192
 MIN_PRODUCTION_FAMILIES = 3
 UNPROVEN_ROUTE_PREFIX = "qualification-unproven:"
+
+# Admission arithmetic. `admission/1` counted one serialized byte as one token, which
+# admitted Karma's 90 KB prompt as ~100k tokens against ~25k real ones and refused any
+# source much longer than it before a model ever saw the request. `admission/2` declares
+# a floor of two bytes per token instead: no tokenizer in use here emits more than one
+# token per two UTF-8 bytes of prompt for Latin text (~4 bytes/token), Devanagari
+# (~2.5 bytes/token at worst) or CJK (~3 bytes/token as UTF-8), so the floor still
+# reserves more than any real request spends. It is a declared bound, not a measurement,
+# and it changes only the reservation arithmetic: the 512 KiB serialized payload cap is
+# unchanged, and beyond that cap a request is still refused outright.
+ADMISSION_VERSION_LEGACY: AdmissionVersion = "admission/1"
+ADMISSION_VERSION: AdmissionVersion = "admission/2"
+BYTES_PER_TOKEN_FLOOR = 2
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ServiceTier = Literal["auto", "default", "flex", "priority"]
@@ -258,7 +273,11 @@ def estimate_cost(
     protocol_overhead_bytes: int = PROTOCOL_OVERHEAD_BYTES,
     max_output_tokens: int | None = None,
 ) -> CostEstimate:
-    """Reserve a conservative maximum without a token-count service call."""
+    """Reserve a conservative maximum without a token-count service call.
+
+    Input tokens follow `ADMISSION_VERSION`: the serialized payload divided by the
+    declared bytes-per-token floor, rounded up, plus the protocol overhead allowance.
+    """
     if payload_bytes < 0 or protocol_overhead_bytes < 0:
         raise ValueError("payload and protocol overhead must be nonnegative")
     if payload_bytes > MAX_REQUEST_PAYLOAD_BYTES:
@@ -267,10 +286,17 @@ def estimate_cost(
         max_output_tokens <= 0 or max_output_tokens > route.max_output_tokens
     ):
         raise ValueError("requested output cap must fit the qualified route maximum")
-    input_tokens = payload_bytes + protocol_overhead_bytes
+    input_tokens = (
+        payload_bytes + BYTES_PER_TOKEN_FLOOR - 1
+    ) // BYTES_PER_TOKEN_FLOOR + protocol_overhead_bytes
     output_tokens = max_output_tokens or route.max_output_tokens
     if input_tokens + output_tokens > route.context_tokens:
-        raise ContextWindowExceeded("bounded request exceeds the qualified context window")
+        # The refusal names what an operator must change: the source, the cap or the route.
+        raise ContextWindowExceeded(
+            f"Route {route.id} cannot accept this request: {payload_bytes} payload bytes "
+            f"(about {input_tokens} estimated input tokens) plus {output_tokens} output tokens "
+            f"exceed its {route.context_tokens}-token context window."
+        )
     numerator = input_tokens * route.prices.input + output_tokens * route.prices.output
     amount = (
         numerator + TOKENS_PER_PRICE_UNIT - 1

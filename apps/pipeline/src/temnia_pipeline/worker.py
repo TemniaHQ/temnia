@@ -26,12 +26,7 @@ from temnia_pipeline.harness.queues import control_task_queue
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchWorkflow
 from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
-from temnia_pipeline.harness.topic_selection_workflow import (
-    TopicSelectionWorkflow,
-    TopicSelectionWorkflowV3,
-)
-from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
-from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunWorkflow
+from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
@@ -97,6 +92,16 @@ async def run_worker(settings: TemporalSettings) -> None:
     ctx = Context.from_env()
     harness_settings = HarnessSettings.from_env()
     snapshot = harness_settings.validate_boot()
+    if snapshot is None:
+        log.info("harness disabled")
+    else:
+        log.info(
+            "harness enabled from %s: backend %s, gateway %s, route snapshot %s",
+            harness_settings.config_path or "the environment",
+            harness_settings.backend,
+            harness_settings.gateway,
+            snapshot.snapshot_id,
+        )
     await db.assert_reachable(ctx.settings.database_url)
     await assert_modal_deployment(ctx)
     if ctx.settings.transcription.provider == "modal-checkpointed":
@@ -155,12 +160,8 @@ async def run_worker(settings: TemporalSettings) -> None:
             IngestWorkflow,
             ReaperWorkflow,
             TranscribeWorkflow,
-            ChapterRunWorkflow,
-            ChapterReviewWorkflow,
-            TopicRunWorkflow,
             TopicReviewWorkflow,
             TopicSelectionWorkflow,
-            TopicSelectionWorkflowV3,
             TopicEditorialPatchWorkflow,
         ],
         activities=[

@@ -1,13 +1,12 @@
 """Offline chapter harness validation/reporting and bounded cost reconciliation."""
 
 # CLI parsing and database row validation are kept explicit so refusal paths are visible.
-# ruff: noqa: EM101, EM102, PLR0913, TRY003
+# ruff: noqa: EM101, PLR0913, TRY003
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -18,20 +17,10 @@ import httpx
 from pydantic import ValidationError
 
 from temnia_pipeline import db, storage
-from temnia_pipeline.contracts import ChapterEditSpec, HarnessEvidence
-from temnia_pipeline.evals.chapter_report import build_report, readable_table
-from temnia_pipeline.evals.chapters import (
-    EvaluationBundle,
-    HumanLabels,
-    content_sha256,
-    validate_bundle,
-)
 from temnia_pipeline.harness.artifacts import ArtifactError, canonical_json
-from temnia_pipeline.harness.bundle_export import export_evaluation_bundle
 from temnia_pipeline.harness.gateway import GatewayConfig, lookup_generation
 from temnia_pipeline.harness.ledger import reconcile_cost
 from temnia_pipeline.harness.routes import RouteEntry, load_route_snapshot
-from temnia_pipeline.harness.validators import validate_edit
 from temnia_pipeline.scope import resolve_scope
 from temnia_pipeline.settings import StorageSettings
 
@@ -43,39 +32,6 @@ MAX_RECONCILIATION_ATTEMPTS = 128
 
 class ReconciliationSkippedError(RuntimeError):
     """One row cannot safely be looked up, while other rows may continue."""
-
-
-def _json(path: Path) -> object:
-    try:
-        return cast("object", json.loads(path.read_bytes()))
-    except (OSError, ValueError) as error:
-        raise ValueError(f"{path} is absent or invalid JSON") from error
-
-
-def _bundle(path: Path) -> EvaluationBundle:
-    try:
-        return EvaluationBundle.model_validate_json(path.read_bytes(), strict=True)
-    except OSError as error:
-        raise ValueError(f"{path} is absent or invalid JSON") from error
-
-
-def _validate_command(path: Path, evidence_path: Path) -> str:
-    raw = _json(path)
-    mapping = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
-    if mapping is not None and mapping.get("format") == "temnia-chapter-evaluation-bundle/1":
-        bundle = EvaluationBundle.model_validate_json(path.read_bytes(), strict=True)
-        validate_bundle(bundle)
-        if bundle.evidence is None:
-            raise ValueError("bundle has no evidence body to compare with --evidence")
-        evidence = HarnessEvidence.model_validate_json(evidence_path.read_bytes(), strict=True)
-        if content_sha256(bundle.evidence) != content_sha256(evidence):
-            raise ValueError("--evidence differs from the bundle evidence body")
-        return "valid evaluation bundle"
-    edit = ChapterEditSpec.model_validate_json(path.read_bytes(), strict=True)
-    evidence = HarnessEvidence.model_validate_json(evidence_path.read_bytes(), strict=True)
-    evidence_sha = content_sha256(evidence)
-    validate_edit(evidence, edit, expected_evidence_sha256=evidence_sha)
-    return "valid grounded chapter edit"
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -223,26 +179,6 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="temnia-harness")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    validate = commands.add_parser("validate", help="validate a local bundle or edit")
-    validate.add_argument("input", type=Path)
-    validate.add_argument("--evidence", required=True, type=Path)
-
-    report = commands.add_parser("report", help="write a deterministic chapter report")
-    report.add_argument("--bundle", required=True, type=Path)
-    report.add_argument("--labels", type=Path)
-    report.add_argument("--output", required=True, type=Path)
-
-    export = commands.add_parser(
-        "export-bundle", help="export one scoped run for offline evaluation"
-    )
-    export.add_argument("--run-id", required=True, type=UUID)
-    export.add_argument("--output", required=True, type=Path)
-    export.add_argument(
-        "--split",
-        choices=("tuning", "test", "qualification"),
-        default="qualification",
-    )
-
     topic_export = commands.add_parser(
         "export-topic-bundle",
         help="export one scoped standalone-topic artifact closure for offline evaluation",
@@ -266,7 +202,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run(args: argparse.Namespace) -> int:  # noqa: C901
+async def _run(args: argparse.Namespace) -> int:
     if args.command == "export-topic-bundle":
         from temnia_pipeline.harness.topic_bundle_export import export_topic_bundle  # noqa: PLC0415
 
@@ -285,44 +221,6 @@ async def _run(args: argparse.Namespace) -> int:  # noqa: C901
         print(  # noqa: T201
             f"Exported topic artifact closure: {len(topic_bundle.artifacts)} artifacts, "
             f"{len(topic_bundle.attempts)} attempts. Human playback remains unmeasured."
-        )
-        return 0
-    if args.command == "validate":
-        print(_validate_command(args.input, args.evidence))  # noqa: T201
-        return 0
-    if args.command == "report":
-        bundle = _bundle(args.bundle)
-        labels = (
-            HumanLabels.model_validate_json(args.labels.read_bytes(), strict=True)
-            if args.labels
-            else None
-        )
-        report = build_report(bundle, labels)
-        _atomic_json(args.output, report.model_dump(mode="json", by_alias=True))
-        print(readable_table(report))  # noqa: T201
-        return 0
-    if args.command == "export-bundle":
-        database_url = os.environ.get("PIPELINE_DATABASE_URL")
-        if not database_url:
-            raise ValueError("PIPELINE_DATABASE_URL is required")
-        bundle = await export_evaluation_bundle(
-            database_url,
-            scope=resolve_scope(),
-            store=storage.make_store(StorageSettings.from_env()),
-            run_id=args.run_id,
-            split=args.split,
-        )
-        _atomic_json(args.output, bundle.model_dump(mode="json", by_alias=True))
-        print(  # noqa: T201
-            canonical_json(
-                {
-                    "attempts": len(bundle.attempts),
-                    "bundle": str(args.output),
-                    "currentRevision": bundle.current_revision,
-                    "runId": str(bundle.run_id),
-                    "sourceId": str(bundle.source_id),
-                }
-            ).decode()
         )
         return 0
     if args.command == "routes":

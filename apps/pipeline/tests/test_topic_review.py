@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -14,7 +13,6 @@ from uuid import uuid4
 import pytest
 from temporalio import activity
 
-from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
@@ -31,6 +29,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness import topic_review as review_module
+from temnia_pipeline.harness.rendering import kept_sections
 from temnia_pipeline.harness.review import ReviewRefused
 from temnia_pipeline.harness.runtime_types import (
     CommitReviewMutationResult,
@@ -49,11 +48,10 @@ from temnia_pipeline.harness.topic_review import (
 )
 from temnia_pipeline.harness.topic_runtime import TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+from temnia_pipeline.harness.validators import rounded_milliseconds
 from test_topic_compiler import _candidate, _case, _compile
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
     from temnia_pipeline.harness.activities import HarnessActivities
 
 
@@ -175,6 +173,7 @@ async def test_acceptance_validates_the_exact_nested_execution_and_checks(  # no
         evidence=ref(HarnessArtifactKind.evidence, evidence.model_dump(mode="json")),
     )
     execution = ref(HarnessArtifactKind.edit, video.edit.model_dump(mode="json"))
+    extent = kept_sections(video.edit)[0]
     check_body: dict[str, Any] = {
         "editorialReasons": [],
         "editorialStatus": "not_run",
@@ -210,7 +209,7 @@ async def test_acceptance_validates_the_exact_nested_execution_and_checks(  # no
             {
                 "sectionId": "one",
                 "editSha256": execution.sha256,
-                "durationMs": 3000,
+                "durationMs": rounded_milliseconds(extent.end - extent.start),
                 "media": media.model_dump(mode="json"),
                 "captions": captions.model_dump(mode="json"),
                 "checks": checks.model_dump(mode="json"),
@@ -461,89 +460,6 @@ def test_topic_review_control_registration_matches_workflow_dispatch() -> None:
     ] == ["apply_topic_operational_review"]
 
 
-@pytest.mark.parametrize(
-    "corruption",
-    [
-        "none",
-        "portfolio_assessment_dependency",
-        "assessment_proposal_dependency",
-        "assessment_metadata_format",
-        "assessment_metadata_run",
-        "proposal_sha",
-    ],
-)
-async def test_editorial_lineage_keeps_exact_resolvable_original_references(
-    monkeypatch: pytest.MonkeyPatch, corruption: str
-) -> None:
-    decision = command()
-    evidence = ref(HarnessArtifactKind.evidence, {"source": "evidence"})
-    proposal = ref(HarnessArtifactKind.proposal, {"source": "proposal"})
-    assessment = ref(HarnessArtifactKind.checks, {"source": "assessment"})
-    edit = ref(HarnessArtifactKind.edit, {"source": "portfolio"})
-    context = TopicContext(run=topic_run_ref(decision), evidence=evidence)
-    metadata: dict[str, object] = {
-        "proposalArtifactId": str(proposal.id),
-        "assessmentArtifactId": str(assessment.id),
-        "proposalSha256": proposal.sha256,
-    }
-    records = {
-        proposal.id: SimpleNamespace(
-            reference=proposal,
-            dependency_ids=[evidence.id],
-            metadata={"format": "topic-proposal/1", "runId": str(decision.runId)},
-        ),
-        assessment.id: SimpleNamespace(
-            reference=assessment,
-            dependency_ids=[evidence.id, proposal.id],
-            metadata={"format": "topic-assessment/1", "runId": str(decision.runId)},
-        ),
-        edit.id: SimpleNamespace(
-            reference=edit,
-            dependency_ids=[evidence.id, proposal.id, assessment.id],
-            metadata=metadata,
-        ),
-    }
-    if corruption == "portfolio_assessment_dependency":
-        records[edit.id].dependency_ids.remove(assessment.id)
-    elif corruption == "assessment_proposal_dependency":
-        records[assessment.id].dependency_ids.remove(proposal.id)
-    elif corruption == "assessment_metadata_format":
-        records[assessment.id].metadata["format"] = "chapter-checks/1"
-    elif corruption == "assessment_metadata_run":
-        records[assessment.id].metadata["runId"] = str(uuid4())
-    elif corruption == "proposal_sha":
-        metadata["proposalSha256"] = "0" * 64
-
-    def artifact_ref(record: SimpleNamespace) -> HarnessArtifactRef:
-        return record.reference
-
-    owner = cast(
-        "HarnessActivities",
-        SimpleNamespace(
-            ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test")),
-            _artifact_ref=artifact_ref,
-        ),
-    )
-    handler = TopicReviewActivities(owner)
-
-    async def accepted_record(_database_url: str, **kwargs: object) -> SimpleNamespace:
-        return records[cast("Any", kwargs["artifact_id"])]
-
-    async def validate_body(lineage: TopicContext) -> None:
-        assert lineage.proposal == proposal
-        assert lineage.assessment == assessment
-        assert lineage.evidence == evidence
-
-    monkeypatch.setattr(artifacts, "_artifact_for_read", accepted_record)
-    monkeypatch.setattr(handler.topics, "load", validate_body)
-    monkeypatch.setattr(handler.topics, "assessment", validate_body)
-    if corruption == "none":
-        assert await handler.editorial_lineage(context, edit, metadata) == (proposal, assessment)
-    else:
-        with pytest.raises(ReviewRefused):
-            await handler.editorial_lineage(context, edit, metadata)
-
-
 async def test_selection_editorial_lineage_preserves_v3_program_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -605,86 +521,3 @@ async def test_selection_editorial_lineage_preserves_v3_program_version(
 
     assert await handler.editorial_lineage(context, edit, metadata) == (selection, assessment)
     assert observed == ["standalone-topics/3", "standalone-topics/3"]
-
-
-async def test_human_revision_preserves_editorial_metadata_and_dependencies(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    evidence = _case()
-    edit = _compile(evidence, _candidate("one", 0, 2))
-    decision = command(sourceId=evidence.sourceId, action="reject")
-    evidence_ref = ref(HarnessArtifactKind.evidence, evidence.model_dump(mode="json")).model_copy(
-        update={"id": edit.evidenceArtifactId, "sha256": edit.evidenceSha256}
-    )
-    context = TopicContext(run=topic_run_ref(decision), evidence=evidence_ref)
-    previous = ref(HarnessArtifactKind.edit, edit.model_dump(mode="json"))
-    proposal = ref(HarnessArtifactKind.proposal, {"original": "proposal"})
-    assessment = ref(HarnessArtifactKind.checks, {"original": "assessment"})
-    metadata: dict[str, object] = {
-        "format": "topic-edit/1",
-        "runId": str(decision.runId),
-        "proposalArtifactId": str(proposal.id),
-        "assessmentArtifactId": str(assessment.id),
-        "proposalSha256": proposal.sha256,
-        "compilerRefusals": ["Retained physical finding"],
-        "mutationKey": str(uuid4()),
-        "revision": 1,
-    }
-    captured: list[dict[str, object]] = []
-
-    def artifact_ref(record: SimpleNamespace) -> HarnessArtifactRef:
-        return record.reference
-
-    owner = cast(
-        "HarnessActivities",
-        SimpleNamespace(
-            ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test"), store=object()),
-            _artifact_ref=artifact_ref,
-        ),
-    )
-    handler = TopicReviewActivities(owner)
-
-    async def retained_context(_run: object) -> TopicContext:
-        return context
-
-    async def retained_portfolio(*_args: object) -> tuple[Any, Any, dict[str, object]]:
-        return edit, evidence, metadata
-
-    async def retained_reference(*_args: object) -> HarnessArtifactRef:
-        return previous
-
-    async def fetchone() -> dict[str, object]:
-        return {"artifact_id": previous.id}
-
-    async def execute(*_args: object) -> SimpleNamespace:
-        return SimpleNamespace(fetchone=fetchone)
-
-    @asynccontextmanager
-    async def scoped(*_args: object) -> AsyncGenerator[SimpleNamespace]:
-        yield SimpleNamespace(execute=execute)
-
-    async def publish(_database_url: str, **kwargs: object) -> SimpleNamespace:
-        captured.append(kwargs)
-        return SimpleNamespace(reference=ref(HarnessArtifactKind.edit, kwargs["content"]))
-
-    monkeypatch.setattr(handler, "context", retained_context)
-    monkeypatch.setattr(handler, "portfolio", retained_portfolio)
-    monkeypatch.setattr(handler, "reference", retained_reference)
-    monkeypatch.setattr(db, "scoped", scoped)
-    monkeypatch.setattr(artifacts, "publish_json", publish)
-    result = await handler.prepare(decision)
-    assert result.candidate is not None
-    assert len(captured) == 1
-    assert captured[0]["metadata"] == {
-        **metadata,
-        "revision": 2,
-        "mutationKey": str(decision.mutationKey),
-    }
-    assert captured[0]["dependency_ids"] == (
-        evidence_ref.id,
-        previous.id,
-        proposal.id,
-        assessment.id,
-    )
-    published = cast("dict[str, Any]", captured[0]["content"])
-    assert published["videos"][0]["edit"]["sections"][0]["reviewState"] == "rejected"

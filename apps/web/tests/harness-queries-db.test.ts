@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SEEDED_SCOPE, sourcePrefix } from "@temnia/contracts";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getChapterView, getTopicView } from "@/lib/harness/queries";
+import { getTopicView } from "@/lib/harness/queries";
 
 const ownerUrl = process.env.TEST_DATABASE_URL;
 if (process.env.LOCAL_CI === "1" && !ownerUrl) {
@@ -18,8 +18,6 @@ const runId = randomUUID();
 const evidenceId = randomUUID();
 const editId = randomUUID();
 const descriptorId = randomUUID();
-const groundingId = randomUUID();
-const legacyGroundingId = randomUUID();
 const editSha256 = "e".repeat(64);
 const checkCount = 70;
 
@@ -50,28 +48,6 @@ suite("chapter view Postgres dependency ownership", () => {
         projectId,
         SEEDED_SCOPE.userId,
         `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}master.mp4`,
-      ]
-    );
-    await owner.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        legacyGroundingId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "e".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding-legacy.json`,
-        "c".repeat(64),
-        JSON.stringify({
-          fallbackQuoteCount: 1,
-          fallbackUnitCount: 1,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-legacy",
-        }),
       ]
     );
     await owner.query(
@@ -138,7 +114,8 @@ suite("chapter view Postgres dependency ownership", () => {
           budget_micros, config, route_snapshot, evidence_artifact_id,
           current_revision)
        VALUES ($1, $2, $3, 'chapters', 'needs_review', 'fixture', $4,
-               1000000, '{"backend":"recorded"}'::jsonb, '{}'::jsonb, $5, 1)`,
+               1000000, '{"backend":"recorded"}'::jsonb,
+               '{"editorialPolicy":"standalone-topics/3"}'::jsonb, $5, 1)`,
       [runId, SEEDED_SCOPE.organizationId, sourceId, randomUUID(), evidenceId]
     );
     await owner.query(
@@ -169,7 +146,7 @@ suite("chapter view Postgres dependency ownership", () => {
         "d".repeat(64),
         JSON.stringify({
           editSha256,
-          format: "chapter-renders/1",
+          format: "topic-renders/1",
           renderCount: checkCount,
           runId,
         }),
@@ -204,29 +181,6 @@ suite("chapter view Postgres dependency ownership", () => {
         [SEEDED_SCOPE.organizationId, sourceId, descriptorId, checkId]
       );
     }
-    await owner.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        groundingId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "f".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding.json`,
-        "b".repeat(64),
-        JSON.stringify({
-          coverageFallbackWindowCount: 1,
-          fallbackQuoteCount: 3,
-          fallbackUnitCount: 2,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-1",
-        }),
-      ]
-    );
   }, 20_000);
 
   afterAll(async () => {
@@ -252,7 +206,7 @@ suite("chapter view Postgres dependency ownership", () => {
   });
 
   it("returns every descriptor-owned check and frozen transcript revision", async () => {
-    const view = await getChapterView(sourceId, runId);
+    const view = await getTopicView(sourceId, runId);
     const checks = view.artifacts.filter(
       (artifact) =>
         artifact.kind === "checks" &&
@@ -266,83 +220,48 @@ suite("chapter view Postgres dependency ownership", () => {
       currentTranscriptRevision: 2,
       evidenceTranscriptRevision: 1,
     });
-    expect(view.summaryGrounding).toMatchObject({
-      coverageFallbackWindowCount: 1,
-      fallbackQuoteCount: 4,
-      fallbackUnitCount: 3,
-    });
-    expect(view.summaryGrounding.reports.map(({ id }) => id)).toEqual(
-      expect.arrayContaining([groundingId, legacyGroundingId])
-    );
-    expect(view.summaryGrounding.reports).toHaveLength(2);
   });
 
-  it("keeps topic and legacy chapter history separate, including exact run selection", async () => {
+  it("keeps topic history to the one topic policy, including exact run selection", async () => {
     if (!owner) {
       return;
     }
     const topicRunId = randomUUID();
-    await owner.query(
-      `INSERT INTO harness_run
-         (id, organization_id, source_id, lane, status, brief, request_key,
-          budget_micros, config, route_snapshot, evidence_artifact_id, current_revision)
-       VALUES ($1, $2, $3, 'chapters', 'needs_review', 'topic fixture', $4,
-          1000000, '{"backend":"recorded"}'::jsonb,
-          '{"editorialPolicy":"standalone-topics/1"}'::jsonb, $5, 0)`,
-      [
-        topicRunId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        randomUUID(),
-        evidenceId,
-      ]
+    const foreignRunId = randomUUID();
+    await Promise.all(
+      (
+        [
+          [topicRunId, "standalone-topics/3"],
+          [foreignRunId, "standalone-topics/1"],
+        ] as const
+      ).map(([id, policy]) =>
+        owner.query(
+          `INSERT INTO harness_run
+             (id, organization_id, source_id, lane, status, brief, request_key,
+              budget_micros, config, route_snapshot, evidence_artifact_id, current_revision)
+           VALUES ($1, $2, $3, 'chapters', 'needs_review', 'topic fixture', $4,
+              1000000, '{"backend":"recorded"}'::jsonb,
+              jsonb_build_object('editorialPolicy', $6::text), $5, 0)`,
+          [
+            id,
+            SEEDED_SCOPE.organizationId,
+            sourceId,
+            randomUUID(),
+            evidenceId,
+            policy,
+          ]
+        )
+      )
     );
-    const [chapters, topics, wrongChapter, wrongTopic] = await Promise.all([
-      getChapterView(sourceId),
+    const [topics, exact, unknown] = await Promise.all([
       getTopicView(sourceId),
-      getChapterView(sourceId, topicRunId),
       getTopicView(sourceId, runId),
+      getTopicView(sourceId, randomUUID()),
     ]);
-    expect(chapters.runs.map((item) => item.id)).toEqual([runId]);
-    expect(topics.runs.map((item) => item.id)).toEqual([topicRunId]);
+    // The deleted programs' rows are not history: only the one policy is listed.
+    expect(topics.runs.map((item) => item.id)).toEqual([topicRunId, runId]);
     expect(topics.run?.id).toBe(topicRunId);
-    expect(wrongChapter.run).toBeNull();
-    expect(wrongTopic.run).toBeNull();
-  });
-
-  it("refuses a present coverage fallback count unless it is exactly one", async () => {
-    const invalidId = randomUUID();
-    await owner?.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        invalidId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "9".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding-invalid.json`,
-        "8".repeat(64),
-        JSON.stringify({
-          coverageFallbackWindowCount: 0,
-          fallbackQuoteCount: 0,
-          fallbackUnitCount: 0,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-invalid",
-        }),
-      ]
-    );
-    try {
-      await expect(getChapterView(sourceId, runId)).rejects.toThrow(
-        "Summary grounding report has invalid coverageFallbackWindowCount."
-      );
-    } finally {
-      await owner?.query("DELETE FROM harness_artifact WHERE id = $1", [
-        invalidId,
-      ]);
-    }
+    expect(exact.run?.id).toBe(runId);
+    expect(unknown.run).toBeNull();
   });
 });

@@ -13,9 +13,11 @@ import pytest
 from obstore.store import MemoryStore
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
+from qualification_fixtures import _outputs_v3
 from temnia_pipeline import db
-from temnia_pipeline.harness import ledger, models, runs
+from temnia_pipeline.harness import models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.gateway import (
     GatewayChatModel,
     GatewayConfig,
@@ -24,17 +26,15 @@ from temnia_pipeline.harness.gateway import (
 from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy
 from temnia_pipeline.harness.models import ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
-    TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_V3_SCHEMAS,
     topic_selection_qualification_prompts,
 )
 from temnia_pipeline.harness.routes import SeatRoutePool
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY
 from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan
 from temnia_pipeline.harness.topic_selection_workflow import selection_model_deps
 from test_harness_model_transport import snapshot
 from test_harness_runs import SEEDED, pipeline_url, ready_source, settings, start_request
 from test_openrouter_gateway import openrouter_route
-from test_topic_selection_qualification import _outputs
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -77,12 +77,12 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             for seat in ("propose", "verify", "summary")
         },
     )
-    configuration = replace(settings(routes), topic_selection_enabled=True, gateway="openrouter")
+    configuration = replace(settings(routes), gateway="openrouter")
     source_id = await ready_source(url)
     original = start_request(source_id, routes)
     start = original.model_copy(
         update={
-            "editorial_policy": SELECTION_POLICY,
+            "editorial_policy": TOPIC_SELECTION_POLICY_V3,
             "request": original.request.model_copy(
                 update={"config": configuration.allowed_config()}
             ),
@@ -119,7 +119,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             role["choices"] = [
                 {
                     "index": 0,
-                    "delta": {"content": json.dumps(_outputs()[0])},
+                    "delta": {"content": json.dumps(_outputs_v3()[1])},
                     "finish_reason": "length" if outcome == "length" else "stop",
                 }
             ]
@@ -185,17 +185,19 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             prompt=prompt,
             stage="proposal:selection:0",
             prompt_version=prompt_version,
-            schema_version=TOPIC_SELECTION_SCHEMAS["topic_author"],
+            schema_version=TOPIC_SELECTION_V3_SCHEMAS["topic_author"],
             author=selected,
             verifier=selected,
             input_artifacts=(),
         )
         deps = selection_model_deps(start.request, plan)
-        agent = models.topic_selection_author_v2
+        agent = models.topic_selection_author_v3
         try:
             if interrupted:
+                # The receipt settles the lost stream: each attempt is a known failure
+                # with its charge, and the next call is a fresh paid attempt.
                 for _ in range(2):
-                    with pytest.raises(ledger.OutcomeUnknown):
+                    with pytest.raises(models.TransientProviderFailure):
                         await agent.run(prompt, deps=deps, model_settings={"max_tokens": 8192})
             elif outcome == "length":
                 for _ in range(2):
@@ -208,26 +210,30 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
                 second = await agent.run(prompt, deps=deps, model_settings={"max_tokens": 8192})
                 assert first.output == second.output
             async with db.scoped(url, SEEDED) as conn:
-                attempt = await (
+                attempts = await (
                     await conn.execute(
                         "SELECT remote_handle,state,actual_cost_micros,cost_status,usage "
-                        "FROM harness_attempt WHERE run_id=%s",
+                        "FROM harness_attempt WHERE run_id=%s ORDER BY attempt_number",
                         (start.request.runId,),
                     )
-                ).fetchone()
-            assert attempt is not None
-            assert attempt["remote_handle"] == "generation-ledger"
-            assert len(early_rows) == requests == 1
+                ).fetchall()
+            assert attempts
+            attempt = attempts[-1]
+            assert all(row["remote_handle"] == "generation-ledger" for row in attempts)
+            expected_requests = 2 if interrupted else 1
+            assert len(early_rows) == requests == expected_requests
             run = await runs.get_run(
                 url, scope=SEEDED, source_id=source_id, run_id=start.request.runId
             )
-            assert run.dispatch_count == 1
+            assert run.dispatch_count == expected_requests
             if interrupted:
-                assert attempt["state"] == "outcome_unknown"
-                assert attempt["actual_cost_micros"] is None
-                assert attempt["cost_status"] == "unknown"
-                assert run.reserved_micros > 0
-                assert lookups == 0
+                assert len(attempts) == 2
+                assert all(row["state"] == "failed_known" for row in attempts)
+                assert all(row["actual_cost_micros"] == 1 for row in attempts)
+                assert all(row["cost_status"] == "reported" for row in attempts)
+                assert run.spent_micros == 2
+                assert run.reserved_micros == 0
+                assert lookups == 2
             else:
                 assert attempt["state"] == "succeeded"
                 assert run.spent_micros == 1

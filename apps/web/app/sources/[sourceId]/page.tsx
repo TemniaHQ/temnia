@@ -11,7 +11,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { harnessSettings } from "@/lib/harness/config";
-import { getChapterView, getTopicView } from "@/lib/harness/queries";
+import { getTopicView } from "@/lib/harness/queries";
 import { resolveScope } from "@/lib/scope/resolve-scope";
 import { getSourceWithArtifacts } from "@/lib/sources/queries";
 import { getTranscript } from "@/lib/transcript/queries";
@@ -22,10 +22,9 @@ export default async function SourcePage({
   params,
 }: PageProps<"/sources/[sourceId]">) {
   const { sourceId } = await params;
-  const [found, transcript, chapters, topics] = await Promise.all([
+  const [found, transcript, topics] = await Promise.all([
     getSourceWithArtifacts(sourceId),
     getTranscript(sourceId),
-    getChapterView(sourceId),
     getTopicView(sourceId),
   ]);
   if (!found) {
@@ -72,8 +71,6 @@ export default async function SourcePage({
           sizeBytes: a.sizeBytes,
           storageKey: a.storageKey,
         }))}
-        chapterAvailability={harnessSettings()}
-        chapters={chapters}
         peaksUrl={has("peaks") ? `${prefix}${ARTIFACT_PATHS.peaks}` : null}
         playlistUrl={has("hls") ? `${prefix}${ARTIFACT_PATHS.hlsMaster}` : null}
         posterUrl={
@@ -97,6 +94,7 @@ export default async function SourcePage({
           width: source.width,
         }}
         speakerLabels={row?.speakerLabels ?? {}}
+        topicAvailability={harnessSettings()}
         topics={topics}
         transcript={
           row

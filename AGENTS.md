@@ -2,6 +2,114 @@
 
 ## Decisions
 
+**2026-09-13 — Merge, deploy, click: the images carry the harness configuration.** Rajesh,
+shown the eleven-step rollout (root-owned file on the VPS, Dokploy bind mount, two
+environment tables, ordered reloads): "Why do I need to do all of these circus to be able
+to run the pipeline?" He is right; the guarantees were sound and their delivery was design
+debt. The guarantees stay: the route snapshot is an immutable content-addressed file, the
+worker refuses to boot on a mismatch, the web sends exactly the worker's run config. The
+delivery is now one committed file per deployment, `apps/pipeline/harness/staging.json`
+(`harness-config/1`, a shared contract), next to its snapshot; both Dockerfiles copy the
+directory to `/app/harness/` and bake `HARNESS_CONFIG_PATH` to it. With that variable set,
+every other `HARNESS_*` environment entry is ignored and the worker's boot log names the
+ignored entries, so stale Dokploy values cannot disagree with the file; empty means the
+environment is the configuration (the gate, local development, the experiment operator,
+which pins its own snapshot). The only value left on the box is the `OPENROUTER_API_KEY`
+secret. `tests/test_harness_config_file.py` boots every committed configuration in the
+gate, which is where the two blockers found by hand today (three-family seat pools; a
+32,768 run-config ceiling under a 65,536 setting) now fail. Changing the roster or a limit
+is a PR. Production gets its own file and one Dokploy variable pointing at it.
+
+**2026-09-13 — Staging roster settled on technical reliability; chapters are gone; the
+harness is the only goal until results are satisfactory.** Rajesh: Temnia is not live, existing
+chapter and topic runs need no compatibility, chapters are gone and only standalone topic videos
+remain, work is done without delegation, and the model selection is settled on what completes
+without technical failure. Evidence from the full-source Karma runs: Kimi K3/Fireworks completed
+every author and repair call in r11, r15, r16, r18 and r20 (zero transport failures in the
+author seat); Gemini 3.8 Flash/Vertex at medium effort completed inventory, cold and source
+review in r11, r18, r20, r22 and r25 (37 settled calls in the r20/r25 bundles alone) and failed
+only by an upstream rate limit delivered inside an HTTP 200 stream (r13 cold review, r23 as
+author) and by exhausting a 32,768 output allowance on reasoning (first v3 source review, a v2
+repair); DeepSeek V4 Pro 0813/Fireworks completed authoring in r24 and authoring plus repair in
+r25; Kimi as full-source reviewer crossed the 540 s deadline once in one attempt (r24); Astra
+failed two full-source author calls on the deadline. Settled roster: verify pool Gemini 3.8
+Flash first, propose pool Kimi K3 first and DeepSeek V4 Pro second, Astra excluded, all through
+OpenRouter with `gateway-transport/2`; every pool lists all three routes because a production
+seat pool needs three model families. The file is committed as
+`infra/harness/topic-routes-staging-0df7f78d.json` (ID `0df7f78d…`), and the run-config
+ceiling `maxOutputTokens` was raised from 32,768 to 65,536 so the worker boots on it. This is a reliability selection recorded with its
+evidence, not an editorial audition; the no-default-vendor rule's audition is still owed on a
+calibration set. Two technical fixes make the roster hold: a lost stream whose generation
+receipt reports a settled charge is now a known failure (`TransientProviderFailure`) that the
+workflow retries twice with 30 s and 90 s backoff before ending the run with route, stage and
+cost named, while a pending receipt keeps the unknown fence; and staging runs with
+`HARNESS_MAX_OUTPUT_TOKENS=65536` (Gemini's route maximum, clamped per route) and
+`HARNESS_MAX_DISPATCHES=64`. The chapter lane (navigation partitions, `chapter-editorial/1`,
+Chapter-Llama) is deleted on 13 September: the web tab, panel, actions, API route and journey
+(5,393 lines) and the pipeline program (workflows, hierarchical summaries, proposal diagnostics,
+editorial verify/repair, Chapter-Llama, chapter evaluation bundle and report, legacy and editorial
+pre-flight suites; 94 files, 24,540 lines). What the topic lane used moved: run failure messages
+to `harness/run_failures.py`, shared evaluation wire models to `evals/common.py`, the synthetic
+pre-flight transcript to `harness/qualification_fixture.py`. Editorial policy is topic-only and a
+replay under another program generation is refused. The `chapter_*` names that remain
+(`ChapterRunInput`, `chapter_revision`, `start_chapter_run`, the per-video `chapter-edit/1`
+execution) are the shared run and render machinery the topic lane is built on; renaming them is
+churn for later. The v1/v2 topic programs went the same evening (84 files, 6,658 lines removed,
+1,361 added): one workflow type `TopicSelectionWorkflow`, one policy literal
+`standalone-topics/3`, one patch and one source-review schema (`TopicSelectionPatchV3`,
+`TopicPortfolioReviewV4`), no `topic-assessment/1` reader, no chapter summary-grounding view,
+and one recorded fixture `topic.synthetic.json` that carries the five schemas as a discovery
+case (empty inventory and author, a required omission finding, one grounded repair, then cold
+and source review of the recovered treatment); settings refuse a recorded fixture that lacks
+any topic stage output. `qualify_harness_gateway.py` keeps only the `topic-selection-v3`
+suite. Prompts were read in full on 13 September: they are user-turn
+rule lists with no system instructions, negative-heavy, example-free, repeating the no-count rule
+across seats, carrying jargon and ruff line-wrap artifacts, and each incident added a paragraph;
+the decisions doc §4 findings stand. The rewrite is measured against the first staging run as
+the baseline, not before it.
+
+**2026-09-13 — Topic generation on staging is one button, one program, one worker; the
+qualification manifest is no longer a gate.** Rajesh could not start the current program on
+staging: the default button refused for want of a per-version flag on two processes and a
+bound five-stage qualification manifest that every prompt or schema bump invalidated, and
+the routes that finished full-source runs were not in the worker's snapshot. New topic runs
+start only `standalone-topics/3` (its DB literal and workflow type name are unchanged); `/1`
+and `/2` were deleted the same day (entry above); Temnia is not live, so no run of either needs
+reading. The manifest, `bind-topics`, the manifest
+formats and the `HARNESS_TOPIC_SELECTION_*` flags and paths are removed. Admission is in-run:
+the first settled call on a snapshot, route, stage and program identity is the proof; a
+provider refusal ends the run `failed` with a message naming route, stage and HTTP status and
+the charge retained; `outcome_unknown` now carries a message. The ledger's reservation,
+receipt and unknown fences are unchanged; `qualify_harness_gateway.py run` remains an
+optional pre-flight that binds nothing. Chapters (navigation partitions) and topics
+(standalone videos) are distinct lanes since 10 September; only topics are the product now,
+so the chapter lane is parked on staging with `HARNESS_CHAPTERS_ENABLED=0` (creation refused,
+existing runs reviewable) and the one worker carries the OpenRouter topic snapshot. OpenRouter
+is the gateway because the Vercel full-source calls timed out repeatedly. The single default
+brief is the Python `EDITORIAL_BRIEF`; the web omits `brief` when the box is empty and the
+worker freezes the effective text on the run; every topic run carries its program manifest;
+the shot detector default is `scdet` in code. Worker boot checks every pool route against the
+effective topic output ceiling; chapter starts keep their strict run-start check. Long sources:
+admission is `admission/2`, input tokens = ceil(bytes / 2) + protocol overhead (the old 1:1 rule
+refused a 2.5-hour source on every 256k route; the 512 KiB payload cap stays; each run records its
+admission version in the frozen snapshot); a route's frozen aggregate deadline is the unit per
+128 KiB of payload, the model activity's start-to-close is the effective deadline plus 60 s, and
+payloads up to 128 KiB keep exactly the frozen values so recorded runs are unchanged. The per-call
+activity option reaches pydantic-ai through a subclass of its private durable model operation on
+the pinned version; an upgrade that renames it fails at import and the gate, never silently. The staging
+roster (Kimi K3/Fireworks author first, DeepSeek V4 Pro/Fireworks second, Gemini 3.8
+Flash/Vertex reviewer first; Astra excluded) is the r25 snapshot reordered and remains
+provisional under the no-default-vendor rule: it finishes runs, it has not won. Later the same
+day the chapter lane was deleted outright (web and pipeline, see the entry above), so the
+`HARNESS_CHAPTERS_ENABLED` flag described here no longer exists. Acceptance for
+the first staging run is sentence-complete cuts with the pause owned by the preceding video;
+topic-ownership defects are corrected by hand and the compound-candidate gap is the next
+program problem. Overlap between standalone videos is allowed for setup context both videos
+need, never for core, and any overlap longer than a short premise is an ownership question
+the reviewer must answer. This supersedes the 2026-09-11 four-schema qualification
+requirement and the decisions doc §2 procedure. Plan:
+`docs/plans/topic-generation-staging-360-view.md`.
+
 **2026-09-12 — Human playback accepts sentence-complete Karma cuts; trailing pauses and
 semantic handoffs are the remaining release refinements.** Rajesh reviewed the nine admitted r11
 videos and found every video technically complete with no broken sentence at either edge. Do not
@@ -77,6 +185,60 @@ invalid and retained no changed selection. The run ended `needs_review`. No test
 an editorial winner. The measured remaining representation gap is internal topic structure inside
 one candidate; adjacent overlap and handoff judgments do not observe it. Do not start more model
 arms or add source-specific rules to hide that program limitation.
+
+**2026-09-12 — New topic runs stick to FFmpeg `scdet`; AdaptiveDetector is not the default without a trial.**
+Rajesh asked which scene detector to keep if the requested AdaptiveDetector trial
+is not going to run. Keep `scdet`. On the verified Karma master the two detectors
+agreed on 403 cuts (428 adaptive vs 409 `scdet`) while AdaptiveDetector took
+211.5 s against 15.6 s; that is agreement and cost, not editorial ranking.
+AdaptiveDetector’s motion-robust baseline matters for handheld or continuously
+moving picture, not a typical locked-off podcast camera switch. Neither detector
+establishes discussion completion. Record:
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md) §1.
+This supersedes the 10 September “use AdaptiveDetector for the next topic trial”
+default. Historical snapshots keep their frozen detector. AdaptiveDetector remains
+an explicit comparison. Do not broaden this into detector shopping or an
+orchestration change. This entry is not yet applied in code. As of PR #40 new runs
+take `harness/settings.py` (`HARNESS_TOPIC_SHOT_DETECTOR`, default
+`pyscenedetect-adaptive`) and `topic_experiment.py` defaults to the same; the `scdet` in
+`runtime_types.py` and `runs.py` is only the fallback for snapshots recorded before the
+field existed. The v3 record and the 12 September runs above record AdaptiveDetector. The
+next settings PR changes the code default and the staging variable to `scdet`; until then
+state the detector explicitly per run. Do not leave both defaults standing.
+
+**2026-09-12 — Topic blockers are editorial operations and calibration; no agent framework.**
+A read-only review of the evidence, author, review, repair and compile stages, re-checked
+against `main` after PR #39 (`standalone-topics/3`) and again after PR #40, is recorded in
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md)
+§3–§9 with per-finding status. #39 closed the control failures (inventory-first by the reviewer
+family, rationale-free source critic, `replace_extent`, three re-reviewed repairs, a select-only
+render gate). Still open: byte-as-token admission with no topic hierarchy (a two-hour source is
+refused), out-of-extent spans refused instead of unioned, word-gap "pauses" and a binary Silero
+veto in the compiler, no critic calibration set, no listening judge, and prompts that are user-turn
+rule lists with no `instructions=` and no `.describe()` on contract fields. Rajesh asked whether
+LangChain/LangGraph/Google ADK should supply checkpoints, resumes or agent loops: no. Their
+Temporal plugins disable their own persistence and add notation only; Temnia's guards live inside
+the PydanticAI model activity. The 2026-09-07 typed-program decision stands (§5). Rajesh's first
+playback review of the nine admitted r11 Karma videos (13 September, §7) is the measured result
+recorded in the entry above: every cut physically complete, no sentence broken at either edge, two
+defects. Their root causes are code-side, and #40 answered both in part. The trailing pause was
+split because `topic-compiler/2` targeted the word-gap midpoint at every transition on a
+first/mid/last grid; `topic-compiler/3` now gives the whole pause to the preceding video, which
+closes the ending. The opening now starts at the latest safe instant before the first selected
+word with no lead-in; whether a 200–300 ms lead-in sounds better is a listening preference under
+C2, not a defect, and no acoustic silence is measured yet (E2). Two videos shared core content
+(mantra, videos 4 and 5) because core overlap was never computed; `topic-selection-portfolio/4`
+now hands every exact overlap and adjacent handoff to the source reviewer with a required typed
+classification. The classification is still the model's: the deterministic core∩core finding
+proposed in §7b was not adopted, and r20/r25 showed the loophole neither can see, a single compound
+candidate with no overlap to classify. That internal-structure gap is the program's open problem,
+as the entry above states; give it a program answer before starting more model arms (§9).
+One informal review is not a labeled set. KernelCPD change-points are built but unreachable from
+production (`segmenter: Literal["sat"]`); run them as scored hints in a code-side source map,
+never as compiler candidates, measured on the calibration set first (§8). No author or reviewer
+seat is finalized. Transport ceiling is now a selection criterion in its own right: Astra failed
+two full-Karma author calls and Kimi one full-source review inside the frozen 540 s, so those
+routes cannot be auditioned on longer sources at all (§9).
 
 **2026-09-11 — OpenRouter is an explicit model-audition transport.** Rajesh merged
 PR #37 and configured the staging pipeline key. The

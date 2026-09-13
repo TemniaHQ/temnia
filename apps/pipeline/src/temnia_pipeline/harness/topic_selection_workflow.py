@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING, Any
 
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -18,20 +19,14 @@ with workflow.unsafe.imports_passed_through():
         TopicSelectionColdReview,
         TopicSelectionDraft,
     )
-    from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
     from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3, EditorialPolicy
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
-        TOPIC_SELECTION_V3_AGENTS,
         HarnessModelDeps,
         topic_opportunity_inventory_v3,
-        topic_selection_author_v2,
         topic_selection_author_v3,
-        topic_selection_cold_v2,
         topic_selection_cold_v3,
-        topic_selection_patch_v2,
         topic_selection_patch_v3,
-        topic_selection_source_v2,
         topic_selection_source_v4,
     )
     from temnia_pipeline.harness.queues import control_task_queue
@@ -47,13 +42,12 @@ with workflow.unsafe.imports_passed_through():
         WorkflowIdentity,
     )
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
-    from temnia_pipeline.harness.topic_selection import SELECTION_POLICY, selection_cold_key
+    from temnia_pipeline.harness.topic_selection import selection_cold_key
     from temnia_pipeline.harness.topic_selection_runtime import (
         OpportunityInventorySaveRequest,
         SelectionAssessmentResult,
         SelectionCallPlan,
         SelectionContext,
-        SelectionProgramVersion,
         SelectionReviewRequest,
         SelectionSaveRequest,
         SelectionSaveResult,
@@ -63,6 +57,9 @@ with workflow.unsafe.imports_passed_through():
         selection_call_inputs,
     )
     from temnia_pipeline.harness.topic_workflow import RETRY, TopicRunWorkflow
+
+if TYPE_CHECKING:
+    from temnia_pipeline.harness.routes import RouteEntry
 
 
 def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> HarnessModelDeps:
@@ -98,17 +95,30 @@ def invalid_model_output(error: Exception) -> bool:
     return name == "UnexpectedModelBehavior"
 
 
-@workflow.defn
+def transient_provider_failure(error: Exception) -> bool:
+    """A lost stream whose charge settled: a fresh paid attempt is allowed, unknowns are not."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name == "TransientProviderFailure"
+
+
+# One dispatch plus two retries: enough to ride out an upstream rate limit delivered
+# inside a successful stream, small enough that a persistently failing route still ends
+# the run with its cause named instead of spending indefinitely.
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_BACKOFF = (timedelta(seconds=30), timedelta(seconds=90))
+
+
+@workflow.defn(name="TopicSelectionWorkflow")
 class TopicSelectionWorkflow(TopicRunWorkflow):
     """New history and model activity names leave the original program replayable."""
 
     __pydantic_ai_agents__ = TOPIC_SELECTION_AGENTS
-    policy: EditorialPolicy = SELECTION_POLICY
-    selection_program: SelectionProgramVersion = "standalone-topics/2"
-    author_agent = topic_selection_author_v2
-    cold_agent = topic_selection_cold_v2
-    source_agent = topic_selection_source_v2
-    patch_agent = topic_selection_patch_v2
+    policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V3
+    author_agent = topic_selection_author_v3
+    cold_agent = topic_selection_cold_v3
+    source_agent = topic_selection_source_v4
+    patch_agent = topic_selection_patch_v3
 
     @workflow.run
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
@@ -158,9 +168,73 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         request: ChapterRunInput,
         context: SelectionContext,
     ) -> SelectionContext:
-        """V2 has no independent pre-author opportunity pass."""
-        _ = request
-        return context
+        """Run one independent source inventory, then degrade visibly if it is unavailable."""
+        plan = await self.prepare_selection(context)
+        diagnostics: tuple[str, ...] = ()
+        inventory = None
+        try:
+            result = await self.run_seat(
+                topic_opportunity_inventory_v3, request, plan, plan.verifier
+            )
+            inventory = result.output
+        except Exception as error:
+            if invalid_model_output(error):
+                diagnostics = (
+                    (
+                        "Independent source opportunity inventory did not match its required "
+                        "schema; authoring continued with that missing observation explicit."
+                    ),
+                )
+            elif execution_limit(error):
+                diagnostics = (
+                    (
+                        "Execution capacity prevented independent source opportunity inventory; "
+                        "authoring continued with that missing observation explicit."
+                    ),
+                )
+            else:
+                raise
+        saved = await workflow.execute_activity(
+            "save_topic_opportunity_inventory_v3",
+            OpportunityInventorySaveRequest(
+                context=context,
+                inventory=inventory,
+                schema_error=diagnostics[0] if diagnostics else None,
+            ),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=SelectionSaveResult,
+        )
+        if saved.selection is None:
+            diagnostics = (*diagnostics, *saved.diagnostics)
+        return context.model_copy(
+            update={
+                "inventory": saved.selection,
+                "inventory_attempted": True,
+                "inventory_diagnostics": tuple(dict.fromkeys(diagnostics)),
+            }
+        )
+
+    async def run_seat(
+        self,
+        agent: Any,  # noqa: ANN401
+        request: ChapterRunInput,
+        plan: SelectionCallPlan,
+        route: RouteEntry,
+    ) -> Any:  # noqa: ANN401
+        """Make one seat's call; retry only a settled transient failure, with backoff."""
+        deps = selection_model_deps(request, plan)
+        settings = {
+            "max_tokens": effective_topic_output_tokens(request.config.maxOutputTokens, route)
+        }
+        for attempt in range(TRANSIENT_ATTEMPTS):
+            try:
+                return await agent.run(plan.prompt, deps=deps, model_settings=settings)
+            except Exception as error:
+                if not transient_provider_failure(error) or attempt == TRANSIENT_ATTEMPTS - 1:
+                    raise
+                await workflow.sleep(TRANSIENT_BACKOFF[attempt])
+        raise RuntimeError("unreachable: transient retry loop exited without a result")
 
     async def review_selection(  # noqa: C901
         self,
@@ -185,15 +259,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 cold_context = context.model_copy(update={"candidate_id": candidate.id})
                 try:
                     plan = await self.prepare_selection(cold_context)
-                    result = await self.cold_agent.run(
-                        plan.prompt,
-                        deps=selection_model_deps(request, plan),
-                        model_settings={
-                            "max_tokens": effective_topic_output_tokens(
-                                request.config.maxOutputTokens, plan.verifier
-                            )
-                        },
-                    )
+                    result = await self.run_seat(self.cold_agent, request, plan, plan.verifier)
                 except Exception as error:
                     if invalid_model_output(error):
                         unavailable.append(candidate.id)
@@ -216,14 +282,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         if not limited:
             try:
                 source_plan = await self.prepare_selection(context)
-                result = await self.source_agent.run(
-                    source_plan.prompt,
-                    deps=selection_model_deps(request, source_plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, source_plan.verifier
-                        )
-                    },
+                result = await self.run_seat(
+                    self.source_agent, request, source_plan, source_plan.verifier
                 )
                 source_dispatched = True
                 source_review = result.output
@@ -310,7 +370,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         context = SelectionContext(
             run=self.ref(request),
             evidence=evidence.artifact,
-            program_version=self.selection_program,
+            program_version=TOPIC_SELECTION_POLICY_V3,
         )
         rubric = await workflow.execute_activity(
             "prepare_topic_selection_rubric",
@@ -320,34 +380,12 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=HarnessArtifactRef,
         )
         context = context.model_copy(update={"rubric": rubric})
-        if run.chapter_llama_config is not None:
-            navigation = await workflow.execute_activity(
-                "generate_chapter_llama_candidate",
-                CandidateRequest(
-                    run=self.ref(request),
-                    evidence=evidence.artifact,
-                    configuration=run.chapter_llama_config,
-                ),
-                start_to_close_timeout=timedelta(hours=2),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RETRY,
-                result_type=CandidateResult,
-            )
-            context = context.model_copy(update={"navigation": navigation.artifact})
         context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:
             plan = await self.prepare_selection(context)
             try:
-                result = await self.author_agent.run(
-                    plan.prompt,
-                    deps=selection_model_deps(request, plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, plan.author
-                        )
-                    },
-                )
+                result = await self.run_seat(self.author_agent, request, plan, plan.author)
                 save = SelectionSaveRequest(context=context, draft=result.output)
             except Exception as error:
                 if not invalid_model_output(error):
@@ -397,15 +435,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
             try:
                 plan = await self.prepare_selection(patch_context)
-                result = await self.patch_agent.run(
-                    plan.prompt,
-                    deps=selection_model_deps(request, plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, plan.author
-                        )
-                    },
-                )
+                result = await self.run_seat(self.patch_agent, request, plan, plan.author)
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except Exception as error:
                 if invalid_model_output(error):
@@ -484,80 +514,4 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             edit=compiled.artifact,
             revision=1,
             reasons=(*compiled.refusals, *stop_reasons),
-        )
-
-
-@workflow.defn(name="TopicSelectionWorkflowV3")
-class TopicSelectionWorkflowV3(TopicSelectionWorkflow):
-    """Inventory-first selection with independent projection and complete extent repair."""
-
-    __pydantic_ai_agents__ = TOPIC_SELECTION_V3_AGENTS
-    policy = TOPIC_SELECTION_POLICY_V3
-    selection_program: SelectionProgramVersion = "standalone-topics/3"
-    author_agent = topic_selection_author_v3
-    cold_agent = topic_selection_cold_v3
-    source_agent = topic_selection_source_v4
-    patch_agent = topic_selection_patch_v3
-
-    @workflow.run
-    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
-        """Execute the inventory-first programme under its own history type."""
-        return await super().run(request)
-
-    async def prepare_author_context(
-        self,
-        request: ChapterRunInput,
-        context: SelectionContext,
-    ) -> SelectionContext:
-        """Run one independent source inventory, then degrade visibly if it is unavailable."""
-        plan = await self.prepare_selection(context)
-        diagnostics: tuple[str, ...] = ()
-        inventory = None
-        try:
-            result = await topic_opportunity_inventory_v3.run(
-                plan.prompt,
-                deps=selection_model_deps(request, plan),
-                model_settings={
-                    "max_tokens": effective_topic_output_tokens(
-                        request.config.maxOutputTokens, plan.verifier
-                    )
-                },
-            )
-            inventory = result.output
-        except Exception as error:
-            if invalid_model_output(error):
-                diagnostics = (
-                    (
-                        "Independent source opportunity inventory did not match its required "
-                        "schema; authoring continued with that missing observation explicit."
-                    ),
-                )
-            elif execution_limit(error):
-                diagnostics = (
-                    (
-                        "Execution capacity prevented independent source opportunity inventory; "
-                        "authoring continued with that missing observation explicit."
-                    ),
-                )
-            else:
-                raise
-        saved = await workflow.execute_activity(
-            "save_topic_opportunity_inventory_v3",
-            OpportunityInventorySaveRequest(
-                context=context,
-                inventory=inventory,
-                schema_error=diagnostics[0] if diagnostics else None,
-            ),
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=RETRY,
-            result_type=SelectionSaveResult,
-        )
-        if saved.selection is None:
-            diagnostics = (*diagnostics, *saved.diagnostics)
-        return context.model_copy(
-            update={
-                "inventory": saved.selection,
-                "inventory_attempted": True,
-                "inventory_diagnostics": tuple(dict.fromkeys(diagnostics)),
-            }
         )

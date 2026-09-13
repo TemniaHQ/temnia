@@ -6,13 +6,7 @@ import {
   reviewTopicCommand,
   startTopicRun,
 } from "@/app/actions/topics";
-import {
-  DEFAULT_TOPIC_BRIEF_VERSION,
-  resolveTopicBrief,
-  TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
-} from "@/lib/harness/topic-defaults";
+import { TOPIC_POLICY } from "@/lib/harness/topic-defaults";
 import {
   restoreTopicIntent,
   TopicReviewIntentSchema,
@@ -27,11 +21,19 @@ const scope = {
   userId: "01992ffe-0a00-7000-8000-000000000003",
 };
 const intent = {
-  defaultBriefVersion: TOPIC_POLICY,
   requestKey: RUN,
   runId: RUN,
   sourceId: SOURCE,
 } as const;
+const serverConfig = {
+  backend: "gateway",
+  evidenceWindowSentences: 80,
+  maxDispatches: 32,
+  maxOutputTokens: 8192,
+  maxRenderConcurrency: 2,
+  maxRepairs: 3,
+  routeSnapshotId: "qualified-snapshot",
+};
 const command = {
   action: "accept",
   baseRevision: 1,
@@ -70,8 +72,6 @@ function rows(responses: unknown[][]) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.HARNESS_ENABLED = "1";
-  delete process.env.HARNESS_TOPIC_SELECTION_ENABLED;
-  delete process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED;
   process.env.HARNESS_BACKEND = "gateway";
   process.env.HARNESS_ROUTE_SNAPSHOT_ID = "qualified-snapshot";
   process.env.HARNESS_MAX_RUN_BUDGET_MICROS = "50000000";
@@ -100,7 +100,9 @@ function readySource() {
 }
 
 describe("topic workflow admission and pending identity", () => {
-  it("starts the generic topic workflow with the server budget and independent-video brief", async () => {
+  it("starts the one current program with no web brief and no deployment flag", async () => {
+    process.env.HARNESS_TOPIC_SELECTION_ENABLED = "0";
+    process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED = "0";
     readySource();
     await expect(startTopicRun(intent)).resolves.toMatchObject({
       ok: false,
@@ -108,37 +110,64 @@ describe("topic workflow admission and pending identity", () => {
       runId: RUN,
     });
     const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicRun);
-    expect(options.workflowId).toBe(`topic-run/${RUN}`);
+    expect(name).toBe(WORKFLOWS.topicSelection);
+    expect(options.workflowId).toBe(`topic-selection/${RUN}`);
     expect(options.args[0]).toMatchObject({
-      brief: resolveTopicBrief(intent),
       budgetMicros: 50_000_000,
       scope,
     });
-    expect(options.args[0].brief).toContain("reuse source context");
-    expect(options.args[0].brief).not.toContain("exact-cover");
+    expect(options.args[0]).not.toHaveProperty("brief");
+    expect(options.memo.temniaIntentSha256).toMatch(SHA256);
     expect(options.workflowIdReusePolicy).toBe("REJECT_DUPLICATE");
+    delete process.env.HARNESS_TOPIC_SELECTION_ENABLED;
+    delete process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED;
   });
 
-  it("preserves custom instructions and changes the exact request identity", async () => {
+  it("sends typed instructions trimmed and keeps empty and typed starts distinct", async () => {
     readySource();
     await startTopicRun(intent);
-    const firstMemo = mocks.start.mock.calls[0]?.[1].memo;
+    const emptyMemo = mocks.start.mock.calls[0]?.[1].memo;
     readySource();
-    await startTopicRun({ ...intent, brief: "Keep the original language." });
-    expect(mocks.start.mock.calls[1]?.[1].args[0].brief).toBe(
+    await startTopicRun({ ...intent, brief: " \n\t " });
+    expect(mocks.start.mock.calls[1]?.[1].args[0]).not.toHaveProperty("brief");
+    expect(mocks.start.mock.calls[1]?.[1].memo).toEqual(emptyMemo);
+    readySource();
+    await startTopicRun({ ...intent, brief: "  Keep the original language. " });
+    expect(mocks.start.mock.calls[2]?.[1].args[0].brief).toBe(
       "Keep the original language."
     );
-    expect(mocks.start.mock.calls[1]?.[1].memo).not.toEqual(firstMemo);
+    expect(mocks.start.mock.calls[2]?.[1].memo).not.toEqual(emptyMemo);
+    readySource();
+    await startTopicRun({ ...intent, brief: "Keep the original language." });
+    expect(mocks.start.mock.calls[3]?.[1].memo).toEqual(
+      mocks.start.mock.calls[2]?.[1].memo
+    );
+  });
+
+  it("returns an existing run whose default brief only the worker holds", async () => {
+    rows([
+      [
+        {
+          brief: "The worker's single editorial brief, frozen at the run.",
+          budgetMicros: 50_000_000,
+          config: serverConfig,
+          id: RUN,
+          requestKey: RUN,
+          routeSnapshot: { editorialPolicy: TOPIC_POLICY },
+        },
+      ],
+    ]);
+    expect(await startTopicRun(intent)).toEqual({ ok: true, runId: RUN });
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 
   it("refuses an existing legacy chapter identity instead of adopting it", async () => {
     rows([
       [
         {
-          brief: resolveTopicBrief(intent),
+          brief: "Any frozen brief.",
           budgetMicros: 50_000_000,
-          config: {},
+          config: serverConfig,
           id: RUN,
           requestKey: RUN,
           routeSnapshot: { editorialPolicy: "chapter-editorial/1" },
@@ -200,7 +229,13 @@ describe("topic workflow admission and pending identity", () => {
     ).toEqual(intent);
     expect(
       restoreTopicIntent(
-        JSON.stringify({ ...intent, defaultBriefVersion: "topic-chapters/1" }),
+        JSON.stringify({ ...intent, runId: "chapter-run-1" }),
+        TopicStartIntentSchema
+      )
+    ).toBeNull();
+    expect(
+      restoreTopicIntent(
+        JSON.stringify({ ...intent, brief: 12 }),
         TopicStartIntentSchema
       )
     ).toBeNull();
@@ -213,52 +248,17 @@ describe("topic workflow admission and pending identity", () => {
         TopicReviewIntentSchema
       )
     ).toBeNull();
-    expect(TOPIC_POLICY).toBe("standalone-topics/1");
   });
 });
 
-describe("versioned selection rollout and human corrections", () => {
-  it("keeps the new program gated without blocking a restored v1 intent", async () => {
-    expect(DEFAULT_TOPIC_BRIEF_VERSION).toBe(TOPIC_SELECTION_POLICY_V3);
-    expect(
-      await startTopicRun({
-        ...intent,
-        defaultBriefVersion: TOPIC_SELECTION_POLICY,
-      })
-    ).toMatchObject({ ok: false });
-    expect(mocks.start).not.toHaveBeenCalled();
-    readySource();
-    await startTopicRun(intent);
-    expect(mocks.start.mock.calls[0]?.[0]).toBe(WORKFLOWS.topicRun);
-  });
-
-  it("dispatches v2 with its own frozen workflow and memo identity", async () => {
-    process.env.HARNESS_TOPIC_SELECTION_ENABLED = "1";
-    readySource();
-    await startTopicRun({
-      ...intent,
-      defaultBriefVersion: TOPIC_SELECTION_POLICY,
+describe("retained generations and human corrections", () => {
+  it("reviews only runs of the one topic policy", async () => {
+    rows([[{ id: RUN }], []]);
+    expect(await reviewTopicCommand({ ...command, runId: RUN })).toMatchObject({
+      ok: true,
+      pending: true,
     });
-    const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicSelection);
-    expect(options.workflowId).toBe(`topic-selection/${RUN}`);
-    const nextMemo = options.memo;
-    readySource();
-    await startTopicRun(intent);
-    expect(mocks.start.mock.calls[1]?.[1].memo).not.toEqual(nextMemo);
-  });
-
-  it("dispatches v3 with its inventory-first workflow and memo identity", async () => {
-    process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED = "1";
-    readySource();
-    await startTopicRun({
-      ...intent,
-      defaultBriefVersion: TOPIC_SELECTION_POLICY_V3,
-    });
-    const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicSelectionV3);
-    expect(options.workflowId).toBe(`topic-selection-v3/${RUN}`);
-    expect(options.memo.temniaIntentSha256).toMatch(SHA256);
+    expect(TOPIC_POLICY).toBe("standalone-topics/3");
   });
 
   it("uses the separate human mutation workflow and persists the complete command", async () => {

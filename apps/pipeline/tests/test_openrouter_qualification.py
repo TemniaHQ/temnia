@@ -16,6 +16,7 @@ import httpx
 import httpx2
 import pytest
 
+from qualification_fixtures import API_KEY, _candidate_payload, _outputs_v3, _paths
 from temnia_pipeline.harness.qualification import (
     CandidateCatalogue,
     CandidateRoute,
@@ -26,13 +27,7 @@ from temnia_pipeline.harness.qualification import (
     reconcile_journal,
     run_qualification,
 )
-from temnia_pipeline.harness.qualification_topic_selection import (
-    bind_topic_selection_qualification,
-    validate_topic_selection_qualification,
-)
-from test_harness_gateway_qualification import API_KEY, _candidate_payload, _paths
 from test_harness_settings import snapshot
-from test_topic_selection_qualification import _outputs, _qualified
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -57,9 +52,9 @@ def _catalogue(*, count: int = 3) -> dict[str, Any]:
 
 def _limits() -> QualificationLimits:
     return QualificationLimits(
-        suite="topic-selection",
+        suite="topic-selection-v3",
         max_exposure_micros=100_000,
-        max_dispatches=12,
+        max_dispatches=15,
         max_output_tokens=256,
         lookup_wait_seconds=0,
     )
@@ -77,7 +72,7 @@ async def _openrouter(
     candidate_path.write_text(json.dumps(catalogue))
     paths = _paths(directory)
     requests: list[dict[str, Any]] = []
-    outputs = _outputs() * 3
+    outputs = _outputs_v3() * 3
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == "openrouter.ai"
@@ -140,7 +135,7 @@ async def _openrouter(
     async def lookup(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "openrouter.ai"
         identity = request.url.params["id"]
-        index = (int(identity.removeprefix("generation-")) - 1) // 4
+        index = (int(identity.removeprefix("generation-")) - 1) // 5
         candidate = catalogue["candidates"][index]
         return httpx.Response(
             200,
@@ -177,13 +172,13 @@ async def _openrouter(
     return snapshot(routes=routes, synthetic=False), paths["report_path"], report, requests
 
 
-async def test_streamed_qualification_and_transport_binding_capture_real_sdk_shape(
+async def test_streamed_qualification_captures_real_sdk_transport_shape(
     tmp_path: Path,
 ) -> None:
-    frozen, path, report, requests = await _openrouter(tmp_path)
+    _, _, report, requests = await _openrouter(tmp_path)
     assert report["status"] == "completed"
     assert report["passed"] is True
-    assert len(requests) == 12
+    assert len(requests) == 15
     for call, request in zip(report["calls"], requests, strict=True):
         assert call["generationObservedAt"] <= call["responseSavedAt"]
         assert request["stream"] is True
@@ -204,14 +199,6 @@ async def test_streamed_qualification_and_transport_binding_capture_real_sdk_sha
         assert receipt["sha256"] == call["cost"]["components"]["receiptSha256"]
         assert json.loads(raw)["data"]["total_cost"] == "0.000001"
         assert Path(receipt["path"]).stat().st_mode & 0o777 == 0o600
-    manifest = tmp_path / "bound.json"
-    bind_topic_selection_qualification(
-        frozen, [path], manifest, max_output_tokens=256, transport_bound=True
-    )
-    value = json.loads(manifest.read_bytes())
-    assert value["format"] == "topic-selection-qualification/4"
-    assert set(value["routeTransports"]) == {route.id for route in frozen.routes}
-    validate_topic_selection_qualification(frozen, manifest, max_output_tokens=256)
 
 
 @pytest.mark.parametrize(
@@ -229,146 +216,6 @@ async def test_stream_unknown_retains_early_handle_and_never_retries(
     assert "response" not in call
     assert "cost" not in call
     assert all(other["state"] == "planned" for other in report["calls"][1:])
-
-
-@pytest.mark.parametrize(
-    "tamper",
-    [
-        "mode",
-        "gateway",
-        "timeout",
-        "accounting",
-        "headers",
-        "wire_mode",
-        "provider",
-        "cost_identity",
-    ],
-)
-async def test_transport_binding_refuses_altered_actual_proof(tmp_path: Path, tamper: str) -> None:
-    frozen, path, report, _ = await _openrouter(tmp_path)
-    call = report["calls"][0]
-    if tamper in {"mode", "gateway", "timeout"}:
-        key, value = {
-            "mode": ("mode", "non_streaming"),
-            "gateway": ("gateway", "vercel"),
-            "timeout": ("total_timeout_seconds", 539.0),
-        }[tamper]
-        call["request"]["transport"][key] = value
-    elif tamper == "accounting":
-        call["request"]["providerAccountingName"] = "Different provider"
-    elif tamper == "headers":
-        call["request"]["headers"]["x-openrouter-cache"] = "true"
-    elif tamper == "wire_mode":
-        call["request"]["stream"] = False
-    elif tamper == "provider":
-        call["request"]["provider"]["allow_fallbacks"] = True
-    else:
-        call["cost"]["components"]["provider"] = "Different provider"
-    path.write_text(json.dumps(report))
-    with pytest.raises(ValueError, match="lack exact request qualification"):
-        bind_topic_selection_qualification(
-            frozen, [path], tmp_path / "refused.json", max_output_tokens=256, transport_bound=True
-        )
-    assert not (tmp_path / "refused.json").exists()
-
-
-async def test_transport_manifest_refuses_legacy_proof_and_legacy_version(tmp_path: Path) -> None:
-    frozen, report_path, _, _ = await _openrouter(tmp_path / "or")
-    for profile in (False, True):
-        with pytest.raises(ValueError, match="requires version 4"):
-            bind_topic_selection_qualification(
-                frozen,
-                [report_path],
-                tmp_path / "old.json",
-                max_output_tokens=256,
-                per_route_output=profile,
-            )
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
-    _, _, _, _ = await _qualified(legacy)
-    with pytest.raises(ValueError, match="lack exact request qualification"):
-        bind_topic_selection_qualification(
-            frozen,
-            [legacy / "report.json"],
-            tmp_path / "false.json",
-            max_output_tokens=256,
-            transport_bound=True,
-        )
-
-
-async def test_cross_mode_unknown_quarantine_survives_settled_report(tmp_path: Path) -> None:
-    frozen, passed, _, _ = await _openrouter(tmp_path / "passed")
-    _, unknown, report, _ = await _openrouter(tmp_path / "unknown", failure="timeout")
-    # A different mode does not clear the same gateway/model/provider's unknown call.
-    report["catalogue"]["candidates"][0]["transport"]["mode"] = "non_streaming"
-    unknown.write_text(json.dumps(report))
-    with pytest.raises(ValueError, match="unsettled calls"):
-        bind_topic_selection_qualification(
-            frozen,
-            [passed, unknown],
-            tmp_path / "bound.json",
-            max_output_tokens=256,
-            transport_bound=True,
-        )
-
-
-@pytest.mark.parametrize("tamper", ["missing", "extra", "mode", "accounting", "version"])
-async def test_transport_manifest_requires_exact_map(tmp_path: Path, tamper: str) -> None:
-    frozen, report_path, _, _ = await _openrouter(tmp_path)
-    manifest = tmp_path / "bound.json"
-    bind_topic_selection_qualification(
-        frozen, [report_path], manifest, max_output_tokens=256, transport_bound=True
-    )
-    value = json.loads(manifest.read_bytes())
-    entry = value["routeTransports"][frozen.routes[0].id]
-    if tamper == "missing":
-        del value["routeTransports"][frozen.routes[0].id]
-    elif tamper == "extra":
-        value["routeTransports"]["unselected"] = entry
-    elif tamper == "mode":
-        entry["transport"]["mode"] = "non_streaming"
-    elif tamper == "accounting":
-        entry["providerAccountingName"] = "other"
-    else:
-        value["format"] = "topic-selection-qualification/3"
-    manifest.write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="transport"):
-        validate_topic_selection_qualification(frozen, manifest)
-
-
-@pytest.mark.parametrize(
-    "tamper", ["missing", "raw_bytes", "normalized_cost", "rehash", "url", "generation"]
-)
-async def test_bound_accounting_requires_retained_exact_raw_observation(
-    tmp_path: Path, tamper: str
-) -> None:
-    frozen, report_path, report, _ = await _openrouter(tmp_path)
-    call = report["calls"][0]
-    receipt = call["costReceipts"][0]
-    if tamper == "missing":
-        del call["costReceipts"]
-    elif tamper == "normalized_cost":
-        call["cost"]["actual_cost_micros"] = 0
-    elif tamper in {"raw_bytes", "rehash"}:
-        path = Path(receipt["path"])
-        changed = path.read_bytes().replace(b'"0.000001"', b'"0.000002"')
-        path.write_bytes(changed)
-        if tamper == "rehash":
-            receipt["sha256"] = hashlib.sha256(changed).hexdigest()
-    elif tamper == "url":
-        receipt["url"] = "https://ai-gateway.vercel.sh/v1/generation"
-    else:
-        receipt["generationId"] = "different-generation"
-    report_path.write_text(json.dumps(report))
-    with pytest.raises(ValueError, match=r"topic qualification|topic production"):
-        bind_topic_selection_qualification(
-            frozen,
-            [report_path],
-            tmp_path / "refused.json",
-            max_output_tokens=256,
-            transport_bound=True,
-        )
-    assert not (tmp_path / "refused.json").exists()
 
 
 async def test_early_unknown_handle_can_be_accounted_without_mutating_original(
@@ -459,7 +306,7 @@ async def test_cli_never_uses_vercel_key_for_openrouter(
             "--max-output-tokens",
             "256",
             "--suite",
-            "topic-selection",
+            "topic-selection-v3",
         ]
     )
     with pytest.raises(QualificationRefusal, match="selected gateway API key"):

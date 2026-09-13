@@ -8,11 +8,7 @@ import {
 } from "@temnia/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { scoped } from "@/lib/db";
-import {
-  TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
-} from "./topic-defaults";
+import { TOPIC_POLICY } from "./topic-defaults";
 
 export interface ChapterArtifactRef {
   id: string;
@@ -54,45 +50,6 @@ export interface ChapterView {
     currentTranscriptRevision: number | null;
   } | null;
   runs: Array<{ createdAt: string; id: string; status: string }>;
-  summaryGrounding: {
-    coverageFallbackWindowCount: number;
-    fallbackQuoteCount: number;
-    fallbackUnitCount: number;
-    reports: ChapterArtifactRef[];
-  };
-}
-
-const MAX_SUMMARY_GROUNDING_REPORTS = 128;
-
-function groundingCount(
-  metadata: Record<string, unknown>,
-  key: "fallbackQuoteCount" | "fallbackUnitCount"
-): number {
-  const value = metadata[key];
-  if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new Error(`Summary grounding report has invalid ${key}.`);
-  }
-  return Number(value);
-}
-
-function coverageFallbackWindowCount(
-  metadata: Record<string, unknown>
-): number {
-  const value = metadata.coverageFallbackWindowCount;
-  if (value === undefined) {
-    return 0;
-  }
-  if (value !== 1) {
-    throw new Error(
-      "Summary grounding report has invalid coverageFallbackWindowCount."
-    );
-  }
-  if (groundingCount(metadata, "fallbackUnitCount") < value) {
-    throw new Error(
-      "Summary grounding report has fewer fallback units than coverage fallback windows."
-    );
-  }
-  return 1;
 }
 
 export function artifactIdsForRevisionPointers(
@@ -108,20 +65,12 @@ export function artifactIdsForRevisionPointers(
   };
 }
 
-export function getChapterView(
-  sourceId: string,
-  selectedRunId?: string,
-  pendingMutationKey?: string
-): Promise<ChapterView> {
-  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, false);
-}
-
 export function getTopicView(
   sourceId: string,
   selectedRunId?: string,
   pendingMutationKey?: string
 ): Promise<ChapterView> {
-  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, true);
+  return getHarnessView(sourceId, selectedRunId, pendingMutationKey);
 }
 
 /** Return scoped immutable references; the browser verifies bytes before editing. */
@@ -138,7 +87,7 @@ export function getTopicEditorialContext(
         and(
           eq(harnessRun.id, runId),
           eq(harnessRun.sourceId, sourceId),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
         )
       )
       .limit(1);
@@ -195,14 +144,11 @@ export function getTopicEditorialContext(
 function getHarnessView(
   sourceId: string,
   selectedRunId: string | undefined,
-  pendingMutationKey: string | undefined,
-  topics: boolean
+  pendingMutationKey: string | undefined
 ): Promise<ChapterView> {
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one scoped snapshot keeps run pointers, bounded events, and exact immutable descriptors mutually consistent
   return scoped(async (tx) => {
-    const policy = topics
-      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
-      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`;
+    const policy = sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`;
     const rows = await tx
       .select()
       .from(harnessRun)
@@ -250,12 +196,6 @@ function getHarnessView(
           id: row.id,
           status: row.status,
         })),
-        summaryGrounding: {
-          coverageFallbackWindowCount: 0,
-          fallbackQuoteCount: 0,
-          fallbackUnitCount: 0,
-          reports: [],
-        },
       };
     }
     const [revisionRows, recentEvents] = await Promise.all([
@@ -350,10 +290,7 @@ function getHarnessView(
                 sql`${harnessArtifact.metadata}->>'editSha256' = ${editSha256}`,
                 ...(kind === "render"
                   ? [
-                      sql`${harnessArtifact.metadata}->>'format' = ${topics ? "topic-renders/1" : "chapter-renders/1"}`,
-                      ...(topics
-                        ? []
-                        : [sql`${harnessArtifact.metadata} ? 'renderCount'`]),
+                      sql`${harnessArtifact.metadata}->>'format' = ${"topic-renders/1"}`,
                     ]
                   : [])
               )
@@ -422,42 +359,17 @@ function getHarnessView(
       .from(transcript)
       .where(eq(transcript.sourceId, sourceId))
       .limit(1);
-    const groundingArtifacts = await tx
+    const topicAssessments = await tx
       .select()
       .from(harnessArtifact)
       .where(
         and(
           eq(harnessArtifact.sourceId, sourceId),
-          eq(harnessArtifact.kind, "checks"),
-          sql`${harnessArtifact.metadata}->>'format' = 'chapter-summary-grounding/1'`,
-          sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`
+          sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
+          sql`${harnessArtifact.metadata}->>'format' IN ('topic-selection-assessment/2', 'topic-selection/2')`
         )
-      )
-      .orderBy(harnessArtifact.createdAt, harnessArtifact.id)
-      .limit(MAX_SUMMARY_GROUNDING_REPORTS + 1);
-    if (groundingArtifacts.length > MAX_SUMMARY_GROUNDING_REPORTS) {
-      throw new Error(
-        "Chapter run exceeds the summary grounding report limit."
       );
-    }
-    const topicAssessments = topics
-      ? await tx
-          .select()
-          .from(harnessArtifact)
-          .where(
-            and(
-              eq(harnessArtifact.sourceId, sourceId),
-              sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
-              sql`${harnessArtifact.metadata}->>'format' IN ('topic-assessment/1', 'topic-selection-assessment/2', 'topic-selection/2')`
-            )
-          )
-      : [];
-    const artifacts = [
-      ...editArtifacts,
-      ...dependencies,
-      ...groundingArtifacts,
-      ...topicAssessments,
-    ];
+    const artifacts = [...editArtifacts, ...dependencies, ...topicAssessments];
     const refs = artifacts.map((artifact) => ({
       id: artifact.id,
       kind: artifact.kind as ChapterArtifactRef["kind"],
@@ -504,29 +416,6 @@ function getHarnessView(
         id: row.id,
         status: row.status,
       })),
-      summaryGrounding: {
-        coverageFallbackWindowCount: groundingArtifacts.reduce(
-          (total, artifact) =>
-            total + coverageFallbackWindowCount(artifact.metadata),
-          0
-        ),
-        fallbackQuoteCount: groundingArtifacts.reduce(
-          (total, artifact) =>
-            total + groundingCount(artifact.metadata, "fallbackQuoteCount"),
-          0
-        ),
-        fallbackUnitCount: groundingArtifacts.reduce(
-          (total, artifact) =>
-            total + groundingCount(artifact.metadata, "fallbackUnitCount"),
-          0
-        ),
-        reports: refs.filter(
-          (artifact) =>
-            artifact.kind === "checks" &&
-            artifact.metadata.format === "chapter-summary-grounding/1" &&
-            artifact.metadata.runId === selected.id
-        ),
-      },
     };
   });
 }

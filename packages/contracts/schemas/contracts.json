@@ -677,7 +677,7 @@
           "default": 8192,
           "type": "integer",
           "minimum": 256,
-          "maximum": 32768
+          "maximum": 65536
         },
         "maxRenderConcurrency": {
           "default": 2,
@@ -742,7 +742,6 @@
         }
       },
       "required": [
-        "brief",
         "budgetMicros",
         "config",
         "requestKey",
@@ -998,6 +997,135 @@
       ],
       "additionalProperties": false,
       "title": "HarnessBoundaryCandidate"
+    },
+    "HarnessConfig": {
+      "$id": "#/$defs/HarnessConfig",
+      "type": "object",
+      "properties": {
+        "allowRecorded": {
+          "type": "boolean"
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "recorded",
+            "gateway"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "const": "harness-config/1"
+        },
+        "gateway": {
+          "type": "string",
+          "enum": [
+            "vercel",
+            "openrouter"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/HarnessConfigLimits"
+        },
+        "recordedFixturePath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "routeSnapshot": {
+          "$ref": "#/$defs/HarnessConfigRouteSnapshot"
+        },
+        "topicShotDetector": {
+          "type": "string",
+          "enum": [
+            "pyscenedetect-adaptive",
+            "scdet"
+          ]
+        }
+      },
+      "required": [
+        "allowRecorded",
+        "backend",
+        "enabled",
+        "format",
+        "gateway",
+        "limits",
+        "recordedFixturePath",
+        "routeSnapshot",
+        "topicShotDetector"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfig"
+    },
+    "HarnessConfigLimits": {
+      "$id": "#/$defs/HarnessConfigLimits",
+      "type": "object",
+      "properties": {
+        "evidenceWindowSentences": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "maxDispatches": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536
+        },
+        "maxRenderConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxRepairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "maxRunBudgetMicros": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "evidenceWindowSentences",
+        "maxDispatches",
+        "maxOutputTokens",
+        "maxRenderConcurrency",
+        "maxRepairs",
+        "maxRunBudgetMicros"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigLimits"
+    },
+    "HarnessConfigRouteSnapshot": {
+      "$id": "#/$defs/HarnessConfigRouteSnapshot",
+      "type": "object",
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigRouteSnapshot"
     },
     "HarnessEvidence": {
       "$id": "#/$defs/HarnessEvidence",
@@ -1756,60 +1884,6 @@
       ],
       "additionalProperties": false,
       "title": "SpeechCoverageInterval"
-    },
-    "TopicAssessment": {
-      "$id": "#/$defs/TopicAssessment",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicAssessmentCandidate"
-          }
-        },
-        "evidenceSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "format": {
-          "type": "string",
-          "const": "topic-assessment/1"
-        },
-        "proposalSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "proposerFamily": {
-          "type": "string",
-          "minLength": 1
-        },
-        "runId": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "verifierFamily": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "candidates",
-        "evidenceSha256",
-        "format",
-        "proposalSha256",
-        "proposerFamily",
-        "runId",
-        "summary",
-        "verifierFamily"
-      ],
-      "additionalProperties": false,
-      "title": "TopicAssessment"
     },
     "TopicAssessmentCandidate": {
       "$id": "#/$defs/TopicAssessmentCandidate",
@@ -2614,63 +2688,6 @@
       "additionalProperties": false,
       "title": "TopicPortfolioReview"
     },
-    "TopicPortfolioReviewV3": {
-      "$id": "#/$defs/TopicPortfolioReviewV3",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceJudgment"
-          }
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionFinding"
-          }
-        },
-        "missingOpportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunityJudgment"
-          }
-        },
-        "selection": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionDecision"
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        }
-      },
-      "required": [
-        "candidates",
-        "findings",
-        "missingOpportunities",
-        "opportunities",
-        "selection",
-        "summary",
-        "overlaps"
-      ],
-      "additionalProperties": false,
-      "title": "TopicPortfolioReviewV3"
-    },
     "TopicPortfolioReviewV4": {
       "$id": "#/$defs/TopicPortfolioReviewV4",
       "type": "object",
@@ -2709,16 +2726,16 @@
           "type": "string",
           "minLength": 1
         },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        },
         "handoffs": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/TopicCandidateHandoffJudgment"
+          }
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
           }
         }
       },
@@ -2729,8 +2746,8 @@
         "opportunities",
         "selection",
         "summary",
-        "overlaps",
-        "handoffs"
+        "handoffs",
+        "overlaps"
       ],
       "additionalProperties": false,
       "title": "TopicPortfolioReviewV4"
@@ -2853,17 +2870,7 @@
         "portfolioReview": {
           "anyOf": [
             {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/TopicPortfolioReview"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV3"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV4"
-                }
-              ]
+              "$ref": "#/$defs/TopicPortfolioReviewV4"
             },
             {
               "type": "null"
@@ -3085,106 +3092,6 @@
       ],
       "additionalProperties": false,
       "title": "TopicSelectionFinding"
-    },
-    "TopicSelectionPatch": {
-      "$id": "#/$defs/TopicSelectionPatch",
-      "type": "object",
-      "properties": {
-        "baseSelectionSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "evidenceSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "operations": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionPatchOperation"
-          }
-        },
-        "rubricSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "baseSelectionSha256",
-        "evidenceSha256",
-        "operations",
-        "rubricSha256",
-        "summary"
-      ],
-      "additionalProperties": false,
-      "title": "TopicSelectionPatch"
-    },
-    "TopicSelectionPatchOperation": {
-      "$id": "#/$defs/TopicSelectionPatchOperation",
-      "type": "object",
-      "properties": {
-        "affectedCandidateIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "findingIds": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "extend_start",
-            "extend_end",
-            "retitle",
-            "merge",
-            "split",
-            "drop",
-            "add_opportunity"
-          ]
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1
-        },
-        "replacementCandidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidate"
-          }
-        }
-      },
-      "required": [
-        "affectedCandidateIds",
-        "findingIds",
-        "id",
-        "kind",
-        "opportunities",
-        "reason",
-        "replacementCandidates"
-      ],
-      "additionalProperties": false,
-      "title": "TopicSelectionPatchOperation"
     },
     "TopicSelectionPatchOperationV3": {
       "$id": "#/$defs/TopicSelectionPatchOperationV3",

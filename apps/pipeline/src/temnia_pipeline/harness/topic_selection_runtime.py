@@ -12,19 +12,16 @@ from pydantic import BaseModel, ConfigDict
 
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
-    TopicPortfolioReview,
-    TopicPortfolioReviewV3,
     TopicPortfolioReviewV4,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
 )
 from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
 
-SelectionProgramVersion = Literal["standalone-topics/2", "standalone-topics/3"]
+SelectionProgramVersion = Literal["standalone-topics/3"]
 
 
 class SelectionContext(BaseModel):
@@ -33,7 +30,7 @@ class SelectionContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     run: RunRef
     evidence: HarnessArtifactRef
-    program_version: SelectionProgramVersion = "standalone-topics/2"
+    program_version: SelectionProgramVersion = "standalone-topics/3"
     rubric: HarnessArtifactRef | None = None
     inventory: HarnessArtifactRef | None = None
     inventory_attempted: bool = False
@@ -53,7 +50,7 @@ class SelectionCallPlan(BaseModel):
     prompt: str
     stage: str
     prompt_version: str
-    program_version: SelectionProgramVersion = "standalone-topics/2"
+    program_version: SelectionProgramVersion = "standalone-topics/3"
     schema_version: str
     author: RouteEntry
     verifier: RouteEntry
@@ -67,7 +64,7 @@ class SelectionSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     context: SelectionContext
     draft: TopicSelectionDraft | None = None
-    patch: TopicSelectionPatch | TopicSelectionPatchV3 | None = None
+    patch: TopicSelectionPatchV3 | None = None
     schema_error: str | None = None
 
 
@@ -99,7 +96,7 @@ class SelectionRejection(BaseModel):
     response: HarnessArtifactRef
     stage: str
     draft: TopicSelectionDraft | None = None
-    patch: TopicSelectionPatch | TopicSelectionPatchV3 | None = None
+    patch: TopicSelectionPatchV3 | None = None
     diagnostics: tuple[str, ...]
 
 
@@ -112,9 +109,7 @@ class SelectionReviewRequest(BaseModel):
     cold_candidate_ids: tuple[str, ...] = ()
     cold_stages: tuple[str, ...] = ()
     unavailable_cold_ids: tuple[str, ...] = ()
-    source_review: TopicPortfolioReview | TopicPortfolioReviewV3 | TopicPortfolioReviewV4 | None = (
-        None
-    )
+    source_review: TopicPortfolioReviewV4 | None = None
     source_dispatched: bool = True
     reasons: tuple[str, ...] = ()
     execution_limited: bool = False

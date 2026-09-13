@@ -1,4 +1,4 @@
-"""Explicit worker-only configuration for the chapter harness."""
+"""Explicit worker-only configuration for the topic harness: one file per deployment, or env."""
 
 # Boot refusals name the exact invalid variable at the validation site.
 # ruff: noqa: EM101, EM102, FBT001, FBT002, PLR0912, TRY003
@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
-from temnia_pipeline.contracts import Backend, ChapterRunConfig
+from temnia_pipeline.contracts import Backend, ChapterRunConfig, HarnessConfig
 from temnia_pipeline.harness.routes import (
     ContextWindowExceeded,
     RouteSnapshot,
@@ -31,7 +31,23 @@ HarnessBackend = Literal["gateway", "recorded"]
 TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
 DEFAULT_MAX_RUN_BUDGET_MICROS = 10_000_000
 REQUIRED_ROUTE_SEATS = frozenset({"propose", "summary", "verify"})
+# Every recorded output the standalone-topic program can ask for, so a fixture that is
+# missing one fails at settings load rather than mid-run.
+RECORDED_TOPIC_OUTPUTS = (
+    "topic_opportunity_inventory",
+    "topic_selection_author_v3",
+    "topic_selection_cold",
+    "topic_selection_source",
+    "topic_selection_source_selected_v3",
+    "topic_selection_patch",
+)
 MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
+# The deployed images bake this to their committed configuration file; an empty value
+# (the gate, local development, the experiment operator) means the environment is the
+# configuration, as before.
+CONFIG_PATH_VARIABLE = "HARNESS_CONFIG_PATH"
+SECRET_VARIABLES = frozenset({"OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY"})
+log = logging.getLogger("temnia.harness.settings")
 
 
 def _flag(env: Mapping[str, str], name: str, default: bool = False) -> bool:
@@ -69,46 +85,28 @@ class HarnessSettings:
     gateway_api_key: str | None
     gateway: GatewayName = "vercel"
     recorded_fixture_path: Path | None = None
-    chapter_llama_config: ChapterLlamaConfig | None = None
-    topic_shot_detector: TopicShotDetector = "pyscenedetect-adaptive"
-    topic_selection_enabled: bool = False
-    topic_selection_v3_enabled: bool = False
-    topic_selection_qualification_path: Path | None = None
-    topic_selection_v3_qualification_path: Path | None = None
+    topic_shot_detector: TopicShotDetector = "scdet"
+    config_path: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
         """Parse process configuration without choosing a model vendor fallback."""
         values = os.environ if env is None else env
+        config_path = values.get(CONFIG_PATH_VARIABLE) or None
+        if config_path:
+            return cls.from_file(Path(config_path), values)
         raw_backend = values.get("HARNESS_BACKEND") or None
         if raw_backend not in {None, "gateway", "recorded"}:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
         raw_gateway = values.get("HARNESS_GATEWAY", "vercel")
         if raw_gateway not in {"vercel", "openrouter"}:
             raise ValueError("HARNESS_GATEWAY must be vercel or openrouter")
-        raw_shot_detector = values.get("HARNESS_TOPIC_SHOT_DETECTOR", "pyscenedetect-adaptive")
+        raw_shot_detector = values.get("HARNESS_TOPIC_SHOT_DETECTOR", "scdet")
         if raw_shot_detector not in {"pyscenedetect-adaptive", "scdet"}:
             raise ValueError("HARNESS_TOPIC_SHOT_DETECTOR must be pyscenedetect-adaptive or scdet")
         snapshot_path = values.get("HARNESS_ROUTE_SNAPSHOT_PATH") or None
         return cls(
-            topic_selection_enabled=_flag(values, "HARNESS_TOPIC_SELECTION_ENABLED"),
-            topic_selection_v3_enabled=_flag(values, "HARNESS_TOPIC_SELECTION_V3_ENABLED"),
-            topic_selection_qualification_path=(
-                Path(values["HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH"])
-                if values.get("HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH")
-                else None
-            ),
-            topic_selection_v3_qualification_path=(
-                Path(values["HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH"])
-                if values.get("HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH")
-                else None
-            ),
             topic_shot_detector=cast("TopicShotDetector", raw_shot_detector),
-            chapter_llama_config=(
-                ChapterLlamaConfig.model_validate_json(values["HARNESS_CHAPTER_LLAMA_CONFIG_JSON"])
-                if values.get("HARNESS_CHAPTER_LLAMA_CONFIG_JSON")
-                else None
-            ),
             enabled=_flag(values, "HARNESS_ENABLED"),
             backend=cast("HarnessBackend | None", raw_backend),
             route_snapshot_id=values.get("HARNESS_ROUTE_SNAPSHOT_ID") or None,
@@ -136,6 +134,51 @@ class HarnessSettings:
             ),
         )
 
+    @classmethod
+    def from_file(cls, path: Path, env: Mapping[str, str]) -> HarnessSettings:
+        """Load the committed deployment file; the environment then supplies only secrets."""
+        config = HarnessConfig.model_validate_json(path.read_bytes())
+        ignored = sorted(
+            name for name in env if name.startswith("HARNESS_") and name != CONFIG_PATH_VARIABLE
+        )
+        if ignored:
+            log.warning(
+                "%s=%s is the harness configuration; ignoring environment entries %s",
+                CONFIG_PATH_VARIABLE,
+                path,
+                ", ".join(ignored),
+            )
+        base = path.resolve().parent
+
+        def resolve(value: str) -> Path:
+            candidate = Path(value)
+            return candidate if candidate.is_absolute() else base / candidate
+
+        gateway = cast("GatewayName", str(config.gateway))
+        return cls(
+            enabled=config.enabled,
+            backend=cast("HarnessBackend", str(config.backend)),
+            route_snapshot_id=config.routeSnapshot.id,
+            route_snapshot_path=resolve(config.routeSnapshot.path),
+            allow_recorded=config.allowRecorded,
+            max_run_budget_micros=config.limits.maxRunBudgetMicros,
+            max_dispatches=config.limits.maxDispatches,
+            max_repairs=config.limits.maxRepairs,
+            max_output_tokens=config.limits.maxOutputTokens,
+            evidence_window_sentences=config.limits.evidenceWindowSentences,
+            max_render_concurrency=config.limits.maxRenderConcurrency,
+            gateway=gateway,
+            gateway_api_key=env.get(
+                "OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY"
+            )
+            or None,
+            recorded_fixture_path=(
+                resolve(config.recordedFixturePath) if config.recordedFixturePath else None
+            ),
+            topic_shot_detector=cast("TopicShotDetector", str(config.topicShotDetector)),
+            config_path=path,
+        )
+
     def allowed_config(self) -> ChapterRunConfig:
         """Return the exact server-visible run configuration this worker accepts."""
         if self.backend is None or self.route_snapshot_id is None:
@@ -154,8 +197,6 @@ class HarnessSettings:
         """Fail enabled workers loudly and leave disabled legacy workers untouched."""
         if not self.enabled:
             return None
-        if self.chapter_llama_config is not None and self.backend != "gateway":
-            raise RuntimeError("Chapter-Llama compute requires the explicit gateway backend")
         if self.backend is None:
             raise RuntimeError("HARNESS_BACKEND is required when HARNESS_ENABLED=1")
         if self.route_snapshot_id is None or self.route_snapshot_path is None:
@@ -187,7 +228,7 @@ class HarnessSettings:
             ):
                 raise RuntimeError("recorded harness fixture must declare synthetic=true")
             outputs = cast("dict[object, object]", fixture).get("outputs")
-            required_outputs = ("propose", "summary", "verify")
+            required_outputs = RECORDED_TOPIC_OUTPUTS
             if not isinstance(outputs, dict) or not all(
                 isinstance(payload := cast("dict[object, object]", outputs).get(stage), dict)
                 and cast("dict[object, object]", payload).get("synthetic") is True
@@ -195,58 +236,21 @@ class HarnessSettings:
                 for stage in required_outputs
             ):
                 raise RuntimeError(
-                    "recorded harness fixture requires explicit synthetic propose, summary, "
-                    "and verify outputs"
+                    "recorded harness fixture requires an explicit synthetic output for "
+                    "every standalone-topic stage"
                 )
         config = self.allowed_config()
         if self.max_run_budget_micros <= 0:
             raise RuntimeError("HARNESS_MAX_RUN_BUDGET_MICROS must be positive")
         snapshot = load_route_snapshot(self.route_snapshot_path)
         if snapshot.snapshot_id != config.routeSnapshotId:
-            raise RuntimeError("loaded route snapshot hash differs from HARNESS_ROUTE_SNAPSHOT_ID")
+            raise RuntimeError("loaded route snapshot hash differs from the configured snapshot ID")
         if self.backend == "recorded" and not snapshot.synthetic:
             raise RuntimeError("recorded backend requires a visibly synthetic route snapshot")
         if self.backend == "gateway" and snapshot.synthetic:
             raise RuntimeError("gateway backend requires a production route snapshot")
         if self.backend == "gateway" and snapshot_gateway(snapshot) != self.gateway:
             raise RuntimeError("loaded route transport differs from HARNESS_GATEWAY")
-        if (
-            self.topic_selection_enabled or self.topic_selection_v3_enabled
-        ) and self.backend == "gateway":
-            # Qualification imports native schemas; defer until settings/route loading finishes.
-            from temnia_pipeline.harness.qualification_topic_selection import (  # noqa: PLC0415
-                validate_topic_selection_qualification,
-            )
-
-            if self.topic_selection_enabled:
-                if self.topic_selection_qualification_path is None:
-                    raise RuntimeError(
-                        "HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH is required for v2"
-                    )
-                validate_topic_selection_qualification(
-                    snapshot,
-                    self.topic_selection_qualification_path,
-                    max_output_tokens=self.max_output_tokens,
-                )
-            if (
-                self.topic_selection_v3_enabled
-                and self.topic_selection_v3_qualification_path is None
-            ):
-                raise RuntimeError(
-                    "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH is required for v3"
-                )
-            if self.topic_selection_v3_enabled:
-                qualification = self.topic_selection_v3_qualification_path
-                if qualification is None:
-                    raise RuntimeError(
-                        "HARNESS_TOPIC_SELECTION_V3_QUALIFICATION_PATH is required for v3"
-                    )
-                validate_topic_selection_qualification(
-                    snapshot,
-                    qualification,
-                    max_output_tokens=self.max_output_tokens,
-                    program_version="standalone-topics/3",
-                )
         missing_seats = REQUIRED_ROUTE_SEATS - snapshot.seats.keys()
         if missing_seats:
             raise RuntimeError(
@@ -263,11 +267,7 @@ class HarnessSettings:
                 estimate_cost(
                     route,
                     payload_bytes=1,
-                    max_output_tokens=(
-                        effective_topic_output_tokens(self.max_output_tokens, route)
-                        if self.topic_selection_enabled
-                        else self.max_output_tokens
-                    ),
+                    max_output_tokens=effective_topic_output_tokens(self.max_output_tokens, route),
                 )
             except (ContextWindowExceeded, ValueError) as error:
                 raise RuntimeError(

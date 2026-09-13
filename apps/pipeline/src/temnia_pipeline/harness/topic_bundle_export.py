@@ -15,14 +15,13 @@ from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessEvidence,
     Scope,
-    TopicAssessment,
     TopicEditSpec,
     TopicProposal,
     TopicRenders,
     TopicSelectionAssessment,
     TopicSelectionRecord,
 )
-from temnia_pipeline.evals.chapters import SHA256, AttemptFact
+from temnia_pipeline.evals.common import SHA256, AttemptFact
 from temnia_pipeline.evals.topics import (
     StageObservation,
     TopicArtifact,
@@ -315,13 +314,9 @@ async def export_topic_bundle(
     assessments = [
         artifact
         for artifact in exported
-        if isinstance(models[artifact.id], (TopicAssessment, TopicSelectionAssessment))
+        if isinstance(model := models[artifact.id], TopicSelectionAssessment)
         and selection_artifact is not None
-        and (
-            getattr(models[artifact.id], "selectionSha256", None)
-            or getattr(models[artifact.id], "proposalSha256", None)
-        )
-        == selection_artifact.sha256
+        and model.selectionSha256 == selection_artifact.sha256
     ]
     assessment_artifact = assessments[-1] if assessments else None
     assessment = models[assessment_artifact.id] if assessment_artifact else None
@@ -472,17 +467,6 @@ async def export_topic_bundle(
             ),
         ),
     ]
-    if isinstance(assessment, TopicAssessment):
-        all_reviewed = bool(assessment.candidates) and all(
-            candidate.coldReview is not None and candidate.sourceReview is not None
-            for candidate in assessment.candidates
-        )
-        stages[1] = StageObservation(
-            stage="selection",
-            status="complete" if all_reviewed else "partial",
-            artifact_sha256s=(assessment_artifact.sha256,) if assessment_artifact else (),
-            reason="V1 reviews supplied candidates and does not establish opportunity coverage.",
-        )
     evidence_config = evidence.config if evidence else {}
     program_identity: dict[str, Any] = {}
     prompt_identity: dict[str, Any] = {}

@@ -25,8 +25,6 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness.rendering import kept_sections
 from temnia_pipeline.harness.topic_compiler import (
     augment_topic_evidence,
-    compile_topics,
-    compile_topics_v2,
     compile_topics_v3,
     topic_execution_proposal,
     topic_source_usage,
@@ -75,8 +73,8 @@ def _candidate(identifier: str, first: int, last: int) -> TopicCandidate:
 
 
 def _compile(evidence: HarnessEvidence, *candidates: TopicCandidate) -> TopicEditSpec:
-    return compile_topics(
-        evidence,
+    return compile_topics_v3(
+        augment_topic_evidence(evidence),
         TopicProposal(
             candidates=list(candidates), summary="Selected useful discussions.", version=1
         ),
@@ -91,9 +89,12 @@ def test_overlapping_videos_have_independent_edges_and_reuse_renderer() -> None:
     original = evidence.model_dump_json()
     portfolio = _compile(evidence, first, second)
     ranges = [kept_sections(video.edit)[0] for video in portfolio.videos]
-    assert [(item.start, item.end) for item in ranges] == [(0, 3), (1, 4)]
+    assert [(item.start, item.end) for item in ranges] == [
+        (Fraction(0), Fraction(31, 10)),
+        (Fraction(11, 10), Fraction(4)),
+    ]
     for video in portfolio.videos:
-        validate_edit(evidence, video.edit, expected_evidence_sha256=SHA)
+        validate_edit(augment_topic_evidence(evidence), video.edit, expected_evidence_sha256=SHA)
         assert len(kept_sections(video.edit)) == 1
     assert evidence.model_dump_json() == original
     assert _compile(evidence, first).videos[0] == portfolio.videos[0]
@@ -125,26 +126,17 @@ def test_v3_assigns_the_complete_available_pause_to_the_preceding_utterance() ->
         summary="Select the middle discussion.",
         version=1,
     )
-    previous = compile_topics_v2(
-        evidence,
-        proposal,
-        evidence_artifact_id=ARTIFACT_ID,
-        evidence_sha256=SHA,
-    )
     owned = compile_topics_v3(
         evidence,
         proposal,
         evidence_artifact_id=ARTIFACT_ID,
         evidence_sha256=SHA,
     )
-    previous_range = kept_sections(previous.videos[0].edit)[0]
     owned_range = kept_sections(owned.videos[0].edit)[0]
 
     assert owned.compilerVersion == "topic-compiler/3"
     assert owned_range.start == 1
     assert owned_range.end == 3
-    assert owned_range.start > previous_range.start
-    assert owned_range.end > previous_range.end
     assert Fraction(0) <= Fraction(3017, 1000) - owned_range.end < Fraction(1, 25)
 
 
@@ -153,10 +145,15 @@ def test_omissions_remain_outside_execution_drops_and_usage_is_separate() -> Non
     video = portfolio.videos[0]
     assert [section.kind.value for section in video.edit.sections] == ["drop", "keep", "drop"]
     assert video.keptSectionId == "middle"
-    assert [(item.start, item.end) for item in kept_sections(video.edit)] == [(1, 2)]
+    assert [(item.start, item.end) for item in kept_sections(video.edit)] == [
+        (Fraction(11, 10), Fraction(21, 10))
+    ]
     usage = topic_source_usage(portfolio)
-    assert usage.used_intervals == ((Fraction(1), Fraction(2)),)
-    assert usage.unused_intervals == ((Fraction(0), Fraction(1)), (Fraction(2), Fraction(4)))
+    assert usage.used_intervals == ((Fraction(11, 10), Fraction(21, 10)),)
+    assert usage.unused_intervals == (
+        (Fraction(0), Fraction(11, 10)),
+        (Fraction(21, 10), Fraction(4)),
+    )
     assert usage.unused_duration == 3
 
 
@@ -261,7 +258,7 @@ def test_unknown_detector_evidence_remains_reviewable_not_silence() -> None:
     )
     result.videos[0].edit.boundaries[1].requiresReview = False
     with pytest.raises(HarnessValidationError, match="unknown speech evidence hidden"):
-        validate_topic_edit(evidence, result)
+        validate_topic_edit(augment_topic_evidence(evidence), result)
 
 
 def test_fixed_source_edges_retain_risk_without_inventing_missing_context() -> None:
@@ -284,15 +281,15 @@ def test_source_offset_does_not_shift_the_output_frame_phase() -> None:
     evidence.frameRate = PositiveRational(numerator=30000, denominator=1001)
     video = _compile(evidence, _candidate("middle", 1, 2)).videos[0]
     selected = kept_sections(video.edit)[0]
-    assert selected.start == Fraction(1001, 1000)
-    assert selected.end == Fraction(3003, 1000)
+    assert selected.start == Fraction(2002, 1875)
+    assert selected.end == Fraction(23023, 7500)
     assert selected.start <= Fraction(1100, 1000)
     assert selected.end >= Fraction(2900, 1000)
 
 
 @pytest.mark.parametrize("side", ["start", "end"])
 def test_final_validation_catches_tampered_cut_that_old_quote_center_allows(side: str) -> None:
-    evidence = _case()
+    evidence = augment_topic_evidence(_case())
     result = _compile(evidence, _candidate("middle", 1, 2))
     boundary = result.videos[0].edit.boundaries[1 if side == "start" else 2]
     time_ms = 1200 if side == "start" else 2800

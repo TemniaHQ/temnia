@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from temnia_pipeline.evals.chapters import EvaluationModel
+from temnia_pipeline.evals.common import EvaluationModel
 from temnia_pipeline.evals.topic_report import TopicQualityReport, build_topic_report
 from temnia_pipeline.evals.topics import (
     Identifier,

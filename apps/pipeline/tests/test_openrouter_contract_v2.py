@@ -21,10 +21,6 @@ from temnia_pipeline.harness.gateway import (
     validate_gateway_request,
 )
 from temnia_pipeline.harness.qualification import CandidateRoute, _provisional_route
-from temnia_pipeline.harness.qualification_topic_selection import (
-    bind_topic_selection_qualification,
-    validate_topic_selection_qualification,
-)
 from test_harness_model_transport import StrictAnswer
 from test_openrouter_qualification import _catalogue, _openrouter
 
@@ -191,30 +187,15 @@ def test_legacy_candidate_keeps_alias_accounting_and_omits_new_fields() -> None:
         CandidateRoute.model_validate(raw)
 
 
-async def test_v2_qualification_binds_output_encoding_and_raw_canonical_accounting(
+async def test_v2_qualification_records_output_encoding_and_raw_canonical_accounting(
     tmp_path: Path,
 ) -> None:
-    snapshot, report_path, report, requests = await _openrouter(
-        tmp_path, catalogue_override=_v2_catalogue()
-    )
+    _, _, report, requests = await _openrouter(tmp_path, catalogue_override=_v2_catalogue())
     assert report["status"] == "completed"
     assert report["passed"] is True
-    assert len(requests) == 12
+    assert len(requests) == 15
     for index, (call, request) in enumerate(zip(report["calls"], requests, strict=True)):
-        key = "max_completion_tokens" if index < 4 else "max_tokens"
+        key = "max_completion_tokens" if index < 5 else "max_tokens"
         assert request[key] == 256
         assert call["request"]["accountingModel"] == call["cost"]["components"]["model"]
         assert call["responseModel"] != call["cost"]["components"]["model"]
-    path = tmp_path / "bound-v2.json"
-    bind_topic_selection_qualification(
-        snapshot, [report_path], path, max_output_tokens=256, transport_bound=True
-    )
-    manifest = json.loads(path.read_bytes())
-    for route in snapshot.routes:
-        assert manifest["routeTransports"][route.id]["accountingModel"] == route.accounting_model
-    validate_topic_selection_qualification(snapshot, path, max_output_tokens=256)
-    first = next(iter(manifest["routeTransports"].values()))
-    first["accountingModel"] = "different/accounting-model"
-    path.write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="transport map"):
-        validate_topic_selection_qualification(snapshot, path, max_output_tokens=256)

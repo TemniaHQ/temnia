@@ -5,8 +5,8 @@ This is an operating procedure, not deployment evidence. The
 [implementation status](../design/harness-implementation-status-2026-09-08.md) records what has
 actually passed. Shared staging remains `main`; merge and deployment are separate from running
 the isolated qualification. Use the [staging runbook](staging.md) for services and access.
-For a local product pass with recorded responses, use the
-[manual-testing walkthrough](chapter-harness-manual-testing.md).
+The chapter lane this procedure rolled out was deleted on 13 September 2026; only the
+checkpointed-speech section below still describes live code.
 
 The [2026-09-09 staging admission record](../design/chapter-staging-qualification-2026-09-09.md)
 records the enabled live configuration and the long-recording preflight. A qualified transport

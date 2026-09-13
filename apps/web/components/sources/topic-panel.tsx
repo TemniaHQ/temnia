@@ -26,12 +26,6 @@ import {
   topicEditorialStatus,
 } from "@/lib/harness/topic-artifacts";
 import {
-  DEFAULT_TOPIC_BRIEF_VERSION,
-  TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
-} from "@/lib/harness/topic-defaults";
-import {
   restoreTopicIntent,
   type TopicReviewIntent,
   TopicReviewIntentSchema,
@@ -39,11 +33,6 @@ import {
   TopicStartIntentSchema,
 } from "@/lib/harness/topic-pending";
 import { formatDuration } from "@/lib/sources/labels";
-
-type TopicPolicy =
-  | typeof TOPIC_POLICY
-  | typeof TOPIC_SELECTION_POLICY
-  | typeof TOPIC_SELECTION_POLICY_V3;
 
 function remember(key: string, value: unknown) {
   try {
@@ -68,7 +57,7 @@ function emptyView(previous: ChapterView): ChapterView {
   };
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one source panel coordinates legacy pending intents, live revision state and both editorial programs
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one source panel coordinates retained pending intents, live revision state and human corrections
 export function TopicPanel({
   availability,
   initialView,
@@ -81,7 +70,6 @@ export function TopicPanel({
   const [view, setView] = useState(initialView);
   const [selectedRunId, setSelectedRunId] = useState(initialView.run?.id ?? "");
   const [brief, setBrief] = useState("");
-  const [program, setProgram] = useState<string>(DEFAULT_TOPIC_BRIEF_VERSION);
   const [pendingStart, setPendingStart] = useState<TopicStartIntent | null>(
     null
   );
@@ -227,16 +215,11 @@ export function TopicPanel({
     if (busy || (!intent && blocked)) {
       return;
     }
-    let defaultBriefVersion: TopicPolicy = TOPIC_SELECTION_POLICY_V3;
-    if (program === TOPIC_POLICY) {
-      defaultBriefVersion = TOPIC_POLICY;
-    }
-    if (program === TOPIC_SELECTION_POLICY) {
-      defaultBriefVersion = TOPIC_SELECTION_POLICY;
-    }
+    // An empty box carries no brief at all, so the worker's single default is
+    // what the run freezes; the stored intent is exactly what was sent.
+    const typed = brief.trim();
     const request = intent ?? {
-      brief: brief.trim(),
-      defaultBriefVersion,
+      ...(typed ? { brief: typed } : {}),
       requestKey: crypto.randomUUID(),
       runId: crypto.randomUUID(),
       sourceId,
@@ -337,25 +320,29 @@ export function TopicPanel({
           <label className="text-sm" htmlFor={`topic-history-${sourceId}`}>
             Run history
           </label>
-          <select
-            className="max-w-full rounded border bg-background p-2 text-sm"
+          <NativeSelect
+            className="max-w-full"
             disabled={blocked}
             id={`topic-history-${sourceId}`}
             onChange={(event) => selectRun(event.target.value)}
             value={selectedRunId}
           >
-            <option value="">New topic discovery</option>
+            <NativeSelectOption value="">
+              New topic discovery
+            </NativeSelectOption>
             {view.runs.map((run) => (
-              <option key={run.id} value={run.id}>
+              <NativeSelectOption key={run.id} value={run.id}>
                 {new Date(run.createdAt).toLocaleString()} ·{" "}
                 {run.status.replaceAll("_", " ")}
-              </option>
+              </NativeSelectOption>
             ))}
             {selectedRunId &&
               !view.runs.some((run) => run.id === selectedRunId) && (
-                <option value={selectedRunId}>Pending discovery</option>
+                <NativeSelectOption value={selectedRunId}>
+                  Pending discovery
+                </NativeSelectOption>
               )}
-          </select>
+          </NativeSelect>
           <Button
             disabled={busy || !selectedRunId}
             onClick={() => refresh()}
@@ -368,22 +355,6 @@ export function TopicPanel({
       </div>
       {!selectedRunId && (
         <div className="space-y-3 rounded-lg border p-4">
-          <NativeSelect
-            aria-label="Topic selection program"
-            disabled={blocked}
-            onChange={(event) => setProgram(event.target.value)}
-            value={program}
-          >
-            <NativeSelectOption value={TOPIC_SELECTION_POLICY_V3}>
-              Source inventory, selection and independent review
-            </NativeSelectOption>
-            <NativeSelectOption value={TOPIC_SELECTION_POLICY}>
-              Previous selection program · comparison
-            </NativeSelectOption>
-            <NativeSelectOption value={TOPIC_POLICY}>
-              Earlier program · comparison
-            </NativeSelectOption>
-          </NativeSelect>
           <details>
             <summary className="cursor-pointer text-sm">
               Optional instructions
@@ -622,7 +593,7 @@ function TopicVideoCard({
         <Badge variant="outline">{humanState}</Badge>
         <Badge variant="outline">
           {topicEditorialStatus(
-            portfolio.selectionAssessment ?? portfolio.assessment,
+            portfolio.selectionAssessment ?? null,
             video.assessment
           )}
         </Badge>
