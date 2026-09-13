@@ -14,7 +14,7 @@ from obstore.store import MemoryStore
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from temnia_pipeline import db
-from temnia_pipeline.harness import ledger, models, runs
+from temnia_pipeline.harness import models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
 from temnia_pipeline.harness.gateway import (
     GatewayChatModel,
@@ -194,8 +194,10 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         agent = models.topic_selection_author_v2
         try:
             if interrupted:
+                # The receipt settles the lost stream: each attempt is a known failure
+                # with its charge, and the next call is a fresh paid attempt.
                 for _ in range(2):
-                    with pytest.raises(ledger.OutcomeUnknown):
+                    with pytest.raises(models.TransientProviderFailure):
                         await agent.run(prompt, deps=deps, model_settings={"max_tokens": 8192})
             elif outcome == "length":
                 for _ in range(2):
@@ -208,26 +210,30 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
                 second = await agent.run(prompt, deps=deps, model_settings={"max_tokens": 8192})
                 assert first.output == second.output
             async with db.scoped(url, SEEDED) as conn:
-                attempt = await (
+                attempts = await (
                     await conn.execute(
                         "SELECT remote_handle,state,actual_cost_micros,cost_status,usage "
-                        "FROM harness_attempt WHERE run_id=%s",
+                        "FROM harness_attempt WHERE run_id=%s ORDER BY attempt_number",
                         (start.request.runId,),
                     )
-                ).fetchone()
-            assert attempt is not None
-            assert attempt["remote_handle"] == "generation-ledger"
-            assert len(early_rows) == requests == 1
+                ).fetchall()
+            assert attempts
+            attempt = attempts[-1]
+            assert all(row["remote_handle"] == "generation-ledger" for row in attempts)
+            expected_requests = 2 if interrupted else 1
+            assert len(early_rows) == requests == expected_requests
             run = await runs.get_run(
                 url, scope=SEEDED, source_id=source_id, run_id=start.request.runId
             )
-            assert run.dispatch_count == 1
+            assert run.dispatch_count == expected_requests
             if interrupted:
-                assert attempt["state"] == "outcome_unknown"
-                assert attempt["actual_cost_micros"] is None
-                assert attempt["cost_status"] == "unknown"
-                assert run.reserved_micros > 0
-                assert lookups == 0
+                assert len(attempts) == 2
+                assert all(row["state"] == "failed_known" for row in attempts)
+                assert all(row["actual_cost_micros"] == 1 for row in attempts)
+                assert all(row["cost_status"] == "reported" for row in attempts)
+                assert run.spent_micros == 2
+                assert run.reserved_micros == 0
+                assert lookups == 2
             else:
                 assert attempt["state"] == "succeeded"
                 assert run.spent_micros == 1
