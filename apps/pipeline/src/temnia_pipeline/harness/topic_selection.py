@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections import Counter
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any, Never, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Never, TypedDict, cast
 
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF, ground_revi
 from temnia_pipeline.harness.validators import HarnessValidationError, validate_evidence
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from temnia_pipeline.contracts import (
         HarnessArtifactRef,
@@ -1289,7 +1289,7 @@ def _validate_replace_candidate_authority(
         _refuse("replace_candidate changed content without an extent-related finding")
 
 
-def _patch_authority(  # noqa: C901, PLR0912
+def _patch_authority(  # noqa: C901
     operation: TopicSelectionPatchOperationV3,
     findings: dict[str, TopicSelectionFinding],
     previous: dict[str, TopicCandidate],
@@ -1314,11 +1314,7 @@ def _patch_authority(  # noqa: C901, PLR0912
     if str(operation.kind) == "replace_candidate":
         _validate_replace_candidate_authority(operation, valid, previous)
     if all(str(f.kind) == "physical_boundary_constraint" for f in valid):
-        if str(operation.kind) not in {"extend_start", "extend_end"}:
-            _refuse(
-                "physical-only findings authorize an edge extension, not semantic restructuring"
-            )
-        edge = "opening" if str(operation.kind) == "extend_start" else "ending"
+        edge = _physical_extension_edge(operation, previous, evidence)
         for identifier in operation.affectedCandidateIds:
             if not any(
                 f.id in {f"physical:{identifier}:{edge}", f"physical:{identifier}:execution"}
@@ -1351,6 +1347,42 @@ def _patch_authority(  # noqa: C901, PLR0912
                 ):
                     _refuse("physical-only opening may annotate only the newly included prefix")
     return allowed_opportunities
+
+
+def _physical_extension_edge(
+    operation: TopicSelectionPatchOperationV3,
+    previous: Mapping[str, TopicCandidate],
+    evidence: HarnessEvidence,
+) -> Literal["opening", "ending"]:
+    """Name the one edge a physical-only operation extends, judged by its effect.
+
+    The repair prompt lets the model spell an extension as `extend_start`, `extend_end` or
+    `replace_extent`; a physical finding authorizes exactly one outward edge move, so the
+    label is not the test. The first staging run lost a six-operation repair to the label.
+    """
+    kind = str(operation.kind)
+    if kind in {"extend_start", "extend_end"}:
+        return "opening" if kind == "extend_start" else "ending"
+    if kind != "replace_extent":
+        _refuse("physical-only findings authorize an edge extension, not semantic restructuring")
+    positions = _positions(evidence)
+    edges: set[str] = set()
+    for identifier, replacement in zip(
+        operation.affectedCandidateIds, operation.replacementCandidates, strict=True
+    ):
+        old_start, old_end = _span(positions, previous[identifier], identifier)
+        new_start, new_end = _span(positions, replacement, replacement.id)
+        if new_start < old_start and new_end == old_end:
+            edges.add("opening")
+        elif new_end > old_end and new_start == old_start:
+            edges.add("ending")
+        else:
+            _refuse(
+                "physical-only findings authorize an edge extension, not semantic restructuring"
+            )
+    if len(edges) != 1:
+        _refuse("physical-only findings authorize an edge extension, not semantic restructuring")
+    return cast("Literal['opening', 'ending']", edges.pop())
 
 
 def apply_selection_patch(  # noqa: C901, PLR0912, PLR0915

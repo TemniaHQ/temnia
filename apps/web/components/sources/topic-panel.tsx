@@ -46,6 +46,22 @@ function remember(key: string, value: unknown) {
   }
 }
 
+/** Candidates the selection proposed that the select-only gate withheld, with their findings. */
+function withheldCandidates(revision: TopicRevisionView) {
+  const rendered = new Set(
+    revision.videos.map((item) => item.video.candidate.id)
+  );
+  const findings = revision.selectionAssessment?.findings ?? [];
+  return (revision.selection?.draft.proposal.candidates ?? [])
+    .filter((candidate) => !rendered.has(candidate.id))
+    .map((candidate) => ({
+      candidate,
+      findings: findings.filter((finding) =>
+        finding.affectedCandidateIds.includes(candidate.id)
+      ),
+    }));
+}
+
 function emptyView(previous: ChapterView): ChapterView {
   return {
     ...previous,
@@ -485,6 +501,31 @@ export function TopicPanel({
                 ))}
             </details>
           )}
+          {withheldCandidates(current).length > 0 && (
+            <details className="text-sm">
+              <summary className="cursor-pointer">
+                Withheld candidates ({withheldCandidates(current).length})
+              </summary>
+              <p className="text-muted-foreground">
+                Proposed but not rendered: each carries a required finding the
+                repair did not resolve.
+              </p>
+              {withheldCandidates(current).map(({ candidate, findings }) => (
+                <div className="mt-2" key={candidate.id}>
+                  <p>
+                    <strong>{candidate.title}</strong> ·{" "}
+                    {candidate.firstSentenceId}–{candidate.lastSentenceId}
+                  </p>
+                  {findings.map((finding) => (
+                    <p className="text-muted-foreground" key={finding.id}>
+                      {finding.kind.replaceAll("_", " ")} ({finding.severity}):{" "}
+                      {finding.reason}
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </details>
+          )}
           {current.videos.length === 0 && (
             <p className="text-muted-foreground text-sm">
               This run produced no topic candidates.
@@ -714,12 +755,14 @@ function TopicRunStatus({ run }: { run: ChapterView["run"] }) {
             <p>Recorded test run; no live editorial judgment.</p>
           )}
           {!!run.errorMessage && <p>{run.errorMessage}</p>}
-          {run.currentTranscriptRevision !== run.evidenceTranscriptRevision && (
-            <p>
-              The transcript changed after this run. These videos use its
-              recorded revision.
-            </p>
-          )}
+          {run.evidenceTranscriptRevision !== null &&
+            run.currentTranscriptRevision !==
+              run.evidenceTranscriptRevision && (
+              <p>
+                The transcript changed after this run. These videos use its
+                recorded revision.
+              </p>
+            )}
         </div>
       )}
     </>

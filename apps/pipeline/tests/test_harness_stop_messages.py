@@ -90,6 +90,21 @@ def test_route_rejection_names_route_stage_and_status_with_the_next_action() -> 
     )
 
 
+def test_payment_required_names_the_account_not_the_route() -> None:
+    status, message = known_failure_details(
+        activity_error(
+            "KnownProviderRejection",
+            "Route fixture-route rejected the proposal:selection:0 request (HTTP 402).",
+        )
+    )
+    assert status == "failed"
+    assert message == (
+        "Route fixture-route rejected the proposal:selection:0 request (HTTP 402). The gateway "
+        "account has insufficient credits or the API key has a spending limit; top up or raise "
+        "the limit, then start a new run. Nothing was charged or retried."
+    )
+
+
 def test_context_window_refusal_keeps_the_exact_sentence_from_the_refusing_site() -> None:
     with pytest.raises(ContextWindowExceeded) as raised:
         estimate_cost(route(), payload_bytes=19_000, max_output_tokens=8192)

@@ -2,6 +2,22 @@
 
 ## Decisions
 
+**2026-09-13 — A physical-only repair is judged by its effect, not its operation label.** The
+first staging run (`fc2000e9`, 15 calls, $1.05, no technical failure) produced 11 candidates
+and 8 required findings on 7 of them; Kimi's repair addressed all 8 in six `replace_extent`
+operations and the harness refused it because one operation, a one-sentence opening
+extension for a physical-only finding, was not spelled `extend_start`, while the repair prompt
+says `replace_extent` "may move either or both edges … including extension". The atomic rule
+then discarded the other five; four videos rendered instead of eleven. The validator now names
+the extended edge from the replacement's effect (exactly one edge, moved outward) and applies
+the same physical-only checks as before; any other shape is still refused. The stop reason
+carries the refusal diagnostic so the panel says why; withheld candidates are listed with
+their findings. Two smaller corrections from the same day: HTTP 402 is reported as gateway
+credits or a key limit (the earlier text sent the reader to the route snapshot), and a
+conclusive HTTP rejection settles at a known zero cost so the run's reservation is released.
+The atomic-repair rule stays; whether partial acceptance should replace it is decided on the
+re-run, not before.
+
 **2026-09-13 — Merge, deploy, click: the images carry the harness configuration.** Rajesh,
 shown the eleven-step rollout (root-owned file on the VPS, Dokploy bind mount, two
 environment tables, ordered reloads): "Why do I need to do all of these circus to be able
