@@ -162,6 +162,15 @@ class ClaimRepairRequest(BaseModel):
     expected_repair_count: Annotated[int, Field(ge=0)]
 
 
+class ReconcileRunResult(BaseModel):
+    """What the gateway receipts settled after an unconfirmed provider outcome."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    looked_up: int = 0
+    settled: int = 0
+    resolved: bool = False
+
+
 class MarkRunFailedRequest(BaseModel):
     """Safe terminal failure fence for the workflow execution that owns a run."""
 

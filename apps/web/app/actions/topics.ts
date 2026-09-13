@@ -324,6 +324,89 @@ export async function startTopicRun(
   };
 }
 
+const RetrySchema = z.object({ runId: z.uuid(), sourceId: z.uuid() });
+const RESUMABLE_STATUSES = new Set(["failed", "budget_paused"]);
+
+/**
+ * Resume a stopped run on its retained work: the worker replays settled responses by
+ * request identity and pays only for what never completed. The run keeps its ID; the
+ * Temporal execution is new, so a finished workflow never blocks the retry.
+ */
+export async function retryTopicRun(
+  input: unknown
+): Promise<TopicActionResult> {
+  const parsed = RetrySchema.safeParse(input);
+  if (!parsed.success) {
+    return { message: "The retry request is invalid.", ok: false };
+  }
+  const prepared = await scoped(async (tx, scope) => {
+    const [run] = await tx
+      .select()
+      .from(harnessRun)
+      .where(
+        and(
+          eq(harnessRun.id, parsed.data.runId),
+          eq(harnessRun.sourceId, parsed.data.sourceId),
+          eq(harnessRun.lane, "chapters"),
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
+        )
+      )
+      .limit(1);
+    if (!run) {
+      return { error: "Topic run not found." } as const;
+    }
+    if (!RESUMABLE_STATUSES.has(run.status)) {
+      return {
+        error:
+          run.status === "outcome_unknown"
+            ? "This run still has an unconfirmed provider charge; it is reconciled automatically and becomes retryable once the receipt arrives."
+            : "Only a failed or budget-paused run can be retried.",
+      } as const;
+    }
+    return {
+      input: ChapterRunInputSchema.parse({
+        brief: run.brief,
+        budgetMicros: Number(
+          run.routeSnapshot.initialBudgetMicros ?? run.budgetMicros
+        ),
+        config: run.config,
+        requestKey: run.requestKey,
+        runId: run.id,
+        scope,
+        sourceId: run.sourceId,
+      }),
+    } as const;
+  });
+  if ("error" in prepared) {
+    return { message: prepared.error, ok: false };
+  }
+  const generation = topicGeneration(prepared.input);
+  const workflowId = `${generation.prefix}/${parsed.data.runId}/retry-${crypto.randomUUID()}`;
+  try {
+    const client = await getTemporalClient();
+    await client.withDeadline(Date.now() + TEMPORAL_RPC_DEADLINE_MS, () =>
+      client.workflow.start(generation.workflow, {
+        args: [prepared.input],
+        memo: { [INTENT_MEMO_KEY]: intentSha256(generation.intent) },
+        taskQueue: TASK_QUEUES.pipeline,
+        workflowExecutionTimeout: "12 hours",
+        workflowId,
+        workflowIdConflictPolicy: "USE_EXISTING",
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
+      })
+    );
+  } catch {
+    return {
+      message:
+        "Could not confirm the retry started. Refresh; if the run is not running, press retry again.",
+      ok: false,
+      runId: parsed.data.runId,
+    };
+  }
+  revalidatePath(`/sources/${parsed.data.sourceId}`);
+  return { ok: true, runId: parsed.data.runId };
+}
+
 export async function reviewTopicCommand(
   input: unknown
 ): Promise<TopicActionResult> {

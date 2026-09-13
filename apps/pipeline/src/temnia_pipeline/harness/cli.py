@@ -27,6 +27,8 @@ from temnia_pipeline.settings import StorageSettings
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
+    from temnia_pipeline.harness.gateway_policy import GatewayName
+
 MAX_RECONCILIATION_ATTEMPTS = 128
 
 
@@ -113,12 +115,13 @@ async def reconcile_run_costs(
     run_id: UUID,
     api_key: str,
     apply: bool,
+    gateway: GatewayName = "vercel",
     lookup: Callable[..., Awaitable[Any]] = lookup_generation,
     settle: Callable[..., Awaitable[Any]] = reconcile_cost,
 ) -> list[dict[str, object]]:
     """Look up bounded known handles, optionally applying exact idempotent settlements."""
     rows = await _reconciliation_rows(database_url, run_id)
-    config = GatewayConfig(api_key=api_key)
+    config = GatewayConfig(api_key=api_key, gateway=gateway)
     results: list[dict[str, object]] = []
     async with httpx.AsyncClient() as client:
         for row in rows:

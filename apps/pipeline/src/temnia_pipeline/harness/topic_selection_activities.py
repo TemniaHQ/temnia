@@ -240,7 +240,11 @@ class TopicSelectionActivities:
         run, evidence, rubric, selection = await self.load(context)
         if rubric is None or context.rubric is None:
             raise HarnessValidationError("editorial calls require a frozen rubric")
-        author, verifier = editorial_routes(run.route_snapshot)
+        author, verifier = editorial_routes(
+            run.route_snapshot,
+            author_index=context.author_index,
+            verifier_index=context.verifier_index,
+        )
         dependencies = [context.evidence, context.rubric]
         if context.candidate_id is not None:
             candidate = (
@@ -594,7 +598,11 @@ class TopicSelectionActivities:
             response_refs.append(
                 await self.response_ref(source_context, source_plan, request.source_review)
             )
-        author, verifier = editorial_routes(run.route_snapshot)
+        author, verifier = editorial_routes(
+            run.route_snapshot,
+            author_index=context.author_index,
+            verifier_index=context.verifier_index,
+        )
         assessment = assess_selection(
             evidence,
             record,

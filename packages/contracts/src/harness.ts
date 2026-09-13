@@ -569,10 +569,12 @@ export const HarnessConfigSchema = z
       .object({
         evidenceWindowSentences: z.int().min(1).max(512),
         maxDispatches: z.int().min(1).max(128),
+        maxInFlightPerRoute: z.int().min(1).max(8).default(2),
         maxOutputTokens: z.int().min(256).max(65_536),
         maxRenderConcurrency: z.int().min(1).max(4),
         maxRepairs: z.int().min(0).max(3),
         maxRunBudgetMicros: z.int().positive(),
+        minDispatchIntervalSeconds: z.number().min(0).max(30).default(1),
       })
       .strict()
       .meta({ id: "HarnessConfigLimits", title: "HarnessConfigLimits" }),

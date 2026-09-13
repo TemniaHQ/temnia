@@ -227,10 +227,12 @@ class HarnessConfigLimits(BaseModel):
     )
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
     maxDispatches: Annotated[int, Field(ge=1, le=128)]
+    maxInFlightPerRoute: Annotated[int, Field(ge=1, le=8)]
     maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
     maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
     maxRepairs: Annotated[int, Field(ge=0, le=3)]
     maxRunBudgetMicros: Annotated[int, Field(gt=0, le=9007199254740991)]
+    minDispatchIntervalSeconds: Annotated[float, Field(ge=0.0, le=30.0)]
 
 
 class HarnessConfigRouteSnapshot(BaseModel):

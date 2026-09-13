@@ -67,6 +67,8 @@ def _write_config(directory: Path, **overrides: object) -> Path:
             "maxRunBudgetMicros": 123,
             "maxRenderConcurrency": 1,
             "evidenceWindowSentences": 40,
+            "maxInFlightPerRoute": 1,
+            "minDispatchIntervalSeconds": 0,
         },
         "topicShotDetector": "pyscenedetect-adaptive",
         "allowRecorded": True,

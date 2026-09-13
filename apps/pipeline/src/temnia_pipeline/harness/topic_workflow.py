@@ -19,9 +19,10 @@ with workflow.unsafe.imports_passed_through():
         HarnessRunStatus,
     )
     from temnia_pipeline.harness.queues import control_task_queue
-    from temnia_pipeline.harness.run_failures import known_failure_details
+    from temnia_pipeline.harness.run_failures import known_failure_details, outcome_unknown
     from temnia_pipeline.harness.runtime_types import (
         MarkRunFailedRequest,
+        ReconcileRunResult,
         RenderRevisionRequest,
         RunRef,
         RunSnapshot,
@@ -64,6 +65,18 @@ class TopicRunWorkflow(PydanticAIWorkflow):
                     task_queue=control_task_queue(info.task_queue),
                     result_type=bool,
                 )
+            if outcome_unknown(error):
+                # Ask the gateway for the receipt now, so the run is retryable without a
+                # human reading the ledger; a pending receipt keeps the fence.
+                with contextlib.suppress(Exception):
+                    await workflow.execute_activity(
+                        "reconcile_chapter_run_costs",
+                        self.ref(request),
+                        start_to_close_timeout=timedelta(seconds=90),
+                        retry_policy=RETRY,
+                        task_queue=control_task_queue(info.task_queue),
+                        result_type=ReconcileRunResult,
+                    )
             raise
         finally:
             with contextlib.suppress(Exception):

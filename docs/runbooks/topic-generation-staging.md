@@ -55,7 +55,8 @@ author's family:
 
 Limits in the file: output 65,536 (Gemini's route maximum; the config ceiling was raised to
 it), 64 dispatches, 3 repairs, $20 run budget, render concurrency 2, evidence window 80
-sentences, `scdet` shot detector.
+sentences, `scdet` shot detector, at most 2 calls in flight per route with 1 s between
+dispatches (the worker's admission per route; providers throttle the account, not the run).
 
 `tests/test_harness_config_file.py` boots every committed configuration in the gate: the
 snapshot ID, the three-family rule and the output ceilings are checked before a merge, not
@@ -93,8 +94,16 @@ Production gets its own file and sets `HARNESS_CONFIG_PATH` to it in Dokploy, on
 | `failed`, "Route X rejected the … request (HTTP …)" | the route does not accept this request shape | change the snapshot, new run |
 | `failed`, "… exceeds the context window of route X" | source too large for that route | a larger-window route, or wait for the topic hierarchy |
 | `budget_paused` | the next call would exceed the run budget | cancel; new run with a larger budget |
-| `outcome_unknown` | a provider call ended without a confirmed outcome; the reservation is retained | reconcile read-only; never replay |
-| `failed`, "… ended without a response; its charge … is settled … Three attempts ended the same way" | the route kept failing inside its stream after two automatic retries | wait and start a new run, or change the route |
+| `outcome_unknown` | a provider call ended without a confirmed outcome and the gateway receipt is still pending | wait; the run becomes `failed` and retryable once the receipt settles; never replay by hand |
+| `failed`, "Every qualified … route failed transiently for the … call (…); last: …" | every route in that seat's pool was throttled or down, each retried after a pause | wait, then **Retry this run**; the retained work is reused |
+| `failed`, "… HTTP 402 … insufficient credits or … spending limit" | the gateway account or key | top up or raise the limit, then **Retry this run** |
+| `failed`, "… was reconciled from the gateway receipt. Retry this run …" | a call ended without a confirmed outcome and its receipt has since settled | **Retry this run** |
 | `cancelled` | you cancelled | — |
+
+A run that stops on a known failure keeps its identity and artifacts: **Retry this run**
+(shown on `failed` and `budget_paused` runs) starts a new execution that replays every
+settled model response and pays only for what never completed. A tab left open across a
+deploy says "Temnia was updated while this page was open. Reload the page"; that is the
+page, not the run.
 
 Never deploy `pipeline` while a topic run is active.

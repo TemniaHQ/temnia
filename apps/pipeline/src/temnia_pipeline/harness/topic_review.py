@@ -77,6 +77,7 @@ def validate_topic_command(command: ChapterReviewInput) -> None:
         ChapterReviewAction.accept,
         ChapterReviewAction.reject,
         ChapterReviewAction.cancel,
+        ChapterReviewAction.retry,
     } or any(
         value is not None
         for value in (
@@ -87,17 +88,23 @@ def validate_topic_command(command: ChapterReviewInput) -> None:
             command.targetTimeMs,
         )
     ):
-        raise ReviewRefused("topic review supports only acceptance, rejection and cancellation")
+        raise ReviewRefused(
+            "topic review supports only acceptance, rejection, cancellation and retry"
+        )
     if not command.reason.strip() or len(command.reason) > MAX_REVIEW_REASON:
         raise ReviewRefused("topic review requires a reason of at most 2000 characters")
-    if (command.action == ChapterReviewAction.cancel) != (command.sectionId is None):
-        raise ReviewRefused("topic decisions name one candidate; cancellation names none")
+    operational = command.action in {ChapterReviewAction.cancel, ChapterReviewAction.retry}
+    if operational != (command.sectionId is None):
+        raise ReviewRefused("topic decisions name one candidate; cancellation and retry name none")
 
 
 def apply_topic_decision(edit: TopicEditSpec, command: ChapterReviewInput) -> TopicEditSpec:
     """Change only the selected kept section's durable human state."""
     validate_topic_command(command)
-    if command.action == ChapterReviewAction.cancel or command.sourceId != edit.sourceId:
+    if (
+        command.action in {ChapterReviewAction.cancel, ChapterReviewAction.retry}
+        or command.sourceId != edit.sourceId
+    ):
         raise ReviewRefused("the decision does not name this topic portfolio")
     matches = [video for video in edit.videos if video.candidate.id == command.sectionId]
     if len(matches) != 1:
@@ -628,7 +635,7 @@ class TopicReviewWorkflow:
         validate_topic_command(command)
         queue = control_task_queue(workflow.info().task_queue)
         ref = topic_run_ref(command)
-        if command.action == ChapterReviewAction.cancel:
+        if command.action in {ChapterReviewAction.cancel, ChapterReviewAction.retry}:
             before = await workflow.execute_activity(
                 "get_chapter_run",
                 ref,
@@ -645,10 +652,11 @@ class TopicReviewWorkflow:
                 result_type=ChapterReviewOutput,
                 task_queue=queue,
             )
-            if result.state == "applied" and before.status in {
-                HarnessRunStatus.pending,
-                HarnessRunStatus.running,
-            }:
+            if (
+                command.action == ChapterReviewAction.cancel
+                and result.state == "applied"
+                and before.status in {HarnessRunStatus.pending, HarnessRunStatus.running}
+            ):
                 with contextlib.suppress(Exception):
                     await workflow.get_external_workflow_handle(
                         before.workflow_id, run_id=before.workflow_run_id

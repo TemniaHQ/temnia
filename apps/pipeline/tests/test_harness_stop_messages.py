@@ -105,6 +105,20 @@ def test_payment_required_names_the_account_not_the_route() -> None:
     )
 
 
+def test_exhausted_seat_names_every_route_and_the_next_action() -> None:
+    status, message = known_failure_details(
+        activity_error(
+            "SeatRoutesExhausted",
+            "Every qualified verifier route failed transiently for the verify:selection:cold:x "
+            "call (route-a, route-b); last: HTTP 429 before any response.",
+        )
+    )
+    assert status == "failed"
+    assert message.startswith("Every qualified verifier route failed transiently")
+    assert "route-a, route-b" in message
+    assert message.endswith("Retry this run later or change the route snapshot.")
+
+
 def test_context_window_refusal_keeps_the_exact_sentence_from_the_refusing_site() -> None:
     with pytest.raises(ContextWindowExceeded) as raised:
         estimate_cost(route(), payload_bytes=19_000, max_output_tokens=8192)
@@ -155,10 +169,14 @@ def test_the_unknown_outcome_sentence_says_what_is_retained_and_what_is_not_retr
     )
 
 
-async def test_conclusive_http_rejection_raises_a_route_stage_and_status_message(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The refusal an operator reads is written where the route and stage are known."""
+async def _dispatch_refused_with(
+    status_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    retry_after: float | None = None,
+) -> tuple[BaseException, list[dict[str, object]]]:
+    """Drive one budgeted call into an HTTP status before any response."""
     failures: list[dict[str, object]] = []
 
     async def acquire(*_args: object, **_kwargs: object) -> SimpleNamespace:
@@ -202,7 +220,10 @@ async def test_conclusive_http_rejection_raises_a_route_stage_and_status_message
         def refuse(
             _messages: list[ModelMessage], _info: AgentInfo
         ) -> ModelResponse:  # pragma: no cover - the transport raises first
-            raise ModelHTTPError(status_code=404, model_name="synthetic/model")
+            error = ModelHTTPError(status_code=status_code, model_name="synthetic/model")
+            if retry_after is not None:
+                error.retry_after_seconds = retry_after  # type: ignore[attr-defined]
+            raise error
 
         return FunctionModel(refuse, model_name="synthetic/model")
 
@@ -234,14 +255,43 @@ async def test_conclusive_http_rejection_raises_a_route_stage_and_status_message
     try:
         budgeted = models.BudgetedModel(models.LazyConfiguredModel(deps), deps)
         agent = Agent(budgeted, output_type=NativeOutput(Answer, strict=True), retries=0)
-        with pytest.raises(models.KnownProviderRejection) as raised:
+        with pytest.raises(Exception) as raised:  # noqa: PT011 - the class is the assertion
             await agent.run("Ask")
     finally:
         models.clear_model_runtime()
-    assert str(raised.value) == (
+    return raised.value, failures
+
+
+async def test_conclusive_http_rejection_raises_a_route_stage_and_status_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The refusal an operator reads is written where the route and stage are known."""
+    raised, failures = await _dispatch_refused_with(404, monkeypatch, tmp_path)
+    assert isinstance(raised, models.KnownProviderRejection)
+    assert str(raised) == (
         "Route fixture-route rejected the verify:selection:source:1 request (HTTP 404)."
     )
     assert failures[0]["outcome_known"] is True
+    assert failures[0]["actual_cost_micros"] == 0
+
+
+@pytest.mark.parametrize("status_code", [408, 425, 429, 500, 502, 503, 529])
+async def test_throttling_and_outages_before_any_response_are_transient_and_free(
+    status_code: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No generation exists, so the reservation is released and a retry is allowed."""
+    raised, failures = await _dispatch_refused_with(
+        status_code, monkeypatch, tmp_path, retry_after=17
+    )
+    assert isinstance(raised, models.TransientProviderFailure)
+    assert str(raised) == (
+        "Route fixture-route answered the verify:selection:source:1 request with "
+        f"HTTP {status_code} before any response; nothing was charged and a fresh attempt "
+        "is allowed. The provider asked for a pause of 17 s."
+    )
+    assert failures[0]["outcome_known"] is True
+    assert failures[0]["actual_cost_micros"] == 0
+    assert failures[0]["error_code"] == f"http-{status_code}"
 
 
 def test_exhausted_transient_failure_names_the_settled_cause_and_the_next_action() -> None:

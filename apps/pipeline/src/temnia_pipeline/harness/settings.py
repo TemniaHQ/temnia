@@ -87,6 +87,8 @@ class HarnessSettings:
     recorded_fixture_path: Path | None = None
     topic_shot_detector: TopicShotDetector = "scdet"
     config_path: Path | None = None
+    max_in_flight_per_route: int = 2
+    min_dispatch_interval_seconds: float = 1.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -122,6 +124,10 @@ class HarnessSettings:
             max_output_tokens=_positive(values, "HARNESS_MAX_OUTPUT_TOKENS", 8192),
             evidence_window_sentences=_positive(values, "HARNESS_EVIDENCE_WINDOW_SENTENCES", 80),
             max_render_concurrency=_positive(values, "HARNESS_MAX_RENDER_CONCURRENCY", 2),
+            max_in_flight_per_route=_positive(values, "HARNESS_MAX_IN_FLIGHT_PER_ROUTE", 2),
+            min_dispatch_interval_seconds=float(
+                values.get("HARNESS_MIN_DISPATCH_INTERVAL_SECONDS", "1")
+            ),
             gateway=cast("GatewayName", raw_gateway),
             gateway_api_key=values.get(
                 "OPENROUTER_API_KEY" if raw_gateway == "openrouter" else "AI_GATEWAY_API_KEY"
@@ -167,6 +173,8 @@ class HarnessSettings:
             max_output_tokens=config.limits.maxOutputTokens,
             evidence_window_sentences=config.limits.evidenceWindowSentences,
             max_render_concurrency=config.limits.maxRenderConcurrency,
+            max_in_flight_per_route=config.limits.maxInFlightPerRoute,
+            min_dispatch_interval_seconds=config.limits.minDispatchIntervalSeconds,
             gateway=gateway,
             gateway_api_key=env.get(
                 "OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY"

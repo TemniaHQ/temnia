@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import hashlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast
@@ -86,7 +86,11 @@ MODEL_ACTIVITY_NAME = "temnia_harness_model_request_v1"
 MODEL_RESPONSE_SCHEMA_VERSION = "pydantic-ai-model-response-v1"
 HTTP_CLIENT_ERROR_MIN = 400
 HTTP_CLIENT_ERROR_MAX = 500
-HTTP_REQUEST_TIMEOUT = 408
+HTTP_SERVER_ERROR_MIN = 500
+# Statuses a gateway returns before it has processed the request: throttling, an early
+# timeout, an upstream outage. No generation exists, so nothing was charged, and the same
+# request may be sent again (after backoff, then on the next qualified route).
+TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
 TOPIC_ID_NORMALIZATION_VERSION = "initial-topic-identifiers/1"
@@ -153,6 +157,47 @@ class ModelFactory(Protocol):
 FailureHook = Callable[[str], Awaitable[None]]
 
 
+class RouteGate:
+    """One route's admission in this worker: bounded in-flight calls, spaced dispatches.
+
+    Providers throttle per account, not per run, so the bound lives in the process that
+    holds the key. Callers wait here before a dispatch is committed, so a queued request
+    never counts as sent.
+    """
+
+    def __init__(self, *, max_in_flight: int, min_interval_seconds: float) -> None:
+        if max_in_flight < 1 or min_interval_seconds < 0:
+            raise ValueError("route gate needs a positive slot count and a nonnegative interval")
+        self.max_in_flight = max_in_flight
+        self.min_interval_seconds = min_interval_seconds
+        self._slots = asyncio.Semaphore(max_in_flight)
+        self._pace = asyncio.Lock()
+        self._last_dispatch: float | None = None
+
+    async def acquire(self) -> None:
+        """Take a slot, then wait out the spacing since the previous dispatch."""
+        await self._slots.acquire()
+        try:
+            async with self._pace:
+                loop = asyncio.get_running_loop()
+                if self._last_dispatch is not None:
+                    wait = self._last_dispatch + self.min_interval_seconds - loop.time()
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                self._last_dispatch = loop.time()
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def release(self) -> None:
+        """Free the slot once the provider has answered or refused."""
+        self._slots.release()
+
+
+DEFAULT_MAX_IN_FLIGHT_PER_ROUTE = 2
+DEFAULT_MIN_DISPATCH_INTERVAL_SECONDS = 1.0
+
+
 @dataclass(frozen=True, slots=True)
 class ModelRuntime:
     """Process-only activity resources; never serialized in harness dependencies."""
@@ -166,6 +211,20 @@ class ModelRuntime:
     failure_hook: FailureHook | None = None
     allow_outside_activity: bool = False
     allow_synthetic: bool = False
+    max_in_flight_per_route: int = DEFAULT_MAX_IN_FLIGHT_PER_ROUTE
+    min_dispatch_interval_seconds: float = DEFAULT_MIN_DISPATCH_INTERVAL_SECONDS
+    route_gates: dict[str, RouteGate] = field(default_factory=dict[str, RouteGate])
+
+    def route_gate(self, route_id: str) -> RouteGate:
+        """The gate for one route, created on first use with this worker's limits."""
+        gate = self.route_gates.get(route_id)
+        if gate is None:
+            gate = RouteGate(
+                max_in_flight=self.max_in_flight_per_route,
+                min_interval_seconds=self.min_dispatch_interval_seconds,
+            )
+            self.route_gates[route_id] = gate
+        return gate
 
 
 _runtime: ModelRuntime | None = None
@@ -626,6 +685,18 @@ class BudgetedModel(WrapperModel):
                 owner_token=owner_token,
             )
             raise
+        # Wait for a slot on this route before the dispatch is committed: a request queued
+        # behind the provider's rate limit is not a request the provider has seen.
+        gate = runtime.route_gate(self.deps.route.id)
+        await gate.acquire()
+        gate_released = False
+
+        def release_gate() -> None:
+            nonlocal gate_released
+            if not gate_released:
+                gate_released = True
+                gate.release()
+
         try:
             dispatched = await ledger.mark_dispatched(
                 runtime.database_url,
@@ -643,6 +714,7 @@ class BudgetedModel(WrapperModel):
             ledger.IdentityConflict,
             ledger.OutcomeUnknown,
         ):
+            release_gate()
             if attempt.state == ledger.AttemptState.RESERVED:
                 await ledger.release_undispatched(
                     runtime.database_url,
@@ -655,6 +727,7 @@ class BudgetedModel(WrapperModel):
                 )
             raise
         if not dispatched:
+            release_gate()
             await ledger.fail_attempt(
                 runtime.database_url,
                 scope=self.deps.scope,
@@ -704,10 +777,9 @@ class BudgetedModel(WrapperModel):
             ):
                 response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
-            conclusive = (
-                HTTP_CLIENT_ERROR_MIN <= error.status_code < HTTP_CLIENT_ERROR_MAX
-                and error.status_code != HTTP_REQUEST_TIMEOUT
-            )
+            status = error.status_code
+            transient = status in TRANSIENT_HTTP_STATUSES or status >= HTTP_SERVER_ERROR_MIN
+            conclusive = HTTP_CLIENT_ERROR_MIN <= status < HTTP_CLIENT_ERROR_MAX and not transient
             await ledger.fail_attempt(
                 runtime.database_url,
                 scope=self.deps.scope,
@@ -716,19 +788,32 @@ class BudgetedModel(WrapperModel):
                 operation_id=acquired.operation.id,
                 attempt_id=attempt.id,
                 owner_token=owner_token,
-                outcome_known=conclusive,
-                # A conclusive HTTP rejection happened before any generation: the cost is
-                # a known zero, so the reservation is released rather than left pending.
-                actual_cost_micros=0 if conclusive else None,
+                outcome_known=conclusive or transient,
+                # An HTTP status before any response means no generation exists: the cost
+                # is a known zero and the reservation is released rather than left pending.
+                actual_cost_micros=0 if conclusive or transient else None,
                 usage={},
-                error_code=f"http-{error.status_code}",
+                error_code=f"http-{status}",
                 error_message="provider request ended with an HTTP error",
             )
+            if transient:
+                retry_after = getattr(error, "retry_after_seconds", None)
+                advice = (
+                    f" The provider asked for a pause of {int(retry_after)} s."
+                    if isinstance(retry_after, (int, float))
+                    else ""
+                )
+                refusal = (
+                    f"Route {self.deps.route.id} answered the {self.deps.stage} request with "
+                    f"HTTP {status} before any response; nothing was charged and a fresh "
+                    f"attempt is allowed.{advice}"
+                )
+                raise TransientProviderFailure(refusal) from error
             if conclusive:
                 # The stop reason names the route, stage and code an operator has to act on.
                 rejection = (
                     f"Route {self.deps.route.id} rejected the {self.deps.stage} request "
-                    f"(HTTP {error.status_code})."
+                    f"(HTTP {status})."
                 )
                 raise KnownProviderRejection(rejection) from error
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
@@ -771,6 +856,8 @@ class BudgetedModel(WrapperModel):
                 error_message="unexpected failure after the dispatch commit",
             )
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
+        finally:
+            release_gate()
         try:
             accepted = await self._accept_response(
                 runtime=runtime,

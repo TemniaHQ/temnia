@@ -98,7 +98,12 @@ function fromFile(path: string): HarnessAvailability {
   } else if (file.backend === "recorded" && !file.allowRecorded) {
     result = RECORDED_DISABLED;
   } else {
-    result = settingsFor(file.backend, file.limits, file.routeSnapshot.id);
+    const {
+      maxInFlightPerRoute: _inFlight,
+      minDispatchIntervalSeconds: _interval,
+      ...runLimits
+    } = file.limits;
+    result = settingsFor(file.backend, runLimits, file.routeSnapshot.id);
   }
   fileSettings.set(path, result);
   return result;

@@ -41,6 +41,10 @@ class SelectionContext(BaseModel):
     rejection: HarnessArtifactRef | None = None
     candidate_id: str | None = None
     iteration: int = 0
+    # Fallback positions inside the seat pools; advanced by the workflow when a route
+    # keeps failing transiently, sticky for the rest of the run.
+    author_index: int = 0
+    verifier_index: int = 0
 
 
 class SelectionCallPlan(BaseModel):
