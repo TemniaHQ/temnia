@@ -63,6 +63,7 @@ from temnia_pipeline.harness.rendering import (
     write_captions,
 )
 from temnia_pipeline.harness.review import ReviewRefused
+from temnia_pipeline.harness.run_failures import RECONCILED_RUN_MESSAGE
 from temnia_pipeline.harness.runtime_types import (
     AcceptInitialRevisionRequest,
     BuildEvidenceRequest,
@@ -71,6 +72,7 @@ from temnia_pipeline.harness.runtime_types import (
     CommitReviewMutationResult,
     EvidenceResult,
     MarkRunFailedRequest,
+    ReconcileRunResult,
     RenderRevisionRequest,
     RenderRevisionResult,
     ResumeRunAssets,
@@ -207,6 +209,31 @@ class HarnessActivities:
         """Persist a safe known-failure state for the exact owning execution."""
         self._require_enabled()
         return await runs.mark_run_failed(self.ctx.settings.database_url, request=request)
+
+    @activity.defn(name="reconcile_chapter_run_costs")
+    async def reconcile_chapter_run_costs(self, run: RunRef) -> ReconcileRunResult:
+        """Settle unknown charges from gateway receipts, then lift the run's fence if clear."""
+        self._require_enabled()
+        api_key = self.harness_settings.gateway_api_key
+        if api_key is None or self.harness_settings.backend != "gateway":
+            return ReconcileRunResult()
+        from temnia_pipeline.harness.cli import reconcile_run_costs  # noqa: PLC0415
+
+        results = await reconcile_run_costs(
+            self.ctx.settings.database_url,
+            run_id=run.run_id,
+            api_key=api_key,
+            apply=True,
+            gateway=self.harness_settings.gateway,
+        )
+        resolved = await runs.settle_reconciled_run(
+            self.ctx.settings.database_url, run=run, message=RECONCILED_RUN_MESSAGE
+        )
+        return ReconcileRunResult(
+            looked_up=len(results),
+            settled=sum(1 for item in results if item.get("applied") is True),
+            resolved=resolved,
+        )
 
     @activity.defn(name="apply_chapter_review")
     async def apply_chapter_review(self, request: ChapterReviewInput) -> ChapterReviewOutput:
@@ -1396,6 +1423,7 @@ class HarnessActivities:
             self.update_chapter_run_stage,
             self.claim_chapter_repair,
             self.mark_chapter_run_failed,
+            self.reconcile_chapter_run_costs,
             self.apply_chapter_review,
             self.accept_initial_chapter_revision,
             self.commit_chapter_review,

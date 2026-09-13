@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getPendingTopicWorkflowStatus,
   type PendingTopicWorkflowStatus,
+  retryTopicRun,
   reviewTopicCommand,
   startTopicRun,
 } from "@/app/actions/topics";
@@ -33,6 +34,8 @@ import {
   TopicStartIntentSchema,
 } from "@/lib/harness/topic-pending";
 import { formatDuration } from "@/lib/sources/labels";
+
+const STALE_SERVER_ACTION = /Server Action|failed-to-find-server-action/;
 
 function remember(key: string, value: unknown) {
   try {
@@ -227,6 +230,40 @@ export function TopicPanel({
     };
   }, [sourceId, requestIdentity]);
 
+  /** A Next.js server action hash changes with every deploy; an open tab must reload. */
+  function explainActionFailure(error: unknown, fallback: string) {
+    const text = error instanceof Error ? error.message : String(error);
+    return STALE_SERVER_ACTION.test(text)
+      ? "Temnia was updated while this page was open. Reload the page and press the button again."
+      : fallback;
+  }
+
+  async function retry() {
+    if (busy || !view.run) {
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await retryTopicRun({ runId: view.run.id, sourceId });
+      setMessage(
+        result.ok
+          ? "Retry started; resuming from the retained work."
+          : result.message
+      );
+      await refresh();
+    } catch (error) {
+      setMessage(
+        explainActionFailure(
+          error,
+          "The retry result is unknown. Refresh; if the run is not running, retry again."
+        )
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function start(intent = pendingStart) {
     if (busy || (!intent && blocked)) {
       return;
@@ -257,9 +294,12 @@ export function TopicPanel({
         remember(startKey, null);
         setPendingStart(null);
       }
-    } catch {
+    } catch (error) {
       setMessage(
-        "The start result is unknown. Check or retry this same request."
+        explainActionFailure(
+          error,
+          "The start result is unknown. Check or retry this same request."
+        )
       );
     } finally {
       setBusy(false);
@@ -304,9 +344,12 @@ export function TopicPanel({
         setPendingReview(null);
       }
       await refresh();
-    } catch {
+    } catch (error) {
       setMessage(
-        "The review result is unknown. Check or retry this same command."
+        explainActionFailure(
+          error,
+          "The review result is unknown. Check or retry this same command."
+        )
       );
     } finally {
       setBusy(false);
@@ -449,7 +492,7 @@ export function TopicPanel({
           {message}
         </p>
       )}
-      <TopicRunStatus run={view.run} />
+      <TopicRunStatus onRetry={retry} retryBlocked={blocked} run={view.run} />
       {!!artifactError && (
         <p className="text-destructive text-sm" role="alert">
           {artifactError}
@@ -735,7 +778,15 @@ function TopicVideoCard({
   );
 }
 
-function TopicRunStatus({ run }: { run: ChapterView["run"] }) {
+function TopicRunStatus({
+  onRetry,
+  retryBlocked,
+  run,
+}: {
+  onRetry: () => void;
+  retryBlocked: boolean;
+  run: ChapterView["run"];
+}) {
   return (
     <>
       {!!run && (
@@ -755,6 +806,11 @@ function TopicRunStatus({ run }: { run: ChapterView["run"] }) {
             <p>Recorded test run; no live editorial judgment.</p>
           )}
           {!!run.errorMessage && <p>{run.errorMessage}</p>}
+          {["failed", "budget_paused"].includes(run.status) && (
+            <Button disabled={retryBlocked} onClick={onRetry} size="sm">
+              Retry this run
+            </Button>
+          )}
           {run.evidenceTranscriptRevision !== null &&
             run.currentTranscriptRevision !==
               run.evidenceTranscriptRevision && (

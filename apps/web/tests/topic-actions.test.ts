@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   editTopicPortfolio,
   getPendingTopicWorkflowStatus,
+  retryTopicRun,
   reviewTopicCommand,
   startTopicRun,
 } from "@/app/actions/topics";
@@ -294,5 +295,57 @@ describe("retained generations and human corrections", () => {
     expect(mocks.start.mock.calls[0]?.[1].workflowId).toBe(
       `topic-edit/${RUN}/${SOURCE}`
     );
+  });
+});
+
+describe("retrying a stopped run", () => {
+  const stoppedRun = {
+    brief: "Default",
+    budgetMicros: 20_000_000,
+    config: serverConfig,
+    id: RUN,
+    lane: "chapters",
+    requestKey: RUN,
+    routeSnapshot: {
+      editorialPolicy: TOPIC_POLICY,
+      initialBudgetMicros: 20_000_000,
+    },
+    sourceId: SOURCE,
+    status: "failed",
+  };
+
+  it("resumes a failed run under a new execution with the original intent", async () => {
+    rows([[stoppedRun]]);
+    await expect(
+      retryTopicRun({ runId: RUN, sourceId: SOURCE })
+    ).resolves.toEqual({ ok: true, runId: RUN });
+    const [name, options] = mocks.start.mock.calls[0] ?? [];
+    expect(name).toBe(WORKFLOWS.topicSelection);
+    expect(options.workflowId).toMatch(
+      new RegExp(`^topic-selection/${RUN}/retry-`)
+    );
+    expect(options.args[0]).toMatchObject({
+      brief: "Default",
+      budgetMicros: 20_000_000,
+      config: serverConfig,
+      requestKey: RUN,
+      runId: RUN,
+      scope,
+      sourceId: SOURCE,
+    });
+  });
+
+  it("refuses a run that is running or fenced on an unknown charge", async () => {
+    rows([[{ ...stoppedRun, status: "running" }]]);
+    await expect(
+      retryTopicRun({ runId: RUN, sourceId: SOURCE })
+    ).resolves.toMatchObject({ ok: false });
+    rows([[{ ...stoppedRun, status: "outcome_unknown" }]]);
+    const fenced = await retryTopicRun({ runId: RUN, sourceId: SOURCE });
+    expect(fenced.ok).toBe(false);
+    expect(fenced.ok ? "" : fenced.message).toContain(
+      "unconfirmed provider charge"
+    );
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 });

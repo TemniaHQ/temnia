@@ -17,6 +17,7 @@ from temnia_pipeline.contracts import (
     ChapterChecks,
     ChapterEditSpec,
     ChapterRenders,
+    ChapterReviewAction,
     ChapterReviewInput,
     ChapterReviewOutput,
     HarnessArtifactKind,
@@ -521,3 +522,13 @@ async def test_selection_editorial_lineage_preserves_v3_program_version(
 
     assert await handler.editorial_lineage(context, edit, metadata) == (selection, assessment)
     assert observed == ["standalone-topics/3", "standalone-topics/3"]
+
+
+def test_retry_is_an_operational_command_that_names_no_candidate() -> None:
+    base = command()
+    retry = base.model_copy(update={"action": ChapterReviewAction.retry, "sectionId": None})
+    validate_topic_command(retry)
+    with pytest.raises(ReviewRefused, match="cancellation and retry name none"):
+        validate_topic_command(base.model_copy(update={"action": ChapterReviewAction.retry}))
+    with pytest.raises(ReviewRefused, match="does not name this topic portfolio"):
+        apply_topic_decision(cast("Any", SimpleNamespace(sourceId=retry.sourceId)), retry)

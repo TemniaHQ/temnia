@@ -254,6 +254,7 @@ class _RequestObservation:
     generation_id: str | None = None
     response_opened: bool = False
     response_headers: dict[str, str] | None = None
+    retry_after_seconds: float | None = None
 
     async def identify(self, identity: str) -> None:
         if not identity or identity.strip() != identity:
@@ -278,9 +279,29 @@ async def _validate_http_request(request: httpx2.Request) -> None:
         validate_gateway_request(request, observed.route)
 
 
+MAX_RETRY_AFTER_SECONDS = 120.0
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Read a delay-seconds Retry-After header, bounded; dates and junk are ignored."""
+    if value is None:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_SECONDS)
+
+
 async def _observe_http_response(response: httpx2.Response) -> None:
     observed = _request_observation.get()
-    if observed is None or not response.is_success:
+    if observed is None:
+        return
+    if not response.is_success:
+        # A throttled or failed request carries the provider's own pacing advice.
+        observed.retry_after_seconds = parse_retry_after(response.headers.get("retry-after"))
         return
     observed.response_opened = True
     observed.response_headers = {
@@ -706,6 +727,9 @@ class GatewayChatModel(WrapperModel):
                     model_name=self.route.gateway_model,
                     message="gateway response ended without complete durable output",
                 ) from error
+            if observed.retry_after_seconds is not None:
+                # Carried on the exception so the budgeted model can pass it to the workflow.
+                error.retry_after_seconds = observed.retry_after_seconds  # type: ignore[attr-defined]
             raise
         finally:
             _request_observation.reset(token)

@@ -132,6 +132,8 @@ async def run_worker(settings: TemporalSettings) -> None:
                 ),
                 gateway=gateway,
                 allow_synthetic=synthetic,
+                max_in_flight_per_route=harness_settings.max_in_flight_per_route,
+                min_dispatch_interval_seconds=harness_settings.min_dispatch_interval_seconds,
             )
         )
     client = await Client.connect(

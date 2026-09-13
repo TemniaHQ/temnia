@@ -51,11 +51,23 @@ def _refuse(message: str) -> Never:
     raise HarnessValidationError(message)
 
 
-def editorial_routes(snapshot: RouteSnapshot) -> tuple[RouteEntry, RouteEntry]:
-    """Choose a reserved nonauthoring family from the immutable qualified pools."""
-    verifier = select_route(snapshot, "verify")
+def editorial_routes(
+    snapshot: RouteSnapshot, *, author_index: int = 0, verifier_index: int = 0
+) -> tuple[RouteEntry, RouteEntry]:
+    """Choose the author by pool order, then a reviewer from another family by pool order.
+
+    The indices are a run's fallback position: a seat whose route keeps failing
+    transiently moves to the next qualified route in its pool. The reviewer's pool is
+    filtered by the author's family first, so independence holds at every position.
+    """
+    author = select_route(snapshot, "propose", candidate_index=author_index)
     try:
-        author = select_route(snapshot, "propose", excluded_families=frozenset({verifier.family}))
+        verifier = select_route(
+            snapshot,
+            "verify",
+            candidate_index=verifier_index,
+            excluded_families=frozenset({author.family}),
+        )
     except NoEligibleRoute as error:
         message = "standalone planning requires a reserved independent reviewer"
         raise NoEligibleRoute(message) from error

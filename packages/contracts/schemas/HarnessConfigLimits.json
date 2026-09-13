@@ -14,6 +14,12 @@
           "minimum": 1,
           "maximum": 128
         },
+        "maxInFlightPerRoute": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
         "maxOutputTokens": {
           "type": "integer",
           "minimum": 256,
@@ -33,15 +39,23 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
+        },
+        "minDispatchIntervalSeconds": {
+          "default": 1,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
         }
       },
       "required": [
         "evidenceWindowSentences",
         "maxDispatches",
+        "maxInFlightPerRoute",
         "maxOutputTokens",
         "maxRenderConcurrency",
         "maxRepairs",
-        "maxRunBudgetMicros"
+        "maxRunBudgetMicros",
+        "minDispatchIntervalSeconds"
       ],
       "additionalProperties": false,
       "title": "HarnessConfigLimits"

@@ -2,6 +2,25 @@
 
 ## Decisions
 
+**2026-09-13 — A transient provider failure never ends a run; it retries, falls back, and the
+run can always be resumed.** Rajesh, after three staging runs (one success, a 402, a 429 that
+discarded $0.38 of work): "With such inconsistency how can we even launch our product to the
+public?" The audit is `docs/design/harness-robustness-2026-09-13.md`. Rules from it: an HTTP
+status before any response (408, 425, 429, every 5xx) is a transient failure with a known
+zero cost and a released reservation, retried once on the route after the longer of 20 s and
+the provider's Retry-After, then on the next qualified route in the seat pool (`author_index`,
+`verifier_index` on the selection context, sticky for the run, reviewer pool filtered by the
+author's family at every position); only when every route has failed does the run end, naming
+them all. The worker admits provider calls per route (`limits.maxInFlightPerRoute`,
+`limits.minDispatchIntervalSeconds` in the deployment file; staging 2 and 1 s), taken before
+the dispatch is committed, because providers throttle the account, not the run. Cold reviews
+fan out concurrently within that bound. An unconfirmed outcome is reconciled from gateway
+receipts in the workflow's failure path; a run in `pending`, `failed` or `budget_paused` can be
+taken over by a new execution and the web's **Retry this run** does exactly that, replaying
+settled responses by request identity. A stale server action after a deploy is explained as
+such. Model activities still never retry at the Temporal level: every retry is a paid decision
+the workflow owns.
+
 **2026-09-13 — A physical-only repair is judged by its effect, not its operation label.** The
 first staging run (`fc2000e9`, 15 calls, $1.05, no technical failure) produced 11 candidates
 and 8 required findings on 7 of them; Kimi's repair addressed all 8 in six `replace_extent`

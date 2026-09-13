@@ -185,6 +185,9 @@ async def _lock_ready_source(
     return row
 
 
+RESUMABLE_STATUSES = ("pending", "failed", "budget_paused")
+
+
 async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
     database_url: str,
     *,
@@ -276,20 +279,24 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                 existing["workflow_id"] == start.workflow.workflow_id
                 and existing["workflow_run_id"] == start.workflow.workflow_run_id
             )
-            if existing["status"] == "pending" and not same_execution:
+            # A new execution resumes a run that is waiting or stopped on a known failure;
+            # its retained artifacts and settled responses are reused, never paid again.
+            # An unconfirmed provider outcome keeps its fence until reconciled.
+            if existing["status"] in RESUMABLE_STATUSES and not same_execution:
                 existing = await (
                     await conn.execute(
                         """
                         UPDATE harness_run
                            SET workflow_id = %s, workflow_run_id = %s,
                                status = 'running', error_message = NULL, updated_at = now()
-                         WHERE id = %s AND status = 'pending'
+                         WHERE id = %s AND status = ANY(%s)
                          RETURNING *
                         """,
                         (
                             start.workflow.workflow_id,
                             start.workflow.workflow_run_id,
                             request.runId,
+                            list(RESUMABLE_STATUSES),
                         ),
                     )
                 ).fetchone()
@@ -504,6 +511,33 @@ async def claim_repair(
         if updated is None:
             raise RunStateConflict("semantic repair claim compare-and-set was lost")
         return _snapshot(updated)
+
+
+async def settle_reconciled_run(database_url: str, *, run: RunRef, message: str) -> bool:
+    """Lift the unknown-outcome fence once no attempt's charge is unknown any more."""
+    scope = Scope(organizationId=run.scope_organization_id, userId=run.scope_user_id)
+    async with db.scoped(database_url, scope) as conn:
+        remaining = await (
+            await conn.execute(
+                "SELECT count(*) AS value FROM harness_attempt"
+                " WHERE run_id = %s AND cost_status = 'unknown'",
+                (run.run_id,),
+            )
+        ).fetchone()
+        if remaining is None or int(remaining["value"]) != 0:
+            return False
+        updated = await (
+            await conn.execute(
+                """
+                UPDATE harness_run
+                   SET status = 'failed', error_message = %s, updated_at = now()
+                 WHERE id = %s AND source_id = %s AND status = 'outcome_unknown'
+                 RETURNING id
+                """,
+                (message, run.run_id, run.source_id),
+            )
+        ).fetchone()
+        return updated is not None
 
 
 async def mark_run_failed(database_url: str, *, request: MarkRunFailedRequest) -> bool:

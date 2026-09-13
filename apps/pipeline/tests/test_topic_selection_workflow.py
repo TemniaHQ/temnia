@@ -31,7 +31,9 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
+from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown
+from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
@@ -648,14 +650,49 @@ async def test_settled_transient_failure_is_retried_and_the_run_completes(
     assert run.render_count == 1
 
 
-async def test_three_settled_transient_failures_end_the_run_with_the_cause(
+async def test_transient_failures_fall_back_through_the_verify_pool_then_end_the_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sources: list[object] = [TransientProviderFailure("settled")] * 3
+    """Each route gets two tries; the seat then moves on; exhaustion names every route."""
+    _, snapshot = _settings()
+    author = select_route(snapshot, "propose")
+    eligible = [
+        route_id
+        for route_id in snapshot.seats["verify"].route_ids
+        if snapshot.route(route_id).family != author.family
+    ]
+    attempts = module.SAME_ROUTE_ATTEMPTS * len(eligible)
+    sources: list[object] = [TransientProviderFailure("settled")] * attempts
     sources.append(v3_portfolio(selected=True))
     run = Program(monkeypatch, initial=draft(selected=True), sources=sources, patches=[])
     monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
-    with pytest.raises(TransientProviderFailure):
+    with pytest.raises(module.SeatRoutesExhausted, match=", ".join(eligible)):
         await TopicSelectionWorkflow().program(run.request)
-    assert run.call_order.count("source") == 3
+    assert run.call_order.count("source") == attempts
     assert run.compiled is None
+
+
+def test_the_provider_pause_advice_extends_the_backoff_but_never_shortens_it() -> None:
+    floor = module.SAME_ROUTE_BACKOFF
+    assert module.advised_pause("nothing", floor) == floor
+    assert module.advised_pause("The provider asked for a pause of 5 s.", floor) == floor
+    assert module.advised_pause("pause of 90 s", floor).total_seconds() == 90
+    assert parse_retry_after("17") == 17
+    assert parse_retry_after(" 3.5 ") == 3.5
+    assert parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT") is None
+    assert parse_retry_after("-1") is None
+    assert parse_retry_after("100000") == 120
+
+
+async def test_a_transient_failure_on_one_route_moves_the_seat_to_the_next_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources: list[object] = [TransientProviderFailure("settled")] * module.SAME_ROUTE_ATTEMPTS
+    sources.append(v3_portfolio(selected=True))
+    run = Program(monkeypatch, initial=draft(selected=True), sources=sources, patches=[])
+    monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order.count("source") == module.SAME_ROUTE_ATTEMPTS + 1
+    assert run.final_context is not None
+    assert run.final_context.verifier_index == 1
+    assert run.compiled is not None

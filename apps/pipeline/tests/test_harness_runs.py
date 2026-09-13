@@ -1883,3 +1883,59 @@ async def test_reasoned_all_drop_revision_can_accept_an_empty_export_without_mod
         assert event["payload"]["reason"] == command.reason
     finally:
         await db.close_pool()
+
+
+@pytest.mark.parametrize("stopped", ["failed", "budget_paused"])
+async def test_a_new_execution_resumes_a_run_stopped_on_a_known_failure(stopped: str) -> None:
+    """The run keeps its identity and artifacts; only the Temporal execution is new."""
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        assert created.created
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                "UPDATE harness_run SET status = %s, error_message = 'stopped' WHERE id = %s",
+                (stopped, start.request.runId),
+            )
+        resumed = await start_or_refetch_run(
+            url,
+            start=start.model_copy(
+                update={
+                    "workflow": WorkflowIdentity(
+                        workflow_id="topic-selection/resume/retry-1",
+                        workflow_run_id="resume-run/1",
+                    )
+                }
+            ),
+            settings=settings(value),
+            route_snapshot=value,
+        )
+        assert not resumed.created
+        assert str(resumed.run.status) == "running"
+        assert resumed.run.workflow_id == "topic-selection/resume/retry-1"
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                "UPDATE harness_run SET status = 'outcome_unknown' WHERE id = %s",
+                (start.request.runId,),
+            )
+        fenced = await start_or_refetch_run(
+            url,
+            start=start.model_copy(
+                update={
+                    "workflow": WorkflowIdentity(
+                        workflow_id="topic-selection/resume/retry-2",
+                        workflow_run_id="resume-run/2",
+                    )
+                }
+            ),
+            settings=settings(value),
+            route_snapshot=value,
+        )
+        assert str(fenced.run.status) == "outcome_unknown"
+    finally:
+        await db.close_pool()

@@ -39,6 +39,19 @@ def _cause_message(cause: BaseException | None) -> str:
     return message.strip()
 
 
+RECONCILED_RUN_MESSAGE = (
+    "A provider call ended without a confirmed outcome; its charge was reconciled from the "
+    "gateway receipt. Retry this run to resume from its retained work."
+)
+
+
+def outcome_unknown(error: Exception) -> bool:
+    """The run is fenced on an unconfirmed provider outcome."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    error_type = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return error_type == "OutcomeUnknown"
+
+
 def known_failure_details(  # noqa: PLR0911
     error: Exception,
 ) -> tuple[Literal["failed", "budget_paused"], str]:
@@ -68,6 +81,13 @@ def known_failure_details(  # noqa: PLR0911
         return "failed", (
             f"The {_failing_stage(error)} response was incomplete or invalid; "
             "the charge is retained and nothing was retried."
+        )
+    if error_type == "SeatRoutesExhausted":
+        exhausted = _cause_message(cause) or "Every qualified route for one seat failed."
+        return "failed", (
+            f"{exhausted} Each route was retried after a pause before the next was tried; "
+            "nothing was charged for a refused request. Retry this run later or change "
+            "the route snapshot."
         )
     if error_type == "TransientProviderFailure":
         settled = _cause_message(cause) or "A provider call ended without a response."

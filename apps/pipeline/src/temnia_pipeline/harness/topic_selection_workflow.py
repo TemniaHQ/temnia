@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
 
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -58,8 +60,26 @@ with workflow.unsafe.imports_passed_through():
     )
     from temnia_pipeline.harness.topic_workflow import RETRY, TopicRunWorkflow
 
-if TYPE_CHECKING:
-    from temnia_pipeline.harness.routes import RouteEntry
+
+Seat = Literal["author", "verifier"]
+
+
+class SeatRoutesExhausted(RuntimeError):  # noqa: N818 - the name crosses Temporal as a type
+    """Every qualified route for one seat failed transiently, each after backoff."""
+
+
+def no_eligible_route(error: Exception) -> bool:
+    """The seat pool has no route at the requested fallback position."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name == "NoEligibleRoute"
+
+
+def failure_sentence(error: Exception) -> str:
+    """The exact sentence the raising site wrote, across the Temporal boundary."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    message = cause.message if isinstance(cause, ApplicationError) else str(cause)
+    return message.strip()
 
 
 def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> HarnessModelDeps:
@@ -102,11 +122,25 @@ def transient_provider_failure(error: Exception) -> bool:
     return name == "TransientProviderFailure"
 
 
-# One dispatch plus two retries: enough to ride out an upstream rate limit delivered
-# inside a successful stream, small enough that a persistently failing route still ends
-# the run with its cause named instead of spending indefinitely.
-TRANSIENT_ATTEMPTS = 3
-TRANSIENT_BACKOFF = (timedelta(seconds=30), timedelta(seconds=90))
+# A transient failure (throttling, an outage, a lost stream whose charge settled) is
+# retried once on the same route after a pause, then the seat moves to the next qualified
+# route in its pool. Pools hold at most a few routes; the cap keeps the loop finite even
+# when a test double never reports an empty pool.
+SAME_ROUTE_ATTEMPTS = 2
+SAME_ROUTE_BACKOFF = timedelta(seconds=20)
+MAX_SEAT_ROUTES = 4
+# Cold reviews are independent per candidate; this bounds the workflow's fan-out, and the
+# worker's per-route gate bounds what actually reaches the provider.
+COLD_REVIEW_FAN_OUT = 3
+PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
+
+
+def advised_pause(sentence: str, floor: timedelta) -> timedelta:
+    """Honour the provider's Retry-After when it is longer than the fixed backoff."""
+    match = PAUSE_ADVICE.search(sentence)
+    if match is None:
+        return floor
+    return max(floor, timedelta(seconds=int(match.group(1))))
 
 
 @workflow.defn(name="TopicSelectionWorkflow")
@@ -115,6 +149,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
 
     __pydantic_ai_agents__ = TOPIC_SELECTION_AGENTS
     policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V3
+    settled_context: SelectionContext
     author_agent = topic_selection_author_v3
     cold_agent = topic_selection_cold_v3
     source_agent = topic_selection_source_v4
@@ -169,13 +204,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         context: SelectionContext,
     ) -> SelectionContext:
         """Run one independent source inventory, then degrade visibly if it is unavailable."""
-        plan = await self.prepare_selection(context)
         diagnostics: tuple[str, ...] = ()
         inventory = None
         try:
-            result = await self.run_seat(
-                topic_opportunity_inventory_v3, request, plan, plan.verifier
+            result, _, settled = await self.run_seat(
+                topic_opportunity_inventory_v3, request, context, "verifier"
             )
+            context = self.carry_routes(context, settled)
             inventory = result.output
         except Exception as error:
             if invalid_model_output(error):
@@ -219,24 +254,61 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         self,
         agent: Any,  # noqa: ANN401
         request: ChapterRunInput,
-        plan: SelectionCallPlan,
-        route: RouteEntry,
-    ) -> Any:  # noqa: ANN401
-        """Make one seat's call; retry only a settled transient failure, with backoff."""
-        deps = selection_model_deps(request, plan)
-        settings = {
-            "max_tokens": effective_topic_output_tokens(request.config.maxOutputTokens, route)
-        }
-        for attempt in range(TRANSIENT_ATTEMPTS):
-            try:
-                return await agent.run(plan.prompt, deps=deps, model_settings=settings)
-            except Exception as error:
-                if not transient_provider_failure(error) or attempt == TRANSIENT_ATTEMPTS - 1:
-                    raise
-                await workflow.sleep(TRANSIENT_BACKOFF[attempt])
-        raise RuntimeError("unreachable: transient retry loop exited without a result")
+        context: SelectionContext,
+        seat: Seat,
+    ) -> tuple[Any, SelectionCallPlan, SelectionContext]:
+        """Make one seat's call on the current route; retry transients, then fall back.
 
-    async def review_selection(  # noqa: C901
+        Returns the result, the plan it was made with, and the context carrying the
+        fallback position that succeeded, which callers keep for the rest of the run.
+        """
+        index_field = "author_index" if seat == "author" else "verifier_index"
+        tried: list[str] = []
+        last_failure = ""
+        stage = seat
+        for _ in range(MAX_SEAT_ROUTES):
+            try:
+                plan = await self.prepare_selection(context)
+            except Exception as error:
+                if no_eligible_route(error) and tried:
+                    break
+                raise
+            stage = plan.stage
+            route = plan.author if seat == "author" else plan.verifier
+            deps = selection_model_deps(request, plan)
+            settings = {
+                "max_tokens": effective_topic_output_tokens(request.config.maxOutputTokens, route)
+            }
+            for attempt in range(SAME_ROUTE_ATTEMPTS):
+                try:
+                    result = await agent.run(plan.prompt, deps=deps, model_settings=settings)
+                except Exception as error:
+                    if not transient_provider_failure(error):
+                        raise
+                    last_failure = failure_sentence(error)
+                    if attempt < SAME_ROUTE_ATTEMPTS - 1:
+                        await workflow.sleep(advised_pause(last_failure, SAME_ROUTE_BACKOFF))
+                    continue
+                return result, plan, context
+            tried.append(route.id)
+            context = context.model_copy(update={index_field: getattr(context, index_field) + 1})
+        exhausted = (
+            f"Every qualified {seat} route failed transiently for the {stage} call "
+            f"({', '.join(tried)}); last: {last_failure}"
+        )
+        raise SeatRoutesExhausted(exhausted)
+
+    @staticmethod
+    def carry_routes(base: SelectionContext, updated: SelectionContext) -> SelectionContext:
+        """Keep the fallback positions a seat call settled on."""
+        return base.model_copy(
+            update={
+                "author_index": updated.author_index,
+                "verifier_index": updated.verifier_index,
+            }
+        )
+
+    async def review_selection(  # noqa: C901, PLR0912, PLR0915
         self,
         request: ChapterRunInput,
         context: SelectionContext,
@@ -252,28 +324,58 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         limited = False
         if context.rubric is None:
             raise RuntimeError("selection review requires the frozen rubric")
-        for candidate in draft.proposal.candidates:
-            key = selection_cold_key(candidate, context.rubric.sha256)
-            cached = cache.get(key)
-            if cached is None:
-                cold_context = context.model_copy(update={"candidate_id": candidate.id})
-                try:
-                    plan = await self.prepare_selection(cold_context)
-                    result = await self.run_seat(self.cold_agent, request, plan, plan.verifier)
-                except Exception as error:
-                    if invalid_model_output(error):
-                        unavailable.append(candidate.id)
-                        reasons.append(
-                            f"Cold review of {candidate.id} did not match its required schema."
-                        )
-                        continue
-                    if not execution_limit(error):
-                        raise
+        rubric_sha = context.rubric.sha256
+        pending = [
+            candidate
+            for candidate in draft.proposal.candidates
+            if selection_cold_key(candidate, rubric_sha) not in cache
+        ]
+        fan_out = asyncio.Semaphore(COLD_REVIEW_FAN_OUT)
+        settled_index = {"verifier_index": context.verifier_index}
+
+        async def review_one(
+            candidate: Any,  # noqa: ANN401
+        ) -> tuple[TopicSelectionColdReview, str]:
+            async with fan_out:
+                cold_context = context.model_copy(
+                    update={
+                        "candidate_id": candidate.id,
+                        "verifier_index": settled_index["verifier_index"],
+                    }
+                )
+                result, plan, settled = await self.run_seat(
+                    self.cold_agent, request, cold_context, "verifier"
+                )
+                settled_index["verifier_index"] = max(
+                    settled_index["verifier_index"], settled.verifier_index
+                )
+                return result.output, plan.stage
+
+        outcomes = await asyncio.gather(
+            *(review_one(candidate) for candidate in pending), return_exceptions=True
+        )
+        context = context.model_copy(update={"verifier_index": settled_index["verifier_index"]})
+        for candidate, outcome in zip(pending, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, Exception):
+                    raise outcome
+                if invalid_model_output(outcome):
+                    unavailable.append(candidate.id)
+                    reasons.append(
+                        f"Cold review of {candidate.id} did not match its required schema."
+                    )
+                    continue
+                if not execution_limit(outcome):
+                    raise outcome
+                if not limited:
                     limited = True
                     reasons.append("Execution capacity prevented the remaining candidate reviews.")
-                    break
-                cached = (result.output, plan.stage)
-                cache[key] = cached
+                continue
+            cache[selection_cold_key(candidate, rubric_sha)] = outcome
+        for candidate in draft.proposal.candidates:
+            cached = cache.get(selection_cold_key(candidate, rubric_sha))
+            if cached is None:
+                continue
             cold_reviews.append(cached[0])
             cold_candidate_ids.append(candidate.id)
             cold_stages.append(cached[1])
@@ -281,10 +383,10 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         source_dispatched = False
         if not limited:
             try:
-                source_plan = await self.prepare_selection(context)
-                result = await self.run_seat(
-                    self.source_agent, request, source_plan, source_plan.verifier
+                result, _, settled = await self.run_seat(
+                    self.source_agent, request, context, "verifier"
                 )
+                context = self.carry_routes(context, settled)
                 source_dispatched = True
                 source_review = result.output
             except Exception as error:
@@ -300,6 +402,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     reasons.append(
                         "Execution capacity prevented the source and opportunity review."
                     )
+        self.settled_context = context
         return await workflow.execute_activity(
             "save_topic_selection_assessment",
             SelectionReviewRequest(
@@ -383,9 +486,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:
-            plan = await self.prepare_selection(context)
             try:
-                result = await self.run_seat(self.author_agent, request, plan, plan.author)
+                result, _, settled = await self.run_seat(
+                    self.author_agent, request, context, "author"
+                )
+                context = self.carry_routes(context, settled)
                 save = SelectionSaveRequest(context=context, draft=result.output)
             except Exception as error:
                 if not invalid_model_output(error):
@@ -422,7 +527,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         limited = False
         while True:
             final = await self.review_selection(request, context, draft, cache)
-            context = context.model_copy(update={"assessment": final.artifact})
+            context = self.carry_routes(context, self.settled_context).model_copy(
+                update={"assessment": final.artifact}
+            )
             if str(final.assessment.executionStatus) == "complete" or not final.actionable:
                 break
             if run.repair_count >= request.config.maxRepairs:
@@ -434,8 +541,10 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             run = await self.claim_repair(run, request)
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
             try:
-                plan = await self.prepare_selection(patch_context)
-                result = await self.run_seat(self.patch_agent, request, plan, plan.author)
+                result, _, settled = await self.run_seat(
+                    self.patch_agent, request, patch_context, "author"
+                )
+                patch_context = self.carry_routes(patch_context, settled)
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except Exception as error:
                 if invalid_model_output(error):
