@@ -178,7 +178,7 @@ def _snapshot(
 ) -> RunSnapshot:
     return RunSnapshot(
         accepted_revision=None,
-        brief=request.request.brief,
+        brief=request.request.brief or "",
         budget_micros=request.request.budgetMicros,
         config=request.request.config,
         current_revision=0,
@@ -941,7 +941,7 @@ async def test_temporal_foreign_summary_fails_visibly_then_recovers(
         assert len(shell.failures) == 1
         assert shell.failures[0].status == HarnessRunStatus.failed
         assert shell.failures[0].error_message == (
-            "The chapter workflow stopped after a known activity failure."
+            "The run stopped after an activity failure: RuntimeError."
         )
 
         summary.malformed = False

@@ -133,29 +133,21 @@ async def test_all_four_workflow_calls_use_their_prepared_route_profile(
     assert agents["source"].outputs == [32768, 32768]
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_only_v2_boot_admits_route_profiles(tmp_path: Path, *, enabled: bool) -> None:
+def test_boot_admits_route_profiles_below_the_configured_ceiling(tmp_path: Path) -> None:
     routes = profiles(author_max=4096, reviewer_max=8192)
     path = tmp_path / "routes.json"
     write_snapshot(path, routes)
-    values = {**env(path, routes, "recorded"), "HARNESS_TOPIC_SELECTION_ENABLED": str(int(enabled))}
-    settings = HarnessSettings.from_env(values)
-    if enabled:
-        assert settings.validate_boot() == routes
-    else:
-        with pytest.raises(RuntimeError, match="HARNESS_MAX_OUTPUT_TOKENS=8192"):
-            settings.validate_boot()
+    # Every route now boots against its own effective ceiling; there is no per-version flag.
+    assert HarnessSettings.from_env(env(path, routes, "recorded")).validate_boot() == routes
 
 
-def test_v2_profile_still_needs_protocol_and_nonempty_request_headroom(tmp_path: Path) -> None:
+def test_route_profile_still_needs_protocol_and_nonempty_request_headroom(tmp_path: Path) -> None:
     routes = profiles(author_max=4096, reviewer_max=8192)
     insufficient = routes.routes[0].model_copy(update={"context_tokens": 4096 + 8192})
     routes = snapshot((insufficient, routes.routes[1]), routes.seats)
     path = tmp_path / "routes.json"
     write_snapshot(path, routes)
-    settings = HarnessSettings.from_env(
-        {**env(path, routes, "recorded"), "HARNESS_TOPIC_SELECTION_ENABLED": "1"}
-    )
+    settings = HarnessSettings.from_env(env(path, routes, "recorded"))
     with pytest.raises(RuntimeError, match="protocol headroom"):
         settings.validate_boot()
 
@@ -166,7 +158,7 @@ async def test_non_v2_capacity_refuses_before_creation_or_ownership_query(
 ) -> None:
     routes = profiles(author_max=4096, reviewer_max=8192)
     settings, _ = _settings()
-    settings = replace(settings, route_snapshot_id=routes.snapshot_id, topic_selection_enabled=True)
+    settings = replace(settings, route_snapshot_id=routes.snapshot_id)
     request = _request().model_copy(update={"config": settings.allowed_config()})
     start = StartRunRequest(
         request=request,
@@ -186,7 +178,7 @@ async def test_non_v2_capacity_refuses_before_creation_or_ownership_query(
 async def test_v2_profile_reaches_scoped_run_admission(monkeypatch: pytest.MonkeyPatch) -> None:
     routes = profiles(author_max=4096, reviewer_max=8192)
     settings, _ = _settings()
-    settings = replace(settings, route_snapshot_id=routes.snapshot_id, topic_selection_enabled=True)
+    settings = replace(settings, route_snapshot_id=routes.snapshot_id)
     start = StartRunRequest(
         request=_request().model_copy(update={"config": settings.allowed_config()}),
         editorial_policy=SELECTION_POLICY,

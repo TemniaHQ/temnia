@@ -41,7 +41,7 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
 ) -> None:
     url = pipeline_url()
     routes = profiles()
-    configuration = replace(settings(routes), max_output_tokens=32768, topic_selection_enabled=True)
+    configuration = replace(settings(routes), max_output_tokens=32768)
     source_id = await ready_source(url)
     original = start_request(source_id, routes)
     start = original.model_copy(

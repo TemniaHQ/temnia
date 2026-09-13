@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 
 JsonObject = Mapping[str, Any]
 MAX_ERROR_LENGTH = 2000
+# An unknown outcome is a state the reader has to act on, so it owns a sentence.
+OUTCOME_UNKNOWN_RUN_MESSAGE = (
+    "A provider call ended without a confirmed outcome. Its reservation is retained until "
+    "reconciliation; nothing is retried automatically."
+)
 _URL = re.compile(r"(?i)\b(?:https?|postgres(?:ql)?|s3)://[^\s]+")
 _SECRET = re.compile(
     r"(?i)\b(authorization|api[-_ ]?key|access[-_ ]?key|secret|token|password)"
@@ -1367,13 +1372,15 @@ async def fail_attempt(  # noqa: PLR0913
         )
         if not outcome_known:
             await conn.execute(
-                "UPDATE harness_run SET status = 'outcome_unknown', updated_at = now()"
+                "UPDATE harness_run SET status = 'outcome_unknown', error_message = %s,"
+                " updated_at = now()"
                 " WHERE id = %s AND status NOT IN ('cancelled', 'failed', 'ready')",
-                (run_id,),
+                (OUTCOME_UNKNOWN_RUN_MESSAGE, run_id),
             )
         elif recovered_unknown:
             await conn.execute(
-                """UPDATE harness_run SET status = 'running', updated_at = now()
+                """UPDATE harness_run
+                      SET status = 'running', error_message = NULL, updated_at = now()
                     WHERE id = %s AND status = 'outcome_unknown' AND NOT EXISTS (
                         SELECT 1 FROM harness_attempt WHERE run_id = %s
                         AND id <> %s AND state = 'outcome_unknown'

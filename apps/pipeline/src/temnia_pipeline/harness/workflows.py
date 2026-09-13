@@ -110,6 +110,35 @@ def _is_known_provider_rejection(error: ActivityError) -> bool:
     return isinstance(cause, ApplicationError) and cause.type == "KnownProviderRejection"
 
 
+_MODEL_STAGE_LABELS = (
+    ("topic_opportunity_inventory", "source opportunity inventory"),
+    ("topic_selection_author", "author"),
+    ("topic_selection_cold", "cold review"),
+    ("topic_selection_source", "source review"),
+    ("topic_selection_patch", "repair"),
+    ("editorial", "editorial"),
+    ("proposal", "proposal"),
+    ("summary", "summary"),
+)
+
+
+def _failing_stage(error: Exception) -> str:
+    """Name the stage from the failing activity; agent names carry it across Temporal."""
+    activity_type = str(getattr(error, "activity_type", "") or "")
+    for marker, label in _MODEL_STAGE_LABELS:
+        if marker in activity_type:
+            return label
+    return "model"
+
+
+def _cause_message(cause: BaseException | None) -> str:
+    """Read the exact sentence the raising site wrote, across the Temporal boundary."""
+    if cause is None:
+        return ""
+    message = cause.message if isinstance(cause, ApplicationError) else str(cause)
+    return message.strip()
+
+
 def _known_failure_details(
     error: Exception,
 ) -> tuple[Literal["failed", "budget_paused"], str]:
@@ -119,7 +148,21 @@ def _known_failure_details(
         return "budget_paused", "The run budget cannot cover the next qualified operation."
     if error_type == "DispatchLimitExceeded":
         return "failed", "The run reached its configured physical dispatch limit."
-    return "failed", "The chapter workflow stopped after a known activity failure."
+    if error_type == "KnownProviderRejection":
+        rejection = _cause_message(cause) or "A route rejected the request."
+        return "failed", (
+            f"{rejection} Change the route snapshot and start a new run; nothing was retried."
+        )
+    if error_type == "ContextWindowExceeded":
+        return "failed", (
+            _cause_message(cause) or "The request exceeds the route's context window."
+        )
+    if error_type == "UnexpectedModelBehavior":
+        return "failed", (
+            f"The {_failing_stage(error)} response was incomplete or invalid; "
+            "the charge is retained and nothing was retried."
+        )
+    return "failed", f"The run stopped after an activity failure: {error_type}."
 
 
 @workflow.defn

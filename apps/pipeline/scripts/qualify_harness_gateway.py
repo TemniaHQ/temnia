@@ -1,4 +1,8 @@
-"""Collect private, bounded evidence for Temnia's live gateway request shape."""
+"""Collect private, bounded evidence for Temnia's live gateway request shape.
+
+This is an optional operator pre-flight for auditioning a route before a full-source
+run. It binds nothing: no worker reads its output, and admission happens in the run.
+"""
 
 # This operator CLI keeps every credential in the process environment.
 # ruff: noqa: EM101, TRY003
@@ -20,8 +24,6 @@ from temnia_pipeline.harness.qualification import (
     reconcile_journal,
     run_qualification,
 )
-from temnia_pipeline.harness.qualification_topic_selection import bind_topic_selection_qualification
-from temnia_pipeline.harness.routes import load_route_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,43 +74,10 @@ def parser() -> argparse.ArgumentParser:
     )
     reconcile.add_argument("--journal-sha256", required=True)
     reconcile.add_argument("--report", required=True, type=Path)
-    bind = commands.add_parser(
-        "bind-topics", help="bind exact topic request receipts to a snapshot"
-    )
-    bind.add_argument("--snapshot", required=True, type=Path)
-    bind.add_argument("--reports", required=True, nargs="+", type=Path)
-    bind.add_argument("--output", required=True, type=Path)
-    bind.add_argument("--max-output-tokens", required=True, type=int)
-    bind.add_argument(
-        "--program-version",
-        choices=("standalone-topics/2", "standalone-topics/3"),
-        default="standalone-topics/2",
-    )
-    bind.add_argument(
-        "--bind-transport",
-        action="store_true",
-        help="explicitly bind version 4 route transport, accounting identity and effective outputs",
-    )
-    bind.add_argument(
-        "--per-route-output",
-        action="store_true",
-        help="explicitly bind version 3 effective outputs from the run and route ceilings",
-    )
     return result
 
 
 async def _run(args: argparse.Namespace) -> int:
-    if args.command == "bind-topics":
-        bind_topic_selection_qualification(
-            load_route_snapshot(args.snapshot),
-            args.reports,
-            args.output,
-            max_output_tokens=args.max_output_tokens,
-            per_route_output=args.per_route_output,
-            transport_bound=args.bind_transport,
-            program_version=args.program_version,
-        )
-        return 0
     if not os.environ.get("AI_GATEWAY_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):
         raise QualificationRefusal("a gateway API key is required in the environment")
     selected_gateway = qualification_gateway(

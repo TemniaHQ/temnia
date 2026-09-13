@@ -29,9 +29,6 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
-from temnia_pipeline.harness.qualification_topic_selection import (
-    validate_topic_selection_qualification,
-)
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.topic_activities import TopicActivities
@@ -252,20 +249,6 @@ class TopicSelectionActivities:
         run, evidence, rubric, selection = await self.load(context)
         if rubric is None or context.rubric is None:
             raise HarnessValidationError("editorial calls require a frozen rubric")
-        if str(run.config.backend) == "gateway":
-            qualification = (
-                self.owner.harness_settings.topic_selection_v3_qualification_path
-                if context.program_version == TOPIC_SELECTION_POLICY_V3
-                else self.owner.harness_settings.topic_selection_qualification_path
-            )
-            if qualification is None:
-                raise HarnessValidationError("topic selection requires exact route qualification")
-            validate_topic_selection_qualification(
-                run.route_snapshot,
-                qualification,
-                max_output_tokens=run.config.maxOutputTokens,
-                program_version=context.program_version,
-            )
         author, verifier = editorial_routes(run.route_snapshot)
         dependencies = [context.evidence, context.rubric]
         v3 = context.program_version == TOPIC_SELECTION_POLICY_V3

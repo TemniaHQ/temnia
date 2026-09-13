@@ -919,7 +919,12 @@ class BudgetedModel(WrapperModel):
                 error_message="provider request ended with an HTTP error",
             )
             if conclusive:
-                raise KnownProviderRejection("provider rejected the model request") from error
+                # The stop reason names the route, stage and code an operator has to act on.
+                rejection = (
+                    f"Route {self.deps.route.id} rejected the {self.deps.stage} request "
+                    f"(HTTP {error.status_code})."
+                )
+                raise KnownProviderRejection(rejection) from error
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
         except asyncio.CancelledError:
             await self._record_unknown(

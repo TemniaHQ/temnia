@@ -162,7 +162,7 @@ class FakeRuns:
             id=start.request.runId,
             source_id=start.request.sourceId,
             request_key=start.request.requestKey,
-            brief=start.request.brief,
+            brief=start.request.brief or "",
             config=start.request.config,
             initial_budget_micros=start.request.budgetMicros,
             budget_micros=start.request.budgetMicros,
@@ -261,7 +261,12 @@ async def test_private_create_only_manifest_freezes_matrix_and_complete_program(
     assert len({item.request.requestKey for item in restored.executions}) == 2
     assert len({arm.pipeline_queue for arm in restored.arms}) == 2
     assert restored.sources[0].known_source_sha256 is None
-    assert set(restored.program.stages) == set(experiment.TOPIC_SELECTION_SCHEMAS)
+    assert set(restored.program.stages) == {
+        "topic_author",
+        "topic_cold",
+        "topic_source",
+        "topic_patch",
+    }
     assert restored.program.stages["topic_patch"].seat == "author"
     assert restored.program.stages["topic_source"].seat == "reviewer"
     with pytest.raises(FileExistsError):
@@ -285,8 +290,7 @@ async def test_v3_experiment_freezes_inventory_workflow_and_worker_settings(
     assert "topic_inventory" in prepared.program.stages
     assert prepared.executions[0].workflow_type == "TopicSelectionWorkflowV3"
     settings, _ = runtime(prepared)
-    assert settings.topic_selection_v3_enabled is True
-    assert settings.topic_selection_enabled is False
+    assert settings.enabled is True
 
 
 async def test_legacy_prepared_experiment_defaults_to_v2_workflow(
@@ -400,7 +404,7 @@ async def test_incompatible_runtime_refuses_before_precreation(
     elif change == "output":
         settings = replace(settings, max_output_tokens=256)
     elif change == "detector":
-        settings = replace(settings, topic_shot_detector="scdet")
+        settings = replace(settings, topic_shot_detector="pyscenedetect-adaptive")
     elif change == "programme":
 
         def stale_program(_version: str) -> TopicProgramManifest:
@@ -479,11 +483,11 @@ async def test_existing_workflow_wrong_memo_or_queue_refuses_reuse(
     assert len(driver.starts) == 1
 
 
-async def test_gateway_arm_requires_exact_qualification_and_resolved_seats(
+async def test_gateway_arm_requires_resolved_seats_and_exact_output_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # This existing qualifier helper uses mocked HTTP and invented responses, never paid inference.
-    snapshot, qualification, _, requests = await _qualified(tmp_path)
+    snapshot, _, requests = await _qualified(tmp_path)
     value = spec(tmp_path)
     route_path = tmp_path / "production-routes.json"
     route_path.write_text(snapshot.model_dump_json())
@@ -498,7 +502,6 @@ async def test_gateway_arm_requires_exact_qualification_and_resolved_seats(
                 }
             ),
             "route_snapshot_path": str(route_path),
-            "qualification_path": str(qualification),
             "recorded_fixture_path": None,
             "author_route_id": author.id,
             "reviewer_route_id": reviewer.id,
@@ -509,27 +512,22 @@ async def test_gateway_arm_requires_exact_qualification_and_resolved_seats(
     settings, temporal = runtime(prepared)
     experiment.assert_runtime(prepared, prepared.arms[0], settings, temporal)
     assert len(requests) == 12
-    unqualified = value.model_copy(
-        update={"arms": (arm.model_copy(update={"qualification_path": None}),)}
-    )
-    with pytest.raises(RuntimeError, match="QUALIFICATION"):
-        await prepare(unqualified, monkeypatch)
     wrong_seat = value.model_copy(
         update={"arms": (arm.model_copy(update={"author_route_id": reviewer.id}),)}
     )
     with pytest.raises(IdentityConflict, match="resolved author/reviewer"):
         await prepare(wrong_seat, monkeypatch)
-    wrong_limit = value.model_copy(
+    wrong_snapshot = value.model_copy(
         update={
             "arms": (
                 arm.model_copy(
-                    update={"config": arm.config.model_copy(update={"maxOutputTokens": 512})}
+                    update={"config": arm.config.model_copy(update={"routeSnapshotId": "0" * 64})}
                 ),
             )
         }
     )
-    with pytest.raises(ValueError, match="output setting"):
-        await prepare(wrong_limit, monkeypatch)
+    with pytest.raises(RuntimeError, match="route snapshot hash differs"):
+        await prepare(wrong_snapshot, monkeypatch)
 
 
 @pytest.mark.parametrize("changed", ["source_bytes", "source_fingerprint", "evidence"])

@@ -47,6 +47,7 @@ from temnia_pipeline.harness.runtime_types import (
     StartRunResult,
 )
 from temnia_pipeline.harness.settings import REQUIRED_ROUTE_SEATS, HarnessSettings
+from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -187,13 +188,35 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 ) -> StartRunResult:
     """Create one immutable request-keyed run or return its exact prior identity."""
     request = start.request
+    topic_policy = is_topic_policy(start.editorial_policy)
+    selection_policy = start.editorial_policy in {
+        TOPIC_SELECTION_POLICY,
+        TOPIC_SELECTION_POLICY_V3,
+    }
+    if topic_policy:
+        # One default brief lives in Python, so a web run hashes the rubric the r-runs hashed.
+        brief = request.brief if request.brief and request.brief.strip() else EDITORIAL_BRIEF
+    elif request.brief is None or not request.brief.strip():
+        raise IdentityConflict("chapter runs require an explicit editorial brief")
+    else:
+        brief = request.brief
+    program_value: object = start.evaluation_program
+    if program_value is None and selection_policy:
+        # Every topic run freezes its own prompt-template and native-schema bytes.
+        from temnia_pipeline.harness.topic_program import current_program  # noqa: PLC0415
+
+        program_value = current_program(
+            "standalone-topics/3"
+            if start.editorial_policy == TOPIC_SELECTION_POLICY_V3
+            else "standalone-topics/2"
+        )
     evaluation_program = None
     evaluation_program_sha = None
-    if start.evaluation_program is not None:
+    if program_value is not None:
         # The operator-only manifest is not part of the cross-language run request.
         from temnia_pipeline.evals.topics import TopicProgramManifest, digest  # noqa: PLC0415
 
-        program = TopicProgramManifest.model_validate(start.evaluation_program)
+        program = TopicProgramManifest.model_validate(program_value)
         if program.policy != start.editorial_policy:
             raise IdentityConflict("evaluation programme differs from the run editorial policy")
         evaluation_program = program.model_dump(mode="json", by_alias=True)
@@ -206,7 +229,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         raise IdentityConflict("requested run config differs from worker allowed config")
     if route_snapshot.snapshot_id != request.config.routeSnapshotId:
         raise IdentityConflict("requested route snapshot differs from loaded immutable snapshot")
-    if start.editorial_policy not in {TOPIC_SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}:
+    if not selection_policy:
         required_routes = {
             route_id
             for seat in REQUIRED_ROUTE_SEATS & route_snapshot.seats.keys()
@@ -248,21 +271,23 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         config_value = request.config.model_dump(mode="json")
         if existing is not None:
             pinned = existing["route_snapshot"]
-            if evaluation_program is not None and (
-                pinned.get("evaluationProgram") != evaluation_program
-                or pinned.get("evaluationProgramSha256") != evaluation_program_sha
-            ):
-                raise IdentityConflict("request key was reused with different evaluation programme")
+            # The lane is the coarser identity, and a lane change also changes the
+            # programme this worker would attach; name the lane rather than the manifest.
             prior_policy = pinned.get("editorialPolicy", "legacy")
             if (is_topic_policy(start.editorial_policy) or is_topic_policy(prior_policy)) and (
                 start.editorial_policy != prior_policy
             ):
                 raise IdentityConflict("request key was reused across incompatible editorial lanes")
+            if evaluation_program is not None and (
+                pinned.get("evaluationProgram") != evaluation_program
+                or pinned.get("evaluationProgramSha256") != evaluation_program_sha
+            ):
+                raise IdentityConflict("request key was reused with different evaluation programme")
             expected = (
                 request.runId,
                 request.sourceId,
                 str(request.requestKey),
-                request.brief,
+                brief,
                 request.budgetMicros,
                 config_value,
             )
@@ -302,17 +327,6 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             elif existing["status"] == "running" and not same_execution:
                 raise IdentityConflict("run resume is already owned by another execution")
             return StartRunResult(run=_snapshot(existing), created=False)
-        topic_policy_disabled = (
-            start.editorial_policy == TOPIC_SELECTION_POLICY
-            and not settings.topic_selection_enabled
-        ) or (
-            start.editorial_policy == TOPIC_SELECTION_POLICY_V3
-            and not settings.topic_selection_v3_enabled
-        )
-        if topic_policy_disabled:
-            raise IdentityConflict(
-                "new topic selection runs are disabled until deployment qualification"
-            )
         source = await _lock_ready_source(conn, request.sourceId)
         transcript = _pinned(source)
         prefix = f"org/{request.scope.organizationId}/source/{request.sourceId}/"
@@ -357,7 +371,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                     request.sourceId,
                     str(request.requestKey),
                     request.budgetMicros,
-                    request.brief,
+                    brief,
                     json.dumps(config_value, separators=(",", ":"), sort_keys=True),
                     json.dumps(route_value, separators=(",", ":"), sort_keys=True),
                     start.workflow.workflow_id,

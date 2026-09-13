@@ -270,7 +270,12 @@ def estimate_cost(
     input_tokens = payload_bytes + protocol_overhead_bytes
     output_tokens = max_output_tokens or route.max_output_tokens
     if input_tokens + output_tokens > route.context_tokens:
-        raise ContextWindowExceeded("bounded request exceeds the qualified context window")
+        # The refusal names what an operator must change: the source, the cap or the route.
+        raise ContextWindowExceeded(
+            f"Route {route.id} cannot accept this request: {payload_bytes} payload bytes "
+            f"(about {input_tokens} estimated input tokens) plus {output_tokens} output tokens "
+            f"exceed its {route.context_tokens}-token context window."
+        )
     numerator = input_tokens * route.prices.input + output_tokens * route.prices.output
     amount = (
         numerator + TOKENS_PER_PRICE_UNIT - 1

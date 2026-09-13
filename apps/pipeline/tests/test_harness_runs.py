@@ -69,6 +69,7 @@ from temnia_pipeline.harness.runtime_types import (
     WorkflowIdentity,
 )
 from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF
 from temnia_pipeline.harness.workflows import ChapterReviewWorkflow
 
 if TYPE_CHECKING:
@@ -432,9 +433,7 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
     value = snapshot()
     source_id = await ready_source(url)
     start = start_request(source_id, value).model_copy(update={"editorial_policy": policy})
-    initial_settings = replace(
-        settings(value), topic_shot_detector=initial_detector, topic_selection_enabled=True
-    )
+    initial_settings = replace(settings(value), topic_shot_detector=initial_detector)
     changed_settings = replace(
         initial_settings,
         topic_shot_detector="scdet"
@@ -475,30 +474,20 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
     "original_policy",
     ["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"],
 )
-async def test_topic_generation_is_exact_and_rollout_does_not_fence_existing_runs(
+async def test_topic_generation_is_exact_and_never_crosses_editorial_lanes(
     original_policy: str,
 ) -> None:
     url = pipeline_url()
     value = snapshot()
     source_id = await ready_source(url)
     start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
-    disabled = settings(value)
-    enabled = replace(
-        disabled,
-        topic_selection_enabled=original_policy == "standalone-topics/2",
-        topic_selection_v3_enabled=original_policy == "standalone-topics/3",
-    )
+    configuration = settings(value)
     try:
-        if original_policy in {"standalone-topics/2", "standalone-topics/3"}:
-            with pytest.raises(IdentityConflict, match="disabled until deployment qualification"):
-                await start_or_refetch_run(
-                    url, start=start, settings=disabled, route_snapshot=value
-                )
         created = await start_or_refetch_run(
-            url, start=start, settings=enabled, route_snapshot=value
+            url, start=start, settings=configuration, route_snapshot=value
         )
         resumed = await start_or_refetch_run(
-            url, start=start, settings=disabled, route_snapshot=value
+            url, start=start, settings=configuration, route_snapshot=value
         )
         assert resumed.created is False
         assert resumed.run.editorial_policy == created.run.editorial_policy == original_policy
@@ -510,7 +499,61 @@ async def test_topic_generation_is_exact_and_rollout_does_not_fence_existing_run
             }
         )
         with pytest.raises(IdentityConflict, match="incompatible editorial lanes"):
-            await start_or_refetch_run(url, start=changed, settings=enabled, route_snapshot=value)
+            await start_or_refetch_run(
+                url, start=changed, settings=configuration, route_snapshot=value
+            )
+    finally:
+        await db.close_pool()
+
+
+@pytest.mark.parametrize("supplied", [None, "", "   "])
+async def test_absent_topic_brief_stores_the_single_python_default(supplied: str | None) -> None:
+    """One default brief lives in Python, so a web run hashes the rubric the r-runs hashed."""
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    original = start_request(source_id, value)
+    start = original.model_copy(
+        update={
+            "editorial_policy": "standalone-topics/3",
+            "request": original.request.model_copy(update={"brief": supplied}),
+        }
+    )
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        assert created.run.brief == EDITORIAL_BRIEF
+        # A replay with the same key and no brief compares against the stored effective brief.
+        resumed = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        assert resumed.created is False
+        assert resumed.run.brief == EDITORIAL_BRIEF
+        explicit = start.model_copy(
+            update={"request": start.request.model_copy(update={"brief": "Different intent."})}
+        )
+        with pytest.raises(IdentityConflict, match="different immutable run intent"):
+            await start_or_refetch_run(
+                url, start=explicit, settings=settings(value), route_snapshot=value
+            )
+    finally:
+        await db.close_pool()
+
+
+async def test_chapter_lane_still_requires_an_explicit_brief() -> None:
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    original = start_request(source_id, value)
+    start = original.model_copy(
+        update={"request": original.request.model_copy(update={"brief": None})}
+    )
+    try:
+        with pytest.raises(IdentityConflict, match="explicit editorial brief"):
+            await start_or_refetch_run(
+                url, start=start, settings=settings(value), route_snapshot=value
+            )
     finally:
         await db.close_pool()
 

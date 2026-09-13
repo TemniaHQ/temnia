@@ -22,11 +22,13 @@ from temnia_pipeline.harness.routes import (
 from temnia_pipeline.harness.settings import HarnessSettings
 
 
-def test_topic_scene_trial_selects_pyscenedetect_and_keeps_explicit_ffmpeg_comparison() -> None:
-    assert HarnessSettings.from_env({}).topic_shot_detector == "pyscenedetect-adaptive"
+def test_topic_scene_detection_defaults_to_scdet_and_keeps_pyscenedetect_comparison() -> None:
+    assert HarnessSettings.from_env({}).topic_shot_detector == "scdet"
     assert (
-        HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": "scdet"}).topic_shot_detector
-        == "scdet"
+        HarnessSettings.from_env(
+            {"HARNESS_TOPIC_SHOT_DETECTOR": "pyscenedetect-adaptive"}
+        ).topic_shot_detector
+        == "pyscenedetect-adaptive"
     )
     for invalid in ("", "auto", "opencv", "pyscenedetect"):
         with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
@@ -159,45 +161,32 @@ def test_enabled_snapshot_requires_every_workflow_seat(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("routes", "invalid_route_id"),
+    "routes",
     [
-        (
-            (
-                route(route_id="primary", max_output_tokens=4096),
-                route(route_id="failover"),
-            ),
-            "primary",
-        ),
-        (
-            (
-                route(route_id="primary"),
-                route(route_id="failover", max_output_tokens=4096),
-            ),
-            "failover",
-        ),
+        (route(route_id="primary", max_output_tokens=4096), route(route_id="failover")),
+        (route(route_id="primary"), route(route_id="failover", max_output_tokens=4096)),
     ],
 )
-def test_required_route_output_capacity_is_checked_at_boot(
+def test_route_below_the_ceiling_boots_under_its_own_effective_output_cap(
     tmp_path: Path,
     routes: tuple[RouteEntry, ...],
-    invalid_route_id: str,
 ) -> None:
+    # Every route is admitted at min(configured ceiling, route maximum); there is no
+    # per-programme asymmetry left in the boot check.
     value = snapshot(routes=routes)
     path = tmp_path / "routes.json"
     write_snapshot(path, value)
 
-    with pytest.raises(
-        RuntimeError,
-        match=rf"route '{invalid_route_id}'.*HARNESS_MAX_OUTPUT_TOKENS=8192",
-    ):
-        HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
+    assert HarnessSettings.from_env(env(path, value, "recorded")).validate_boot() == value
 
 
-def test_gateway_checks_failover_route_output_capacity(tmp_path: Path) -> None:
+def test_gateway_boot_still_refuses_a_route_without_effective_context_headroom(
+    tmp_path: Path,
+) -> None:
     value = snapshot(
         routes=(
             route(route_id="primary"),
-            route(route_id="failover", max_output_tokens=4096),
+            route(route_id="failover", context_tokens=4096, max_output_tokens=4096),
             route(route_id="third"),
         ),
         synthetic=False,

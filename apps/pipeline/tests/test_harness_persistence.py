@@ -511,12 +511,16 @@ async def test_attempt_batch_unknown_member_fences_every_missing_member() -> Non
             ).fetchone()
             run = await (
                 await conn.execute(
-                    "SELECT reserved_micros, status FROM harness_run WHERE id = %s",
+                    "SELECT reserved_micros, status, error_message FROM harness_run WHERE id = %s",
                     (case.run_id,),
                 )
             ).fetchone()
         assert attempts == {"count": 1}
-        assert run == {"reserved_micros": 20, "status": "outcome_unknown"}
+        assert run == {
+            "reserved_micros": 20,
+            "status": "outcome_unknown",
+            "error_message": ledger.OUTCOME_UNKNOWN_RUN_MESSAGE,
+        }
     finally:
         await db.close_pool()
 
@@ -1132,14 +1136,17 @@ async def test_owned_known_failure_reconciliation_preserves_other_exposure(
         async with db.scoped(url, SEEDED) as conn:
             row = await (
                 await conn.execute(
-                    "SELECT status, spent_micros, reserved_micros FROM harness_run WHERE id = %s",
+                    "SELECT status, spent_micros, reserved_micros, error_message"
+                    " FROM harness_run WHERE id = %s",
                     (case.run_id,),
                 )
             ).fetchone()
+        # An unknown outcome owns a sentence, and recovery clears it.
         assert row == {
             "status": "outcome_unknown" if remaining_unknown else "running",
             "spent_micros": 13,
             "reserved_micros": 20 if remaining_unknown else 0,
+            "error_message": (ledger.OUTCOME_UNKNOWN_RUN_MESSAGE if remaining_unknown else None),
         }
     finally:
         await db.close_pool()

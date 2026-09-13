@@ -77,7 +77,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             for seat in ("propose", "verify", "summary")
         },
     )
-    configuration = replace(settings(routes), topic_selection_enabled=True, gateway="openrouter")
+    configuration = replace(settings(routes), gateway="openrouter")
     source_id = await ready_source(url)
     original = start_request(source_id, routes)
     start = original.model_copy(

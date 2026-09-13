@@ -351,7 +351,7 @@ async def editorial_integration(  # noqa: PLR0915
                 prompt=render_editorial_assessment_prompt(
                     evidence=evidence,
                     edit=edit,
-                    brief=start.request.brief,
+                    brief=start.request.brief or "",
                     technical_report={"sections": reports},
                 ),
             ),

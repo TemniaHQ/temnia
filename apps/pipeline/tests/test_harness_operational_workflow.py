@@ -554,5 +554,5 @@ async def test_known_activity_failure_persists_one_visible_failed_state() -> Non
         assert activities.marked is not None
         assert activities.marked.status == "failed"
         assert activities.marked.error_message == (
-            "The chapter workflow stopped after a known activity failure."
+            "The run stopped after an activity failure: KnownMediaFailure."
         )

@@ -7,10 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import pytest
 
 from temnia_pipeline.harness.qualification import (
     CandidateRoute,
@@ -22,14 +19,11 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_SCHEMAS,
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
-    bind_topic_selection_qualification,
     native_schema_sha256,
     topic_selection_qualification_case,
     topic_selection_qualification_inventory,
     topic_selection_qualification_prompts,
-    validate_topic_selection_qualification,
 )
-from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     candidate_handoff_rows,
@@ -43,9 +37,11 @@ from test_harness_gateway_qualification import (
     _request_transport,
     _three_candidate_lookup_transport,
 )
-from test_harness_settings import env, snapshot, write_snapshot
+from test_harness_settings import snapshot
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 
@@ -209,7 +205,7 @@ async def _qualified(
     tmp_path: Path,
     *,
     max_output_tokens: int = 256,
-) -> tuple[RouteSnapshot, Path, dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[RouteSnapshot, dict[str, Any], list[dict[str, Any]]]:
     catalogue = _candidate_payload(count=3)
     routes = tuple(
         _provisional_route(CandidateRoute.model_validate(item), date(2026, 9, 11)).model_copy(
@@ -239,18 +235,13 @@ async def _qualified(
     )
     assert report["status"] == "completed"
     assert report["passed"] is True
-    manifest = tmp_path / "bound.json"
-    bind_topic_selection_qualification(
-        frozen, [paths["report_path"]], manifest, max_output_tokens=max_output_tokens
-    )
-    return frozen, manifest, report, requests
+    return frozen, report, requests
 
 
 async def test_qualification_captures_four_real_native_shapes_and_effective_settings(
     tmp_path: Path,
 ) -> None:
-    frozen, manifest, report, requests = await _qualified(tmp_path)
-    validate_topic_selection_qualification(frozen, manifest, max_output_tokens=256)
+    _, report, requests = await _qualified(tmp_path)
     prompts = topic_selection_qualification_prompts()
     assert len(requests) == 12
     for call, request in zip(report["calls"], requests, strict=True):
@@ -262,22 +253,6 @@ async def test_qualification_captures_four_real_native_shapes_and_effective_sett
         assert actual == expected == call["nativeSchemaSha256"]
         assert call["schemaVersion"] == TOPIC_SELECTION_SCHEMAS[call["stage"]]
         assert request["max_completion_tokens"] == 256
-    with pytest.raises(ValueError, match="output setting"):
-        validate_topic_selection_qualification(frozen, manifest, max_output_tokens=512)
-    route_path = tmp_path / "routes.json"
-    write_snapshot(route_path, frozen)
-    configured = {
-        **env(route_path, frozen, "gateway"),
-        "HARNESS_TOPIC_SELECTION_ENABLED": "1",
-        "HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH": str(manifest),
-        "HARNESS_MAX_OUTPUT_TOKENS": "256",
-    }
-    assert HarnessSettings.from_env(configured).validate_boot() == frozen
-    del configured["HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH"]
-    with pytest.raises(RuntimeError, match="HARNESS_TOPIC_SELECTION_QUALIFICATION_PATH"):
-        HarnessSettings.from_env(configured).validate_boot()
-    configured["HARNESS_TOPIC_SELECTION_ENABLED"] = "0"
-    assert HarnessSettings.from_env(configured).validate_boot() == frozen
 
 
 async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) -> None:
@@ -336,59 +311,3 @@ async def test_v3_qualification_can_refresh_only_a_changed_stage(tmp_path: Path)
     assert [(call["stage"], call["promptVersion"]) for call in report["calls"]] == [
         ("topic_author", SELECTION_AUTHOR_PROMPT_V3)
     ]
-
-
-@pytest.mark.parametrize(
-    "tamper",
-    [
-        "suite",
-        "prompt",
-        "messages",
-        "schema",
-        "contract",
-        "native",
-        "provider",
-        "reasoning",
-        "tokens",
-        "receipt",
-        "missing_route",
-    ],
-)
-async def test_qualification_refuses_mutated_identity_and_missing_route_coverage(  # noqa: C901
-    tmp_path: Path,
-    tamper: str,
-) -> None:
-    frozen, manifest, report, _ = await _qualified(tmp_path)
-    call = report["calls"][0]
-    if tamper == "suite":
-        report["suite"] = "editorial"
-    elif tamper == "prompt":
-        call["promptVersion"] = "topic-propose/1"
-    elif tamper == "messages":
-        call["request"]["messages"]["sha256"] = "a" * 64
-    elif tamper == "schema":
-        call["schemaVersion"] = "topic-proposal/1"
-    elif tamper == "contract":
-        call["outputContractSha256"] = "a" * 64
-    elif tamper == "native":
-        call["nativeSchemaSha256"] = "a" * 64
-        call["request"]["responseFormat"]["schemaSha256"] = "a" * 64
-    elif tamper == "provider":
-        call["request"]["providerOptions"]["gateway"]["only"] = ["foreign-provider"]
-    elif tamper == "reasoning":
-        call["request"]["reasoningEffort"] = "high"
-    elif tamper == "tokens":
-        call["request"]["maxCompletionTokens"] = 512
-    elif tamper == "receipt":
-        receipt = Path(call["response"]["path"])
-        receipt.write_bytes(receipt.read_bytes() + b" ")
-    else:
-        report["calls"] = report["calls"][:4]
-    report_path = tmp_path / "report.json"
-    report_path.write_text(json.dumps(report))
-    # Rebinding the report digest cannot launder stale request metadata or receipt bytes.
-    bound = json.loads(manifest.read_bytes())
-    bound["reports"][0]["sha256"] = hashlib.sha256(report_path.read_bytes()).hexdigest()
-    manifest.write_text(json.dumps(bound))
-    with pytest.raises(ValueError, match=r"topic qualification|topic production routes"):
-        validate_topic_selection_qualification(frozen, manifest, max_output_tokens=256)
