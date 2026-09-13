@@ -18,8 +18,6 @@ const runId = randomUUID();
 const evidenceId = randomUUID();
 const editId = randomUUID();
 const descriptorId = randomUUID();
-const groundingId = randomUUID();
-const legacyGroundingId = randomUUID();
 const editSha256 = "e".repeat(64);
 const checkCount = 70;
 
@@ -50,28 +48,6 @@ suite("chapter view Postgres dependency ownership", () => {
         projectId,
         SEEDED_SCOPE.userId,
         `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}master.mp4`,
-      ]
-    );
-    await owner.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        legacyGroundingId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "e".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding-legacy.json`,
-        "c".repeat(64),
-        JSON.stringify({
-          fallbackQuoteCount: 1,
-          fallbackUnitCount: 1,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-legacy",
-        }),
       ]
     );
     await owner.query(
@@ -205,29 +181,6 @@ suite("chapter view Postgres dependency ownership", () => {
         [SEEDED_SCOPE.organizationId, sourceId, descriptorId, checkId]
       );
     }
-    await owner.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        groundingId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "f".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding.json`,
-        "b".repeat(64),
-        JSON.stringify({
-          coverageFallbackWindowCount: 1,
-          fallbackQuoteCount: 3,
-          fallbackUnitCount: 2,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-1",
-        }),
-      ]
-    );
   }, 20_000);
 
   afterAll(async () => {
@@ -267,15 +220,6 @@ suite("chapter view Postgres dependency ownership", () => {
       currentTranscriptRevision: 2,
       evidenceTranscriptRevision: 1,
     });
-    expect(view.summaryGrounding).toMatchObject({
-      coverageFallbackWindowCount: 1,
-      fallbackQuoteCount: 4,
-      fallbackUnitCount: 3,
-    });
-    expect(view.summaryGrounding.reports.map(({ id }) => id)).toEqual(
-      expect.arrayContaining([groundingId, legacyGroundingId])
-    );
-    expect(view.summaryGrounding.reports).toHaveLength(2);
   });
 
   it("keeps topic history to topic policies, including exact run selection", async () => {
@@ -307,41 +251,5 @@ suite("chapter view Postgres dependency ownership", () => {
     expect(topics.run?.id).toBe(topicRunId);
     expect(exact.run?.id).toBe(runId);
     expect(unknown.run).toBeNull();
-  });
-
-  it("refuses a present coverage fallback count unless it is exactly one", async () => {
-    const invalidId = randomUUID();
-    await owner?.query(
-      `INSERT INTO harness_artifact
-         (id, organization_id, source_id, kind, fingerprint, storage_key,
-          sha256, size_bytes, metadata)
-       VALUES ($1, $2, $3, 'checks', $4, $5, $6, 1, $7::jsonb)`,
-      [
-        invalidId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        "9".repeat(64),
-        `${sourcePrefix(SEEDED_SCOPE.organizationId, sourceId)}harness/grounding-invalid.json`,
-        "8".repeat(64),
-        JSON.stringify({
-          coverageFallbackWindowCount: 0,
-          fallbackQuoteCount: 0,
-          fallbackUnitCount: 0,
-          format: "chapter-summary-grounding/1",
-          hierarchyLevel: 1,
-          runId,
-          windowId: "window-invalid",
-        }),
-      ]
-    );
-    try {
-      await expect(getTopicView(sourceId, runId)).rejects.toThrow(
-        "Summary grounding report has invalid coverageFallbackWindowCount."
-      );
-    } finally {
-      await owner?.query("DELETE FROM harness_artifact WHERE id = $1", [
-        invalidId,
-      ]);
-    }
   });
 });

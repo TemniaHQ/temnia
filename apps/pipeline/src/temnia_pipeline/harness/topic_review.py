@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from temporalio import workflow
@@ -66,7 +66,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from temnia_pipeline.harness.activities import HarnessActivities
-    from temnia_pipeline.harness.topic_selection_runtime import SelectionProgramVersion
 
 RETRY = RetryPolicy(maximum_attempts=3)
 MAX_REVIEW_REASON = 2000
@@ -208,13 +207,12 @@ class TopicReviewActivities:
             ):
                 raise ReviewRefused("selection portfolio differs from its editorial lineage")
             selections = TopicSelectionActivities(self.owner)
-            program_version = metadata.get("programVersion", "standalone-topics/2")
-            if program_version not in {"standalone-topics/2", "standalone-topics/3"}:
+            if metadata.get("programVersion", "standalone-topics/3") != "standalone-topics/3":
                 raise ReviewRefused("selection portfolio has an unknown programme version")
             lineage = SelectionContext(
                 run=context.run,
                 evidence=context.evidence,
-                program_version=cast("SelectionProgramVersion", program_version),
+                program_version="standalone-topics/3",
                 rubric=rubric,
                 selection=selection,
                 assessment=assessment,
@@ -225,36 +223,7 @@ class TopicReviewActivities:
                 context, edit, (context.evidence, rubric, selection, assessment)
             )
             return selection, assessment
-        proposal = await self.reference(context, metadata.get("proposalArtifactId"))
-        assessment = await self.reference(context, metadata.get("assessmentArtifactId"))
-        if (
-            proposal.kind != HarnessArtifactKind.proposal
-            or assessment.kind != HarnessArtifactKind.checks
-            or proposal.sha256 != metadata.get("proposalSha256")
-        ):
-            raise ReviewRefused("topic portfolio editorial references differ from their lineage")
-        for reference, format_name in (
-            (proposal, "topic-proposal/1"),
-            (assessment, "topic-assessment/1"),
-        ):
-            record = await artifacts._artifact_for_read(
-                self.owner.ctx.settings.database_url,
-                scope=self.topics.scope(context),
-                source_id=context.run.source_id,
-                artifact_id=reference.id,
-            )
-            if record.metadata.get("format") != format_name or record.metadata.get("runId") != str(
-                context.run.run_id
-            ):
-                raise ReviewRefused(
-                    "topic editorial artifact metadata is not resolvable for this run"
-                )
-        lineage = context.model_copy(update={"proposal": proposal, "assessment": assessment})
-        await self.topics.load(lineage)
-        await self.topics.assessment(lineage)
-        await self.require_dependencies(context, edit, (context.evidence, proposal, assessment))
-        await self.require_dependencies(context, assessment, (context.evidence, proposal))
-        return proposal, assessment
+        raise ReviewRefused("the portfolio has no selection lineage")
 
     async def portfolio(
         self, context: TopicContext, ref: HarnessArtifactRef
@@ -273,10 +242,7 @@ class TopicReviewActivities:
         ):
             raise ReviewRefused("the portfolio belongs to another run or format")
         edit = TopicEditSpec.model_validate(await self.topics.read(context, ref))
-        if record.metadata.get("selectionArtifactId") is not None:
-            _, evidence = await self.topics.load_evidence(context)
-        else:
-            _, evidence, _ = await self.topics.load(context)
+        _, evidence = await self.topics.load_evidence(context)
         if (
             edit.evidenceArtifactId != context.evidence.id
             or context.evidence.id not in record.dependency_ids

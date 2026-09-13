@@ -16,7 +16,7 @@ import httpx
 import httpx2
 import pytest
 
-from qualification_fixtures import API_KEY, _candidate_payload, _paths
+from qualification_fixtures import API_KEY, _candidate_payload, _outputs_v3, _paths
 from temnia_pipeline.harness.qualification import (
     CandidateCatalogue,
     CandidateRoute,
@@ -28,7 +28,6 @@ from temnia_pipeline.harness.qualification import (
     run_qualification,
 )
 from test_harness_settings import snapshot
-from test_topic_selection_qualification import _outputs
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -53,9 +52,9 @@ def _catalogue(*, count: int = 3) -> dict[str, Any]:
 
 def _limits() -> QualificationLimits:
     return QualificationLimits(
-        suite="topic-selection",
+        suite="topic-selection-v3",
         max_exposure_micros=100_000,
-        max_dispatches=12,
+        max_dispatches=15,
         max_output_tokens=256,
         lookup_wait_seconds=0,
     )
@@ -73,7 +72,7 @@ async def _openrouter(
     candidate_path.write_text(json.dumps(catalogue))
     paths = _paths(directory)
     requests: list[dict[str, Any]] = []
-    outputs = _outputs() * 3
+    outputs = _outputs_v3() * 3
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == "openrouter.ai"
@@ -136,7 +135,7 @@ async def _openrouter(
     async def lookup(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "openrouter.ai"
         identity = request.url.params["id"]
-        index = (int(identity.removeprefix("generation-")) - 1) // 4
+        index = (int(identity.removeprefix("generation-")) - 1) // 5
         candidate = catalogue["candidates"][index]
         return httpx.Response(
             200,
@@ -179,7 +178,7 @@ async def test_streamed_qualification_captures_real_sdk_transport_shape(
     _, _, report, requests = await _openrouter(tmp_path)
     assert report["status"] == "completed"
     assert report["passed"] is True
-    assert len(requests) == 12
+    assert len(requests) == 15
     for call, request in zip(report["calls"], requests, strict=True):
         assert call["generationObservedAt"] <= call["responseSavedAt"]
         assert request["stream"] is True
@@ -307,7 +306,7 @@ async def test_cli_never_uses_vercel_key_for_openrouter(
             "--max-output-tokens",
             "256",
             "--suite",
-            "topic-selection",
+            "topic-selection-v3",
         ]
     )
     with pytest.raises(QualificationRefusal, match="selected gateway API key"):

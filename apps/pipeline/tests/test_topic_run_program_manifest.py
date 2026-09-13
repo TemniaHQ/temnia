@@ -17,7 +17,7 @@ from temnia_pipeline.harness.topic_program import current_program
 from test_harness_runs import pipeline_url, ready_source, settings, snapshot, start_request
 
 
-@pytest.mark.parametrize("policy", ["standalone-topics/2", "standalone-topics/3"])
+@pytest.mark.parametrize("policy", ["standalone-topics/3"])
 async def test_web_started_topic_run_freezes_its_own_program_manifest(policy: str) -> None:
     """A staging bundle binds the same bytes an experiment bundle binds, at no model cost."""
     url = pipeline_url()
@@ -25,9 +25,7 @@ async def test_web_started_topic_run_freezes_its_own_program_manifest(policy: st
     source_id = await ready_source(url)
     start = start_request(source_id, value).model_copy(update={"editorial_policy": policy})
     assert start.evaluation_program is None
-    expected = current_program(
-        "standalone-topics/3" if policy == "standalone-topics/3" else "standalone-topics/2"
-    ).model_dump(mode="json", by_alias=True)
+    expected = current_program("standalone-topics/3").model_dump(mode="json", by_alias=True)
     try:
         created = await start_or_refetch_run(
             url, start=start, settings=settings(value), route_snapshot=value

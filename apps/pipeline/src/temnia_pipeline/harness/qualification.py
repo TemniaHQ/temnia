@@ -39,12 +39,7 @@ from temnia_pipeline.harness.gateway import (
     validate_gateway_request,
 )
 from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noqa: TC001
-from temnia_pipeline.harness.models import (
-    COMPACT_PROPOSAL_SCHEMA_VERSION,
-)
 from temnia_pipeline.harness.qualification_topic_selection import (
-    TOPIC_SELECTION_SCHEMAS,
-    TOPIC_SELECTION_STAGES,
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
     topic_selection_qualification_prompts,
@@ -71,45 +66,17 @@ SHA256_PATTERN = r"^[a-f0-9]{64}$"
 _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
-_STAGES = ("summary", "proposal", "verify")
-QualificationSuite = Literal["legacy", "editorial", "topic-selection", "topic-selection-v3"]
-_EDITORIAL_PROMPT_GENERATION = 4
-_EDITORIAL_PROMPT_VERSIONS = {
-    1: {
-        "editorial_assess": "chapter-editorial-assess-v1",
-        "editorial_repair": "chapter-editorial-repair-v1",
-    },
-    2: {
-        "editorial_assess": "chapter-editorial-assess-v2",
-        "editorial_repair": "chapter-editorial-repair-v2",
-    },
-    3: {
-        "editorial_assess": "chapter-editorial-assess-v3",
-        "editorial_repair": "chapter-editorial-repair-v3",
-    },
-    4: {
-        "editorial_assess": "chapter-editorial-assess-v3",
-        "editorial_repair": "chapter-editorial-repair-v4",
-    },
-}
+QualificationSuite = Literal["topic-selection-v3"]
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
-    if suite == "topic-selection-v3":
-        return TOPIC_SELECTION_V3_STAGES
-    if suite == "topic-selection":
-        return TOPIC_SELECTION_STAGES
-    return ("editorial_assess", "editorial_repair") if suite == "editorial" else _STAGES
+    _ = suite
+    return TOPIC_SELECTION_V3_STAGES
 
 
 def _schema_version(stage: str, limits: QualificationLimits) -> str:
-    if limits.suite == "topic-selection-v3":
-        return TOPIC_SELECTION_V3_SCHEMAS[stage]
-    if limits.suite == "topic-selection":
-        return TOPIC_SELECTION_SCHEMAS[stage]
-    if stage == "proposal" and limits.proposal_wire == "compact":
-        return COMPACT_PROPOSAL_SCHEMA_VERSION
-    return f"qualification-{stage}/1"
+    _ = limits
+    return TOPIC_SELECTION_V3_SCHEMAS[stage]
 
 
 _RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
@@ -257,8 +224,7 @@ class QualificationLimits(BaseModel):
     max_exposure_micros: Annotated[int, Field(gt=0)]
     max_dispatches: Annotated[int, Field(gt=0)]
     max_output_tokens: Annotated[int, Field(ge=256)]
-    proposal_wire: Literal["canonical", "compact"] = "canonical"
-    suite: QualificationSuite = "legacy"
+    suite: QualificationSuite = "topic-selection-v3"
     stages: tuple[str, ...] | None = None
     request_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 300
     lookup_timeout_seconds: Annotated[float, Field(gt=0, le=10)] = 10
@@ -266,14 +232,6 @@ class QualificationLimits(BaseModel):
 
     @model_validator(mode="after")
     def _suite_wire(self) -> QualificationLimits:
-        if not self.suite.startswith("topic-selection") and (
-            self.max_exposure_micros > MAX_EXPOSURE_MICROS
-            or self.max_dispatches > MAX_DISPATCHES
-            or self.max_output_tokens > MAX_OUTPUT_TOKENS
-        ):
-            raise ValueError("historical qualification suite exceeds its fixed ceilings")
-        if self.suite != "legacy" and self.proposal_wire != "canonical":
-            raise ValueError("the editorial suite has no proposal-wire selection")
         if self.stages is not None and (
             not self.stages
             or len(set(self.stages)) != len(self.stages)
@@ -456,29 +414,19 @@ class _QualificationJournal:
             for candidate in catalogue.candidates
             for stage in _selected_stages(limits)
         ]
-        if limits.proposal_wire == "compact" or limits.suite != "legacy":
-            prompts = qualification_prompts(limits.proposal_wire, limits.suite)
-            for call in calls:
-                stage = call["stage"]
-                call.update(
-                    {
-                        **(
-                            {"suite": limits.suite}
-                            if limits.suite != "legacy"
-                            else {"proposalWire": "compact"}
-                        ),
-                        "promptVersion": prompts[stage][2],
-                        "schemaVersion": _schema_version(stage, limits),
-                    }
-                )
+        prompts = qualification_prompts(limits.suite)
+        for call in calls:
+            stage = call["stage"]
+            call.update(
+                {
+                    "suite": limits.suite,
+                    "promptVersion": prompts[stage][2],
+                    "schemaVersion": _schema_version(stage, limits),
+                }
+            )
         serialized_limits = limits.model_dump(mode="json")
         if limits.stages is None:
             serialized_limits.pop("stages")
-        if limits.suite == "legacy":
-            serialized_limits.pop("suite")
-        if limits.proposal_wire == "canonical":
-            # Missing proposal-wire fields are the historical canonical identity.
-            serialized_limits.pop("proposal_wire")
         value: dict[str, Any] = {
             "format": "temnia-gateway-qualification/1",
             "createdAt": _now(),
@@ -497,12 +445,7 @@ class _QualificationJournal:
                 "candidate metadata is not a production route snapshot",
             ],
         }
-        if limits.proposal_wire == "compact":
-            value["proposalWire"] = "compact"
-        if limits.suite != "legacy":
-            value["suite"] = limits.suite
-        if limits.suite == "editorial":
-            value["editorialPromptGeneration"] = _EDITORIAL_PROMPT_GENERATION
+        value["suite"] = limits.suite
         forbidden = api_key.encode()
         if forbidden in canonical_json(value):
             raise QualificationRefusal("qualification input contains the gateway credential")
@@ -555,11 +498,7 @@ class _QualificationJournal:
         if prompt_version is not None and schema_version is not None:
             call.update(
                 {
-                    **(
-                        {"suite": limits["suite"]}
-                        if limits.get("suite", "legacy") != "legacy"
-                        else {"proposalWire": "compact"}
-                    ),
+                    "suite": limits["suite"],
                     "promptVersion": prompt_version,
                     "schemaVersion": schema_version,
                 }
@@ -614,13 +553,9 @@ class _QualificationJournal:
             raise
         digest = hashlib.sha256(raw).hexdigest()
         response_ref = {"path": str(path), "sha256": digest, "sizeBytes": len(raw)}
-        if call.get("proposalWire") == "compact" or call.get("suite", "legacy") != "legacy":
-            response_ref.update(
-                {
-                    "promptVersion": call["promptVersion"],
-                    "schemaVersion": call["schemaVersion"],
-                }
-            )
+        response_ref.update(
+            {"promptVersion": call["promptVersion"], "schemaVersion": call["schemaVersion"]}
+        )
         call.update(
             {
                 "state": "response_saved",
@@ -767,38 +702,15 @@ def _provisional_route(candidate: CandidateRoute, observed: date) -> RouteEntry:
 
 
 def qualification_prompts(
-    proposal_wire: Literal["canonical", "compact"] = "canonical",
-    suite: QualificationSuite = "legacy",
+    suite: QualificationSuite = "topic-selection-v3",
 ) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the topic seats."""
-    _ = proposal_wire
-    if suite == "topic-selection-v3":
-        return dict(topic_selection_qualification_prompts("standalone-topics/3"))
-    if suite == "topic-selection":
-        return dict(topic_selection_qualification_prompts())
-    raise QualificationRefusal(
-        "the chapter qualification suites were removed with the chapter lane"
-    )
+    _ = suite
+    return dict(topic_selection_qualification_prompts())
 
 
-def _validate_grounding(
-    stage: str,
-    output: object,
-    proposal_wire: Literal["canonical", "compact"] = "canonical",
-    suite: QualificationSuite = "legacy",
-) -> None:
-    _ = proposal_wire
-    if suite == "topic-selection-v3":
-        validate_topic_selection_qualification_output(
-            stage, output, program_version="standalone-topics/3"
-        )
-        return
-    if suite == "topic-selection":
-        validate_topic_selection_qualification_output(stage, output)
-        return
-    raise QualificationRefusal(
-        "the chapter qualification suites were removed with the chapter lane"
-    )
+def _validate_grounding(stage: str, output: object) -> None:
+    validate_topic_selection_qualification_output(stage, output)
 
 
 def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, Any]:
@@ -916,7 +828,7 @@ class _QualificationModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        prompts = qualification_prompts(self.limits.proposal_wire, self.limits.suite)
+        prompts = qualification_prompts(self.limits.suite)
         schema_version = _schema_version(self.stage, self.limits)
         metadata = CassetteMetadata(
             route_id=self.route.id,
@@ -942,16 +854,8 @@ class _QualificationModel(WrapperModel):
             request_hash=request_hash,
             payload_bytes=payload_bytes,
             estimated_cost_micros=estimate.amount_micros,
-            prompt_version=(
-                metadata.prompt_version
-                if self.limits.proposal_wire == "compact" or self.limits.suite != "legacy"
-                else None
-            ),
-            schema_version=(
-                metadata.schema_version
-                if self.limits.proposal_wire == "compact" or self.limits.suite != "legacy"
-                else None
-            ),
+            prompt_version=metadata.prompt_version,
+            schema_version=metadata.schema_version,
         )
         if self.limits.suite.startswith("topic-selection"):
             prompt, output_type, _ = prompts[self.stage]
@@ -1166,7 +1070,7 @@ async def run_qualification(
         request_timeout_seconds=limits.request_timeout_seconds,
         lookup_timeout_seconds=limits.lookup_timeout_seconds,
     )
-    prompts = qualification_prompts(limits.proposal_wire, limits.suite)
+    prompts = qualification_prompts(limits.suite)
     catalogue = candidates.catalogue
     try:
         async with (
@@ -1215,14 +1119,12 @@ async def run_qualification(
                                 passed=False,
                                 code="strict-output-invalid",
                             )
-                            candidate_failed = limits.suite == "legacy"
+                            candidate_failed = False
                         except ModelHTTPError:
-                            candidate_failed = limits.suite == "legacy"
+                            candidate_failed = False
                         else:
                             try:
-                                _validate_grounding(
-                                    stage, result.output, limits.proposal_wire, limits.suite
-                                )
+                                _validate_grounding(stage, result.output)
                             except ValueError:
                                 journal.validation(
                                     candidate.id,
@@ -1230,7 +1132,7 @@ async def run_qualification(
                                     passed=False,
                                     code="grounding-invalid",
                                 )
-                                candidate_failed = limits.suite == "legacy"
+                                candidate_failed = False
                             else:
                                 journal.validation(
                                     candidate.id,
@@ -1346,30 +1248,15 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
         )
     except (KeyError, ValueError) as error:
         raise QualificationRefusal("qualification journal metadata is invalid") from error
-    stored_wire = value.get("proposalWire", "canonical")
-    if stored_wire not in {"canonical", "compact"} or stored_wire != limits.proposal_wire:
-        raise QualificationRefusal("qualification journal proposal wire is inconsistent")
-    if value.get("suite", "legacy") != limits.suite:
+    if value.get("suite") != limits.suite:
         raise QualificationRefusal("qualification journal suite is inconsistent")
-    if limits.suite == "editorial":
-        # The first retained editorial journals predate an explicit generation field.
-        generation = value.get("editorialPromptGeneration", 1)
-        if type(generation) is not int or generation not in _EDITORIAL_PROMPT_VERSIONS:
-            raise QualificationRefusal("qualification journal editorial generation is invalid")
-        expected_prompt_versions = _EDITORIAL_PROMPT_VERSIONS[generation]
-    else:
-        if "editorialPromptGeneration" in value:
-            raise QualificationRefusal("legacy qualification cannot declare editorial generation")
-        expected_prompt_versions = {
-            stage: prompt[2]
-            for stage, prompt in qualification_prompts(limits.proposal_wire, limits.suite).items()
-        }
+    expected_prompt_versions = {
+        stage: prompt[2] for stage, prompt in qualification_prompts(limits.suite).items()
+    }
     calls_value = value.get("calls")
     if not isinstance(calls_value, list):
         raise QualificationRefusal("qualification journal call list is invalid")
     calls = cast("list[object]", calls_value)
-    if not limits.suite.startswith("topic-selection") and len(calls) > MAX_DISPATCHES:
-        raise QualificationRefusal("qualification journal call list is invalid")
     expected = {
         (candidate.id, stage)
         for candidate in catalogue.candidates
@@ -1399,17 +1286,12 @@ def _validate_reconciliation_journal(value: dict[str, Any]) -> None:
         state = str(call.get("state"))
         if identity not in expected or identity in observed or state not in allowed_states:
             raise QualificationRefusal("qualification journal call identity or state is invalid")
-        if (limits.proposal_wire == "compact" or limits.suite != "legacy") and (
-            (limits.suite != "legacy" and call.get("suite") != limits.suite)
-            or (limits.proposal_wire == "compact" and call.get("proposalWire") != "compact")
+        if (
+            call.get("suite") != limits.suite
             or call.get("promptVersion") != expected_prompt_versions[identity[1]]
             or call.get("schemaVersion") != _schema_version(identity[1], limits)
         ):
-            raise QualificationRefusal(
-                "qualification journal editorial call metadata is invalid"
-                if limits.suite == "editorial"
-                else "qualification journal compact call metadata is invalid"
-            )
+            raise QualificationRefusal("qualification journal call metadata is invalid")
         observed.add(identity)
         if state not in {"planned", "skipped"}:
             dispatched += 1

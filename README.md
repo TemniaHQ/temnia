@@ -34,9 +34,8 @@ pnpm dev
 
 Open http://localhost:3000 and run the hello workflow. The Temporal UI is at http://localhost:56080.
 
-For the chapter editing flow, follow the [manual-testing walkthrough](docs/runbooks/chapter-harness-manual-testing.md).
-It includes the matching web/worker settings, local model setup and fixture-specific review/export
-journey. The commands above alone leave the chapter harness disabled.
+To run topic generation, follow [topic generation on staging](docs/runbooks/topic-generation-staging.md);
+the same environment table applies locally. The commands above alone leave the harness disabled.
 
 ## Deliver a change
 

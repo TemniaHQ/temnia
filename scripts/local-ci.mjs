@@ -393,7 +393,7 @@ async function runFullGate(sha) {
       "-e",
       `HARNESS_ROUTE_SNAPSHOT_PATH=${GATE_HARNESS_DIR}/routes.synthetic.json`,
       "-e",
-      `HARNESS_RECORDED_FIXTURE_PATH=${GATE_HARNESS_DIR}/chapter.synthetic.json`,
+      `HARNESS_RECORDED_FIXTURE_PATH=${GATE_HARNESS_DIR}/topic.synthetic.json`,
       "-v",
       `${GATE_HARNESS_FIXTURES}:${GATE_HARNESS_DIR}:ro`,
       ...storageEnv,

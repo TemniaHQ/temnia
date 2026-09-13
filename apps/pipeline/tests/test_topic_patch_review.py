@@ -19,8 +19,6 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.topic_compiler import (
     augment_topic_evidence,
-    compile_topics,
-    compile_topics_v2,
     compile_topics_v3,
 )
 from temnia_pipeline.harness.topic_patch_review import (
@@ -41,16 +39,15 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.activities import HarnessActivities
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
 @pytest.mark.parametrize("identity", ["matching", "stale", "hidden_id_collision"])
 async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_reviews(  # noqa: C901, PLR0915
-    monkeypatch: pytest.MonkeyPatch, version: int, identity: str
+    monkeypatch: pytest.MonkeyPatch, identity: str
 ) -> None:
-    evidence = augment_topic_evidence(_case()) if version in {2, 3} else _case()
+    evidence = augment_topic_evidence(_case())
     evidence_ref = ref(HarnessArtifactKind.evidence, evidence.model_dump(mode="json"))
     candidates = [_candidate("one", 0, 1), _candidate("two", 2, 3)]
     proposed = TopicProposal(version=1, summary="Source discussions.", candidates=candidates)
-    compiler = {1: compile_topics, 2: compile_topics_v2, 3: compile_topics_v3}[version]
+    compiler = compile_topics_v3
     portfolio = compiler(
         evidence,
         proposed,
@@ -107,102 +104,72 @@ async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_rev
     ]
     rubric = make_rubric("Find independently useful discussions.")
     rubric_ref = retain(HarnessArtifactKind.checks, rubric.model_dump(mode="json"))
-    assessment: dict[str, Any]
-    if version in {2, 3}:
-        record = {
-            "format": "topic-selection/2",
-            "draft": {
-                "proposal": complete.model_dump(mode="json"),
-                "opportunities": [
-                    {
-                        "id": f"opportunity:{candidate.id}",
-                        "candidateIds": [candidate.id],
-                        "coreSpans": [span.model_dump() for span in candidate.coreSpans],
-                        "completionSpans": [
-                            span.model_dump() for span in candidate.completionSpans
-                        ],
-                        "valueEvidenceSpans": [span.model_dump() for span in candidate.coreSpans],
-                        "requiredContextSpans": [],
-                        "meaningChangingFollowups": [],
-                        "viewerPurpose": candidate.purpose,
-                        "disposition": "proposed",
-                        "dispositionReason": "A source-grounded opportunity.",
-                    }
-                    for candidate in complete.candidates
-                ],
-            },
-            "evidenceSha256": evidence_ref.sha256,
-            "rubric": rubric.model_dump(),
-            "rubricSha256": content_hash(rubric),
-            "runId": str(command.runId),
-            "origin": "model",
-            "parentSelectionSha256": None,
-        }
-        proposal_ref = retain(HarnessArtifactKind.proposal, record)
-        assessment = {
-            "format": "topic-selection-assessment/2",
-            "runId": str(command.runId),
-            "selectionSha256": proposal_ref.sha256,
-            "evidenceSha256": evidence_ref.sha256,
-            "rubricSha256": content_hash(rubric),
-            "coldReviews": [
+    record = {
+        "format": "topic-selection/2",
+        "draft": {
+            "proposal": complete.model_dump(mode="json"),
+            "opportunities": [
                 {
-                    **item,
-                    "value": {
-                        **dict.fromkeys(
-                            (
-                                "viewerReasonToWatch",
-                                "deliveredValue",
-                                "focusedDevelopment",
-                                "openingEffectiveness",
-                            ),
-                            criterion,
+                    "id": f"opportunity:{candidate.id}",
+                    "candidateIds": [candidate.id],
+                    "coreSpans": [span.model_dump() for span in candidate.coreSpans],
+                    "completionSpans": [span.model_dump() for span in candidate.completionSpans],
+                    "valueEvidenceSpans": [span.model_dump() for span in candidate.coreSpans],
+                    "requiredContextSpans": [],
+                    "meaningChangingFollowups": [],
+                    "viewerPurpose": candidate.purpose,
+                    "disposition": "proposed",
+                    "dispositionReason": "A source-grounded opportunity.",
+                }
+                for candidate in complete.candidates
+            ],
+        },
+        "evidenceSha256": evidence_ref.sha256,
+        "rubric": rubric.model_dump(),
+        "rubricSha256": content_hash(rubric),
+        "runId": str(command.runId),
+        "origin": "model",
+        "parentSelectionSha256": None,
+    }
+    proposal_ref = retain(HarnessArtifactKind.proposal, record)
+    assessment = {
+        "format": "topic-selection-assessment/2",
+        "runId": str(command.runId),
+        "selectionSha256": proposal_ref.sha256,
+        "evidenceSha256": evidence_ref.sha256,
+        "rubricSha256": content_hash(rubric),
+        "coldReviews": [
+            {
+                **item,
+                "value": {
+                    **dict.fromkeys(
+                        (
+                            "viewerReasonToWatch",
+                            "deliveredValue",
+                            "focusedDevelopment",
+                            "openingEffectiveness",
                         ),
-                        "reconstructedPurpose": "A useful answer.",
-                        "reconstructedTakeaway": "The answer is complete.",
-                    },
-                }
-                for item in cold
-            ],
-            "portfolioReview": None,
-            "findings": [],
-            "executionStatus": "needs_review",
-            "proposerFamily": "author",
-            "verifierFamily": "reviewer",
-            "reasons": [],
-            "responseArtifacts": [],
-        }
-        metadata: dict[str, Any] = {
-            "selectionArtifactId": str(proposal_ref.id),
-            "selectionSha256": proposal_ref.sha256,
-            "rubricArtifactId": str(rubric_ref.id),
-        }
-    else:
-        proposal_ref = retain(HarnessArtifactKind.proposal, complete.model_dump(mode="json"))
-        assessment = {
-            "format": "topic-assessment/1",
-            "runId": str(command.runId),
-            "proposalSha256": proposal_ref.sha256,
-            "evidenceSha256": evidence_ref.sha256,
-            "candidates": [
-                {
-                    "candidateId": item["candidateId"],
-                    "coldReview": item,
-                    "sourceReview": None,
-                    "status": "needs_review",
-                    "reasons": [],
-                    "physicalBoundaryIssues": [],
-                }
-                for item in cold
-            ],
-            "summary": "Retained judgments.",
-            "proposerFamily": "author",
-            "verifierFamily": "reviewer",
-        }
-        metadata = {
-            "proposalArtifactId": str(proposal_ref.id),
-            "proposalSha256": proposal_ref.sha256,
-        }
+                        criterion,
+                    ),
+                    "reconstructedPurpose": "A useful answer.",
+                    "reconstructedTakeaway": "The answer is complete.",
+                },
+            }
+            for item in cold
+        ],
+        "portfolioReview": None,
+        "findings": [],
+        "executionStatus": "needs_review",
+        "proposerFamily": "author",
+        "verifierFamily": "reviewer",
+        "reasons": [],
+        "responseArtifacts": [],
+    }
+    metadata: dict[str, Any] = {
+        "selectionArtifactId": str(proposal_ref.id),
+        "selectionSha256": proposal_ref.sha256,
+        "rubricArtifactId": str(rubric_ref.id),
+    }
     assessment_ref = retain(HarnessArtifactKind.checks, assessment)
     metadata["assessmentArtifactId"] = str(assessment_ref.id)
     owner = cast(
@@ -262,22 +229,10 @@ async def test_prepare_retains_unchanged_checks_and_human_state_without_fake_rev
     )
     assert provenance["origin"] == "human"
     assert published["topic-editorial-patch/1"][1]["candidateLineage"] == {"one": ["one"]}
-    if version in {2, 3}:
-        selected = published["topic-selection/2"][0]
-        assert selected["origin"] == "human"
-        assert selected["rubric"] == rubric.model_dump(mode="json")
-        assert selected["parentSelectionSha256"] == proposal_ref.sha256
-        revised = published["topic-selection-assessment/2"][0]
-        assert revised["portfolioReview"] is None
-        assert [item["candidateId"] for item in revised["coldReviews"]] == ["two", "declined"]
-    else:
-        selected = published["topic-proposal/1"][0]
-        assert {item["id"] for item in selected["candidates"]} == {"one", "two", "declined"}
-        revised = published["topic-assessment/1"][0]
-        assert all(item["sourceReview"] is None for item in revised["candidates"])
-        assert (
-            next(item for item in revised["candidates"] if item["candidateId"] == "one")[
-                "coldReview"
-            ]
-            is None
-        )
+    selected = published["topic-selection/2"][0]
+    assert selected["origin"] == "human"
+    assert selected["rubric"] == rubric.model_dump(mode="json")
+    assert selected["parentSelectionSha256"] == proposal_ref.sha256
+    revised = published["topic-selection-assessment/2"][0]
+    assert revised["portfolioReview"] is None
+    assert [item["candidateId"] for item in revised["coldReviews"]] == ["two", "declined"]

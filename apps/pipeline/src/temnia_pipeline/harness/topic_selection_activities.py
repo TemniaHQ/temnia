@@ -21,7 +21,6 @@ from temnia_pipeline.contracts import (
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
@@ -32,7 +31,6 @@ from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.topic_activities import TopicActivities
 from temnia_pipeline.harness.topic_compiler import (
-    compile_topics_v2,
     compile_topics_v3,
     validate_topic_edit,
 )
@@ -40,14 +38,9 @@ from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
-    SELECTION_COLD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
-    SELECTION_PATCH_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
-    SELECTION_POLICY,
-    SELECTION_PROMPT,
-    SELECTION_SOURCE_PROMPT,
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
     assess_selection,
@@ -57,7 +50,6 @@ from temnia_pipeline.harness.topic_selection import (
     selection_candidates_for_render,
     selection_cold_key,
     selection_cold_prompt,
-    selection_patch_prompt,
     selection_patch_prompt_v3,
     selection_prompt,
     selection_semantic_key,
@@ -142,7 +134,7 @@ class TopicSelectionActivities:
         )
         if (
             run.editorial_policy != context.program_version
-            or context.program_version not in {SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}
+            or context.program_version != TOPIC_SELECTION_POLICY_V3
             or run.evidence_artifact_id != context.evidence.id
         ):
             raise HarnessValidationError(
@@ -250,7 +242,6 @@ class TopicSelectionActivities:
             raise HarnessValidationError("editorial calls require a frozen rubric")
         author, verifier = editorial_routes(run.route_snapshot)
         dependencies = [context.evidence, context.rubric]
-        v3 = context.program_version == TOPIC_SELECTION_POLICY_V3
         if context.candidate_id is not None:
             candidate = (
                 next(
@@ -268,48 +259,38 @@ class TopicSelectionActivities:
                 raise HarnessValidationError("cold review candidate is absent from the selection")
             prompt = selection_cold_prompt(evidence, candidate, rubric)
             stage = f"verify:selection:cold:{selection_cold_key(candidate, context.rubric.sha256)}"
-            version = SELECTION_COLD_PROMPT_V3 if v3 else SELECTION_COLD_PROMPT
+            version = SELECTION_COLD_PROMPT_V3
             synthetic = "topic_selection_cold"
         elif selection is not None and context.assessment is None:
             if context.selection is None:
                 raise HarnessValidationError("source review requires its exact selection artifact")
-            prompt = selection_source_prompt(
-                evidence, selection.draft, rubric, independent_projection=v3
-            )
+            prompt = selection_source_prompt(evidence, selection.draft, rubric)
             stage = f"verify:selection:source:{context.iteration}"
-            version = SELECTION_SOURCE_PROMPT_V3 if v3 else SELECTION_SOURCE_PROMPT
+            version = SELECTION_SOURCE_PROMPT_V3
             synthetic = (
                 "topic_selection_source_selected_v3"
-                if v3 and selection.draft.proposal.candidates
-                else (
-                    "topic_selection_source_selected"
-                    if selection.draft.proposal.candidates
-                    else "topic_selection_source"
-                )
+                if selection.draft.proposal.candidates
+                else "topic_selection_source"
             )
             dependencies.append(context.selection)
         elif selection is not None:
             assessment = await self.assessment(context)
             if assessment is None or context.selection is None or context.assessment is None:
                 raise HarnessValidationError("selection repair requires exact assessed state")
-            prompt = (
-                selection_patch_prompt_v3(evidence, selection, assessment, context.selection.sha256)
-                if v3
-                else selection_patch_prompt(
-                    evidence, selection, assessment, context.selection.sha256
-                )
+            prompt = selection_patch_prompt_v3(
+                evidence, selection, assessment, context.selection.sha256
             )
             stage = f"repair:selection:{context.iteration}"
-            version = SELECTION_PATCH_PROMPT_V3 if v3 else SELECTION_PATCH_PROMPT
+            version = SELECTION_PATCH_PROMPT_V3
             synthetic = "topic_selection_patch"
             dependencies.extend((context.selection, context.assessment))
-        elif v3 and context.inventory is None and not context.inventory_attempted:
+        elif context.inventory is None and not context.inventory_attempted:
             prompt = opportunity_inventory_prompt(evidence, rubric)
             stage = "verify:selection:inventory:0"
             version = SELECTION_INVENTORY_PROMPT
             synthetic = "topic_opportunity_inventory"
         else:
-            inventory = await self.inventory(context) if v3 and context.inventory else None
+            inventory = await self.inventory(context) if context.inventory else None
             if inventory is not None and context.inventory is not None:
                 dependencies.append(context.inventory)
             navigation = None
@@ -337,8 +318,8 @@ class TopicSelectionActivities:
                 diagnostics=diagnostics,
             )
             stage = f"proposal:selection:{context.iteration}"
-            version = SELECTION_AUTHOR_PROMPT_V3 if v3 else SELECTION_PROMPT
-            synthetic = "topic_selection_author_v3" if v3 else "topic_selection_author"
+            version = SELECTION_AUTHOR_PROMPT_V3
+            synthetic = "topic_selection_author_v3"
         route = verifier if stage.startswith("verify:") else author
         estimate_cost(
             route,
@@ -346,13 +327,9 @@ class TopicSelectionActivities:
             max_output_tokens=effective_topic_output_tokens(run.config.maxOutputTokens, route),
         )
         synthetic_payload = self.owner._recorded_output(synthetic)
-        if synthetic_payload is not None and version in {
-            SELECTION_PATCH_PROMPT,
-            SELECTION_PATCH_PROMPT_V3,
-        }:
+        if synthetic_payload is not None and version == SELECTION_PATCH_PROMPT_V3:
             # Fixture operations remain authored test data; only run-local immutable hashes vary.
-            patch_type = TopicSelectionPatchV3 if v3 else TopicSelectionPatch
-            patch = patch_type.model_validate(synthetic_payload["output"])
+            patch = TopicSelectionPatchV3.model_validate(synthetic_payload["output"])
             if context.selection is None:
                 raise HarnessValidationError("recorded patch requires its exact selection")
             synthetic_payload = {
@@ -370,10 +347,8 @@ class TopicSelectionActivities:
             prompt_version=version,
             program_version=context.program_version,
             schema_version={
-                SELECTION_PROMPT: "topic-selection-draft/2",
                 SELECTION_AUTHOR_PROMPT_V3: "topic-selection-draft/2",
                 SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
-                SELECTION_SOURCE_PROMPT: "topic-selection-portfolio/2",
                 SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
             }.get(version, version),
             author=author,
@@ -457,8 +432,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V3
-            or rubric is None
+            rubric is None
             or context.rubric is None
             or context.inventory is not None
             or selection is not None
@@ -521,7 +495,7 @@ class TopicSelectionActivities:
             if draft is None:
                 raise HarnessValidationError("selection response contains no draft")  # noqa: TRY301
             validate_selection(evidence, draft)
-            if previous is None and context.program_version == TOPIC_SELECTION_POLICY_V3:
+            if previous is None:
                 inventory = await self.inventory(context)
                 if inventory is not None:
                     validate_selection_against_inventory(inventory, draft)
@@ -631,7 +605,6 @@ class TopicSelectionActivities:
             verifier_family=verifier.family,
             response_artifacts=tuple(response_refs),
             reasons=reasons,
-            require_source_candidate_reviews=context.program_version != TOPIC_SELECTION_POLICY_V3,
         )
         if request.execution_limited:
             assessment = TopicSelectionAssessment.model_validate(
@@ -705,16 +678,8 @@ class TopicSelectionActivities:
             or context.assessment is None
         ):
             raise HarnessValidationError("selection compilation requires exact assessed state")
-        proposal = selection_candidates_for_render(
-            record,
-            assessment,
-            require_complete_review=context.program_version == TOPIC_SELECTION_POLICY_V3,
-        )
-        compiler = (
-            compile_topics_v3
-            if context.program_version == TOPIC_SELECTION_POLICY_V3
-            else compile_topics_v2
-        )
+        proposal = selection_candidates_for_render(record, assessment, require_complete_review=True)
+        compiler = compile_topics_v3
         videos: list[TopicCompiledVideo] = []
         refusals: list[str] = []
         compiled = compiler(

@@ -378,46 +378,11 @@ async def test_concurrent_duplicate_start_is_one_immutable_run() -> None:
         await db.close_pool()
 
 
-@pytest.mark.parametrize("original_policy", ["standalone-topics/1", "standalone-topics/3"])
-async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) -> None:
-    """A replay under another program generation is refused; the stored generation stands."""
-    url = pipeline_url()
-    value = snapshot()
-    source_id = await ready_source(url)
-    start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
-    try:
-        created = await start_or_refetch_run(
-            url, start=start, settings=settings(value), route_snapshot=value
-        )
-        changed = start.model_copy(
-            update={
-                "editorial_policy": "standalone-topics/3"
-                if original_policy == "standalone-topics/1"
-                else "standalone-topics/1"
-            }
-        )
-        with pytest.raises(IdentityConflict):
-            await start_or_refetch_run(
-                url, start=changed, settings=settings(value), route_snapshot=value
-            )
-        resumed = await start_or_refetch_run(
-            url, start=start, settings=settings(value), route_snapshot=value
-        )
-        assert created.run.editorial_policy == resumed.run.editorial_policy == original_policy
-        assert resumed.created is False
-        assert created.run.config == resumed.run.config == start.request.config
-        assert created.run.request_key == resumed.run.request_key
-    finally:
-        await db.close_pool()
-
-
 @pytest.mark.parametrize(
     ("policy", "initial_detector"),
     [
-        ("standalone-topics/1", "pyscenedetect-adaptive"),
-        ("standalone-topics/1", "scdet"),
-        ("standalone-topics/2", "pyscenedetect-adaptive"),
-        ("standalone-topics/2", "scdet"),
+        ("standalone-topics/3", "pyscenedetect-adaptive"),
+        ("standalone-topics/3", "scdet"),
     ],
 )
 async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scdet(
@@ -461,42 +426,6 @@ async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scde
             assert retained["route_snapshot"]["topicShotDetector"] == initial_detector
         else:
             assert "topicShotDetector" not in retained["route_snapshot"]
-    finally:
-        await db.close_pool()
-
-
-@pytest.mark.parametrize(
-    "original_policy",
-    ["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"],
-)
-async def test_topic_generation_is_exact_and_never_crosses_editorial_lanes(
-    original_policy: str,
-) -> None:
-    url = pipeline_url()
-    value = snapshot()
-    source_id = await ready_source(url)
-    start = start_request(source_id, value).model_copy(update={"editorial_policy": original_policy})
-    configuration = settings(value)
-    try:
-        created = await start_or_refetch_run(
-            url, start=start, settings=configuration, route_snapshot=value
-        )
-        resumed = await start_or_refetch_run(
-            url, start=start, settings=configuration, route_snapshot=value
-        )
-        assert resumed.created is False
-        assert resumed.run.editorial_policy == created.run.editorial_policy == original_policy
-        changed = start.model_copy(
-            update={
-                "editorial_policy": "standalone-topics/2"
-                if original_policy == "standalone-topics/1"
-                else "standalone-topics/1"
-            }
-        )
-        with pytest.raises(IdentityConflict, match="incompatible editorial lanes"):
-            await start_or_refetch_run(
-                url, start=changed, settings=configuration, route_snapshot=value
-            )
     finally:
         await db.close_pool()
 

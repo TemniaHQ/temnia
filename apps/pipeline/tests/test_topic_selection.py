@@ -19,7 +19,6 @@ from temnia_pipeline.contracts import (
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionFinding,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
@@ -196,7 +195,7 @@ def _assess(
     record: TopicSelectionRecord,
     *,
     cold: list[TopicSelectionColdReview] | None = None,
-    source: TopicPortfolioReview | None = None,
+    source: TopicPortfolioReviewV4 | None = None,
 ) -> TopicSelectionAssessment:
     return assess_selection(
         EVIDENCE,
@@ -205,7 +204,7 @@ def _assess(
         cold_reviews=cold
         if cold is not None
         else [_cold(c) for c in record.draft.proposal.candidates],
-        source_review=source if source is not None else _source(record),
+        source_review=source if source is not None else _source_v3(record),
         author_family="author",
         verifier_family="reviewer",
     )
@@ -267,7 +266,6 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
         EVIDENCE,
         record.draft,
         record.rubric,
-        independent_projection=True,
     )
     instruction, payload_text = prompt.split("SOURCE DATA\n", 1)
     payload = json.loads(payload_text)
@@ -286,7 +284,6 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
         source_review=compact,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert str(assessment.executionStatus) == "complete"
     assert selection_candidates_for_render(
@@ -321,9 +318,7 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
     record = _record(earlier, later)
     expected_overlap = _span(3, 4)
     prompt_payload = json.loads(
-        selection_source_prompt(
-            EVIDENCE, record.draft, record.rubric, independent_projection=True
-        ).split("SOURCE DATA\n", 1)[1]
+        selection_source_prompt(EVIDENCE, record.draft, record.rubric).split("SOURCE DATA\n", 1)[1]
     )
     assert prompt_payload["candidateOverlaps"] == [
         {
@@ -341,7 +336,6 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
         source_review=omitted,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert unavailable.portfolioReview is None
     assert "must assess every supplied pair exactly once" in " ".join(unavailable.reasons)
@@ -354,7 +348,6 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
         source_review=_source_v3(record),
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert unsupported_shared.portfolioReview is None
     assert "explicit required context for both" in " ".join(unsupported_shared.reasons)
@@ -374,7 +367,6 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
         source_review=review,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert missing_finding.portfolioReview is None
     assert "lacks its required two-candidate finding" in " ".join(missing_finding.reasons)
@@ -399,7 +391,6 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
         source_review=review,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert assessed.portfolioReview is not None
     assert [(str(item.kind), item.affectedCandidateIds) for item in assessed.findings] == [
@@ -417,7 +408,6 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
         source_review=_source_v3(shared_record),
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert accepted_shared.portfolioReview is not None
 
@@ -428,9 +418,7 @@ def test_inventory_first_review_must_classify_every_adjacent_handoff() -> None:
     record = _record(earlier, later)
     expected = candidate_handoff_rows(EVIDENCE, record.draft)
     prompt_payload = json.loads(
-        selection_source_prompt(
-            EVIDENCE, record.draft, record.rubric, independent_projection=True
-        ).split("SOURCE DATA\n", 1)[1]
+        selection_source_prompt(EVIDENCE, record.draft, record.rubric).split("SOURCE DATA\n", 1)[1]
     )
     assert prompt_payload["candidateHandoffs"] == expected
 
@@ -443,7 +431,6 @@ def test_inventory_first_review_must_classify_every_adjacent_handoff() -> None:
         source_review=omitted,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert unavailable.portfolioReview is None
     assert "must assess every supplied pair exactly once in order" in " ".join(unavailable.reasons)
@@ -464,7 +451,6 @@ def test_inventory_first_review_must_classify_every_adjacent_handoff() -> None:
         source_review=reordered,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert unavailable.portfolioReview is None
     assert "must assess every supplied pair exactly once in order" in " ".join(unavailable.reasons)
@@ -530,7 +516,6 @@ def test_one_source_handoff_finding_can_move_both_candidate_edges_atomically() -
         source_review=source,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     repaired_earlier = earlier.model_copy(update={"lastSentenceId": "s000003"})
     repaired_later = later.model_copy(
@@ -670,7 +655,7 @@ def test_render_gate_withholds_unreviewed_or_known_invalid_candidates() -> None:
         == []
     )
 
-    source = _source(record).model_copy(
+    source = _source_v3(record).model_copy(
         update={
             "findings": [
                 TopicSelectionFinding.model_validate(
@@ -720,7 +705,7 @@ def test_physical_findings_unwrap_strict_supporting_sentence_ids(
         record,
         content_hash(record),
         cold_reviews=[_cold(candidate)],
-        source_review=_source(record),
+        source_review=_source_v3(record),
         author_family="author",
         verifier_family="reviewer",
     )
@@ -783,7 +768,6 @@ def test_source_unfocused_extent_is_a_required_publication_correction() -> None:
         source_review=source,
         author_family="author",
         verifier_family="reviewer",
-        require_source_candidate_reviews=False,
     )
     assert str(assessment.executionStatus) == "needs_review"
     assert [(str(f.kind), str(f.severity)) for f in assessment.findings] == [
@@ -794,7 +778,7 @@ def test_source_unfocused_extent_is_a_required_publication_correction() -> None:
 def test_unknown_source_finding_neither_completes_selection_nor_authorizes_a_patch() -> None:
     candidate = _candidate("uncertain", 0, 3)
     record = _record(candidate)
-    source = _source(record).model_dump(mode="json")
+    source = _source_v3(record).model_dump(mode="json")
     source["findings"] = [
         {
             **_finding(
@@ -806,9 +790,9 @@ def test_unknown_source_finding_neither_completes_selection_nor_authorizes_a_pat
             "severity": "unknown",
         }
     ]
-    assessment = _assess(record, source=TopicPortfolioReview.model_validate(source))
+    assessment = _assess(record, source=TopicPortfolioReviewV4.model_validate(source))
     assert str(assessment.executionStatus) == "needs_review"
-    patch = TopicSelectionPatch.model_validate(
+    patch = TopicSelectionPatchV3.model_validate(
         {
             "baseSelectionSha256": content_hash(record),
             "evidenceSha256": record.evidenceSha256,
@@ -848,7 +832,7 @@ def test_empty_selection_requires_independent_source_audit_before_completion() -
     assert str(_assess(record).executionStatus) == "complete"
 
 
-def _compound() -> tuple[TopicSelectionRecord, TopicSelectionAssessment, TopicSelectionPatch]:
+def _compound() -> tuple[TopicSelectionRecord, TopicSelectionAssessment, TopicSelectionPatchV3]:
     left, right, protected = (
         _candidate("left", 0, 1),
         _candidate("right", 2, 3),
@@ -863,7 +847,7 @@ def _compound() -> tuple[TopicSelectionRecord, TopicSelectionAssessment, TopicSe
             "disposition": "needs_evidence",
         }
     )
-    source = _source(record).model_dump(mode="json")
+    source = _source_v3(record).model_dump(mode="json")
     source["missingOpportunities"] = [missing.model_dump(mode="json")]
     source["findings"] = [
         _finding(
@@ -874,8 +858,8 @@ def _compound() -> tuple[TopicSelectionRecord, TopicSelectionAssessment, TopicSe
         ),
         _finding("omission", "missed_opportunity", [], [missing.id]),
     ]
-    assessment = _assess(record, source=TopicPortfolioReview.model_validate(source))
-    patch = TopicSelectionPatch.model_validate(
+    assessment = _assess(record, source=TopicPortfolioReviewV4.model_validate(source))
+    patch = TopicSelectionPatchV3.model_validate(
         {
             "baseSelectionSha256": content_hash(record),
             "evidenceSha256": record.evidenceSha256,

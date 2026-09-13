@@ -11,7 +11,7 @@ import {
   TopicSelectionAssessmentSchema,
 } from "@temnia/contracts";
 import type { ChapterView } from "../lib/harness/queries";
-import { TOPIC_SELECTION_POLICY_V3 } from "../lib/harness/topic-defaults";
+import { TOPIC_POLICY } from "../lib/harness/topic-defaults";
 import { uploadFixture } from "./helpers/upload";
 
 const SPEECH = resolve(process.cwd(), "e2e/fixtures/speech-40s.mp4");
@@ -37,7 +37,7 @@ async function artifact(page: Page, view: ChapterView, id: string) {
 const EXPECTED_DISPATCHES = 4;
 const INSTRUCTIONS = "Keep the speaker's original language in every title.";
 
-test(`${TOPIC_SELECTION_POLICY_V3} generation, human correction and exact accepted exports`, async ({
+test(`${TOPIC_POLICY} generation, human correction and exact accepted exports`, async ({
   page,
 }) => {
   test.setTimeout(300_000);

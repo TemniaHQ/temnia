@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from harness_fixtures import SOURCE_ID
 from temnia_pipeline.contracts import (
-    TopicPortfolioReview,
+    TopicPortfolioReviewV4,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
+    TopicSelectionPatchV3,
     TranscriptV1,
 )
+from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from test_harness_compiler import _evidence
@@ -47,7 +48,7 @@ class RecordedAgent:
         return SimpleNamespace(output=output)
 
 
-async def test_recorded_selection_fixture_recovers_one_discussion_through_all_four_schemas(
+async def test_recorded_selection_fixture_recovers_one_discussion_through_all_five_schemas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transcript = TranscriptV1.model_validate_json(
@@ -62,7 +63,7 @@ async def test_recorded_selection_fixture_recovers_one_discussion_through_all_fo
     )
     monkeypatch.setattr(doubles, "EVIDENCE", evidence)
     run = Program(monkeypatch, initial=draft(selected=False), sources=[], patches=[])
-    outputs = json.loads((FIXTURES / "harness/chapter.synthetic.json").read_bytes())["outputs"]
+    outputs = json.loads((FIXTURES / "harness/topic.synthetic.json").read_bytes())["outputs"]
 
     def payload(stage: str) -> dict[str, object]:
         return cast("dict[str, object]", outputs[stage])
@@ -71,16 +72,18 @@ async def test_recorded_selection_fixture_recovers_one_discussion_through_all_fo
     agents = [
         ("author_agent", TopicSelectionDraft),
         ("cold_agent", TopicSelectionColdReview),
-        ("source_agent", TopicPortfolioReview),
-        ("patch_agent", TopicSelectionPatch),
+        ("source_agent", TopicPortfolioReviewV4),
+        ("patch_agent", TopicSelectionPatchV3),
     ]
-    registered: list[RecordedAgent] = []
+    inventory_agent = RecordedAgent(TopicSelectionDraft)
+    monkeypatch.setattr(module, "topic_opportunity_inventory_v3", inventory_agent)
+    registered: list[RecordedAgent] = [inventory_agent]
     for name, output_type in agents:
         agent = RecordedAgent(output_type)
         monkeypatch.setattr(TopicSelectionWorkflow, name, agent)
         registered.append(agent)
     result = await TopicSelectionWorkflow().program(run.request)
-    assert [len(agent.calls) for agent in registered] == [1, 1, 2, 1]
+    assert [len(agent.calls) for agent in registered] == [1, 1, 1, 2, 1]
     assert result.revision == 1
     assert run.render_count == 1
     assert run.compiled is not None
@@ -90,6 +93,7 @@ async def test_recorded_selection_fixture_recovers_one_discussion_through_all_fo
     assert assessment is not None
     assert str(assessment.executionStatus) == "needs_review"
     assert assessment.portfolioReview is not None
-    assert str(assessment.portfolioReview.selection[0].disposition) == "unresolved"
+    # The select-only gate rendered it, so the recovered treatment must carry "select".
+    assert str(assessment.portfolioReview.selection[0].disposition) == "select"
     assert str(assessment.coldReviews[0].value.deliveredValue.status) == "unknown"
     assert not assessment.findings

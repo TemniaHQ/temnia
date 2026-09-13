@@ -290,16 +290,16 @@
           "type": "string",
           "minLength": 1
         },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        },
         "handoffs": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/TopicCandidateHandoffJudgment"
+          }
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
           }
         }
       },
@@ -310,8 +310,8 @@
         "opportunities",
         "selection",
         "summary",
-        "overlaps",
-        "handoffs"
+        "handoffs",
+        "overlaps"
       ],
       "additionalProperties": false,
       "title": "TopicPortfolioReviewV4"

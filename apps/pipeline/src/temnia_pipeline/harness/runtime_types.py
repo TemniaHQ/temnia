@@ -8,11 +8,9 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from temnia_pipeline.contracts import (
-    ChapterEditSpec,
-    ChapterProposal,
     ChapterReviewInput,
     ChapterReviewOutput,
     ChapterRunConfig,
@@ -23,7 +21,7 @@ from temnia_pipeline.contracts import (
     TranscriptRevisionAnnotations,
 )
 from temnia_pipeline.harness.editorial_policy import EditorialPolicy
-from temnia_pipeline.harness.routes import AdmissionVersion, RouteEntry, RouteSnapshot
+from temnia_pipeline.harness.routes import AdmissionVersion, RouteSnapshot
 
 
 class WorkflowIdentity(BaseModel):
@@ -198,194 +196,6 @@ class ResumeRunAssets(BaseModel):
     base_revision: Annotated[int | None, Field(gt=0)] = None
 
 
-class PlanningWindow(BaseModel):
-    """One contiguous, bounded model planning window."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    id: Annotated[str, Field(min_length=1, max_length=256)]
-    first_sentence_id: Annotated[str, Field(min_length=1, max_length=256)]
-    last_sentence_id: Annotated[str, Field(min_length=1, max_length=256)]
-    sentence_count: Annotated[int, Field(gt=0)]
-    prompt: Annotated[str, Field(min_length=1, max_length=524288)]
-
-
-class PreparePlanningRequest(BaseModel):
-    """Evidence identity used to prepare one bounded proposal request."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    extra_context_bytes: Annotated[int, Field(ge=0, le=524288)] = 0
-
-
-class ProposalPlan(BaseModel):
-    """Bounded direct or first-level hierarchy calls and frozen route facts."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    windows: tuple[PlanningWindow, ...]
-    route: RouteEntry
-    summary_route: RouteEntry
-    synthetic_payload: dict[str, object] | None = None
-    synthetic_summary_payload: dict[str, object] | None = None
-
-
-class ValidateSummaryRequest(BaseModel):
-    """One retained model summary and its immutable grounding lineage."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    window: PlanningWindow
-    summary: dict[str, object]
-    model_stage: Annotated[str, Field(min_length=1, max_length=128)]
-    hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
-    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
-
-
-class ValidatedSummary(BaseModel):
-    """Grounded summary value or a finite content-free semantic refusal."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    summary: dict[str, object] | None = None
-    artifact: HarnessArtifactRef | None = None
-    refusal: Annotated[str | None, Field(max_length=2000)] = None
-
-    @model_validator(mode="after")
-    def _one_outcome(self) -> ValidatedSummary:
-        accepted = self.summary is not None and self.artifact is not None
-        if accepted == (self.refusal is not None):
-            message = "validated summary requires exactly one accepted or refused outcome"
-            raise ValueError(message)
-        return self
-
-
-class PrepareGlobalProposalRequest(BaseModel):
-    """Grounded first-level summaries used to build the global proposal prompt."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    windows: tuple[PlanningWindow, ...]
-    summaries: tuple[dict[str, object], ...]
-    hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
-    grounding_artifacts: tuple[HarnessArtifactRef, ...] = ()
-
-
-class GlobalProposalPlan(BaseModel):
-    """Bounded global prompt produced after validating hierarchy lineage."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    prompt: Annotated[str | None, Field(min_length=1, max_length=524288)] = None
-    route: RouteEntry
-    synthetic_payload: dict[str, object] | None = None
-    reduction_windows: tuple[PlanningWindow, ...] = ()
-    hierarchy_level: Annotated[int, Field(ge=1, le=8)] = 1
-    refusal: Annotated[str | None, Field(max_length=2000)] = None
-    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
-
-
-class CompileProposalRequest(BaseModel):
-    """Validated model proposal and immutable evidence identities to compile."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    proposal: ChapterProposal
-    generator_family: Annotated[str, Field(min_length=1, max_length=128)]
-    model_stage: Annotated[str, Field(min_length=1, max_length=128)]
-    boundary_constraints: tuple[tuple[str, str, str], ...] = ()
-    editorial_dependencies: tuple[HarnessArtifactRef, ...] = ()
-    prior_proposal_artifact: HarnessArtifactRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    prior_edit_artifact: HarnessArtifactRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-    @model_validator(mode="after")
-    def _prior_pair(self) -> CompileProposalRequest:
-        if (self.prior_proposal_artifact is None) != (self.prior_edit_artifact is None):
-            message = "preservation requires both prior artifact references"
-            raise ValueError(message)
-        return self
-
-
-class ProposalDiagnosticRequest(BaseModel):
-    """Exact retained proposal response to inspect without another model call."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    model_stage: Annotated[str, Field(min_length=1, max_length=128)]
-    route: RouteEntry
-    program_version: Annotated[str, Field(min_length=1, max_length=128)]
-    prompt_version: Annotated[str, Field(min_length=1, max_length=128)]
-    schema_version: Annotated[str, Field(min_length=1, max_length=128)]
-    max_output_tokens: Annotated[int, Field(gt=0)]
-    operation_inputs: dict[str, object]
-    operation_config: dict[str, object]
-    input_artifacts: tuple[HarnessArtifactRef, ...] = ()
-    compiler_refusal: Annotated[str | None, Field(min_length=1, max_length=2000)] = None
-
-
-class ProposalDiagnosticIssue(BaseModel):
-    """Content-free schema path and validation code safe for repair feedback."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    path: Annotated[str, Field(min_length=1, max_length=256)]
-    code: Annotated[str, Field(min_length=1, max_length=128)]
-
-
-class ProposalDiagnostic(BaseModel):
-    """Content-free reason and immutable evidence for one unusable proposal."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    artifact: HarnessArtifactRef
-    response: HarnessArtifactRef
-    code: Literal["output_limit", "invalid_json", "invalid_schema", "compiler_refusal"]
-    message: Annotated[str, Field(min_length=1, max_length=1000)]
-    issues: Annotated[tuple[ProposalDiagnosticIssue, ...], Field(max_length=32)] = ()
-    compiler_code: Annotated[str | None, Field(max_length=128)] = None
-
-
-class CompiledRevision(BaseModel):
-    """Immutable proposal/edit artifacts ready for revision CAS acceptance."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    proposal_artifact: HarnessArtifactRef
-    edit_artifact: HarnessArtifactRef
-    edit: ChapterEditSpec
-    revision: Annotated[int, Field(gt=0)]
-
-
-class CompileProposalResult(BaseModel):
-    """A compiled proposal or one bounded semantic refusal, never both."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    compiled: CompiledRevision | None = None
-    refusal: Annotated[str | None, Field(min_length=1, max_length=2000)] = None
-
-    @model_validator(mode="after")
-    def _one_outcome(self) -> CompileProposalResult:
-        if (self.compiled is None) == (self.refusal is None):
-            message = "compile result requires exactly one outcome"
-            raise ValueError(message)
-        return self
-
-
 class AcceptInitialRevisionRequest(BaseModel):
     """Compact control-queue request to accept one prepared initial edit."""
 
@@ -415,70 +225,6 @@ class RenderRevisionResult(BaseModel):
     has_kept_sections: bool = True
     technical_report: tuple[dict[str, object], ...]
     technical_passed: bool
-
-
-class ReuseRevisionRenderRequest(BaseModel):
-    """A review-only revision eligible to reuse its predecessor's checked bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    predecessor_revision: Annotated[int, Field(gt=0)]
-    edit: HarnessArtifactRef
-    revision: Annotated[int, Field(gt=1)]
-    required: bool = False
-
-
-class ReuseRevisionRenderOutcome(BaseModel):
-    """Verified metadata-only reuse, or an explicit content-change fallback."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    reused: RenderRevisionResult | None = None
-    all_sections_accepted: bool = False
-
-
-class PrepareVerificationRequest(BaseModel):
-    """Current evidence/edit/render identities and all generating families."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    evidence: HarnessArtifactRef
-    proposal: HarnessArtifactRef
-    edit: HarnessArtifactRef
-    rendered: RenderRevisionResult
-    generation_families: tuple[str, ...]
-
-
-class VerificationPlan(BaseModel):
-    """A bounded independent verifier call, or an explicit review-only refusal."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    prompt: Annotated[str | None, Field(max_length=524288)] = None
-    route: RouteEntry | None = None
-    synthetic_payload: dict[str, object] | None = None
-    refusal: Annotated[str | None, Field(max_length=2000)] = None
-    output_cap: Annotated[int, Field(gt=0)] = 1
-    dispatch_limit: Annotated[int, Field(gt=0, le=128)] = 1
-    editorial_v2: bool = False
-    editorial_prompt_version: Annotated[str | None, Field(min_length=1, max_length=128)] = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-
-
-class FinalizeVerificationRequest(BaseModel):
-    """Validated verifier verdict to publish with its measured dependencies."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    run: RunRef
-    revision: Annotated[int, Field(gt=0)]
-    edit: HarnessArtifactRef
-    rendered: RenderRevisionResult
-    verdict: dict[str, object]
-    verifier_family: Annotated[str, Field(min_length=1, max_length=128)]
 
 
 class ExportRevisionRequest(BaseModel):
@@ -528,13 +274,3 @@ class CommitReviewMutationResult(BaseModel):
 
     output: ChapterReviewOutput
     render: RenderRevisionRequest | None
-
-
-class ReviewEventResult(BaseModel):
-    """Internal persisted review event result."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    state: Literal["applied", "conflict", "refused"]
-    revision: Annotated[int | None, Field(gt=0)]
-    message: Annotated[str, Field(max_length=2000)]

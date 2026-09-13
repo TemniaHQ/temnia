@@ -46,7 +46,7 @@ def _settings() -> tuple[HarnessSettings, RouteSnapshot]:
             "HARNESS_BACKEND": "recorded",
             "HARNESS_ENABLED": "1",
             "HARNESS_MAX_REPAIRS": "0",
-            "HARNESS_RECORDED_FIXTURE_PATH": str(FIXTURES / "chapter.synthetic.json"),
+            "HARNESS_RECORDED_FIXTURE_PATH": str(FIXTURES / "topic.synthetic.json"),
             "HARNESS_ROUTE_SNAPSHOT_ID": routes.snapshot_id,
             "HARNESS_ROUTE_SNAPSHOT_PATH": str(FIXTURES / "routes.synthetic.json"),
         }

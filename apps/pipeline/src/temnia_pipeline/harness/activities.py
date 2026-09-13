@@ -41,7 +41,6 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.editorial_policy import (
-    TOPIC_SELECTION_POLICY,
     TOPIC_SELECTION_POLICY_V3,
     is_topic_policy,
 )
@@ -83,7 +82,6 @@ from temnia_pipeline.harness.runtime_types import (
 )
 from temnia_pipeline.harness.shot_evidence import build_source_shot_evidence
 from temnia_pipeline.harness.speech_evidence import build_source_speech_coverage
-from temnia_pipeline.harness.topic_activities import TopicActivities
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
@@ -396,7 +394,7 @@ class HarnessActivities:
                 ),
             },
         )
-        if run.editorial_policy in {TOPIC_SELECTION_POLICY, TOPIC_SELECTION_POLICY_V3}:
+        if run.editorial_policy == TOPIC_SELECTION_POLICY_V3:
             evidence = augment_topic_evidence(evidence)
         fingerprint = artifacts.fingerprint_for(
             kind="evidence",
@@ -1379,7 +1377,6 @@ class HarnessActivities:
     def activities(self) -> Sequence[Callable[..., object]]:
         """Return heavy activities for the pipeline task queue."""
         return (
-            *TopicActivities(self).activities(),
             *TopicRenderActivities(self).activities(),
             *TopicReviewActivities(self).activities(),
             *TopicSelectionActivities(self).activities(),

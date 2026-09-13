@@ -24,7 +24,6 @@ from temnia_pipeline.contracts import (
     TranscriptRevisionAnnotations,
 )
 from temnia_pipeline.harness.editorial_policy import (
-    TOPIC_SELECTION_POLICY,
     TOPIC_SELECTION_POLICY_V3,
     is_topic_policy,
 )
@@ -33,9 +32,7 @@ from temnia_pipeline.harness.routes import (
     ADMISSION_VERSION,
     ADMISSION_VERSION_LEGACY,
     AdmissionVersion,
-    ContextWindowExceeded,
     RouteSnapshot,
-    estimate_cost,
 )
 from temnia_pipeline.harness.runtime_types import (
     ClaimRepairRequest,
@@ -52,13 +49,14 @@ from temnia_pipeline.harness.runtime_types import (
     StartRunRequest,
     StartRunResult,
 )
-from temnia_pipeline.harness.settings import REQUIRED_ROUTE_SEATS, HarnessSettings
 from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from psycopg import AsyncConnection
+
+    from temnia_pipeline.harness.settings import HarnessSettings
 
 
 class RunStateConflict(RuntimeError):
@@ -196,33 +194,22 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 ) -> StartRunResult:
     """Create one immutable request-keyed run or return its exact prior identity."""
     request = start.request
-    selection_policy = start.editorial_policy in {
-        TOPIC_SELECTION_POLICY,
-        TOPIC_SELECTION_POLICY_V3,
-    }
     # One default brief lives in Python, so a web run hashes the rubric the r-runs hashed.
     brief = request.brief if request.brief and request.brief.strip() else EDITORIAL_BRIEF
     program_value: object = start.evaluation_program
-    if program_value is None and selection_policy:
+    if program_value is None:
         # Every topic run freezes its own prompt-template and native-schema bytes.
         from temnia_pipeline.harness.topic_program import current_program  # noqa: PLC0415
 
-        program_value = current_program(
-            "standalone-topics/3"
-            if start.editorial_policy == TOPIC_SELECTION_POLICY_V3
-            else "standalone-topics/2"
-        )
-    evaluation_program = None
-    evaluation_program_sha = None
-    if program_value is not None:
-        # The operator-only manifest is not part of the cross-language run request.
-        from temnia_pipeline.evals.topics import TopicProgramManifest, digest  # noqa: PLC0415
+        program_value = current_program()
+    # The operator-only manifest is not part of the cross-language run request.
+    from temnia_pipeline.evals.topics import TopicProgramManifest, digest  # noqa: PLC0415
 
-        program = TopicProgramManifest.model_validate(program_value)
-        if program.policy != start.editorial_policy:
-            raise IdentityConflict("evaluation programme differs from the run editorial policy")
-        evaluation_program = program.model_dump(mode="json", by_alias=True)
-        evaluation_program_sha = digest(evaluation_program)
+    program = TopicProgramManifest.model_validate(program_value)
+    if program.policy != start.editorial_policy:
+        raise IdentityConflict("evaluation programme differs from the run editorial policy")
+    evaluation_program = program.model_dump(mode="json", by_alias=True)
+    evaluation_program_sha = digest(evaluation_program)
     if not settings.enabled:
         raise RuntimeError("chapter harness is disabled on this worker")
     if request.budgetMicros > settings.max_run_budget_micros:
@@ -231,24 +218,6 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         raise IdentityConflict("requested run config differs from worker allowed config")
     if route_snapshot.snapshot_id != request.config.routeSnapshotId:
         raise IdentityConflict("requested route snapshot differs from loaded immutable snapshot")
-    if not selection_policy:
-        required_routes = {
-            route_id
-            for seat in REQUIRED_ROUTE_SEATS & route_snapshot.seats.keys()
-            for route_id in route_snapshot.seats[seat].route_ids
-        }
-        for route in route_snapshot.routes:
-            if route.id not in required_routes:
-                continue
-            try:
-                estimate_cost(
-                    route, payload_bytes=1, max_output_tokens=request.config.maxOutputTokens
-                )
-            except (ContextWindowExceeded, ValueError) as error:
-                message = (
-                    f"non-v2 route {route.id!r} cannot honor the requested global output ceiling"
-                )
-                raise IdentityConflict(message) from error
     async with db.scoped(database_url, request.scope) as conn:
         fenced = await (
             await conn.execute(
@@ -280,7 +249,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                 start.editorial_policy != prior_policy
             ):
                 raise IdentityConflict("request key was reused across incompatible editorial lanes")
-            if evaluation_program is not None and (
+            if (
                 pinned.get("evaluationProgram") != evaluation_program
                 or pinned.get("evaluationProgramSha256") != evaluation_program_sha
             ):
@@ -350,9 +319,8 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             "pinnedTranscript": transcript.model_dump(mode="json"),
             "snapshot": route_snapshot.model_dump(mode="json"),
         }
-        if evaluation_program is not None:
-            route_value["evaluationProgram"] = evaluation_program
-            route_value["evaluationProgramSha256"] = evaluation_program_sha
+        route_value["evaluationProgram"] = evaluation_program
+        route_value["evaluationProgramSha256"] = evaluation_program_sha
         route_value["editorialPolicy"] = start.editorial_policy
         route_value["topicShotDetector"] = settings.topic_shot_detector
         row = await (

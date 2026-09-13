@@ -10,8 +10,7 @@ import pytest
 from temnia_pipeline.contracts import PositiveRational, SignedRationalTime, SpeechCoverageInterval
 from temnia_pipeline.harness.compiler import candidate_time
 from temnia_pipeline.harness.topic_compiler import (
-    compile_topics_v2,
-    topic_boundary_issues,
+    compile_topics_v3,
     topic_boundary_issues_v2,
     validate_topic_edit,
 )
@@ -23,7 +22,7 @@ from temnia_pipeline.harness.topic_feasible import (
 from temnia_pipeline.harness.validators import HarnessValidationError, rational, validate_evidence
 from test_harness_compiler import ARTIFACT_ID, SHA, _clear_coverage, _evidence, _transcript, _word
 from test_topic_compiler import _candidate, _case
-from test_topic_editorial import _proposal
+from topic_fixtures import _proposal
 
 
 def test_submillisecond_audio_grid_preserves_safe_interior_without_mutating_source() -> None:
@@ -39,7 +38,7 @@ def test_submillisecond_audio_grid_preserves_safe_interior_without_mutating_sour
     assert derived_candidate_time(evidence, derived[0]) == Fraction(1, 550)
     # 1.818ms is the only safe sample; integer-ms truncation would choose a different sample.
     assert derived[0].timeMs == 2
-    edit = compile_topics_v2(
+    edit = compile_topics_v3(
         evidence,
         _proposal(_candidate("after", 1, 1)),
         evidence_artifact_id=ARTIFACT_ID,
@@ -62,10 +61,9 @@ def test_sparse_old_inventory_does_not_mean_no_feasible_frame() -> None:
         update={"boundaries": [c for c in evidence.boundaries if str(c.kind) == "edge"]}
     )
     candidate = _candidate("claim", 1, 2)
-    assert topic_boundary_issues(evidence, candidate)
     augmented = augment_topic_evidence(evidence)
     assert not topic_boundary_issues_v2(augmented, candidate)
-    edit = compile_topics_v2(
+    edit = compile_topics_v3(
         augmented, _proposal(candidate), evidence_artifact_id=ARTIFACT_ID, evidence_sha256=SHA
     )
     validate_topic_edit(augmented, edit, expected_evidence_sha256=SHA)
@@ -123,7 +121,7 @@ def test_grid_is_source_relative_and_v2_requires_persisted_derivation() -> None:
         (c.id, candidate_time(right, c)) for c in right.boundaries
     ]
     with pytest.raises(HarnessValidationError, match="persisted"):
-        compile_topics_v2(
+        compile_topics_v3(
             source,
             _proposal(_candidate("all", 0, 3)),
             evidence_artifact_id=ARTIFACT_ID,

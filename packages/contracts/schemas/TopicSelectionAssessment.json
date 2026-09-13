@@ -309,113 +309,6 @@
       "additionalProperties": false,
       "title": "TopicOpportunityJudgment"
     },
-    "TopicPortfolioReview": {
-      "$id": "#/$defs/TopicPortfolioReview",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceJudgment"
-          }
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionFinding"
-          }
-        },
-        "missingOpportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunityJudgment"
-          }
-        },
-        "selection": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionDecision"
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "candidates",
-        "findings",
-        "missingOpportunities",
-        "opportunities",
-        "selection",
-        "summary"
-      ],
-      "additionalProperties": false,
-      "title": "TopicPortfolioReview"
-    },
-    "TopicPortfolioReviewV3": {
-      "$id": "#/$defs/TopicPortfolioReviewV3",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceJudgment"
-          }
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionFinding"
-          }
-        },
-        "missingOpportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunityJudgment"
-          }
-        },
-        "selection": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionDecision"
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        }
-      },
-      "required": [
-        "candidates",
-        "findings",
-        "missingOpportunities",
-        "opportunities",
-        "selection",
-        "summary",
-        "overlaps"
-      ],
-      "additionalProperties": false,
-      "title": "TopicPortfolioReviewV3"
-    },
     "TopicPortfolioReviewV4": {
       "$id": "#/$defs/TopicPortfolioReviewV4",
       "type": "object",
@@ -454,16 +347,16 @@
           "type": "string",
           "minLength": 1
         },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        },
         "handoffs": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/TopicCandidateHandoffJudgment"
+          }
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
           }
         }
       },
@@ -474,8 +367,8 @@
         "opportunities",
         "selection",
         "summary",
-        "overlaps",
-        "handoffs"
+        "handoffs",
+        "overlaps"
       ],
       "additionalProperties": false,
       "title": "TopicPortfolioReviewV4"
@@ -515,17 +408,7 @@
         "portfolioReview": {
           "anyOf": [
             {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/TopicPortfolioReview"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV3"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV4"
-                }
-              ]
+              "$ref": "#/$defs/TopicPortfolioReviewV4"
             },
             {
               "type": "null"

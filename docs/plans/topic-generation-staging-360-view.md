@@ -311,8 +311,8 @@ on `pipeline` only, never on `web`.
 
 | Item | Disposition |
 | --- | --- |
-| v1 lane (`standalone-topics/1`) | Hidden from new runs now; code deleted in the next PR after a staging query shows no non-terminal run |
-| v2 lane (`standalone-topics/2`) | Hidden now; v3 contains it; deleted next PR; readers kept |
+| v1 lane (`standalone-topics/1`) | Deleted 13 September in the same PR (superseded: nothing is live, no reader is kept) |
+| v2 lane (`standalone-topics/2`) | Deleted 13 September in the same PR; v3 contains it |
 | Chapter lane | Parked on staging with one web flag; code, runs, review and export untouched |
 | Qualification manifest gate | Replaced by in-run admission plus the ledger; identity hashes still recorded per attempt |
 | `bind-topics`, manifest formats `/2` to `/5` | Deleted; `run` and `reconcile` kept as optional pre-flight |

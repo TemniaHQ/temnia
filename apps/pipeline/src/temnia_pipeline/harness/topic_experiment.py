@@ -55,11 +55,8 @@ from temnia_pipeline.settings import TemporalSettings
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 Nonempty = Annotated[str, Field(min_length=1)]
-WORKFLOW_TYPES = {
-    "standalone-topics/2": "TopicSelectionWorkflow",
-    "standalone-topics/3": "TopicSelectionWorkflowV3",
-}
-WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/2"]
+WORKFLOW_TYPES = {"standalone-topics/3": "TopicSelectionWorkflow"}
+WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/3"]
 MEMO_KEY = "temniaExperimentSha256"
 INTENT_MEMO_KEY = "temniaIntentSha256"
 RPC_TIMEOUT = timedelta(seconds=30)
@@ -118,7 +115,7 @@ class ExperimentSpec(EvaluationModel):
     temporal_address: Nonempty
     temporal_namespace: Nonempty
     topic_shot_detector: TopicShotDetector = "scdet"
-    program_version: Literal["standalone-topics/2", "standalone-topics/3"] = "standalone-topics/2"
+    program_version: Literal["standalone-topics/3"] = "standalone-topics/3"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]
 

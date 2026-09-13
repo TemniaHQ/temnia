@@ -8,7 +8,6 @@ import pytest
 
 from temnia_pipeline.contracts import (
     TopicSelectionAssessment,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
@@ -23,7 +22,7 @@ from temnia_pipeline.harness.topic_selection import (
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_harness_compiler import _evidence, _transcript, _word
 from test_topic_compiler import _candidate, _span
-from test_topic_selection_workflow import CANDIDATE, EVIDENCE, draft, opportunity, portfolio
+from test_topic_selection_workflow import CANDIDATE, EVIDENCE, draft, opportunity, v3_portfolio
 
 
 def test_source_inventory_defers_packaging_and_disposition() -> None:
@@ -34,7 +33,7 @@ def test_source_inventory_defers_packaging_and_disposition() -> None:
         validate_opportunity_inventory(EVIDENCE, selected)
 
 
-def test_partial_omission_patch_retains_every_discovered_opportunity() -> None:
+def test_partial_omission_patch_is_refused_until_every_required_omission_is_treated() -> None:
     rubric = make_rubric("Find worthwhile independent discussions.")
     record = TopicSelectionRecord.model_validate(
         {
@@ -49,7 +48,7 @@ def test_partial_omission_patch_retains_every_discovered_opportunity() -> None:
         }
     )
     selection_sha = content_hash(record)
-    source_review = portfolio(selected=False, missing=True)
+    source_review = v3_portfolio(selected=False, missing=True)
     second = opportunity(selected=False).model_copy(
         update={
             "id": "second-opportunity",
@@ -78,7 +77,7 @@ def test_partial_omission_patch_retains_every_discovered_opportunity() -> None:
         verifier_family="reviewer",
     )
     assert assessment.portfolioReview is not None
-    patch = TopicSelectionPatch.model_validate(
+    patch = TopicSelectionPatchV3.model_validate(
         {
             "baseSelectionSha256": selection_sha,
             "evidenceSha256": record.evidenceSha256,
@@ -97,15 +96,16 @@ def test_partial_omission_patch_retains_every_discovered_opportunity() -> None:
             ],
         }
     )
-    output = apply_selection_patch(EVIDENCE, record, selection_sha, assessment, patch)
-    assert {item.id for item in output.opportunities} == {"useful-discussion", second.id}
-    retained = next(item for item in output.opportunities if item.id == second.id)
-    assert retained == second
-    assert retained.candidateIds == []
-    assert str(retained.disposition) == "needs_evidence"
-    # A declined/no-op repair does not manufacture progress or discard its retained assessment.
+    # The atomic repair rule: every required omission is treated in one transaction or none is.
+    with pytest.raises(HarnessValidationError, match="every required finding"):
+        apply_selection_patch(EVIDENCE, record, selection_sha, assessment, patch)
     noop = patch.model_copy(update={"operations": []})
-    assert apply_selection_patch(EVIDENCE, record, selection_sha, assessment, noop) == record.draft
+    with pytest.raises(HarnessValidationError, match="cannot return an empty repair"):
+        apply_selection_patch(EVIDENCE, record, selection_sha, assessment, noop)
+    assert {item.id for item in assessment.portfolioReview.missingOpportunities} == {
+        "useful-discussion",
+        second.id,
+    }
 
 
 def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
@@ -156,7 +156,7 @@ def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
     extended = original.model_copy(
         update={"firstSentenceId": "s000000", "requiredContextSpans": [_span(0)]}
     )
-    patch = TopicSelectionPatch.model_validate(
+    patch = TopicSelectionPatchV3.model_validate(
         {
             "baseSelectionSha256": selection_sha,
             "evidenceSha256": record.evidenceSha256,

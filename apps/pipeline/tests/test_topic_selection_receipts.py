@@ -17,7 +17,6 @@ from temnia_pipeline import db
 from temnia_pipeline.contracts import HarnessArtifactKind, HarnessArtifactRef
 from temnia_pipeline.harness import artifacts, ledger
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
 from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionContext,
@@ -72,7 +71,7 @@ async def test_response_requires_complete_original_call_identity(  # noqa: C901 
         config={
             "maxOutputTokens": output_ceiling - 1 if corruption == "setting" else output_ceiling,
             "reservedVerifierFamily": plan.verifier.family,
-            "programVersion": SELECTION_POLICY,
+            "programVersion": "standalone-topics/3",
             "promptVersion": plan.prompt_version,
             "schemaVersion": plan.schema_version,
             "route": plan.verifier.model_dump(mode="json"),
@@ -87,7 +86,7 @@ async def test_response_requires_complete_original_call_identity(  # noqa: C901 
         storageKey="tests/response.json",
     )
     metadata: dict[str, Any] = {
-        "programVersion": SELECTION_POLICY,
+        "programVersion": "standalone-topics/3",
         "promptVersion": plan.prompt_version,
         "schemaVersion": plan.schema_version,
         "route": plan.verifier.model_dump(mode="json"),

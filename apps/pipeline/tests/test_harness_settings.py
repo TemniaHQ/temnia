@@ -17,7 +17,7 @@ from temnia_pipeline.harness.routes import (
     RouteSnapshot,
     SeatRoutePool,
 )
-from temnia_pipeline.harness.settings import HarnessSettings
+from temnia_pipeline.harness.settings import RECORDED_TOPIC_OUTPUTS, HarnessSettings
 
 
 def route(
@@ -86,8 +86,7 @@ def env(path: Path, value: RouteSnapshot, backend: str) -> dict[str, str]:
         json.dumps(
             {
                 "outputs": {
-                    stage: {"output": {}, "synthetic": True}
-                    for stage in ("propose", "summary", "verify")
+                    stage: {"output": {}, "synthetic": True} for stage in RECORDED_TOPIC_OUTPUTS
                 },
                 "synthetic": True,
             }
@@ -213,7 +212,7 @@ def test_committed_recorded_snapshot_has_valid_capacity() -> None:
             "HARNESS_ALLOW_RECORDED": "1",
             "HARNESS_BACKEND": "recorded",
             "HARNESS_ENABLED": "1",
-            "HARNESS_RECORDED_FIXTURE_PATH": str(fixture_dir / "chapter.synthetic.json"),
+            "HARNESS_RECORDED_FIXTURE_PATH": str(fixture_dir / "topic.synthetic.json"),
             "HARNESS_ROUTE_SNAPSHOT_ID": value["snapshot_id"],
             "HARNESS_ROUTE_SNAPSHOT_PATH": str(route_path),
         }

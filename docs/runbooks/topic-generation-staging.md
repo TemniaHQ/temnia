@@ -8,7 +8,7 @@ Reload mechanics are in [staging.md](staging.md) §4b.
 
 ## What runs
 
-`standalone-topics/3` on `TopicSelectionWorkflowV3`, queue `temnia-pipeline`, the same
+`standalone-topics/3` on `TopicSelectionWorkflow`, queue `temnia-pipeline`, the same
 worker that ingests and transcribes. The chapter lane no longer exists in the code. No
 qualification manifest exists; a route that refuses a request ends the run with a
 message naming the route, stage and HTTP status.

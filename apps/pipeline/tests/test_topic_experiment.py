@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from qualification_fixtures import _qualified  # pyright: ignore[reportPrivateUsage]
 from temnia_pipeline.contracts import Backend, ChapterRunConfig, HarnessRunStatus
 from temnia_pipeline.evals.topics import digest
 from temnia_pipeline.harness import topic_experiment as experiment
@@ -27,7 +28,6 @@ from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.scope import resolve_scope
 from temnia_pipeline.settings import TemporalSettings
-from test_topic_selection_qualification import _qualified  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from temnia_pipeline.contracts import Scope
@@ -72,7 +72,7 @@ def spec(tmp_path: Path) -> experiment.ExperimentSpec:
     route_path = tmp_path / "routes.json"
     route_path.write_bytes((FIXTURES / "routes.synthetic.json").read_bytes())
     fixture_path = tmp_path / "fixture.json"
-    fixture_path.write_bytes((FIXTURES / "chapter.synthetic.json").read_bytes())
+    fixture_path.write_bytes((FIXTURES / "topic.synthetic.json").read_bytes())
     snapshot = load_route_snapshot(route_path)
     author, reviewer = editorial_routes(snapshot)
     arm = experiment.ArmSpec(
@@ -262,6 +262,7 @@ async def test_private_create_only_manifest_freezes_matrix_and_complete_program(
     assert len({arm.pipeline_queue for arm in restored.arms}) == 2
     assert restored.sources[0].known_source_sha256 is None
     assert set(restored.program.stages) == {
+        "topic_inventory",
         "topic_author",
         "topic_cold",
         "topic_source",
@@ -288,28 +289,9 @@ async def test_v3_experiment_freezes_inventory_workflow_and_worker_settings(
     )
     assert prepared.program.policy == "standalone-topics/3"
     assert "topic_inventory" in prepared.program.stages
-    assert prepared.executions[0].workflow_type == "TopicSelectionWorkflowV3"
+    assert prepared.executions[0].workflow_type == "TopicSelectionWorkflow"
     settings, _ = runtime(prepared)
     assert settings.enabled is True
-
-
-async def test_legacy_prepared_experiment_defaults_to_v2_workflow(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    prepared = await prepare(spec(tmp_path), monkeypatch)
-    path = tmp_path / "legacy-prepared.json"
-    experiment.write_prepared(path, prepared)
-    body = json.loads(path.read_bytes())
-    body["experiment"]["spec"].pop("programVersion")
-    for execution in body["experiment"]["executions"]:
-        execution.pop("workflowType")
-    body["sha256"] = digest(body["experiment"])
-    path.write_text(json.dumps(body))
-
-    restored = experiment.read_prepared(path)
-
-    assert restored.spec.program_version == "standalone-topics/2"
-    assert restored.executions[0].workflow_type == "TopicSelectionWorkflow"
 
 
 @pytest.mark.parametrize("field", ["arms", "sources"])
@@ -511,7 +493,7 @@ async def test_gateway_arm_requires_resolved_seats_and_exact_output_ceiling(
     prepared = await prepare(value, monkeypatch)
     settings, temporal = runtime(prepared)
     experiment.assert_runtime(prepared, prepared.arms[0], settings, temporal)
-    assert len(requests) == 12
+    assert len(requests) == 15
     wrong_seat = value.model_copy(
         update={"arms": (arm.model_copy(update={"author_route_id": reviewer.id}),)}
     )

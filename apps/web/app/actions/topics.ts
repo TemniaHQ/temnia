@@ -17,8 +17,6 @@ import { scoped } from "@/lib/db";
 import { harnessSettings } from "@/lib/harness/config";
 import {
   TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
   TopicStartInstructionsSchema,
 } from "@/lib/harness/topic-defaults";
 import { getTemporalClient } from "@/lib/temporal/client";
@@ -76,12 +74,12 @@ function stableJson(value: unknown): string {
 function topicGeneration(input: unknown) {
   return {
     intent: {
-      editorialPolicy: TOPIC_SELECTION_POLICY_V3,
+      editorialPolicy: TOPIC_POLICY,
       input,
-      workflow: WORKFLOWS.topicSelectionV3,
+      workflow: WORKFLOWS.topicSelection,
     },
-    prefix: "topic-selection-v3",
-    workflow: WORKFLOWS.topicSelectionV3,
+    prefix: "topic-selection",
+    workflow: WORKFLOWS.topicSelection,
   };
 }
 
@@ -211,7 +209,7 @@ export async function startTopicRun(
         existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
       );
       const same =
-        existing.routeSnapshot.editorialPolicy === TOPIC_SELECTION_POLICY_V3 &&
+        existing.routeSnapshot.editorialPolicy === TOPIC_POLICY &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
         // An omitted brief is the worker's default, which this process does not
@@ -345,7 +343,7 @@ export async function reviewTopicCommand(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
         )
       )
       .limit(1);
@@ -463,7 +461,7 @@ export async function editTopicPortfolio(
           eq(harnessRun.id, parsed.data.runId),
           eq(harnessRun.sourceId, parsed.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
         )
       )
       .limit(1);
@@ -639,7 +637,7 @@ export async function getPendingTopicWorkflowStatus(
           eq(harnessRun.id, command.data.runId),
           eq(harnessRun.sourceId, command.data.sourceId),
           eq(harnessRun.lane, "chapters"),
-          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
+          sql`${harnessRun.routeSnapshot}->>'editorialPolicy' = ${TOPIC_POLICY}`
         )
       )
       .limit(1);

@@ -77,21 +77,6 @@ export type TopicAssessmentCandidate = z.infer<
   typeof TopicAssessmentCandidateSchema
 >;
 
-export const TopicAssessmentSchema = z
-  .object({
-    candidates: z.array(TopicAssessmentCandidateSchema),
-    evidenceSha256: sha256(),
-    format: z.literal("topic-assessment/1"),
-    proposalSha256: sha256(),
-    proposerFamily: z.string().min(1),
-    runId: z.uuid(),
-    summary: z.string().min(1),
-    verifierFamily: z.string().nullable(),
-  })
-  .strict()
-  .meta({ id: "TopicAssessment", title: "TopicAssessment" });
-export type TopicAssessment = z.infer<typeof TopicAssessmentSchema>;
-
 export const TopicRenderedVideoSchema = z
   .object({
     candidateId: identifier(),

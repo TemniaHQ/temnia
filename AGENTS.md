@@ -33,7 +33,15 @@ pre-flight transcript to `harness/qualification_fixture.py`. Editorial policy is
 replay under another program generation is refused. The `chapter_*` names that remain
 (`ChapterRunInput`, `chapter_revision`, `start_chapter_run`, the per-video `chapter-edit/1`
 execution) are the shared run and render machinery the topic lane is built on; renaming them is
-churn for later. The v1/v2 topic programs are next, in the same manner. Prompts were read in full on 13 September: they are user-turn
+churn for later. The v1/v2 topic programs went the same evening (84 files, 6,658 lines removed,
+1,361 added): one workflow type `TopicSelectionWorkflow`, one policy literal
+`standalone-topics/3`, one patch and one source-review schema (`TopicSelectionPatchV3`,
+`TopicPortfolioReviewV4`), no `topic-assessment/1` reader, no chapter summary-grounding view,
+and one recorded fixture `topic.synthetic.json` that carries the five schemas as a discovery
+case (empty inventory and author, a required omission finding, one grounded repair, then cold
+and source review of the recovered treatment); settings refuse a recorded fixture that lacks
+any topic stage output. `qualify_harness_gateway.py` keeps only the `topic-selection-v3`
+suite. Prompts were read in full on 13 September: they are user-turn
 rule lists with no system instructions, negative-heavy, example-free, repeating the no-count rule
 across seats, carrying jargon and ruff line-wrap artifacts, and each incident added a paragraph;
 the decisions doc §4 findings stand. The rewrite is measured against the first staging run as
@@ -45,8 +53,8 @@ staging: the default button refused for want of a per-version flag on two proces
 bound five-stage qualification manifest that every prompt or schema bump invalidated, and
 the routes that finished full-source runs were not in the worker's snapshot. New topic runs
 start only `standalone-topics/3` (its DB literal and workflow type name are unchanged); `/1`
-and `/2` are hidden from the web now and their producer code is deleted in the next PR once a
-staging query shows no non-terminal run of either. The manifest, `bind-topics`, the manifest
+and `/2` were deleted the same day (entry above); Temnia is not live, so no run of either needs
+reading. The manifest, `bind-topics`, the manifest
 formats and the `HARNESS_TOPIC_SELECTION_*` flags and paths are removed. Admission is in-run:
 the first settled call on a snapshot, route, stage and program identity is the proof; a
 provider refusal ends the run `failed` with a message naming route, stage and HTTP status and

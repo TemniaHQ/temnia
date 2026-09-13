@@ -16,7 +16,7 @@ from harness_fixtures import EVIDENCE_REF, SCOPE, _request, _settings, _snapshot
 from temnia_pipeline.contracts import HarnessEvidence, HarnessEvidenceShot
 from temnia_pipeline.harness import activities as module
 from temnia_pipeline.harness.activities import HarnessActivities
-from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.runtime_types import (
     BuildEvidenceRequest,
     StartRunRequest,
@@ -35,7 +35,7 @@ SHOT_ID = UUID("10000000-0000-4000-8000-000000000007")
 SPEECH_ID = UUID("10000000-0000-4000-8000-000000000008")
 
 
-@pytest.mark.parametrize("policy", [TOPIC_POLICY])
+@pytest.mark.parametrize("policy", [TOPIC_SELECTION_POLICY_V3])
 async def test_evidence_uses_frozen_detector_and_preserves_historical_fingerprints(  # noqa: C901, PLR0915
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, policy: str
 ) -> None:
@@ -146,7 +146,7 @@ async def test_evidence_uses_frozen_detector_and_preserves_historical_fingerprin
         )
     first, second = [HarnessEvidence.model_validate(item["content"]) for item in publications]
     fingerprints = [item["identity"].fingerprint for item in publications]
-    if policy == TOPIC_POLICY:
+    if policy == TOPIC_SELECTION_POLICY_V3:
         assert selected == ["pyscenedetect-adaptive", "scdet"]
         assert segmentation == [{"shot_times_ms": (2000,)}, {"shot_times_ms": (2000,)}]
         assert first.shots == [HarnessEvidenceShot(timeMs=2000, score=0.5)]

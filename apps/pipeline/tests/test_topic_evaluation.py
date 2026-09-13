@@ -22,6 +22,8 @@ from temnia_pipeline.contracts import (
     PositiveRational,
     Scope,
     TopicProposal,
+    TopicSelectionAssessment,
+    TopicSelectionRecord,
 )
 from temnia_pipeline.evals.topic_cli import private_json, run_topic_command
 from temnia_pipeline.evals.topic_comparison import (
@@ -51,8 +53,10 @@ from temnia_pipeline.evals.topics import (
 )
 from temnia_pipeline.harness import topic_bundle_export as exporter
 from temnia_pipeline.harness.artifacts import canonical_json
-from temnia_pipeline.harness.topic_compiler import compile_topics
+from temnia_pipeline.harness.topic_compiler import augment_topic_evidence, compile_topics_v3
+from temnia_pipeline.harness.topic_selection import content_hash, make_rubric
 from test_topic_compiler import _candidate, _case, _span
+from topic_fixtures import _cold, _criterion
 
 NOW = datetime(2026, 9, 11, tzinfo=UTC)
 RUBRIC = "c" * 64
@@ -95,11 +99,13 @@ def _ref(artifact: TopicArtifact) -> dict[str, Any]:
 
 
 def _bundle(*, technical_status: str = "pass") -> TopicEvaluationBundle:
-    evidence = _case().model_copy(
-        update={
-            "audioSampleRate": 48000,
-            "frameRate": PositiveRational(numerator=25, denominator=1),
-        }
+    evidence = augment_topic_evidence(
+        _case().model_copy(
+            update={
+                "audioSampleRate": 48000,
+                "frameRate": PositiveRational(numerator=25, denominator=1),
+            }
+        )
     )
     run_id = uuid4()
     evidence_artifact = _artifact(
@@ -116,8 +122,8 @@ def _bundle(*, technical_status: str = "pass") -> TopicEvaluationBundle:
         kind="edit",
         dependencies=(evidence_artifact.id,),
     )
-    edit = compile_topics(
-        evidence,
+    edit = compile_topics_v3(
+        augment_topic_evidence(evidence),
         proposal,
         evidence_artifact_id=evidence_artifact.id,
         evidence_sha256=evidence_artifact.sha256,
@@ -199,41 +205,84 @@ def _bundle(*, technical_status: str = "pass") -> TopicEvaluationBundle:
         dependencies=tuple(artifact.id for artifact in artifacts),
     )
     artifacts.append(renders)
-    criterion = {
-        "evidenceSpans": [_span(0).model_dump(mode="json")],
-        "reason": "Synthetic grounded criterion",
-        "status": "pass",
-    }
-    assessment = _artifact(
+    rubric = make_rubric("Find independently useful discussions.")
+    record = TopicSelectionRecord.model_validate(
         {
-            "format": "topic-assessment/1",
-            "runId": str(run_id),
+            "format": "topic-selection/2",
+            "draft": {
+                "proposal": proposal.model_dump(mode="json"),
+                "opportunities": [
+                    {
+                        "id": f"opportunity:{candidate.id}",
+                        "candidateIds": [candidate.id],
+                        "coreSpans": [span.model_dump() for span in candidate.coreSpans],
+                        "completionSpans": [
+                            span.model_dump() for span in candidate.completionSpans
+                        ],
+                        "valueEvidenceSpans": [span.model_dump() for span in candidate.coreSpans],
+                        "requiredContextSpans": [],
+                        "meaningChangingFollowups": [],
+                        "viewerPurpose": candidate.purpose,
+                        "disposition": "proposed",
+                        "dispositionReason": "A source-grounded opportunity.",
+                    }
+                    for candidate in proposal.candidates
+                ],
+            },
             "evidenceSha256": evidence_artifact.sha256,
-            "proposalSha256": proposal_artifact.sha256,
-            "proposerFamily": "family-a",
-            "verifierFamily": "family-b",
-            "summary": "Synthetic assessment",
-            "candidates": [
-                {
-                    "candidateId": "one",
-                    "coldReview": {
-                        "candidateId": "one",
-                        "coherentTopic": criterion,
-                        "completeDiscussion": criterion,
-                        "intelligibleBeginning": criterion,
-                        "titleFaithful": criterion,
-                    },
-                    "sourceReview": None,
-                    "physicalBoundaryIssues": [],
-                    "status": "needs_review",
-                    "reasons": [],
-                }
-            ],
-        },
-        "topic-assessment/1",
-        dependencies=(proposal_artifact.id, evidence_artifact.id),
+            "rubric": rubric.model_dump(mode="json"),
+            "rubricSha256": content_hash(rubric),
+            "runId": str(run_id),
+            "origin": "model",
+            "parentSelectionSha256": None,
+        }
     )
-    # The runtime model's precise fields are used below, without a parallel schema.
+    record_artifact = _artifact(
+        record.model_dump(mode="json"),
+        "topic-selection/2",
+        kind="proposal",
+        dependencies=(evidence_artifact.id,),
+    )
+    artifacts.append(record_artifact)
+    criterion = _criterion().model_dump(mode="json")
+    assessment = _artifact(
+        TopicSelectionAssessment.model_validate(
+            {
+                "format": "topic-selection-assessment/2",
+                "runId": str(run_id),
+                "selectionSha256": record_artifact.sha256,
+                "evidenceSha256": evidence_artifact.sha256,
+                "rubricSha256": content_hash(rubric),
+                "coldReviews": [
+                    {
+                        **_cold("one").model_dump(mode="json"),
+                        "value": {
+                            **dict.fromkeys(
+                                (
+                                    "viewerReasonToWatch",
+                                    "deliveredValue",
+                                    "focusedDevelopment",
+                                    "openingEffectiveness",
+                                ),
+                                criterion,
+                            ),
+                            "reconstructedPurpose": "A useful answer.",
+                            "reconstructedTakeaway": "The answer is complete.",
+                        },
+                    }
+                ],
+                "portfolioReview": None,
+                "findings": [],
+                "executionStatus": "needs_review",
+                "proposerFamily": "family-a",
+                "verifierFamily": "family-b",
+                "reasons": [],
+                "responseArtifacts": [],
+            }
+        ).model_dump(mode="json"),
+        "topic-selection-assessment/2",
+        dependencies=(record_artifact.id, evidence_artifact.id),
+    )
     artifacts.append(assessment)
     return TopicEvaluationBundle(
         source_id=evidence.sourceId,
@@ -247,7 +296,7 @@ def _bundle(*, technical_status: str = "pass") -> TopicEvaluationBundle:
         current_revision=1,
         configuration=TopicConfiguration(
             configuration_id="control",
-            policy="standalone-topics/1",
+            policy="standalone-topics/3",
             source_sha256="d" * 64,
             transcript_sha256=evidence.transcriptSha256,
             rubric_sha256=RUBRIC,
@@ -840,7 +889,7 @@ async def test_topic_export_preserves_revision_closure_and_private_media_referen
             "accepted_revision": None,
             "evidence_artifact_id": evidence.id,
             "route_snapshot": {
-                "editorialPolicy": "standalone-topics/1",
+                "editorialPolicy": "standalone-topics/3",
                 "pinnedSource": {"sha256": "d" * 64},
             },
             "brief": "Generic standalone discussions",

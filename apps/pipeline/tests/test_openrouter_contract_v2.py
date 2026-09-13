@@ -193,9 +193,9 @@ async def test_v2_qualification_records_output_encoding_and_raw_canonical_accoun
     _, _, report, requests = await _openrouter(tmp_path, catalogue_override=_v2_catalogue())
     assert report["status"] == "completed"
     assert report["passed"] is True
-    assert len(requests) == 12
+    assert len(requests) == 15
     for index, (call, request) in enumerate(zip(report["calls"], requests, strict=True)):
-        key = "max_completion_tokens" if index < 4 else "max_tokens"
+        key = "max_completion_tokens" if index < 5 else "max_tokens"
         assert request[key] == 256
         assert call["request"]["accountingModel"] == call["cost"]["components"]["model"]
         assert call["responseModel"] != call["cost"]["components"]["model"]

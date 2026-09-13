@@ -2,25 +2,23 @@
 
 # Public refusal messages are intentionally defined at the state transition
 # that produces them, and the fixed domain exception names omit Error.
-# ruff: noqa: EM101, N815, N818, TC002, TC003, TRY003
+# ruff: noqa: EM101, N818, TC002, TC003, TRY003
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import hashlib
-import json
-from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext, TextPart
+from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext
 from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.durable_exec import DurableOperationBackend
 
@@ -51,20 +49,11 @@ from temporalio import activity
 from temporalio.common import RetryPolicy
 
 from temnia_pipeline.contracts import (
-    ChapterProposal,
-    ChapterProposalSection,
-    Kind,
-    QuoteWordId,
     Scope,
-    TopicColdReview,
-    TopicPortfolioReview,
     TopicPortfolioReviewV4,
-    TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
-    TopicSourceReview,
 )
 from temnia_pipeline.harness import artifacts, ledger
 from temnia_pipeline.harness.cassettes import (
@@ -88,7 +77,6 @@ from temnia_pipeline.harness.gateway import (
 )
 from temnia_pipeline.harness.gateway_policy import model_activity_timeout_seconds
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
-from temnia_pipeline.harness.topic_editorial import TOPIC_PROMPT
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -101,7 +89,6 @@ HTTP_CLIENT_ERROR_MAX = 500
 HTTP_REQUEST_TIMEOUT = 408
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
-COMPACT_PROPOSAL_SCHEMA_VERSION = "chapter-proposal-compact/1"
 TOPIC_ID_NORMALIZATION_VERSION = "initial-topic-identifiers/1"
 
 
@@ -123,121 +110,6 @@ class TransientProviderFailure(RuntimeError):
     times. An upstream rate limit delivered inside a successful HTTP stream is the
     case this exists for.
     """
-
-
-class SummaryUnit(BaseModel):
-    """One ordered summary unit grounded in original source sentence IDs."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    id: Annotated[str, Field(min_length=1, max_length=256)]
-    firstSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
-    lastSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
-    quoteWordIds: list[Annotated[str, Field(min_length=1, max_length=256)]]
-    text: Annotated[str, Field(min_length=1, max_length=20_000)]
-
-
-class HierarchicalSummaryV1(BaseModel):
-    """A bounded hierarchy whose endpoints remain in original evidence IDs."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    version: Literal[1]
-    units: Annotated[list[SummaryUnit], Field(min_length=1, max_length=1000)]
-
-    @model_validator(mode="after")
-    def _unique_lineage(self) -> HierarchicalSummaryV1:
-        if len({unit.id for unit in self.units}) != len(self.units):
-            raise ValueError("summary unit IDs must be unique")
-        return self
-
-
-class CompactChapterProposalSection(BaseModel):
-    """One bounded model-authored decision without an internal section label."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    firstSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
-    lastSentenceId: Annotated[str, Field(min_length=1, max_length=256)]
-    kind: Kind
-    title: Annotated[str, Field(max_length=160)]
-    reason: Annotated[str, Field(max_length=320)]
-    quoteWordIds: Annotated[list[QuoteWordId], Field(max_length=2)]
-
-
-class CompactChapterProposal(BaseModel):
-    """Private native-output shape converted explicitly to the canonical proposal."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    version: Literal[1]
-    sections: Annotated[list[CompactChapterProposalSection], Field(min_length=1)]
-    summary: Annotated[str, Field(max_length=1024)]
-
-
-def _proposal_section_id(index: int, first_sentence_id: str, last_sentence_id: str) -> str:
-    identity = json.dumps(
-        [index, first_sentence_id, last_sentence_id],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode()
-    return f"section-{index:04d}-{hashlib.sha256(identity).hexdigest()}"
-
-
-def canonical_chapter_proposal(compact: CompactChapterProposal) -> ChapterProposal:
-    """Derive stable unique labels after the compact wire object is fully valid."""
-    return ChapterProposal(
-        version=compact.version,
-        summary=compact.summary,
-        sections=[
-            ChapterProposalSection(
-                id=_proposal_section_id(index, section.firstSentenceId, section.lastSentenceId),
-                firstSentenceId=section.firstSentenceId,
-                lastSentenceId=section.lastSentenceId,
-                kind=section.kind,
-                title=section.title,
-                reason=section.reason,
-                quoteWordIds=section.quoteWordIds,
-            )
-            for index, section in enumerate(compact.sections)
-        ],
-    )
-
-
-def compact_synthetic_proposal(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Adapt the explicit recorded v1 fixture to the private compact native schema."""
-    if payload is None:
-        return None
-    output = payload.get("output")
-    if not isinstance(output, dict):
-        return payload
-    output_value = cast("dict[str, Any]", output)
-    sections = output_value.get("sections")
-    if not isinstance(sections, list):
-        return payload
-    section_values = cast("list[object]", sections)
-    if not all(isinstance(item, dict) for item in section_values):
-        return payload
-    compact_output: dict[str, Any] = dict(output_value)
-    compact_output["sections"] = [
-        {key: value for key, value in section.items() if key != "id"}
-        for section in cast("list[dict[str, Any]]", section_values)
-    ]
-    CompactChapterProposal.model_validate_json(
-        json.dumps(compact_output, allow_nan=False, ensure_ascii=False), strict=True
-    )
-    return {**payload, "output": compact_output}
-
-
-class EditorialVerdictV1(BaseModel):
-    """Text/evidence verdict that cannot claim audiovisual inspection."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    version: Literal[1]
-    status: Literal["passed", "needs_review", "failed"]
-    reasons: Annotated[list[str], Field(max_length=100)]
-    inspectedModalities: Literal["text_evidence_and_technical_report"]
 
 
 class HarnessModelDeps(BaseModel):
@@ -393,155 +265,6 @@ def _response_from_artifact(value: object) -> ModelResponse:
     return MODEL_RESPONSE_ADAPTER.validate_python(value)
 
 
-def _summary_unit_id(
-    index: int,
-    first_sentence_id: str,
-    last_sentence_id: str,
-    collision_index: int,
-) -> str:
-    identity = json.dumps(
-        [index, first_sentence_id, last_sentence_id, collision_index],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode()
-    return f"summary-{index:04d}-{hashlib.sha256(identity).hexdigest()}"
-
-
-def _summary_body(content: str) -> dict[str, Any] | None:
-    try:
-        value: object = json.loads(content)
-    except (TypeError, ValueError):
-        return None
-    return cast("dict[str, Any]", value) if isinstance(value, dict) else None
-
-
-def normalized_summary_units(
-    raw_units: object,
-) -> tuple[list[dict[str, Any]], bool] | None:
-    """Derive unique bounded labels while preserving every semantic unit field."""
-    if not isinstance(raw_units, list):
-        return None
-    values = cast("list[object]", raw_units)
-    if not all(isinstance(value, dict) for value in values):
-        return None
-    unit_values = cast("list[dict[str, Any]]", values)
-    labels = [value.get("id") for value in unit_values]
-    label_counts = Counter(
-        value
-        for value in labels
-        if isinstance(value, str) and 1 <= len(value) <= MAX_SUMMARY_ID_LENGTH
-    )
-    used = {value for value, count in label_counts.items() if count == 1}
-    units: list[dict[str, Any]] = []
-    changed = False
-    for index, value in enumerate(unit_values):
-        unit = dict(value)
-        label = unit.get("id")
-        if not (
-            isinstance(label, str)
-            and 1 <= len(label) <= MAX_SUMMARY_ID_LENGTH
-            and label_counts[label] == 1
-        ):
-            first = unit.get("firstSentenceId")
-            last = unit.get("lastSentenceId")
-            if not isinstance(first, str) or not isinstance(last, str):
-                return None
-            collision_index = 0
-            label = _summary_unit_id(index, first, last, collision_index)
-            while label in used:
-                collision_index += 1
-                label = _summary_unit_id(index, first, last, collision_index)
-            unit["id"] = label
-            used.add(label)
-            changed = True
-        units.append(unit)
-    return units, changed
-
-
-def _replace_summary_text(
-    response: ModelResponse,
-    text_index: int,
-    text_part: TextPart,
-    body: dict[str, Any],
-) -> ModelResponse:
-    try:
-        content = json.dumps(
-            body,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    except (TypeError, ValueError):
-        return response
-    parts = list(response.parts)
-    parts[text_index] = replace(text_part, content=content)
-    return replace(response, parts=parts)
-
-
-def _normalize_summary_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
-    """Derive invalid cosmetic summary labels without changing retained provider bytes."""
-    if deps.schema_version != SUMMARY_SCHEMA_VERSION:
-        return response
-    text_indexes = [
-        index for index, part in enumerate(response.parts) if isinstance(part, TextPart)
-    ]
-    if len(text_indexes) != 1:
-        return response
-    text_index = text_indexes[0]
-    text_part = response.parts[text_index]
-    if not isinstance(text_part, TextPart):  # pragma: no cover - narrowed above
-        return response
-    body = _summary_body(text_part.content)
-    units = normalized_summary_units(body.get("units") if body is not None else None)
-    if body is None or units is None or not units[1]:
-        return response
-    body["units"] = units[0]
-    return _replace_summary_text(response, text_index, text_part, body)
-
-
-def normalize_initial_topic_response(
-    response: ModelResponse, *, schema_version: str, stage: str
-) -> ModelResponse:
-    """Name empty initial candidate IDs without changing any editorial field or receipt."""
-    if schema_version != TOPIC_PROMPT or stage != "proposal:topic:0":
-        return response
-    text_indexes = [
-        index for index, part in enumerate(response.parts) if isinstance(part, TextPart)
-    ]
-    if len(text_indexes) != 1:
-        return response
-    text_index = text_indexes[0]
-    text_part = cast("TextPart", response.parts[text_index])
-    body = _summary_body(text_part.content)
-    candidates = body.get("candidates") if body is not None else None
-    if not isinstance(candidates, list) or not all(
-        isinstance(candidate, dict) for candidate in cast("list[object]", candidates)
-    ):
-        return response
-    values = cast("list[dict[str, Any]]", candidates)
-    used = {candidate["id"] for candidate in values if isinstance(candidate.get("id"), str)}
-    changed = False
-    for index, candidate in enumerate(values):
-        if candidate.get("id") != "":
-            continue
-        first, last = candidate.get("firstSentenceId"), candidate.get("lastSentenceId")
-        if not isinstance(first, str) or not isinstance(last, str):
-            return response
-        collision = 0
-        while True:
-            suffix = f"-{collision}" if collision else ""
-            label = f"topic-{index:04d}{suffix}"
-            if label not in used:
-                break
-            collision += 1
-        candidate["id"] = label
-        used.add(label)
-        changed = True
-    if body is None or not changed:
-        return response
-    return _replace_summary_text(response, text_index, text_part, body)
-
-
 def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
     """Reject terminal truncation after settlement, then normalize named cosmetic fields."""
     if (
@@ -550,11 +273,7 @@ def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> Mode
         and response.finish_reason != "stop"
     ):
         raise UnexpectedModelBehavior("streamed model response did not finish successfully")
-    return normalize_initial_topic_response(
-        _normalize_summary_response(deps, response),
-        schema_version=deps.schema_version,
-        stage=deps.stage,
-    )
+    return response
 
 
 async def _heartbeat(attempt_id: UUID) -> None:
@@ -1130,11 +849,7 @@ class BudgetedModel(WrapperModel):
                 "runId": str(self.deps.run_id),
                 "schemaVersion": self.deps.schema_version,
                 "synthetic": self.deps.synthetic_payload is not None,
-                **(
-                    {"maxOutputTokens": max_output_tokens}
-                    if self.deps.schema_version == COMPACT_PROPOSAL_SCHEMA_VERSION
-                    else {}
-                ),
+                "maxOutputTokens": max_output_tokens,
             },
             dependency_ids=self.deps.input_artifact_ids,
         )
@@ -1277,13 +992,6 @@ def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
     )
 
 
-topic_propose_v1 = _agent("topic_propose_v1", TopicProposal)
-topic_cold_review_v1 = _agent("topic_cold_review_v1", TopicColdReview)
-topic_source_review_v1 = _agent("topic_source_review_v1", TopicSourceReview)
-topic_selection_author_v2 = _agent("topic_selection_author_v2", TopicSelectionDraft)
-topic_selection_cold_v2 = _agent("topic_selection_cold_v2", TopicSelectionColdReview)
-topic_selection_source_v2 = _agent("topic_selection_source_v2", TopicPortfolioReview)
-topic_selection_patch_v2 = _agent("topic_selection_patch_v2", TopicSelectionPatch)
 topic_opportunity_inventory_v3 = _agent("topic_opportunity_inventory_v3", TopicSelectionDraft)
 topic_selection_author_v3 = _agent("topic_selection_author_v3", TopicSelectionDraft)
 topic_selection_cold_v3 = _agent("topic_selection_cold_v3", TopicSelectionColdReview)
@@ -1291,29 +999,14 @@ topic_selection_source_v4 = _agent("topic_selection_source_v4", TopicPortfolioRe
 topic_selection_patch_v3 = _agent("topic_selection_patch_v3", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
-TOPIC_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
-    topic_propose_v1,
-    topic_cold_review_v1,
-    topic_source_review_v1,
-)
 TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
-    topic_selection_author_v2,
-    topic_selection_cold_v2,
-    topic_selection_source_v2,
-    topic_selection_patch_v2,
-)
-TOPIC_SELECTION_V3_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_opportunity_inventory_v3,
     topic_selection_author_v3,
     topic_selection_cold_v3,
     topic_selection_source_v4,
     topic_selection_patch_v3,
 )
-HARNESS_AGENTS = (
-    *TOPIC_AGENTS,
-    *TOPIC_SELECTION_AGENTS,
-    *TOPIC_SELECTION_V3_AGENTS,
-)
+HARNESS_AGENTS = TOPIC_SELECTION_AGENTS
 
 
 def harness_pydantic_ai_plugin() -> PydanticAIPlugin:

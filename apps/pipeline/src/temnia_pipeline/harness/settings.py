@@ -30,6 +30,16 @@ HarnessBackend = Literal["gateway", "recorded"]
 TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
 DEFAULT_MAX_RUN_BUDGET_MICROS = 10_000_000
 REQUIRED_ROUTE_SEATS = frozenset({"propose", "summary", "verify"})
+# Every recorded output the standalone-topic program can ask for, so a fixture that is
+# missing one fails at settings load rather than mid-run.
+RECORDED_TOPIC_OUTPUTS = (
+    "topic_opportunity_inventory",
+    "topic_selection_author_v3",
+    "topic_selection_cold",
+    "topic_selection_source",
+    "topic_selection_source_selected_v3",
+    "topic_selection_patch",
+)
 MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
 
 
@@ -162,7 +172,7 @@ class HarnessSettings:
             ):
                 raise RuntimeError("recorded harness fixture must declare synthetic=true")
             outputs = cast("dict[object, object]", fixture).get("outputs")
-            required_outputs = ("propose", "summary", "verify")
+            required_outputs = RECORDED_TOPIC_OUTPUTS
             if not isinstance(outputs, dict) or not all(
                 isinstance(payload := cast("dict[object, object]", outputs).get(stage), dict)
                 and cast("dict[object, object]", payload).get("synthetic") is True
@@ -170,8 +180,8 @@ class HarnessSettings:
                 for stage in required_outputs
             ):
                 raise RuntimeError(
-                    "recorded harness fixture requires explicit synthetic propose, summary, "
-                    "and verify outputs"
+                    "recorded harness fixture requires an explicit synthetic output for "
+                    "every standalone-topic stage"
                 )
         config = self.allowed_config()
         if self.max_run_budget_micros <= 0:

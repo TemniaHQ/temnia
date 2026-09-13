@@ -12,10 +12,10 @@ import pytest
 from harness_fixtures import _request, _settings
 from temnia_pipeline import db
 from temnia_pipeline.harness import ledger, runs
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.routes import RouteSnapshot, SeatRoutePool
 from temnia_pipeline.harness.runtime_types import StartRunRequest, WorkflowIdentity
 from temnia_pipeline.harness.settings import HarnessSettings
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY
 from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionCallPlan,
     effective_topic_output_tokens,
@@ -24,7 +24,7 @@ from temnia_pipeline.harness.topic_selection_runtime import (
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from test_harness_model_transport import route, snapshot
 from test_harness_settings import env, write_snapshot
-from test_topic_selection_workflow import AgentDouble, Program, add_patch, draft, portfolio
+from test_topic_selection_workflow import AgentDouble, Program, add_patch, draft, v3_portfolio
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,7 +111,7 @@ async def test_all_four_workflow_calls_use_their_prepared_route_profile(
     program = Program(
         monkeypatch,
         initial=draft(selected=False),
-        sources=[portfolio(selected=False, missing=True), portfolio(selected=True)],
+        sources=[v3_portfolio(selected=False, missing=True), v3_portfolio(selected=True)],
         patches=[add_patch],
     )
     routes = profiles()
@@ -152,36 +152,13 @@ def test_route_profile_still_needs_protocol_and_nonempty_request_headroom(tmp_pa
         settings.validate_boot()
 
 
-@pytest.mark.parametrize("policy", ["standalone-topics/1"])
-async def test_non_v2_capacity_refuses_before_creation_or_ownership_query(
-    monkeypatch: pytest.MonkeyPatch, policy: str
-) -> None:
-    routes = profiles(author_max=4096, reviewer_max=8192)
-    settings, _ = _settings()
-    settings = replace(settings, route_snapshot_id=routes.snapshot_id)
-    request = _request().model_copy(update={"config": settings.allowed_config()})
-    start = StartRunRequest(
-        request=request,
-        workflow=WorkflowIdentity(workflow_id="fixture", workflow_run_id="claiming-execution"),
-    ).model_copy(update={"editorial_policy": policy})
-
-    def forbid_database(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("an incompatible non-v2 request must not create or claim a database run")
-
-    monkeypatch.setattr(db, "scoped", forbid_database)
-    with pytest.raises(ledger.IdentityConflict, match=r"non-v2 route.*global output ceiling"):
-        await runs.start_or_refetch_run(
-            "unused", start=start, settings=settings, route_snapshot=routes
-        )
-
-
 async def test_v2_profile_reaches_scoped_run_admission(monkeypatch: pytest.MonkeyPatch) -> None:
     routes = profiles(author_max=4096, reviewer_max=8192)
     settings, _ = _settings()
     settings = replace(settings, route_snapshot_id=routes.snapshot_id)
     start = StartRunRequest(
         request=_request().model_copy(update={"config": settings.allowed_config()}),
-        editorial_policy=SELECTION_POLICY,
+        editorial_policy=TOPIC_SELECTION_POLICY_V3,
         workflow=WorkflowIdentity(workflow_id="fixture", workflow_run_id="claiming-execution"),
     )
 

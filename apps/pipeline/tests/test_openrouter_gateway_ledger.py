@@ -13,9 +13,11 @@ import pytest
 from obstore.store import MemoryStore
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
+from qualification_fixtures import _outputs_v3
 from temnia_pipeline import db
 from temnia_pipeline.harness import models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.gateway import (
     GatewayChatModel,
     GatewayConfig,
@@ -24,17 +26,15 @@ from temnia_pipeline.harness.gateway import (
 from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy
 from temnia_pipeline.harness.models import ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
-    TOPIC_SELECTION_SCHEMAS,
+    TOPIC_SELECTION_V3_SCHEMAS,
     topic_selection_qualification_prompts,
 )
 from temnia_pipeline.harness.routes import SeatRoutePool
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY
 from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan
 from temnia_pipeline.harness.topic_selection_workflow import selection_model_deps
 from test_harness_model_transport import snapshot
 from test_harness_runs import SEEDED, pipeline_url, ready_source, settings, start_request
 from test_openrouter_gateway import openrouter_route
-from test_topic_selection_qualification import _outputs
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -82,7 +82,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
     original = start_request(source_id, routes)
     start = original.model_copy(
         update={
-            "editorial_policy": SELECTION_POLICY,
+            "editorial_policy": TOPIC_SELECTION_POLICY_V3,
             "request": original.request.model_copy(
                 update={"config": configuration.allowed_config()}
             ),
@@ -119,7 +119,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             role["choices"] = [
                 {
                     "index": 0,
-                    "delta": {"content": json.dumps(_outputs()[0])},
+                    "delta": {"content": json.dumps(_outputs_v3()[1])},
                     "finish_reason": "length" if outcome == "length" else "stop",
                 }
             ]
@@ -185,13 +185,13 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             prompt=prompt,
             stage="proposal:selection:0",
             prompt_version=prompt_version,
-            schema_version=TOPIC_SELECTION_SCHEMAS["topic_author"],
+            schema_version=TOPIC_SELECTION_V3_SCHEMAS["topic_author"],
             author=selected,
             verifier=selected,
             input_artifacts=(),
         )
         deps = selection_model_deps(start.request, plan)
-        agent = models.topic_selection_author_v2
+        agent = models.topic_selection_author_v3
         try:
             if interrupted:
                 # The receipt settles the lost stream: each attempt is a known failure

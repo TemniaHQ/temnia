@@ -26,7 +26,7 @@ from temnia_pipeline.contracts import (
     TopicProposal,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
+    TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
 from temnia_pipeline.harness import topic_selection_workflow as module
@@ -35,14 +35,16 @@ from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
-from temnia_pipeline.harness.topic_selection import SELECTION_POLICY, content_hash, make_rubric
+from temnia_pipeline.harness.topic_selection import (
+    content_hash,
+    make_rubric,
+)
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
-    TopicSelectionWorkflowV3,
 )
 from test_topic_compiler import _candidate, _case, _span
-from test_topic_editorial import _cold, _criterion, _source
+from topic_fixtures import _cold, _criterion, _source
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -197,7 +199,7 @@ class Program:
         patches: list[object],
         colds: list[object] | None = None,
         inventory: object | None = None,
-        policy: str = SELECTION_POLICY,
+        policy: str = TOPIC_SELECTION_POLICY_V3,
         workflow_type: type[TopicSelectionWorkflow] = TopicSelectionWorkflow,
     ) -> None:
         self.policy = policy
@@ -219,7 +221,11 @@ class Program:
         self.compiled: TopicCompilation | None = None
         self.final_context: SelectionContext | None = None
         self.render_count = 0
-        self.inventory = AgentDouble("inventory", [inventory], self.call_order)
+        self.inventory = AgentDouble(
+            "inventory",
+            [inventory if inventory is not None else draft(selected=False)],
+            self.call_order,
+        )
         self.author = AgentDouble("author", [initial], self.call_order)
         self.cold = AgentDouble("cold", colds if colds is not None else [cold()], self.call_order)
         self.source = AgentDouble("source", sources, self.call_order)
@@ -236,7 +242,7 @@ class Program:
         monkeypatch.setattr(workflow_type, "cold_agent", self.cold)
         monkeypatch.setattr(workflow_type, "source_agent", self.source)
         monkeypatch.setattr(workflow_type, "patch_agent", self.patch)
-        if workflow_type is TopicSelectionWorkflowV3:
+        if workflow_type is TopicSelectionWorkflow:
             monkeypatch.setattr(module, "topic_opportunity_inventory_v3", self.inventory)
         monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
         monkeypatch.setattr(
@@ -349,8 +355,8 @@ class Program:
         raise AssertionError(message)
 
 
-def add_patch(payload: dict[str, Any]) -> TopicSelectionPatch:
-    return TopicSelectionPatch.model_validate(
+def add_patch(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+    return TopicSelectionPatchV3.model_validate(
         {
             **{
                 name: payload[name]
@@ -378,7 +384,7 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
     run = Program(
         monkeypatch,
         initial=draft(selected=False),
-        sources=[portfolio(selected=False, missing=True), portfolio(selected=True)],
+        sources=[v3_portfolio(selected=False, missing=True), v3_portfolio(selected=True)],
         patches=[add_patch],
     )
     result = await TopicSelectionWorkflow().program(run.request)
@@ -392,7 +398,8 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
     assert assessed is not None
     assert str(assessed.executionStatus) == "complete"
     assert all(
-        call.program_version == SELECTION_POLICY for call in (*run.author.calls, *run.source.calls)
+        call.program_version == TOPIC_SELECTION_POLICY_V3
+        for call in (*run.author.calls, *run.source.calls)
     )
     assert run.author.calls[0].route.family != run.source.calls[0].route.family
 
@@ -401,7 +408,10 @@ async def test_empty_source_assessment_can_confirm_abstention(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = Program(
-        monkeypatch, initial=draft(selected=False), sources=[portfolio(selected=False)], patches=[]
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[v3_portfolio(selected=False)],
+        patches=[],
     )
     result = await TopicSelectionWorkflow().program(run.request)
     assert run.render_count == 0
@@ -414,13 +424,13 @@ async def test_empty_source_assessment_can_confirm_abstention(
 async def test_weak_selection_is_dropped_with_its_audience_disposition_retained(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def drop(payload: dict[str, Any]) -> TopicSelectionPatch:
+    def drop(payload: dict[str, Any]) -> TopicSelectionPatchV3:
         excluded = opportunity(selected=False).model_dump(mode="json")
         excluded.update(
             disposition="not_useful_for_audience",
             dispositionReason="This explanation is too elementary for the specialist brief.",
         )
-        return TopicSelectionPatch.model_validate(
+        return TopicSelectionPatchV3.model_validate(
             {
                 **{
                     name: payload[name]
@@ -441,7 +451,7 @@ async def test_weak_selection_is_dropped_with_its_audience_disposition_retained(
             }
         )
 
-    confirmed = portfolio(selected=False).model_dump(mode="json")
+    confirmed = v3_portfolio(selected=False).model_dump(mode="json")
     confirmed["opportunities"] = [
         {
             "opportunityId": "useful-discussion",
@@ -455,8 +465,8 @@ async def test_weak_selection_is_dropped_with_its_audience_disposition_retained(
         monkeypatch,
         initial=draft(selected=True),
         sources=[
-            portfolio(selected=True, weak=True),
-            TopicPortfolioReview.model_validate(confirmed),
+            v3_portfolio(selected=True, weak=True),
+            TopicPortfolioReviewV4.model_validate(confirmed),
         ],
         patches=[drop],
     )
@@ -481,7 +491,7 @@ async def test_weak_selection_is_dropped_with_its_audience_disposition_retained(
 async def test_source_invalid_patch_retains_the_prior_assessed_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def invalid(payload: dict[str, Any]) -> TopicSelectionPatch:
+    def invalid(payload: dict[str, Any]) -> TopicSelectionPatchV3:
         patch = add_patch(payload)
         patch.operations[0].replacementCandidates[0].firstSentenceId = "foreign-sentence"
         return patch
@@ -489,7 +499,7 @@ async def test_source_invalid_patch_retains_the_prior_assessed_selection(
     run = Program(
         monkeypatch,
         initial=draft(selected=False),
-        sources=[portfolio(selected=False, missing=True)],
+        sources=[v3_portfolio(selected=False, missing=True)],
         patches=[invalid],
     )
     result = await TopicSelectionWorkflow().program(run.request)
@@ -514,7 +524,8 @@ async def test_review_execution_limit_preserves_unknown_not_false_pass(
     assert assessment is not None
     assert str(assessment.executionStatus) == "execution_limited"
     assert assessment.portfolioReview is None
-    assert run.render_count == 1
+    # The select-only gate withholds every unreviewed candidate; nothing is rendered as a pass.
+    assert run.render_count == 0
     assert not run.patch.calls
 
 
@@ -538,7 +549,7 @@ async def test_cold_review_with_foreign_candidate_id_is_retained_as_unavailable(
         monkeypatch,
         initial=draft(selected=True),
         colds=[wrong_target],
-        sources=[portfolio(selected=True)],
+        sources=[v3_portfolio(selected=True)],
         patches=[],
     )
     await TopicSelectionWorkflow().program(run.request)
@@ -567,9 +578,9 @@ async def test_v3_inventory_precedes_author_and_source_review_hides_rationale(
         sources=[v3_portfolio(selected=True)],
         patches=[],
         policy=TOPIC_SELECTION_POLICY_V3,
-        workflow_type=TopicSelectionWorkflowV3,
+        workflow_type=TopicSelectionWorkflow,
     )
-    result = await TopicSelectionWorkflowV3().program(run.request)
+    result = await TopicSelectionWorkflow().program(run.request)
     assert result.revision == 1
     assert run.call_order == ["inventory", "author", "cold", "source"]
     assert run.inventory.calls[0].route.family == run.source.calls[0].route.family
@@ -604,9 +615,9 @@ async def test_v3_invalid_repair_withholds_the_known_invalid_video(
         sources=[unresolved],
         patches=[UnexpectedModelBehavior("truncated patch")],
         policy=TOPIC_SELECTION_POLICY_V3,
-        workflow_type=TopicSelectionWorkflowV3,
+        workflow_type=TopicSelectionWorkflow,
     )
-    result = await TopicSelectionWorkflowV3().program(run.request)
+    result = await TopicSelectionWorkflow().program(run.request)
     assert run.call_order == ["inventory", "author", "cold", "source", "patch"]
     assert run.render_count == 0
     assert "prior assessed selection is retained" in (result.errorMessage or "")
@@ -626,7 +637,7 @@ async def test_settled_transient_failure_is_retried_and_the_run_completes(
     run = Program(
         monkeypatch,
         initial=draft(selected=True),
-        sources=[TransientProviderFailure("settled"), portfolio(selected=True)],
+        sources=[TransientProviderFailure("settled"), v3_portfolio(selected=True)],
         patches=[],
     )
     monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
@@ -640,7 +651,7 @@ async def test_three_settled_transient_failures_end_the_run_with_the_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sources: list[object] = [TransientProviderFailure("settled")] * 3
-    sources.append(portfolio(selected=True))
+    sources.append(v3_portfolio(selected=True))
     run = Program(monkeypatch, initial=draft(selected=True), sources=sources, patches=[])
     monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
     with pytest.raises(TransientProviderFailure):

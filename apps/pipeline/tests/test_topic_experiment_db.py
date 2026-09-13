@@ -57,7 +57,7 @@ async def test_precreated_pending_run_claims_once_and_preserves_programme(tmp_pa
         precreate = StartRunRequest(
             request=execution.request,
             workflow=execution.preparation_identity,
-            editorial_policy="standalone-topics/2",
+            editorial_policy="standalone-topics/3",
             evaluation_program=before.evaluation_program,
         )
         duplicates = await asyncio.gather(
@@ -78,7 +78,7 @@ async def test_precreated_pending_run_claims_once_and_preserves_programme(tmp_pa
             workflow=WorkflowIdentity(
                 workflow_id=execution.workflow_id, workflow_run_id="actual-temporal-execution"
             ),
-            editorial_policy="standalone-topics/2",
+            editorial_policy="standalone-topics/3",
         )
         claimed = await runs.start_or_refetch_run(
             url, start=claim, settings=settings, route_snapshot=prepared.arms[0].snapshot

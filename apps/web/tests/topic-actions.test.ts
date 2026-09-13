@@ -6,10 +6,7 @@ import {
   reviewTopicCommand,
   startTopicRun,
 } from "@/app/actions/topics";
-import {
-  TOPIC_POLICY,
-  TOPIC_SELECTION_POLICY_V3,
-} from "@/lib/harness/topic-defaults";
+import { TOPIC_POLICY } from "@/lib/harness/topic-defaults";
 import {
   restoreTopicIntent,
   TopicReviewIntentSchema,
@@ -113,8 +110,8 @@ describe("topic workflow admission and pending identity", () => {
       runId: RUN,
     });
     const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicSelectionV3);
-    expect(options.workflowId).toBe(`topic-selection-v3/${RUN}`);
+    expect(name).toBe(WORKFLOWS.topicSelection);
+    expect(options.workflowId).toBe(`topic-selection/${RUN}`);
     expect(options.args[0]).toMatchObject({
       budgetMicros: 50_000_000,
       scope,
@@ -156,7 +153,7 @@ describe("topic workflow admission and pending identity", () => {
           config: serverConfig,
           id: RUN,
           requestKey: RUN,
-          routeSnapshot: { editorialPolicy: TOPIC_SELECTION_POLICY_V3 },
+          routeSnapshot: { editorialPolicy: TOPIC_POLICY },
         },
       ],
     ]);
@@ -251,18 +248,17 @@ describe("topic workflow admission and pending identity", () => {
         TopicReviewIntentSchema
       )
     ).toBeNull();
-    expect(TOPIC_POLICY).toBe("standalone-topics/1");
   });
 });
 
 describe("retained generations and human corrections", () => {
-  it("keeps the earlier policy literals readable for existing runs", async () => {
+  it("reviews only runs of the one topic policy", async () => {
     rows([[{ id: RUN }], []]);
     expect(await reviewTopicCommand({ ...command, runId: RUN })).toMatchObject({
       ok: true,
       pending: true,
     });
-    expect(TOPIC_SELECTION_POLICY_V3).toBe("standalone-topics/3");
+    expect(TOPIC_POLICY).toBe("standalone-topics/3");
   });
 
   it("uses the separate human mutation workflow and persists the complete command", async () => {

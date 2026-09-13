@@ -207,66 +207,19 @@ export const TopicPortfolioReviewSchema = z
   .meta({ id: "TopicPortfolioReview", title: "TopicPortfolioReview" });
 export type TopicPortfolioReview = z.infer<typeof TopicPortfolioReviewSchema>;
 
-/** V3 makes omission of a material candidate-overlap decision structurally invalid. */
-export const TopicPortfolioReviewV3Schema = TopicPortfolioReviewSchema.extend({
+/**
+ * The source review the program runs: every material candidate overlap and every adjacent
+ * handoff is an exact, executable decision, so omitting one is structurally invalid.
+ */
+export const TopicPortfolioReviewV4Schema = TopicPortfolioReviewSchema.extend({
+  handoffs: z.array(TopicCandidateHandoffJudgmentSchema),
   overlaps: z.array(TopicCandidateOverlapJudgmentSchema),
 })
-  .strict()
-  .meta({ id: "TopicPortfolioReviewV3", title: "TopicPortfolioReviewV3" });
-export type TopicPortfolioReviewV3 = z.infer<
-  typeof TopicPortfolioReviewV3Schema
->;
-
-/** V4 makes every adjacent non-overlapping topic handoff an exact, executable decision. */
-export const TopicPortfolioReviewV4Schema = TopicPortfolioReviewV3Schema.extend(
-  {
-    handoffs: z.array(TopicCandidateHandoffJudgmentSchema),
-  }
-)
   .strict()
   .meta({ id: "TopicPortfolioReviewV4", title: "TopicPortfolioReviewV4" });
 export type TopicPortfolioReviewV4 = z.infer<
   typeof TopicPortfolioReviewV4Schema
 >;
-
-export const TopicSelectionPatchOperationSchema = z
-  .object({
-    affectedCandidateIds: z.array(z.string()),
-    findingIds: z.array(z.string()).min(1),
-    id: identifier(),
-    kind: z.enum([
-      "extend_start",
-      "extend_end",
-      "retitle",
-      "merge",
-      "split",
-      "drop",
-      "add_opportunity",
-    ]),
-    opportunities: z.array(TopicOpportunitySchema),
-    reason: reason(),
-    replacementCandidates: z.array(TopicCandidateSchema),
-  })
-  .strict()
-  .meta({
-    id: "TopicSelectionPatchOperation",
-    title: "TopicSelectionPatchOperation",
-  });
-export type TopicSelectionPatchOperation = z.infer<
-  typeof TopicSelectionPatchOperationSchema
->;
-
-export const TopicSelectionPatchSchema = z
-  .object({
-    baseSelectionSha256: sha256(),
-    evidenceSha256: sha256(),
-    operations: z.array(TopicSelectionPatchOperationSchema),
-    rubricSha256: sha256(),
-    summary: reason(),
-  })
-  .strict()
-  .meta({ id: "TopicSelectionPatch", title: "TopicSelectionPatch" });
-export type TopicSelectionPatch = z.infer<typeof TopicSelectionPatchSchema>;
 
 /** V3 may replace both semantic boundaries in one accountable operation. */
 export const TopicSelectionPatchOperationV3Schema = z
@@ -333,13 +286,7 @@ export const TopicSelectionAssessmentSchema = z
     executionStatus: z.enum(["complete", "needs_review", "execution_limited"]),
     findings: z.array(TopicSelectionFindingSchema),
     format: z.literal("topic-selection-assessment/2"),
-    portfolioReview: z
-      .union([
-        TopicPortfolioReviewSchema,
-        TopicPortfolioReviewV3Schema,
-        TopicPortfolioReviewV4Schema,
-      ])
-      .nullable(),
+    portfolioReview: TopicPortfolioReviewV4Schema.nullable(),
     proposerFamily: reason(),
     reasons: z.array(z.string()),
     responseArtifacts: z.array(HarnessArtifactRefSchema),

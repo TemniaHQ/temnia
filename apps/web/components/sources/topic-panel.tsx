@@ -593,7 +593,7 @@ function TopicVideoCard({
         <Badge variant="outline">{humanState}</Badge>
         <Badge variant="outline">
           {topicEditorialStatus(
-            portfolio.selectionAssessment ?? portfolio.assessment,
+            portfolio.selectionAssessment ?? null,
             video.assessment
           )}
         </Badge>

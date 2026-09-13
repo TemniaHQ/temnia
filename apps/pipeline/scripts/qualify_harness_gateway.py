@@ -47,12 +47,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--max-exposure-micros", required=True, type=int)
     run.add_argument("--max-dispatches", required=True, type=int)
     run.add_argument("--max-output-tokens", required=True, type=int)
-    run.add_argument("--proposal-wire", choices=("canonical", "compact"), default="canonical")
-    run.add_argument(
-        "--suite",
-        choices=("legacy", "editorial", "topic-selection", "topic-selection-v3"),
-        default="legacy",
-    )
+    run.add_argument("--suite", choices=("topic-selection-v3",), default="topic-selection-v3")
     run.add_argument(
         "--stage",
         action="append",
@@ -103,7 +98,6 @@ async def _run(args: argparse.Namespace) -> int:
         max_exposure_micros=args.max_exposure_micros,
         max_dispatches=args.max_dispatches,
         max_output_tokens=args.max_output_tokens,
-        proposal_wire=args.proposal_wire,
         suite=args.suite,
         stages=tuple(args.stages) if args.stages else None,
         request_timeout_seconds=args.request_timeout_seconds,

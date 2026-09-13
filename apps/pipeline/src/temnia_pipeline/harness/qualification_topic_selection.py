@@ -1,7 +1,7 @@
 """Exact production topic request qualification, distinct from editorial acceptance."""
 
 # Refusal messages and explicit fixture construction make this evidence contract auditable.
-# ruff: noqa: EM101, TRY003, C901
+# ruff: noqa: EM101, TRY003
 from __future__ import annotations
 
 import hashlib
@@ -15,32 +15,23 @@ from pydantic_ai.tools import GenerateToolJsonSchema
 from temnia_pipeline.contracts import (
     TopicCandidate,
     TopicOpportunity,
-    TopicPortfolioReview,
-    TopicPortfolioReviewV3,
     TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
-    TopicSelectionPatch,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
     TopicSentenceSpan,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
-from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
-    SELECTION_COLD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
-    SELECTION_PATCH_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
-    SELECTION_POLICY,
-    SELECTION_PROMPT,
-    SELECTION_SOURCE_PROMPT,
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
     assess_selection,
@@ -48,7 +39,6 @@ from temnia_pipeline.harness.topic_selection import (
     make_rubric,
     opportunity_inventory_prompt,
     selection_cold_prompt,
-    selection_patch_prompt,
     selection_patch_prompt_v3,
     selection_prompt,
     selection_source_prompt,
@@ -60,7 +50,6 @@ from temnia_pipeline.harness.topic_selection import (
 if TYPE_CHECKING:
     from temnia_pipeline.contracts import HarnessEvidence
 
-TOPIC_SELECTION_STAGES = ("topic_author", "topic_cold", "topic_source", "topic_patch")
 TOPIC_SELECTION_V3_STAGES = (
     "topic_inventory",
     "topic_author",
@@ -68,12 +57,6 @@ TOPIC_SELECTION_V3_STAGES = (
     "topic_source",
     "topic_patch",
 )
-TOPIC_SELECTION_SCHEMAS = {
-    "topic_author": "topic-selection-draft/2",
-    "topic_cold": "topic-selection-cold/2",
-    "topic_source": "topic-selection-portfolio/2",
-    "topic_patch": "topic-selection-patch/2",
-}
 TOPIC_SELECTION_V3_SCHEMAS = {
     "topic_inventory": "topic-selection-draft/2",
     "topic_author": "topic-selection-draft/2",
@@ -257,116 +240,66 @@ def topic_selection_qualification_inventory() -> TopicSelectionDraft:
     return TopicSelectionDraft.model_validate(payload)
 
 
-def topic_selection_qualification_prompts(
-    program_version: str = SELECTION_POLICY,
-) -> dict[str, tuple[str, type[BaseModel], str]]:
-    """Use the exact production prompts and native output types for one generation."""
-    evidence, record, assessment = topic_selection_qualification_case(
-        combined_patch=program_version == TOPIC_SELECTION_POLICY_V3
-    )
-    if program_version == TOPIC_SELECTION_POLICY_V3:
-        inventory = topic_selection_qualification_inventory()
-        return {
-            "topic_inventory": (
-                opportunity_inventory_prompt(evidence, record.rubric),
-                TopicSelectionDraft,
-                SELECTION_INVENTORY_PROMPT,
-            ),
-            "topic_author": (
-                selection_prompt(evidence, record.rubric, source_inventory=inventory),
-                TopicSelectionDraft,
-                SELECTION_AUTHOR_PROMPT_V3,
-            ),
-            "topic_cold": (
-                selection_cold_prompt(evidence, record.draft.proposal.candidates[0], record.rubric),
-                TopicSelectionColdReview,
-                SELECTION_COLD_PROMPT_V3,
-            ),
-            "topic_source": (
-                selection_source_prompt(
-                    evidence, record.draft, record.rubric, independent_projection=True
-                ),
-                TopicPortfolioReviewV4,
-                SELECTION_SOURCE_PROMPT_V3,
-            ),
-            "topic_patch": (
-                selection_patch_prompt_v3(evidence, record, assessment, content_hash(record)),
-                TopicSelectionPatchV3,
-                SELECTION_PATCH_PROMPT_V3,
-            ),
-        }
-    if program_version != SELECTION_POLICY:
-        raise ValueError("unknown topic selection qualification generation")
+def topic_selection_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
+    """Use the exact production prompts and native output types of the one program."""
+    evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    inventory = topic_selection_qualification_inventory()
     return {
-        "topic_author": (
-            selection_prompt(evidence, record.rubric),
+        "topic_inventory": (
+            opportunity_inventory_prompt(evidence, record.rubric),
             TopicSelectionDraft,
-            SELECTION_PROMPT,
+            SELECTION_INVENTORY_PROMPT,
+        ),
+        "topic_author": (
+            selection_prompt(evidence, record.rubric, source_inventory=inventory),
+            TopicSelectionDraft,
+            SELECTION_AUTHOR_PROMPT_V3,
         ),
         "topic_cold": (
             selection_cold_prompt(evidence, record.draft.proposal.candidates[0], record.rubric),
             TopicSelectionColdReview,
-            SELECTION_COLD_PROMPT,
+            SELECTION_COLD_PROMPT_V3,
         ),
         "topic_source": (
             selection_source_prompt(evidence, record.draft, record.rubric),
-            TopicPortfolioReview,
-            SELECTION_SOURCE_PROMPT,
+            TopicPortfolioReviewV4,
+            SELECTION_SOURCE_PROMPT_V3,
         ),
         "topic_patch": (
-            selection_patch_prompt(evidence, record, assessment, content_hash(record)),
-            TopicSelectionPatch,
-            SELECTION_PATCH_PROMPT,
+            selection_patch_prompt_v3(evidence, record, assessment, content_hash(record)),
+            TopicSelectionPatchV3,
+            SELECTION_PATCH_PROMPT_V3,
         ),
     }
 
 
-def validate_topic_selection_qualification_output(
-    stage: str, output: object, *, program_version: str = SELECTION_POLICY
-) -> None:
+def validate_topic_selection_qualification_output(stage: str, output: object) -> None:
     """Source admission is measured separately from schema transport and publication quality."""
-    evidence, record, assessment = topic_selection_qualification_case(
-        combined_patch=program_version == TOPIC_SELECTION_POLICY_V3
-    )
+    evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
     if stage == "topic_inventory" and isinstance(output, TopicSelectionDraft):
-        if program_version != TOPIC_SELECTION_POLICY_V3:
-            raise ValueError("inventory output belongs only to topic selection v3")
         validate_opportunity_inventory(evidence, output)
         return
     if stage == "topic_author" and isinstance(output, TopicSelectionDraft):
         validate_selection(evidence, output)
-        if program_version == TOPIC_SELECTION_POLICY_V3:
-            validate_selection_against_inventory(topic_selection_qualification_inventory(), output)
+        validate_selection_against_inventory(topic_selection_qualification_inventory(), output)
         return
-    if stage == "topic_patch" and isinstance(output, (TopicSelectionPatch, TopicSelectionPatchV3)):
+    if stage == "topic_patch" and isinstance(output, TopicSelectionPatchV3):
         apply_selection_patch(evidence, record, content_hash(record), assessment, output)
         return
     if stage not in {"topic_cold", "topic_source"}:
         raise ValueError("topic qualification output has the wrong stage or type")
     if stage == "topic_cold" and not isinstance(output, TopicSelectionColdReview):
         raise ValueError("topic qualification cold output has the wrong type")
-    expected_source_type = (
-        TopicPortfolioReviewV4
-        if program_version == TOPIC_SELECTION_POLICY_V3
-        else TopicPortfolioReview
-    )
-    if stage == "topic_source" and not isinstance(output, expected_source_type):
+    if stage == "topic_source" and not isinstance(output, TopicPortfolioReviewV4):
         raise ValueError("topic qualification source output has the wrong type")
     judged = assess_selection(
         evidence,
         record,
         content_hash(record),
         cold_reviews=[output] if isinstance(output, TopicSelectionColdReview) else [],
-        source_review=(
-            output
-            if isinstance(
-                output, (TopicPortfolioReview, TopicPortfolioReviewV3, TopicPortfolioReviewV4)
-            )
-            else None
-        ),
+        source_review=output if isinstance(output, TopicPortfolioReviewV4) else None,
         author_family="synthetic-author",
         verifier_family="synthetic-reviewer",
-        require_source_candidate_reviews=program_version != TOPIC_SELECTION_POLICY_V3,
     )
     if stage == "topic_cold" and len(judged.coldReviews) != 1:
         raise ValueError("topic qualification cold observation is not source-grounded")

@@ -143,7 +143,7 @@ def test_frozen_transport_projects_intended_roles_before_model_calls() -> None:
     }
     configuration = TopicConfiguration(
         configuration_id=value.snapshot_id,
-        policy="standalone-topics/2",
+        policy="standalone-topics/3",
         route_snapshot=value.model_dump(mode="json"),
         execution_identity={"transport": projected},
     )

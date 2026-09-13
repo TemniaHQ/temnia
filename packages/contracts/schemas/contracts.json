@@ -1756,60 +1756,6 @@
       "additionalProperties": false,
       "title": "SpeechCoverageInterval"
     },
-    "TopicAssessment": {
-      "$id": "#/$defs/TopicAssessment",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicAssessmentCandidate"
-          }
-        },
-        "evidenceSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "format": {
-          "type": "string",
-          "const": "topic-assessment/1"
-        },
-        "proposalSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "proposerFamily": {
-          "type": "string",
-          "minLength": 1
-        },
-        "runId": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "verifierFamily": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "candidates",
-        "evidenceSha256",
-        "format",
-        "proposalSha256",
-        "proposerFamily",
-        "runId",
-        "summary",
-        "verifierFamily"
-      ],
-      "additionalProperties": false,
-      "title": "TopicAssessment"
-    },
     "TopicAssessmentCandidate": {
       "$id": "#/$defs/TopicAssessmentCandidate",
       "type": "object",
@@ -2613,63 +2559,6 @@
       "additionalProperties": false,
       "title": "TopicPortfolioReview"
     },
-    "TopicPortfolioReviewV3": {
-      "$id": "#/$defs/TopicPortfolioReviewV3",
-      "type": "object",
-      "properties": {
-        "candidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceJudgment"
-          }
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionFinding"
-          }
-        },
-        "missingOpportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunityJudgment"
-          }
-        },
-        "selection": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionDecision"
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        }
-      },
-      "required": [
-        "candidates",
-        "findings",
-        "missingOpportunities",
-        "opportunities",
-        "selection",
-        "summary",
-        "overlaps"
-      ],
-      "additionalProperties": false,
-      "title": "TopicPortfolioReviewV3"
-    },
     "TopicPortfolioReviewV4": {
       "$id": "#/$defs/TopicPortfolioReviewV4",
       "type": "object",
@@ -2708,16 +2597,16 @@
           "type": "string",
           "minLength": 1
         },
-        "overlaps": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
-          }
-        },
         "handoffs": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/TopicCandidateHandoffJudgment"
+          }
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidateOverlapJudgment"
           }
         }
       },
@@ -2728,8 +2617,8 @@
         "opportunities",
         "selection",
         "summary",
-        "overlaps",
-        "handoffs"
+        "handoffs",
+        "overlaps"
       ],
       "additionalProperties": false,
       "title": "TopicPortfolioReviewV4"
@@ -2852,17 +2741,7 @@
         "portfolioReview": {
           "anyOf": [
             {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/TopicPortfolioReview"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV3"
-                },
-                {
-                  "$ref": "#/$defs/TopicPortfolioReviewV4"
-                }
-              ]
+              "$ref": "#/$defs/TopicPortfolioReviewV4"
             },
             {
               "type": "null"
@@ -3084,106 +2963,6 @@
       ],
       "additionalProperties": false,
       "title": "TopicSelectionFinding"
-    },
-    "TopicSelectionPatch": {
-      "$id": "#/$defs/TopicSelectionPatch",
-      "type": "object",
-      "properties": {
-        "baseSelectionSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "evidenceSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "operations": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSelectionPatchOperation"
-          }
-        },
-        "rubricSha256": {
-          "pattern": "^[a-fA-F0-9]{64}$",
-          "type": "string"
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "baseSelectionSha256",
-        "evidenceSha256",
-        "operations",
-        "rubricSha256",
-        "summary"
-      ],
-      "additionalProperties": false,
-      "title": "TopicSelectionPatch"
-    },
-    "TopicSelectionPatchOperation": {
-      "$id": "#/$defs/TopicSelectionPatchOperation",
-      "type": "object",
-      "properties": {
-        "affectedCandidateIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "findingIds": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "extend_start",
-            "extend_end",
-            "retitle",
-            "merge",
-            "split",
-            "drop",
-            "add_opportunity"
-          ]
-        },
-        "opportunities": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicOpportunity"
-          }
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1
-        },
-        "replacementCandidates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicCandidate"
-          }
-        }
-      },
-      "required": [
-        "affectedCandidateIds",
-        "findingIds",
-        "id",
-        "kind",
-        "opportunities",
-        "reason",
-        "replacementCandidates"
-      ],
-      "additionalProperties": false,
-      "title": "TopicSelectionPatchOperation"
     },
     "TopicSelectionPatchOperationV3": {
       "$id": "#/$defs/TopicSelectionPatchOperationV3",

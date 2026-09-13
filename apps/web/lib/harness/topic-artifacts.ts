@@ -4,9 +4,7 @@ import {
   ChapterRendersSchema,
   type HarnessArtifactRef,
   type RationalTime,
-  type TopicAssessment,
   type TopicAssessmentCandidate,
-  TopicAssessmentSchema,
   type TopicCompiledVideo,
   TopicEditSpecSchema,
   TopicExportSchema,
@@ -39,7 +37,6 @@ export interface TopicVideoView {
 }
 
 export interface TopicRevisionView {
-  assessment: TopicAssessment | null;
   exportedCandidateIds: string[];
   exportUrl: string | null;
   selection?: TopicSelectionRecord | null;
@@ -131,7 +128,10 @@ export function topicArtifactIdentity(view: ChapterView): string {
 }
 
 export function topicEditorialStatus(
-  assessment: Pick<TopicAssessment, "verifierFamily" | "proposerFamily"> | null,
+  assessment: Pick<
+    TopicSelectionAssessment,
+    "verifierFamily" | "proposerFamily"
+  > | null,
   candidate: TopicAssessmentCandidate | null
 ):
   | "Passed text review"
@@ -193,7 +193,7 @@ export function reusedContextMs(
 }
 
 /** Hash-load one portfolio and only descriptors bound to its exact revision. */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: validate both editorial formats against the same immutable physical portfolio and source scope
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: validate the selection, its assessment and the physical portfolio against one immutable source scope
 export async function loadTopicRevision(
   sourceId: string,
   view: ChapterView,
@@ -220,7 +220,6 @@ export async function loadTopicRevision(
     edit.sourceId === sourceId,
     "The topic portfolio belongs to another source."
   );
-  let assessment: TopicAssessment | null = null;
   let selectionAssessment: TopicSelectionAssessment | null = null;
   let selection: TopicSelectionRecord | null = null;
   let selectionCandidates: TopicAssessmentCandidate[] = [];
@@ -339,44 +338,6 @@ export async function loadTopicRevision(
       };
     });
   }
-  if (
-    editRef.metadata.assessmentArtifactId &&
-    !editRef.metadata.selectionArtifactId
-  ) {
-    const ref = one(
-      view.artifacts.filter(
-        (item) =>
-          item.id === editRef.metadata.assessmentArtifactId &&
-          item.kind === "checks" &&
-          item.metadata.format === "topic-assessment/1" &&
-          item.metadata.runId === run.id
-      ),
-      "The topic assessment is missing or ambiguous."
-    );
-    requireFact(
-      organizationFor(checkedKey(ref, sourceId), sourceId) === organizationId,
-      "Foreign topic assessment."
-    );
-    assessment = await load(ref, TopicAssessmentSchema);
-    requireFact(
-      assessment.runId === run.id &&
-        assessment.evidenceSha256 === edit.evidenceSha256 &&
-        assessment.proposalSha256 === editRef.metadata.proposalSha256,
-      "The topic assessment does not belong to this proposal and evidence."
-    );
-    requireFact(
-      new Set(assessment.candidates.map((item) => item.candidateId)).size ===
-        assessment.candidates.length &&
-        assessment.candidates.every(
-          (item) =>
-            (!item.coldReview ||
-              item.coldReview.candidateId === item.candidateId) &&
-            (!item.sourceReview ||
-              item.sourceReview.candidateId === item.candidateId)
-        ),
-      "Invalid topic assessment candidate identities."
-    );
-  }
   const videos: TopicVideoView[] = edit.videos.map((video) => {
     const section = one(
       video.edit.sections.filter((item) => item.id === video.keptSectionId),
@@ -398,10 +359,9 @@ export async function loadTopicRevision(
     );
     return {
       assessment:
-        (selectionAssessment
-          ? selectionCandidates
-          : assessment?.candidates
-        )?.find((item) => item.candidateId === video.candidate.id) ?? null,
+        selectionCandidates.find(
+          (item) => item.candidateId === video.candidate.id
+        ) ?? null,
       captionsUrl: null,
       durationMs: topicDurationMs(start.time, end.time),
       endMs: end.timeMs,
@@ -557,7 +517,6 @@ export async function loadTopicRevision(
     }
   }
   return {
-    assessment,
     exportedCandidateIds,
     exportUrl,
     selection,

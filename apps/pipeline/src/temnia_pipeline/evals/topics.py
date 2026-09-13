@@ -21,7 +21,6 @@ from temnia_pipeline.contracts import (
     ChapterEditSpec,
     ChapterRenders,
     HarnessEvidence,
-    TopicAssessment,
     TopicCandidate,
     TopicEditorialRubric,
     TopicEditSpec,
@@ -81,25 +80,14 @@ class TopicProgramManifest(EvaluationModel):
     """Frozen runtime identity captured before dispatch, never inferred from current code."""
 
     format: Literal["temnia-topic-evaluation-program/1"] = "temnia-topic-evaluation-program/1"
-    policy: Literal["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"]
+    policy: Literal["standalone-topics/3"]
     implementation_sha256: SHA256
     program_version: Identifier
     stages: Annotated[dict[Identifier, TopicProgramStage], Field(min_length=1)]
 
     @model_validator(mode="after")
-    def _complete_v2_roster(self) -> Self:
-        if self.policy == "standalone-topics/2" and {
-            name: stage.seat for name, stage in self.stages.items()
-        } != {
-            "topic_author": "author",
-            "topic_cold": "reviewer",
-            "topic_source": "reviewer",
-            "topic_patch": "author",
-        }:
-            raise ValueError("v2 intended programme requires its complete four-stage seat roster")
-        if self.policy == "standalone-topics/3" and {
-            name: stage.seat for name, stage in self.stages.items()
-        } != {
+    def _complete_roster(self) -> Self:
+        if {name: stage.seat for name, stage in self.stages.items()} != {
             "topic_inventory": "reviewer",
             "topic_author": "author",
             "topic_cold": "reviewer",
@@ -114,7 +102,7 @@ class TopicConfiguration(EvaluationModel):
     """Unknown deployment details stay null; no vendor is implicitly selected."""
 
     configuration_id: Identifier
-    policy: Literal["standalone-topics/1", "standalone-topics/2", "standalone-topics/3"]
+    policy: Literal["standalone-topics/3"]
     source_sha256: SHA256 | None = None
     transcript_sha256: SHA256 | None = None
     rubric_sha256: SHA256 | None = None
@@ -134,7 +122,7 @@ class TopicConfiguration(EvaluationModel):
 
 
 def effective_output_projection(
-    policy: str,
+    _policy: str,
     run_configuration: dict[str, JSONValue],
     route_snapshot: dict[str, JSONValue] | None,
 ) -> dict[str, JSONValue]:
@@ -159,10 +147,6 @@ def effective_output_projection(
     author, reviewer = editorial_routes(snapshot)
     return {
         name: effective_topic_output_tokens(requested, route)
-        if policy in {"standalone-topics/2", "standalone-topics/3"}
-        else requested
-        if requested <= route.max_output_tokens
-        else None
         for name, route in (("author", author), ("reviewer", reviewer))
     }
 
@@ -571,14 +555,13 @@ def topic_label_template(bundle: TopicEvaluationBundle) -> TopicHumanLabels:
 
 
 def artifact_model(artifact: TopicArtifact) -> object | None:
-    """Dispatch public records by their real format; v1 never becomes v2."""
+    """Dispatch public records by their real format."""
     if artifact.body is None:
         return None
     format_name = artifact.body.get("format") or artifact.metadata.get("format")
     models = {
         "topic-selection/2": TopicSelectionRecord,
         "topic-selection-assessment/2": TopicSelectionAssessment,
-        "topic-assessment/1": TopicAssessment,
         "topic-renders/1": TopicRenders,
         "topic-export/1": TopicExport,
         "topic-proposal/1": TopicProposal,
@@ -691,9 +674,9 @@ def validate_topic_bundle(bundle: TopicEvaluationBundle) -> None:
                 for reference in (render.checks, render.captions):
                     if reference is not None:
                         _verify_reference(reference, by_id)
-        if isinstance(
-            model, (TopicSelectionRecord, TopicSelectionAssessment, TopicAssessment)
-        ) and (model.runId != bundle.run_id or model.evidenceSha256 != bundle.evidence_sha256):
+        if isinstance(model, (TopicSelectionRecord, TopicSelectionAssessment)) and (
+            model.runId != bundle.run_id or model.evidenceSha256 != bundle.evidence_sha256
+        ):
             raise ValueError("editorial artifact belongs to another run or evidence")
         if (
             isinstance(model, TopicSelectionRecord)
@@ -921,13 +904,7 @@ def validate_topic_labels(bundle: TopicEvaluationBundle, labels: TopicHumanLabel
             raise ValueError("reviewer calibration lacks exact retained inputs")
         assessment = artifact_model(artifacts[case.judgment_artifact_sha256])
         candidate_id = candidates[case.candidate_sha256].id
-        if isinstance(assessment, TopicAssessment):
-            row = next(
-                (item for item in assessment.candidates if item.candidateId == candidate_id), None
-            )
-            cold = row.coldReview if row else None
-            source = row.sourceReview if row else None
-        elif isinstance(assessment, TopicSelectionAssessment):
+        if isinstance(assessment, TopicSelectionAssessment):
             cold = next(
                 (item for item in assessment.coldReviews if item.candidateId == candidate_id), None
             )
