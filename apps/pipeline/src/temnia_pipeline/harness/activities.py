@@ -59,6 +59,7 @@ from temnia_pipeline.harness.rendering import (
     preflight_disk,
     required_disk_bytes,
     run_render_batch,
+    timeline_from_identity,
     timeline_identity,
     write_captions,
 )
@@ -82,8 +83,15 @@ from temnia_pipeline.harness.runtime_types import (
     StartRunRequest,
     StartRunResult,
 )
-from temnia_pipeline.harness.shot_evidence import build_source_shot_evidence
-from temnia_pipeline.harness.speech_evidence import build_source_speech_coverage
+from temnia_pipeline.harness.shot_evidence import (
+    build_source_shot_evidence,
+    find_source_shot_evidence,
+)
+from temnia_pipeline.harness.source_sensors import find_source_timeline, object_identity
+from temnia_pipeline.harness.speech_evidence import (
+    build_source_speech_coverage,
+    find_source_speech_coverage,
+)
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
@@ -314,7 +322,7 @@ class HarnessActivities:
         )
         return self._try_cleanup_source_cache(request.run_id)
 
-    async def _build_chapter_evidence_locked(
+    async def _build_chapter_evidence_locked(  # noqa: C901, PLR0912, PLR0915
         self,
         request: BuildEvidenceRequest,
         run: RunSnapshot,
@@ -331,8 +339,24 @@ class HarnessActivities:
             raise RuntimeError("source master size changed after run creation")
         observed = self._object_identity(master)
         self._validate_pinned_object(run, observed)
-        source_path, source_sha = await self._source_path(run, observed=observed)
-        timeline = await inspect_timeline(source_path, ffprobe=self.ctx.settings.ffprobe)
+        # Ingest measured this master already: take its hash and timeline from the record
+        # and assemble evidence without a download. A source ingested before the sensors
+        # existed, or whose sensors are missing, goes through the download path below.
+        recorded = await find_source_timeline(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            storage_key=run.source.storage_key,
+            size_bytes=run.source.size_bytes,
+            observed=observed,
+        )
+        source_path: Path | None = None
+        if recorded is not None:
+            source_sha, timeline = recorded
+        else:
+            source_path, source_sha = await self._source_path(run, observed=observed)
+            timeline = await inspect_timeline(source_path, ffprobe=self.ctx.settings.ffprobe)
         stored = await obs.get_async(self.ctx.store, run.transcript.storage_key)
         body = bytes(await stored.bytes_async())
         if len(body) != run.transcript.size_bytes:
@@ -355,17 +379,33 @@ class HarnessActivities:
         }
         shot_record = None
         if is_topic_policy(run.editorial_policy):
-            shot_record = await build_source_shot_evidence(
+            shot_record = await find_source_shot_evidence(
                 self.ctx.settings.database_url,
                 scope=scope,
                 source_id=ref.source_id,
                 store=self.ctx.store,
-                source_path=source_path,
                 source_object=source_object,
                 timeline=timeline,
                 ffmpeg=self.ctx.settings.ffmpeg,
                 detector=run.topic_shot_detector,
             )
+            if shot_record is None:
+                # No record for this master yet: fetch it once and measure here.
+                if source_path is None:
+                    source_path, _ = await self._source_path(
+                        run, observed=observed, expected_sha256=source_sha
+                    )
+                shot_record = await build_source_shot_evidence(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    source_path=source_path,
+                    source_object=source_object,
+                    timeline=timeline,
+                    ffmpeg=self.ctx.settings.ffmpeg,
+                    detector=run.topic_shot_detector,
+                )
         layers = await asyncio.to_thread(
             make_segmenter(request.segmenter).segment,
             transcript.words,
@@ -373,18 +413,34 @@ class HarnessActivities:
         )
         speech = None
         if is_topic_policy(run.editorial_policy):
-            speech = await build_source_speech_coverage(
+            speech = await find_source_speech_coverage(
                 self.ctx.settings.database_url,
                 scope=scope,
                 source_id=ref.source_id,
                 store=self.ctx.store,
-                source_path=source_path,
                 source_object=source_object,
                 timeline=timeline,
                 transcript=transcript,
                 detector_path=self.ctx.settings.transcription.speech_vad_model_path,
                 ffmpeg=self.ctx.settings.ffmpeg,
             )
+            if speech is None:
+                if source_path is None:
+                    source_path, _ = await self._source_path(
+                        run, observed=observed, expected_sha256=source_sha
+                    )
+                speech = await build_source_speech_coverage(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    source_path=source_path,
+                    source_object=source_object,
+                    timeline=timeline,
+                    transcript=transcript,
+                    detector_path=self.ctx.settings.transcription.speech_vad_model_path,
+                    ffmpeg=self.ctx.settings.ffmpeg,
+                )
         evidence = build_evidence(
             transcript,
             layers,
@@ -532,41 +588,7 @@ class HarnessActivities:
 
     @staticmethod
     def _timeline_from_identity(value: dict[str, object]) -> MediaTimelineFacts:
-        def fraction(name: str, *, optional: bool = False) -> Fraction | None:
-            raw = value.get(name)
-            if raw is None and optional:
-                return None
-            if not isinstance(raw, dict):
-                raise TypeError("frozen timeline rational is invalid")
-            parts = cast("dict[str, object]", raw)
-            return Fraction(int(str(parts["numerator"])), int(str(parts["denominator"])))
-
-        return MediaTimelineFacts(
-            duration=cast("Fraction", fraction("duration")),
-            container_start=cast("Fraction", fraction("containerStart")),
-            source_start=cast("Fraction", fraction("sourceStart")),
-            has_video=bool(value.get("hasVideo")),
-            has_audio=bool(value.get("hasAudio")),
-            video_stream_index=cast("int | None", value.get("videoStreamIndex")),
-            audio_stream_index=cast("int | None", value.get("audioStreamIndex")),
-            video_start=fraction("videoStart", optional=True),
-            audio_start=fraction("audioStart", optional=True),
-            video_duration=fraction("videoDuration", optional=True),
-            audio_duration=fraction("audioDuration", optional=True),
-            frame_rate=fraction("frameRate", optional=True),
-            video_time_base=fraction("videoTimeBase", optional=True),
-            audio_time_base=fraction("audioTimeBase", optional=True),
-            sample_rate=cast("int | None", value.get("sampleRate")),
-            width=cast("int | None", value.get("width")),
-            height=cast("int | None", value.get("height")),
-            rotation=cast("int | None", value.get("rotation")),
-            audio_channels=cast("int | None", value.get("audioChannels")),
-            audio_layout=cast("str | None", value.get("audioLayout")),
-            variable_frame_rate=bool(value.get("variableFrameRate")),
-            video_codec=cast("str | None", value.get("videoCodec")),
-            audio_codec=cast("str | None", value.get("audioCodec")),
-            sample_aspect_ratio=fraction("sampleAspectRatio", optional=True),
-        )
+        return timeline_from_identity(value)
 
     @activity.defn(name="render_chapter_revision")
     async def render_chapter_revision(self, request: RenderRevisionRequest) -> RenderRevisionResult:
@@ -1048,21 +1070,7 @@ class HarnessActivities:
 
     @staticmethod
     def _object_identity(metadata: object) -> dict[str, str | None]:
-        if not isinstance(metadata, dict):
-            raise TypeError("object storage returned invalid source metadata")
-        values = cast("dict[object, object]", metadata)
-
-        def text_value(*keys: str) -> str | None:
-            for key in keys:
-                value = values.get(key)
-                if value is not None:
-                    return str(value)
-            return None
-
-        return {
-            "etag": text_value("e_tag", "etag"),
-            "versionId": text_value("version", "version_id", "versionId"),
-        }
+        return object_identity(metadata)
 
     @staticmethod
     def _validate_pinned_object(run: RunSnapshot, observed: dict[str, str | None]) -> None:

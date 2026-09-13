@@ -2,6 +2,25 @@
 
 ## Decisions
 
+**2026-09-13 — Source sensors are measured at ingest, once; a topic run downloads nothing
+until it renders.** Rajesh asked which steps belong on the GPU and which on the CPU; the plan
+is `docs/plans/media-placement-360-view.md`. The first run on every source used to pay the
+master download, `scdet` over the whole master and Silero VAD inside the topic run, on the
+VPS, before the first model call. Now `measure_source_sensors` runs in the ingest workflow
+after `derive_source`, while the master is still in the source work directory, and publishes
+three records bound to the master's object identity (ETag or version ID, key, size):
+`source-timeline/1` (the master's sha256 and exact stream facts), the shot record and the
+speech record. `build_chapter_evidence` heads the object, finds the timeline record, takes
+the hash and timeline from it, finds the two sensor records by their bindings and assembles
+evidence with no download; a source without records (ingested before this, or a sensor that
+failed at ingest) falls back to the download path unchanged. Two identity rules changed to
+make this hold: the shot record's fingerprint no longer includes the ffmpeg binary hash (it
+stays in the body as provenance, so a deploy with a new ffmpeg does not send every source
+back through a decode), and speech is measured without a transcript (the duration equality
+check moved to the projection onto a transcript, where it belongs). A sensor that fails at
+ingest never fails the ingest. Rendering still fetches the master; moving that encode to the
+Modal GPU is the plan's second part.
+
 **2026-09-13 — A transient provider failure never ends a run; it retries, falls back, and the
 run can always be resumed.** Rajesh, after three staging runs (one success, a 402, a 429 that
 discarded $0.38 of work): "With such inconsistency how can we even launch our product to the

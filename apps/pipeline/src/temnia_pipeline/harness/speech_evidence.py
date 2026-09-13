@@ -152,13 +152,6 @@ def coverage_from_source_speech(
     )
 
 
-def _require_measurement_source(timeline: MediaTimelineFacts, transcript: TranscriptV1) -> None:
-    if not timeline.has_audio:
-        raise ValueError("selected source has no audio stream; speech coverage is unknown")
-    if round(timeline.duration * 1000) != transcript.durationMs:
-        raise ValueError("source and transcript durations have no exact millisecond mapping")
-
-
 def _require_detector_identity(measured: SpeechEvidence) -> None:
     if (measured.detector, measured.detector_revision, measured.detector_sha256) != (
         SILERO_DETECTOR,
@@ -168,25 +161,34 @@ def _require_detector_identity(measured: SpeechEvidence) -> None:
         raise ValueError("source speech detector returned an unexpected model identity")
 
 
-async def build_source_speech_coverage(
+@dataclass(frozen=True, slots=True)
+class SourceSpeechRecord:
+    """One immutable detector record for a master, before any transcript projection."""
+
+    artifact: artifacts.HarnessArtifact
+    content: object
+    binding: dict[str, Any]
+
+
+async def ensure_source_speech(
     database_url: str,
     *,
     scope: Scope,
     source_id: UUID,
     store: S3Store,
-    source_path: Path,
+    source_path: Path | None,
     source_object: Mapping[str, Any],
     timeline: MediaTimelineFacts,
-    transcript: TranscriptV1,
     detector_path: Path,
     ffmpeg: str,
-) -> ChapterSpeechCoverage:
-    """Reuse or measure CPU VAD under the caller's verified source lease and heartbeat.
+    measure: bool = True,
+) -> SourceSpeechRecord | None:
+    """Reuse or measure CPU VAD on the master; the transcript is not needed to measure.
 
-    The master path/hash are already verified by chapter evidence construction.
-    Older audio.m4a coverage has no retained master mapping and is not projected.
-    Cancellation propagates and closes the PCM subprocess; decode failure remains
-    an immutable unknown result, never a silence or editorial-quality assertion.
+    Returns None when no record exists and measuring is not allowed here (a run that
+    holds no master); the caller then falls back to its download path. Cancellation
+    propagates and closes the PCM subprocess; decode failure remains an immutable
+    unknown result, never a silence or editorial-quality assertion.
     """
     binding = source_speech_binding(
         scope=scope, source_id=source_id, source_object=source_object, timeline=timeline
@@ -203,56 +205,98 @@ async def build_source_speech_coverage(
     if existing is not None:
         if existing.organization_id != scope.organizationId or existing.source_id != source_id:
             raise IdentityConflict("speech artifact is outside the selected organization/source")
-        accepted = existing
         content = await artifacts.read_artifact_json(
-            database_url, scope=scope, source_id=source_id, store=store, artifact_id=accepted.id
+            database_url, scope=scope, source_id=source_id, store=store, artifact_id=existing.id
         )
-    else:
-        try:
-            _require_measurement_source(timeline, transcript)
-            async with asyncio.timeout(DECODE_TIMEOUT_SECONDS):
-                model = await asyncio.to_thread(SileroOnnx.from_path, detector_path)
-                windows = stream_pcm_windows(source_path, ffmpeg=ffmpeg, timeline=timeline)
-                try:
-                    measured = await detect_speech(windows, model)
-                finally:
-                    await windows.aclose()
-            _require_detector_identity(measured)
-            saved = _SourceSpeech(
-                binding=binding,
-                status="measured",
-                intervals=[
-                    SpeechCoverageInterval(startMs=row.start_ms, endMs=row.end_ms)
-                    for row in measured.intervals
-                ],
-                duration_ms=measured.duration_ms,
-                pcm_sample_count=source_pcm_sample_count(timeline),
-                window_count=measured.window_count,
-                error=None,
-            )
-        except Exception as error:  # noqa: BLE001
-            saved = _SourceSpeech(
-                binding=binding,
-                status="unknown",
-                intervals=[],
-                duration_ms=transcript.durationMs,
-                pcm_sample_count=0,
-                window_count=0,
-                error=f"{type(error).__name__}: {error}",
-            )
-        content = saved.model_dump(mode="json")
-        # Validate before publishing; malformed model/detector output cannot become
-        # an accepted measured artifact even if a test or adapter returns it.
-        coverage_from_source_speech(content, binding=binding, transcript=transcript)
-        accepted = await artifacts.publish_json(
-            database_url,
-            scope=scope,
-            source_id=source_id,
-            store=store,
-            identity=identity,
-            content=content,
-            metadata={"format": FORMAT, "status": saved.status},
+        return SourceSpeechRecord(artifact=existing, content=content, binding=binding)
+    if not measure or source_path is None:
+        return None
+    duration_ms = round(timeline.duration * 1000)
+    try:
+        if not timeline.has_audio:
+            message = "selected source has no audio stream; speech coverage is unknown"
+            raise ValueError(message)  # noqa: TRY301
+        async with asyncio.timeout(DECODE_TIMEOUT_SECONDS):
+            model = await asyncio.to_thread(SileroOnnx.from_path, detector_path)
+            windows = stream_pcm_windows(source_path, ffmpeg=ffmpeg, timeline=timeline)
+            try:
+                measured = await detect_speech(windows, model)
+            finally:
+                await windows.aclose()
+        _require_detector_identity(measured)
+        saved = _SourceSpeech(
+            binding=binding,
+            status="measured",
+            intervals=[
+                SpeechCoverageInterval(startMs=row.start_ms, endMs=row.end_ms)
+                for row in measured.intervals
+            ],
+            duration_ms=measured.duration_ms,
+            pcm_sample_count=source_pcm_sample_count(timeline),
+            window_count=measured.window_count,
+            error=None,
         )
+    except Exception as error:  # noqa: BLE001
+        saved = _SourceSpeech(
+            binding=binding,
+            status="unknown",
+            intervals=[],
+            duration_ms=duration_ms,
+            pcm_sample_count=0,
+            window_count=0,
+            error=f"{type(error).__name__}: {error}",
+        )
+    content = saved.model_dump(mode="json")
+    accepted = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=identity,
+        content=content,
+        metadata={"format": FORMAT, "status": saved.status},
+    )
+    return SourceSpeechRecord(artifact=accepted, content=content, binding=binding)
+
+
+async def _speech_coverage(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    store: S3Store,
+    source_path: Path | None,
+    source_object: Mapping[str, Any],
+    timeline: MediaTimelineFacts,
+    transcript: TranscriptV1,
+    detector_path: Path,
+    ffmpeg: str,
+    measure: bool = True,
+) -> ChapterSpeechCoverage | None:
+    """Project the master's speech record onto this transcript's grid.
+
+    The measurement is shared across transcript revisions; the projection checks that
+    the transcript covers exactly the measured duration. Returns None only when no
+    record exists and measuring is not allowed here.
+    """
+    if round(timeline.duration * 1000) != transcript.durationMs:
+        message = "source and transcript durations have no exact millisecond mapping"
+        raise ValueError(message)
+    record = await ensure_source_speech(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        source_path=source_path,
+        source_object=source_object,
+        timeline=timeline,
+        detector_path=detector_path,
+        ffmpeg=ffmpeg,
+        measure=measure,
+    )
+    if record is None:
+        return None
+    accepted, content, binding = record.artifact, record.content, record.binding
     coverage = coverage_from_source_speech(content, binding=binding, transcript=transcript)
     return ChapterSpeechCoverage(
         coverage=coverage,
@@ -264,4 +308,63 @@ async def build_source_speech_coverage(
             "thresholdVersion": DEFAULT_THRESHOLDS.version,
             "recognitionInput": "selected-transcript-word-spans/1",
         },
+    )
+
+
+async def build_source_speech_coverage(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    store: S3Store,
+    source_path: Path,
+    source_object: Mapping[str, Any],
+    timeline: MediaTimelineFacts,
+    transcript: TranscriptV1,
+    detector_path: Path,
+    ffmpeg: str,
+) -> ChapterSpeechCoverage:
+    """Reuse or measure CPU VAD under the caller's verified source lease, then project."""
+    coverage = await _speech_coverage(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        source_path=source_path,
+        source_object=source_object,
+        timeline=timeline,
+        transcript=transcript,
+        detector_path=detector_path,
+        ffmpeg=ffmpeg,
+    )
+    if coverage is None:  # pragma: no cover - measuring always yields a record
+        raise RuntimeError("speech measurement returned no record")
+    return coverage
+
+
+async def find_source_speech_coverage(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    store: S3Store,
+    source_object: Mapping[str, Any],
+    timeline: MediaTimelineFacts,
+    transcript: TranscriptV1,
+    detector_path: Path,
+    ffmpeg: str,
+) -> ChapterSpeechCoverage | None:
+    """The projection of ingest's record onto this transcript, or None; never decodes."""
+    return await _speech_coverage(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        source_path=None,
+        source_object=source_object,
+        timeline=timeline,
+        transcript=transcript,
+        detector_path=detector_path,
+        ffmpeg=ffmpeg,
+        measure=False,
     )

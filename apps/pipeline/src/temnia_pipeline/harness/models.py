@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -157,6 +158,13 @@ class ModelFactory(Protocol):
 FailureHook = Callable[[str], Awaitable[None]]
 
 
+@dataclass(slots=True)
+class _GateState:
+    slots: asyncio.Semaphore
+    pace: asyncio.Lock
+    last_dispatch: float | None = None
+
+
 class RouteGate:
     """One route's admission in this worker: bounded in-flight calls, spaced dispatches.
 
@@ -170,32 +178,45 @@ class RouteGate:
             raise ValueError("route gate needs a positive slot count and a nonnegative interval")
         self.max_in_flight = max_in_flight
         self.min_interval_seconds = min_interval_seconds
-        self._slots = asyncio.Semaphore(max_in_flight)
-        self._pace = asyncio.Lock()
-        self._last_dispatch: float | None = None
+        # asyncio primitives bind to the loop that first waits on them; a runtime can
+        # outlive a loop (tests, tools), so the state is kept per running loop.
+        self._states: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _GateState] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def _state(self) -> _GateState:
+        loop = asyncio.get_running_loop()
+        state = self._states.get(loop)
+        if state is None:
+            state = _GateState(slots=asyncio.Semaphore(self.max_in_flight), pace=asyncio.Lock())
+            self._states[loop] = state
+        return state
 
     async def acquire(self) -> None:
         """Take a slot, then wait out the spacing since the previous dispatch."""
-        await self._slots.acquire()
+        state = self._state()
+        await state.slots.acquire()
         try:
-            async with self._pace:
+            async with state.pace:
                 loop = asyncio.get_running_loop()
-                if self._last_dispatch is not None:
-                    wait = self._last_dispatch + self.min_interval_seconds - loop.time()
+                if state.last_dispatch is not None:
+                    wait = state.last_dispatch + self.min_interval_seconds - loop.time()
                     if wait > 0:
                         await asyncio.sleep(wait)
-                self._last_dispatch = loop.time()
+                state.last_dispatch = loop.time()
         except BaseException:
-            self._slots.release()
+            state.slots.release()
             raise
 
     def release(self) -> None:
         """Free the slot once the provider has answered or refused."""
-        self._slots.release()
+        self._state().slots.release()
 
 
-DEFAULT_MAX_IN_FLIGHT_PER_ROUTE = 2
-DEFAULT_MIN_DISPATCH_INTERVAL_SECONDS = 1.0
+# The runtime's own defaults admit freely; the worker installs the deployment file's
+# limits at boot. Tests and tools that build a runtime directly are not paced.
+DEFAULT_MAX_IN_FLIGHT_PER_ROUTE = 8
+DEFAULT_MIN_DISPATCH_INTERVAL_SECONDS = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -725,6 +746,9 @@ class BudgetedModel(WrapperModel):
                     attempt_id=attempt.id,
                     owner_token=owner_token,
                 )
+            raise
+        except BaseException:
+            release_gate()
             raise
         if not dispatched:
             release_gate()

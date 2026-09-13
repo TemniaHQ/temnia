@@ -86,6 +86,14 @@ never edit an existing snapshot) and the file's `routeSnapshot` block points at 
 refuses a configuration that does not boot. Merge, deploy; nothing to set on the box.
 Production gets its own file and sets `HARNESS_CONFIG_PATH` to it in Dokploy, once.
 
+## What a run does before its first model call
+
+Nothing heavy. Ingest measured the master's timeline, shot boundaries and speech coverage
+once (`measure_source_sensors`, the `sensors` stage in the source's progress), so a topic run
+heads the object, reads those records and assembles evidence in seconds. A source ingested
+before 13 September has no records: its first run downloads the master and measures, as
+before, and caches the result for later runs. Rendering still fetches the master.
+
 ## What each stop means
 
 | Run status and message | Cause | Do |
