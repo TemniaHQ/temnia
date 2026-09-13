@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING, Any
 
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -64,6 +65,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from temnia_pipeline.harness.topic_workflow import RETRY, TopicRunWorkflow
 
+if TYPE_CHECKING:
+    from temnia_pipeline.harness.routes import RouteEntry
+
 
 def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> HarnessModelDeps:
     """Share exact call identity with receipt validation and the existing budgeted model."""
@@ -96,6 +100,20 @@ def invalid_model_output(error: Exception) -> bool:
     cause = error.cause if isinstance(error, ActivityError) else error
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name == "UnexpectedModelBehavior"
+
+
+def transient_provider_failure(error: Exception) -> bool:
+    """A lost stream whose charge settled: a fresh paid attempt is allowed, unknowns are not."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name == "TransientProviderFailure"
+
+
+# One dispatch plus two retries: enough to ride out an upstream rate limit delivered
+# inside a successful stream, small enough that a persistently failing route still ends
+# the run with its cause named instead of spending indefinitely.
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_BACKOFF = (timedelta(seconds=30), timedelta(seconds=90))
 
 
 @workflow.defn
@@ -162,6 +180,27 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         _ = request
         return context
 
+    async def run_seat(
+        self,
+        agent: Any,  # noqa: ANN401
+        request: ChapterRunInput,
+        plan: SelectionCallPlan,
+        route: RouteEntry,
+    ) -> Any:  # noqa: ANN401
+        """Make one seat's call; retry only a settled transient failure, with backoff."""
+        deps = selection_model_deps(request, plan)
+        settings = {
+            "max_tokens": effective_topic_output_tokens(request.config.maxOutputTokens, route)
+        }
+        for attempt in range(TRANSIENT_ATTEMPTS):
+            try:
+                return await agent.run(plan.prompt, deps=deps, model_settings=settings)
+            except Exception as error:
+                if not transient_provider_failure(error) or attempt == TRANSIENT_ATTEMPTS - 1:
+                    raise
+                await workflow.sleep(TRANSIENT_BACKOFF[attempt])
+        raise RuntimeError("unreachable: transient retry loop exited without a result")
+
     async def review_selection(  # noqa: C901
         self,
         request: ChapterRunInput,
@@ -185,15 +224,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 cold_context = context.model_copy(update={"candidate_id": candidate.id})
                 try:
                     plan = await self.prepare_selection(cold_context)
-                    result = await self.cold_agent.run(
-                        plan.prompt,
-                        deps=selection_model_deps(request, plan),
-                        model_settings={
-                            "max_tokens": effective_topic_output_tokens(
-                                request.config.maxOutputTokens, plan.verifier
-                            )
-                        },
-                    )
+                    result = await self.run_seat(self.cold_agent, request, plan, plan.verifier)
                 except Exception as error:
                     if invalid_model_output(error):
                         unavailable.append(candidate.id)
@@ -216,14 +247,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         if not limited:
             try:
                 source_plan = await self.prepare_selection(context)
-                result = await self.source_agent.run(
-                    source_plan.prompt,
-                    deps=selection_model_deps(request, source_plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, source_plan.verifier
-                        )
-                    },
+                result = await self.run_seat(
+                    self.source_agent, request, source_plan, source_plan.verifier
                 )
                 source_dispatched = True
                 source_review = result.output
@@ -339,15 +364,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         while accepted is None:
             plan = await self.prepare_selection(context)
             try:
-                result = await self.author_agent.run(
-                    plan.prompt,
-                    deps=selection_model_deps(request, plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, plan.author
-                        )
-                    },
-                )
+                result = await self.run_seat(self.author_agent, request, plan, plan.author)
                 save = SelectionSaveRequest(context=context, draft=result.output)
             except Exception as error:
                 if not invalid_model_output(error):
@@ -397,15 +414,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
             try:
                 plan = await self.prepare_selection(patch_context)
-                result = await self.patch_agent.run(
-                    plan.prompt,
-                    deps=selection_model_deps(request, plan),
-                    model_settings={
-                        "max_tokens": effective_topic_output_tokens(
-                            request.config.maxOutputTokens, plan.author
-                        )
-                    },
-                )
+                result = await self.run_seat(self.patch_agent, request, plan, plan.author)
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except Exception as error:
                 if invalid_model_output(error):
@@ -514,14 +523,8 @@ class TopicSelectionWorkflowV3(TopicSelectionWorkflow):
         diagnostics: tuple[str, ...] = ()
         inventory = None
         try:
-            result = await topic_opportunity_inventory_v3.run(
-                plan.prompt,
-                deps=selection_model_deps(request, plan),
-                model_settings={
-                    "max_tokens": effective_topic_output_tokens(
-                        request.config.maxOutputTokens, plan.verifier
-                    )
-                },
+            result = await self.run_seat(
+                topic_opportunity_inventory_v3, request, plan, plan.verifier
             )
             inventory = result.output
         except Exception as error:

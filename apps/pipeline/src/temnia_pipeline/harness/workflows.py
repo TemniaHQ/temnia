@@ -139,7 +139,7 @@ def _cause_message(cause: BaseException | None) -> str:
     return message.strip()
 
 
-def _known_failure_details(
+def _known_failure_details(  # noqa: PLR0911
     error: Exception,
 ) -> tuple[Literal["failed", "budget_paused"], str]:
     cause = error.cause if isinstance(error, ActivityError) else error
@@ -161,6 +161,12 @@ def _known_failure_details(
         return "failed", (
             f"The {_failing_stage(error)} response was incomplete or invalid; "
             "the charge is retained and nothing was retried."
+        )
+    if error_type == "TransientProviderFailure":
+        settled = _cause_message(cause) or "A provider call ended without a response."
+        return "failed", (
+            f"{settled} Three attempts ended the same way; nothing more is retried. "
+            "Change the route snapshot or start a new run later."
         )
     return "failed", f"The run stopped after an activity failure: {error_type}."
 

@@ -610,3 +610,40 @@ async def test_v3_invalid_repair_withholds_the_known_invalid_video(
     assert run.call_order == ["inventory", "author", "cold", "source", "patch"]
     assert run.render_count == 0
     assert "prior assessed selection is retained" in (result.errorMessage or "")
+
+
+class TransientProviderFailure(Exception):  # noqa: N818
+    """A local double for the settled-charge transient failure name."""
+
+
+async def _no_sleep(_delay: object) -> None:
+    return None
+
+
+async def test_settled_transient_failure_is_retried_and_the_run_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[TransientProviderFailure("settled"), portfolio(selected=True)],
+        patches=[],
+    )
+    monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order.count("source") == 2
+    assert run.compiled is not None
+    assert run.render_count == 1
+
+
+async def test_three_settled_transient_failures_end_the_run_with_the_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources: list[object] = [TransientProviderFailure("settled")] * 3
+    sources.append(portfolio(selected=True))
+    run = Program(monkeypatch, initial=draft(selected=True), sources=sources, patches=[])
+    monkeypatch.setattr(module.workflow, "sleep", _no_sleep)
+    with pytest.raises(TransientProviderFailure):
+        await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order.count("source") == 3
+    assert run.compiled is None

@@ -240,6 +240,13 @@ def observe_gateway_generation(callback: GenerationObserver) -> Generator[None]:
         _generation_observer.reset(token)
 
 
+async def notify_observed_generation(identity: str) -> None:
+    """Hand a generation identity to the bound observer; transports and doubles share it."""
+    callback = _generation_observer.get()
+    if callback is not None:
+        await callback(identity)
+
+
 @dataclass
 class _RequestObservation:
     route: RouteEntry

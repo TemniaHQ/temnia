@@ -114,6 +114,18 @@ class KnownProviderRejection(RuntimeError):
     """The provider conclusively rejected the one physical request."""
 
 
+class TransientProviderFailure(RuntimeError):
+    """A dispatched request ended without a response, but its charge is settled.
+
+    The gateway receipt for the observed generation reported a known cost, so the
+    outcome is not ambiguous: the money is accounted and there is no response to
+    recover. Unlike an unknown outcome, a fresh attempt is a new paid call, not a
+    duplicate of an unresolved one, so the workflow may retry a bounded number of
+    times. An upstream rate limit delivered inside a successful HTTP stream is the
+    case this exists for.
+    """
+
+
 class SummaryUnit(BaseModel):
     """One ordered summary unit grounded in original source sentence IDs."""
 
@@ -651,6 +663,67 @@ class BudgetedModel(WrapperModel):
         self.lazy = lazy
         self.deps = deps
 
+    async def _settle_failed_dispatch(
+        self,
+        *,
+        runtime: ModelRuntime,
+        operation_id: UUID,
+        attempt: ledger.Attempt,
+        owner_token: str,
+        generation_ids: list[str],
+    ) -> str | None:
+        """Turn a lost stream into a known failure when the gateway receipt settles.
+
+        Returns the failure sentence when the observed generation's charge is
+        reported, after recording the attempt as conclusively failed with that
+        charge. Returns None, without writing anything, when there is no observed
+        generation, the lookup is pending, or the lookup itself fails; the caller
+        then keeps the unknown-outcome fence exactly as before.
+        """
+        if not generation_ids or runtime.gateway is None or self.deps.synthetic_payload:
+            return None
+        generation_id = generation_ids[-1]
+        try:
+            if runtime.lookup_client is not None:
+                observation = await observe_generation_cost(
+                    runtime.lookup_client,
+                    config=runtime.gateway,
+                    route=self.deps.route,
+                    generation_id=generation_id,
+                )
+            else:
+                async with httpx.AsyncClient() as client:
+                    observation = await observe_generation_cost(
+                        client,
+                        config=runtime.gateway,
+                        route=self.deps.route,
+                        generation_id=generation_id,
+                    )
+        except (GatewayError, httpx.HTTPError, ValueError, TimeoutError):
+            return None
+        if observation.status != "reported" or observation.actual_cost_micros is None:
+            return None
+        sentence = (
+            f"Route {self.deps.route.id}: the {self.deps.stage} request ended without a "
+            f"response; its charge of {observation.actual_cost_micros} micros is settled and "
+            "a fresh attempt is allowed."
+        )
+        await ledger.fail_attempt(
+            runtime.database_url,
+            scope=self.deps.scope,
+            source_id=self.deps.source_id,
+            run_id=self.deps.run_id,
+            operation_id=operation_id,
+            attempt_id=attempt.id,
+            owner_token=owner_token,
+            outcome_known=True,
+            actual_cost_micros=observation.actual_cost_micros,
+            usage=dict(observation.components),
+            error_code="provider-stream-failure",
+            error_message=sentence,
+        )
+        return sentence
+
     async def _record_unknown(  # noqa: PLR0913
         self,
         *,
@@ -892,7 +965,10 @@ class BudgetedModel(WrapperModel):
             if current is not None:
                 current.add_done_callback(lambda _: pulse.cancel())
 
+        observed_generations: list[str] = []
+
         async def remember_generation(identity: str) -> None:
+            observed_generations.append(identity)
             save = asyncio.create_task(
                 ledger.attach_remote_handle(
                     runtime.database_url,
@@ -954,6 +1030,15 @@ class BudgetedModel(WrapperModel):
             )
             raise
         except (ModelAPIError, httpx.TimeoutException) as error:
+            settled = await self._settle_failed_dispatch(
+                runtime=runtime,
+                operation_id=acquired.operation.id,
+                attempt=attempt,
+                owner_token=owner_token,
+                generation_ids=observed_generations,
+            )
+            if settled is not None:
+                raise TransientProviderFailure(settled) from error
             await self._record_unknown(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
