@@ -291,6 +291,10 @@ async function runFullGate(sha) {
       );
     }
     const harnessEnv = [
+      // The images default to their committed deployment file; the gate's recorded
+      // backend is environment-configured, so the default is switched off here.
+      "-e",
+      "HARNESS_CONFIG_PATH=",
       "-e",
       "HARNESS_ENABLED=1",
       "-e",

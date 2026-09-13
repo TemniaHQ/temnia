@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { technicalEligibility } from "@/lib/harness/checks";
 import {
@@ -64,6 +67,91 @@ describe("topic server configuration", () => {
       available: false,
       message:
         "Topic videos are unavailable because the server configuration is incomplete.",
+    });
+  });
+
+  it("reads the committed deployment file and ignores stale environment entries", () => {
+    const staging = resolve(
+      import.meta.dirname,
+      "../../pipeline/harness/staging.json"
+    );
+    const result = harnessSettings({
+      HARNESS_CONFIG_PATH: staging,
+      HARNESS_ENABLED: "0",
+      HARNESS_MAX_OUTPUT_TOKENS: "8192",
+      HARNESS_ROUTE_SNAPSHOT_ID: "stale",
+    });
+    expect(result).toMatchObject({
+      available: true,
+      settings: {
+        config: {
+          backend: "gateway",
+          maxDispatches: 64,
+          maxOutputTokens: 65_536,
+          routeSnapshotId:
+            "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",
+        },
+        maxRunBudgetMicros: 20_000_000,
+        synthetic: false,
+      },
+    });
+  });
+
+  it("refuses a deployment file that is disabled, recorded without approval, or invalid", () => {
+    const directory = mkdtempSync(join(tmpdir(), "harness-config-"));
+    const write = (name: string, body: unknown) => {
+      const path = join(directory, name);
+      writeFileSync(path, JSON.stringify(body));
+      return path;
+    };
+    const base = {
+      allowRecorded: false,
+      backend: "gateway",
+      enabled: true,
+      format: "harness-config/1",
+      gateway: "openrouter",
+      limits: {
+        evidenceWindowSentences: 80,
+        maxDispatches: 64,
+        maxOutputTokens: 65_536,
+        maxRenderConcurrency: 2,
+        maxRepairs: 3,
+        maxRunBudgetMicros: 20_000_000,
+      },
+      recordedFixturePath: null,
+      routeSnapshot: { id: "a".repeat(64), path: "routes.json" },
+      topicShotDetector: "scdet",
+    };
+    expect(
+      harnessSettings({
+        HARNESS_CONFIG_PATH: write("disabled.json", {
+          ...base,
+          enabled: false,
+        }),
+      })
+    ).toEqual({
+      available: false,
+      message: "Topic videos are not enabled on this server.",
+    });
+    expect(
+      harnessSettings({
+        HARNESS_CONFIG_PATH: write("recorded.json", {
+          ...base,
+          backend: "recorded",
+        }),
+      })
+    ).toEqual({
+      available: false,
+      message: "The recorded topic backend is disabled on this server.",
+    });
+    expect(
+      harnessSettings({
+        HARNESS_CONFIG_PATH: write("invalid.json", { ...base, limits: {} }),
+      })
+    ).toEqual({
+      available: false,
+      message:
+        "Topic videos are unavailable because the server configuration file is invalid.",
     });
   });
 

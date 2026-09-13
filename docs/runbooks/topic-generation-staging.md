@@ -1,10 +1,8 @@
 # Topic generation on staging
 
-How the one staging worker is configured so that **Find topic videos** on
-staging.temnia.dev runs the current standalone-topic program. Decision record: the
-2026-09-13 entries in `AGENTS.md`; plan:
-[topic-generation-staging-360-view.md](../plans/topic-generation-staging-360-view.md).
-Dokploy reload mechanics are in [staging.md](staging.md) §4b.
+How **Find topic videos** on staging.temnia.dev runs the standalone-topic program with
+nothing to configure on the box. Decision record: the 2026-09-13 entries in `AGENTS.md`;
+plan: [topic-generation-staging-360-view.md](../plans/topic-generation-staging-360-view.md).
 
 ## What runs
 
@@ -27,11 +25,27 @@ A production seat pool must name at least three model families, so every pool li
 three routes; only the order differs. The reviewer is chosen from the verify pool excluding
 the author's family, so Gemini reviews whatever Kimi or DeepSeek authored.
 
-## The route snapshot
+## Where the configuration lives
 
-The file is committed: [`infra/harness/topic-routes-staging-0df7f78d.json`](../../infra/harness/topic-routes-staging-0df7f78d.json),
-snapshot ID `0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c`. It is the
-r25 experiment catalogue without Astra, `gateway-transport/2` through OpenRouter:
+One committed file per deployment is the whole harness configuration:
+[`apps/pipeline/harness/staging.json`](../../apps/pipeline/harness/staging.json)
+(`harness-config/1`), next to its route snapshot
+[`topic-routes-staging-0df7f78d.json`](../../apps/pipeline/harness/topic-routes-staging-0df7f78d.json)
+(ID `0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c`). Both images copy
+that directory to `/app/harness/` and bake `HARNESS_CONFIG_PATH=/app/harness/staging.json`,
+so the worker and the web read the same file from the same commit: the run config the web
+sends equals the worker's by construction. The only value that stays in Dokploy is the
+secret `OPENROUTER_API_KEY` on `pipeline`, which is already there.
+
+While `HARNESS_CONFIG_PATH` is set, every other `HARNESS_*` entry in a service's environment
+is ignored and the worker's boot log lists the ignored names; stale entries from earlier
+enablements are harmless. An empty `HARNESS_CONFIG_PATH` (the gate, local development, the
+experiment operator) means the environment is the configuration, as before.
+
+The snapshot is the r25 experiment catalogue without Astra, `gateway-transport/2` through
+OpenRouter. A production seat pool must name at least three model families, so every pool
+lists all three routes; only the order differs, and the reviewer is chosen excluding the
+author's family:
 
 | Seat | Order |
 | --- | --- |
@@ -39,92 +53,37 @@ r25 experiment catalogue without Astra, `gateway-transport/2` through OpenRouter
 | `verify` (inventory, cold, source review) | Gemini 3.8 Flash/Vertex, Kimi K3/Fireworks, DeepSeek V4 Pro 0813/Fireworks |
 | `summary` (unused by topics, required by the schema) | as `propose` |
 
-The worker refuses to boot if the file's content does not hash to the ID in
-`HARNESS_ROUTE_SNAPSHOT_ID`. A reorder or a new route is a new file with a new ID, never an
-edit; build it with the pipeline's `RouteSnapshot` model (`computed_id()`) and commit it
-next to this one.
+Limits in the file: output 65,536 (Gemini's route maximum; the config ceiling was raised to
+it), 64 dispatches, 3 repairs, $20 run budget, render concurrency 2, evidence window 80
+sentences, `scdet` shot detector.
 
-## Environment
+`tests/test_harness_config_file.py` boots every committed configuration in the gate: the
+snapshot ID, the three-family rule and the output ceilings are checked before a merge, not
+on the box.
 
-On `pipeline` (secrets stay here):
+## Merge, deploy, click
 
-| Variable | Value |
-| --- | --- |
-| `HARNESS_ENABLED` | `1` |
-| `HARNESS_BACKEND` | `gateway` |
-| `HARNESS_GATEWAY` | `openrouter` |
-| `OPENROUTER_API_KEY` | the staging key (already on the service) |
-| `HARNESS_ROUTE_SNAPSHOT_PATH` | `/etc/temnia/topic-routes.json` |
-| `HARNESS_ROUTE_SNAPSHOT_ID` | `0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c` |
-| `HARNESS_MAX_OUTPUT_TOKENS` | `65536` |
-| `HARNESS_MAX_DISPATCHES` | `64` |
-| `HARNESS_MAX_REPAIRS` | `3` |
-| `HARNESS_MAX_RUN_BUDGET_MICROS` | `20000000` |
-| `HARNESS_MAX_RENDER_CONCURRENCY` | `2` |
-| `HARNESS_TOPIC_SHOT_DETECTOR` | `scdet` |
-| `HARNESS_TOPIC_SELECTION_*`, `HARNESS_CHAPTER_LLAMA_CONFIG_JSON` | delete if present |
+1. Merge the PR. Dokploy builds and deploys both images from `main` (each application's
+   Deployments tab shows the merge SHA green). Do not deploy while a topic run is active;
+   a model call in flight becomes `outcome_unknown`.
+2. Read the `pipeline` boot log: one line
+   `harness enabled from /app/harness/staging.json: backend gateway, gateway openrouter, route snapshot 0df7f78d…`,
+   then the Temporal pollers on `temnia-pipeline` and `temnia-pipeline-control`.
+3. Open a Ready source on staging.temnia.dev, Topics tab, **Find topic videos**. Leave the
+   instructions box empty (the single default brief applies) and press it.
 
-On `web` (non-secret only):
+First run: Karma. Expect `needs_review`, nine to eleven videos, about $1, the run's
+`route_snapshot` naming the author and reviewer above. Play every video, accept or correct,
+export. Second run: World Order (151 min); note each full-source call's duration against the
+payload-scaled deadline. Record the run IDs, cost and durations in the day log.
 
-| Variable | Value |
-| --- | --- |
-| `HARNESS_ENABLED` | `1` |
-| `HARNESS_BACKEND` | `gateway` |
-| `HARNESS_ROUTE_SNAPSHOT_ID` | the same ID |
-| `HARNESS_MAX_OUTPUT_TOKENS` | `65536` |
-| `HARNESS_MAX_DISPATCHES` | `64` |
-| `HARNESS_MAX_REPAIRS` | `3` |
-| `HARNESS_MAX_RUN_BUDGET_MICROS` | `20000000` |
-| `HARNESS_MAX_RENDER_CONCURRENCY` | `2` |
-| `HARNESS_EVIDENCE_WINDOW_SENTENCES` | `80` |
-| `HARNESS_CHAPTERS_ENABLED` | delete if present |
+## Changing the roster or a limit
 
-The run config the web sends must equal the worker's; a mismatch ends the run with a message
-that says so. These values were checked on 13 September: the worker's `validate_boot` passes
-with this file and this table (the run-config ceiling was raised to 65,536 for it).
-
-## Rollout, step by step
-
-Do this once, after PR #41 is merged and both services have deployed the merge commit
-(Dokploy → each application → Deployments shows the merge SHA green).
-
-1. **Nothing in flight.** Temporal UI (`temporal.temnia.dev`): no running workflow on
-   `temnia-pipeline`. Deploying or reloading the worker under a model call makes that run
-   `outcome_unknown`.
-2. **Copy the snapshot to the VPS** (from the merged checkout, as your SSH user):
-
-   ```bash
-   scp infra/harness/topic-routes-staging-0df7f78d.json vps:/tmp/topic-routes-0df7f78d.json
-   ```
-
-   then on the VPS:
-
-   ```bash
-   sudo install -d -o root -g root -m 0755 /var/lib/temnia/harness && sudo install -o root -g root -m 0444 /tmp/topic-routes-0df7f78d.json /var/lib/temnia/harness/topic-routes-0df7f78d.json && ls -l /var/lib/temnia/harness/
-   ```
-
-3. **Mount it on `pipeline`.** Dokploy → `pipeline` → Advanced → Mounts → Add: type
-   *Bind*, host path `/var/lib/temnia/harness/topic-routes-0df7f78d.json`, mount path
-   `/etc/temnia/topic-routes.json`. Leave existing mounts alone.
-4. **Set the `pipeline` environment** (Dokploy → `pipeline` → Environment): every row of the
-   `pipeline` table above; keep all unrelated entries (database, storage, Temporal, Modal,
-   the OpenRouter key). Save.
-5. **Reload `pipeline`** (Dokploy → `pipeline` → General → Reload, not Deploy). Then read
-   the new task's log: it must print the snapshot ID `0df7f78d…`, no error, and the Temporal
-   UI must show pollers on `temnia-pipeline` and `temnia-pipeline-control`. If the log
-   says the ID does not match, the file or the ID is wrong; fix and reload.
-6. **Set the `web` environment** (the `web` table above), Save, Reload `web`. Open
-   `https://staging.temnia.dev/api/health`, then a source that is Ready: the Topics tab shows
-   **Find topic videos** enabled. If it says the harness is disabled, the web env or its
-   reload did not take; check the container's environment, not the saved form.
-7. **First run: Karma.** Leave the instructions box empty (the single default brief applies),
-   press the button, watch the run card. Expect `needs_review`, nine to eleven videos, about
-   $1, and the run's `route_snapshot` naming the author and reviewer above. Review every
-   video: play it, accept or correct, export. Note settled cost and each full-source call's
-   duration.
-8. **Second run: World Order (151 min).** Same, and record each full-source call's duration
-   against the payload-scaled deadline.
-9. Record the snapshot ID, both runs' IDs, cost and durations in the day log.
+Edit `apps/pipeline/harness/staging.json` in a PR. A different roster is a new snapshot
+file with a new ID (build it with the pipeline's `RouteSnapshot` model and `computed_id()`;
+never edit an existing snapshot) and the file's `routeSnapshot` block points at it. The gate
+refuses a configuration that does not boot. Merge, deploy; nothing to set on the box.
+Production gets its own file and sets `HARNESS_CONFIG_PATH` to it in Dokploy, once.
 
 ## What each stop means
 
@@ -138,4 +97,4 @@ Do this once, after PR #41 is merged and both services have deployed the merge c
 | `failed`, "… ended without a response; its charge … is settled … Three attempts ended the same way" | the route kept failing inside its stream after two automatic retries | wait and start a new run, or change the route |
 | `cancelled` | you cancelled | — |
 
-Never deploy or reload `pipeline` while a topic run is active.
+Never deploy `pipeline` while a topic run is active.

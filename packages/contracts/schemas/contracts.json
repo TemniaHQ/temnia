@@ -998,6 +998,135 @@
       "additionalProperties": false,
       "title": "HarnessBoundaryCandidate"
     },
+    "HarnessConfig": {
+      "$id": "#/$defs/HarnessConfig",
+      "type": "object",
+      "properties": {
+        "allowRecorded": {
+          "type": "boolean"
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "recorded",
+            "gateway"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "const": "harness-config/1"
+        },
+        "gateway": {
+          "type": "string",
+          "enum": [
+            "vercel",
+            "openrouter"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/HarnessConfigLimits"
+        },
+        "recordedFixturePath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "routeSnapshot": {
+          "$ref": "#/$defs/HarnessConfigRouteSnapshot"
+        },
+        "topicShotDetector": {
+          "type": "string",
+          "enum": [
+            "pyscenedetect-adaptive",
+            "scdet"
+          ]
+        }
+      },
+      "required": [
+        "allowRecorded",
+        "backend",
+        "enabled",
+        "format",
+        "gateway",
+        "limits",
+        "recordedFixturePath",
+        "routeSnapshot",
+        "topicShotDetector"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfig"
+    },
+    "HarnessConfigLimits": {
+      "$id": "#/$defs/HarnessConfigLimits",
+      "type": "object",
+      "properties": {
+        "evidenceWindowSentences": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "maxDispatches": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536
+        },
+        "maxRenderConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxRepairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "maxRunBudgetMicros": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "evidenceWindowSentences",
+        "maxDispatches",
+        "maxOutputTokens",
+        "maxRenderConcurrency",
+        "maxRepairs",
+        "maxRunBudgetMicros"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigLimits"
+    },
+    "HarnessConfigRouteSnapshot": {
+      "$id": "#/$defs/HarnessConfigRouteSnapshot",
+      "type": "object",
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigRouteSnapshot"
+    },
     "HarnessEvidence": {
       "$id": "#/$defs/HarnessEvidence",
       "type": "object",

@@ -2,6 +2,24 @@
 
 ## Decisions
 
+**2026-09-13 — Merge, deploy, click: the images carry the harness configuration.** Rajesh,
+shown the eleven-step rollout (root-owned file on the VPS, Dokploy bind mount, two
+environment tables, ordered reloads): "Why do I need to do all of these circus to be able
+to run the pipeline?" He is right; the guarantees were sound and their delivery was design
+debt. The guarantees stay: the route snapshot is an immutable content-addressed file, the
+worker refuses to boot on a mismatch, the web sends exactly the worker's run config. The
+delivery is now one committed file per deployment, `apps/pipeline/harness/staging.json`
+(`harness-config/1`, a shared contract), next to its snapshot; both Dockerfiles copy the
+directory to `/app/harness/` and bake `HARNESS_CONFIG_PATH` to it. With that variable set,
+every other `HARNESS_*` environment entry is ignored and the worker's boot log names the
+ignored entries, so stale Dokploy values cannot disagree with the file; empty means the
+environment is the configuration (the gate, local development, the experiment operator,
+which pins its own snapshot). The only value left on the box is the `OPENROUTER_API_KEY`
+secret. `tests/test_harness_config_file.py` boots every committed configuration in the
+gate, which is where the two blockers found by hand today (three-family seat pools; a
+32,768 run-config ceiling under a 65,536 setting) now fail. Changing the roster or a limit
+is a PR. Production gets its own file and one Dokploy variable pointing at it.
+
 **2026-09-13 — Staging roster settled on technical reliability; chapters are gone; the
 harness is the only goal until results are satisfactory.** Rajesh: Temnia is not live, existing
 chapter and topic runs need no compatibility, chapters are gone and only standalone topic videos

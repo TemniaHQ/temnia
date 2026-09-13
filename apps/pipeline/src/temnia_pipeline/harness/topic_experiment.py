@@ -270,6 +270,8 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
     """Return non-secret exact worker overrides; operator retains existing infrastructure env."""
     config = arm.spec.config
     return {
+        # An arm's exact snapshot and limits, never the image's committed deployment file.
+        "HARNESS_CONFIG_PATH": "",
         "HARNESS_ENABLED": "1",
         "HARNESS_BACKEND": config.backend.value,
         "HARNESS_GATEWAY": snapshot_gateway(arm.snapshot),

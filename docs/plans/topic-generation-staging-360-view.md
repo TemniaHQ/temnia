@@ -313,7 +313,8 @@ on `pipeline` only, never on `web`.
 | --- | --- |
 | v1 lane (`standalone-topics/1`) | Deleted 13 September in the same PR (superseded: nothing is live, no reader is kept) |
 | v2 lane (`standalone-topics/2`) | Deleted 13 September in the same PR; v3 contains it |
-| Chapter lane | Parked on staging with one web flag; code, runs, review and export untouched |
+| Chapter lane | Deleted 13 September (superseded: nothing is live) |
+| Rollout by hand (mount, env tables, reloads) | Superseded 13 September: the images carry `apps/pipeline/harness/staging.json`; merge, deploy, click |
 | Qualification manifest gate | Replaced by in-run admission plus the ledger; identity hashes still recorded per attempt |
 | `bind-topics`, manifest formats `/2` to `/5` | Deleted; `run` and `reconcile` kept as optional pre-flight |
 | Per-version enable flags on web and worker | Dropped; worker boot is the gate |

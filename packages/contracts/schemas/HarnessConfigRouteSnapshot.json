@@ -1,0 +1,27 @@
+{
+  "$defs": {
+    "HarnessConfigRouteSnapshot": {
+      "$id": "#/$defs/HarnessConfigRouteSnapshot",
+      "type": "object",
+      "properties": {
+        "id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigRouteSnapshot"
+    }
+  },
+  "$id": "HarnessConfigRouteSnapshot.json",
+  "$ref": "#/$defs/HarnessConfigRouteSnapshot",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

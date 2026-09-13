@@ -45,6 +45,10 @@ RUN addgroup -S temnia && adduser -S temnia -G temnia
 COPY --from=installer --chown=temnia:temnia /app/apps/web/.next/standalone ./
 COPY --from=installer --chown=temnia:temnia /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=installer --chown=temnia:temnia /app/apps/web/public ./apps/web/public
+# The worker owns the harness configuration; the web carries the same committed file so
+# the run config it sends equals the worker's by construction.
+COPY --from=pruner --chown=temnia:temnia /app/apps/pipeline/harness ./harness
+ENV HARNESS_CONFIG_PATH=/app/harness/staging.json
 USER temnia
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=5 \

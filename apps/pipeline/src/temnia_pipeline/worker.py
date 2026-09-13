@@ -92,6 +92,16 @@ async def run_worker(settings: TemporalSettings) -> None:
     ctx = Context.from_env()
     harness_settings = HarnessSettings.from_env()
     snapshot = harness_settings.validate_boot()
+    if snapshot is None:
+        log.info("harness disabled")
+    else:
+        log.info(
+            "harness enabled from %s: backend %s, gateway %s, route snapshot %s",
+            harness_settings.config_path or "the environment",
+            harness_settings.backend,
+            harness_settings.gateway,
+            snapshot.snapshot_id,
+        )
     await db.assert_reachable(ctx.settings.database_url)
     await assert_modal_deployment(ctx)
     if ctx.settings.transcription.provider == "modal-checkpointed":

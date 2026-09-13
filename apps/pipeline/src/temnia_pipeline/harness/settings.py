@@ -1,4 +1,4 @@
-"""Explicit worker-only configuration for the chapter harness."""
+"""Explicit worker-only configuration for the topic harness: one file per deployment, or env."""
 
 # Boot refusals name the exact invalid variable at the validation site.
 # ruff: noqa: EM101, EM102, FBT001, FBT002, PLR0912, TRY003
@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from temnia_pipeline.contracts import Backend, ChapterRunConfig
+from temnia_pipeline.contracts import Backend, ChapterRunConfig, HarnessConfig
 from temnia_pipeline.harness.routes import (
     ContextWindowExceeded,
     RouteSnapshot,
@@ -41,6 +42,12 @@ RECORDED_TOPIC_OUTPUTS = (
     "topic_selection_patch",
 )
 MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
+# The deployed images bake this to their committed configuration file; an empty value
+# (the gate, local development, the experiment operator) means the environment is the
+# configuration, as before.
+CONFIG_PATH_VARIABLE = "HARNESS_CONFIG_PATH"
+SECRET_VARIABLES = frozenset({"OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY"})
+log = logging.getLogger("temnia.harness.settings")
 
 
 def _flag(env: Mapping[str, str], name: str, default: bool = False) -> bool:
@@ -79,11 +86,15 @@ class HarnessSettings:
     gateway: GatewayName = "vercel"
     recorded_fixture_path: Path | None = None
     topic_shot_detector: TopicShotDetector = "scdet"
+    config_path: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
         """Parse process configuration without choosing a model vendor fallback."""
         values = os.environ if env is None else env
+        config_path = values.get(CONFIG_PATH_VARIABLE) or None
+        if config_path:
+            return cls.from_file(Path(config_path), values)
         raw_backend = values.get("HARNESS_BACKEND") or None
         if raw_backend not in {None, "gateway", "recorded"}:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
@@ -121,6 +132,51 @@ class HarnessSettings:
                 if values.get("HARNESS_RECORDED_FIXTURE_PATH")
                 else None
             ),
+        )
+
+    @classmethod
+    def from_file(cls, path: Path, env: Mapping[str, str]) -> HarnessSettings:
+        """Load the committed deployment file; the environment then supplies only secrets."""
+        config = HarnessConfig.model_validate_json(path.read_bytes())
+        ignored = sorted(
+            name for name in env if name.startswith("HARNESS_") and name != CONFIG_PATH_VARIABLE
+        )
+        if ignored:
+            log.warning(
+                "%s=%s is the harness configuration; ignoring environment entries %s",
+                CONFIG_PATH_VARIABLE,
+                path,
+                ", ".join(ignored),
+            )
+        base = path.resolve().parent
+
+        def resolve(value: str) -> Path:
+            candidate = Path(value)
+            return candidate if candidate.is_absolute() else base / candidate
+
+        gateway = cast("GatewayName", str(config.gateway))
+        return cls(
+            enabled=config.enabled,
+            backend=cast("HarnessBackend", str(config.backend)),
+            route_snapshot_id=config.routeSnapshot.id,
+            route_snapshot_path=resolve(config.routeSnapshot.path),
+            allow_recorded=config.allowRecorded,
+            max_run_budget_micros=config.limits.maxRunBudgetMicros,
+            max_dispatches=config.limits.maxDispatches,
+            max_repairs=config.limits.maxRepairs,
+            max_output_tokens=config.limits.maxOutputTokens,
+            evidence_window_sentences=config.limits.evidenceWindowSentences,
+            max_render_concurrency=config.limits.maxRenderConcurrency,
+            gateway=gateway,
+            gateway_api_key=env.get(
+                "OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY"
+            )
+            or None,
+            recorded_fixture_path=(
+                resolve(config.recordedFixturePath) if config.recordedFixturePath else None
+            ),
+            topic_shot_detector=cast("TopicShotDetector", str(config.topicShotDetector)),
+            config_path=path,
         )
 
     def allowed_config(self) -> ChapterRunConfig:
@@ -188,7 +244,7 @@ class HarnessSettings:
             raise RuntimeError("HARNESS_MAX_RUN_BUDGET_MICROS must be positive")
         snapshot = load_route_snapshot(self.route_snapshot_path)
         if snapshot.snapshot_id != config.routeSnapshotId:
-            raise RuntimeError("loaded route snapshot hash differs from HARNESS_ROUTE_SNAPSHOT_ID")
+            raise RuntimeError("loaded route snapshot hash differs from the configured snapshot ID")
         if self.backend == "recorded" and not snapshot.synthetic:
             raise RuntimeError("recorded backend requires a visibly synthetic route snapshot")
         if self.backend == "gateway" and snapshot.synthetic:

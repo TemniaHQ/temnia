@@ -395,6 +395,11 @@ identity, and successful boot. Check web migrations/seed and `/api/health`, and 
 Temporal connection. A reload is expected to retain the image. Read a failed task's logs before
 diagnosing rollback; the prior task may be running with its prior environment.
 
+The topic harness no longer needs a mounted route file or `HARNESS_*` environment: both
+images carry `apps/pipeline/harness/staging.json` and its snapshot
+([topic-generation-staging.md](topic-generation-staging.md)). What follows describes the
+earlier mount-based enablement and stays for the record.
+
 For the harness route file, the public API namespace is **`mounts`**, plural:
 `mounts.listByServiceId`, `mounts.create`, and `mounts.remove`. A bind creation uses `serviceId`,
 `serviceType: "application"`, `type: "bind"`, `hostPath` and `mountPath`. Preserve existing mounts.
@@ -407,9 +412,8 @@ file and create a new one for every route change.
 
 ## 4c. Topic generation
 
-The harness environment for standalone topic videos, the route snapshot mount, the
-parked chapter lane and the first-run checklist are in
-[topic-generation-staging.md](topic-generation-staging.md).
+The committed harness configuration, the route snapshot and the first-run checklist are in
+[topic-generation-staging.md](topic-generation-staging.md): merge, deploy, click.
 
 ## 5. Rules that follow from this setup
 

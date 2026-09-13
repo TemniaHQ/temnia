@@ -211,6 +211,36 @@ class HarnessBoundaryCandidate(BaseModel):
     timeMs: Annotated[int, Field(ge=0, le=9007199254740991)]
 
 
+class Gateway(StrEnum):
+    vercel = "vercel"
+    openrouter = "openrouter"
+
+
+class TopicShotDetector(StrEnum):
+    pyscenedetect_adaptive = "pyscenedetect-adaptive"
+    scdet = "scdet"
+
+
+class HarnessConfigLimits(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
+    maxDispatches: Annotated[int, Field(ge=1, le=128)]
+    maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
+    maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
+    maxRepairs: Annotated[int, Field(ge=0, le=3)]
+    maxRunBudgetMicros: Annotated[int, Field(gt=0, le=9007199254740991)]
+
+
+class HarnessConfigRouteSnapshot(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: Annotated[str, Field(pattern="^[a-f0-9]{64}$")]
+    path: Annotated[str, Field(min_length=1)]
+
+
 class HarnessEvidencePause(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -877,6 +907,21 @@ class ChapterRunOutput(BaseModel):
     revision: Annotated[int | None, Field(ge=1, le=9007199254740991)]
     runId: UUID
     status: HarnessRunStatus
+
+
+class HarnessConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    allowRecorded: bool
+    backend: Backend
+    enabled: bool
+    format: Literal["harness-config/1"]
+    gateway: Gateway
+    limits: HarnessConfigLimits
+    recordedFixturePath: Annotated[str | None, Field(min_length=1)]
+    routeSnapshot: HarnessConfigRouteSnapshot
+    topicShotDetector: TopicShotDetector
 
 
 class HelloInput(BaseModel):
