@@ -2,6 +2,40 @@
 
 ## Decisions
 
+**2026-09-12 — New topic runs stick to FFmpeg `scdet`; AdaptiveDetector is not the default without a trial.**
+Rajesh asked which scene detector to keep if the requested AdaptiveDetector trial
+is not going to run. Keep `scdet`. On the verified Karma master the two detectors
+agreed on 403 cuts (428 adaptive vs 409 `scdet`) while AdaptiveDetector took
+211.5 s against 15.6 s; that is agreement and cost, not editorial ranking.
+AdaptiveDetector’s motion-robust baseline matters for handheld or continuously
+moving picture, not a typical locked-off podcast camera switch. Neither detector
+establishes discussion completion. Record:
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md) §1.
+This supersedes the 10 September “use AdaptiveDetector for the next topic trial”
+default. Historical snapshots keep their frozen detector. AdaptiveDetector remains
+an explicit comparison. Do not broaden this into detector shopping or an
+orchestration change. `main` still defaults `pyscenedetect-adaptive` after PR #40;
+apply or withdraw this entry in the next PR that touches `harness/settings.py`.
+
+**2026-09-12 — Topic blockers are editorial operations and calibration; no agent framework.**
+A read-only stage review (evidence, author, review, repair, compile) and a prompt review, each
+re-checked against `main` after PRs #39 and #40, are recorded with per-finding status in
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md)
+§3–§9. Open after #40: admission counts one byte as one token with no topic hierarchy, so a
+two-hour source is refused before any editorial question; a cited span outside a candidate's
+extent is refused rather than unioned into it; compiler "pauses" are word gaps, not measured
+silence, and Silero is a binary veto with no fade tier; no critic calibration set and no
+listening judge; every prompt is a user-turn rule list with no `instructions=` and no
+`.describe()` on contract fields; internal topic structure inside one compound candidate is
+unobserved (the r20/r25 failure). Rajesh asked whether LangChain, LangGraph or Google ADK should
+supply checkpoints, resumes or agent loops: no. Their Temporal plugins disable their own
+persistence and add notation only, and Temnia's dispatch guards live inside the PydanticAI model
+activity; the 2026-09-07 typed-program decision stands (§5). KernelCPD change-points are built but
+unreachable from production (`segmenter: Literal["sat"]`); run them as scored hints in a code-side
+source map, never as compiler candidates, measured on the calibration set first (§8). No author or
+reviewer seat is finalized; §9 records why and what an audition needs. Do not present the nine r11
+videos or any later Karma run as acceptance.
+
 **2026-09-12 — Human playback accepts sentence-complete Karma cuts; trailing pauses and
 semantic handoffs are the remaining release refinements.** Rajesh reviewed the nine admitted r11
 videos and found every video technically complete with no broken sentence at either edge. Do not
