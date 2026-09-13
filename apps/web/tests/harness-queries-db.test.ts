@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SEEDED_SCOPE, sourcePrefix } from "@temnia/contracts";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getChapterView, getTopicView } from "@/lib/harness/queries";
+import { getTopicView } from "@/lib/harness/queries";
 
 const ownerUrl = process.env.TEST_DATABASE_URL;
 if (process.env.LOCAL_CI === "1" && !ownerUrl) {
@@ -138,7 +138,8 @@ suite("chapter view Postgres dependency ownership", () => {
           budget_micros, config, route_snapshot, evidence_artifact_id,
           current_revision)
        VALUES ($1, $2, $3, 'chapters', 'needs_review', 'fixture', $4,
-               1000000, '{"backend":"recorded"}'::jsonb, '{}'::jsonb, $5, 1)`,
+               1000000, '{"backend":"recorded"}'::jsonb,
+               '{"editorialPolicy":"standalone-topics/3"}'::jsonb, $5, 1)`,
       [runId, SEEDED_SCOPE.organizationId, sourceId, randomUUID(), evidenceId]
     );
     await owner.query(
@@ -252,7 +253,7 @@ suite("chapter view Postgres dependency ownership", () => {
   });
 
   it("returns every descriptor-owned check and frozen transcript revision", async () => {
-    const view = await getChapterView(sourceId, runId);
+    const view = await getTopicView(sourceId, runId);
     const checks = view.artifacts.filter(
       (artifact) =>
         artifact.kind === "checks" &&
@@ -277,7 +278,7 @@ suite("chapter view Postgres dependency ownership", () => {
     expect(view.summaryGrounding.reports).toHaveLength(2);
   });
 
-  it("keeps topic and legacy chapter history separate, including exact run selection", async () => {
+  it("keeps topic history to topic policies, including exact run selection", async () => {
     if (!owner) {
       return;
     }
@@ -297,17 +298,15 @@ suite("chapter view Postgres dependency ownership", () => {
         evidenceId,
       ]
     );
-    const [chapters, topics, wrongChapter, wrongTopic] = await Promise.all([
-      getChapterView(sourceId),
+    const [topics, exact, unknown] = await Promise.all([
       getTopicView(sourceId),
-      getChapterView(sourceId, topicRunId),
       getTopicView(sourceId, runId),
+      getTopicView(sourceId, randomUUID()),
     ]);
-    expect(chapters.runs.map((item) => item.id)).toEqual([runId]);
-    expect(topics.runs.map((item) => item.id)).toEqual([topicRunId]);
+    expect(topics.runs.map((item) => item.id)).toEqual([topicRunId, runId]);
     expect(topics.run?.id).toBe(topicRunId);
-    expect(wrongChapter.run).toBeNull();
-    expect(wrongTopic.run).toBeNull();
+    expect(exact.run?.id).toBe(runId);
+    expect(unknown.run).toBeNull();
   });
 
   it("refuses a present coverage fallback count unless it is exactly one", async () => {
@@ -336,7 +335,7 @@ suite("chapter view Postgres dependency ownership", () => {
       ]
     );
     try {
-      await expect(getChapterView(sourceId, runId)).rejects.toThrow(
+      await expect(getTopicView(sourceId, runId)).rejects.toThrow(
         "Summary grounding report has invalid coverageFallbackWindowCount."
       );
     } finally {

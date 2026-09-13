@@ -3,7 +3,6 @@
 import { VideoPlayer } from "@videojs/react/video";
 import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
-import { ChapterPanel } from "@/components/sources/chapter-panel";
 import { SourceTimestamp } from "@/components/sources/source-timestamp";
 import { TopicPanel } from "@/components/sources/topic-panel";
 import { TranscriptPanel } from "@/components/sources/transcript-panel";
@@ -64,10 +63,6 @@ interface ArtifactSummary {
 
 interface SourceWorkspaceProps {
   artifacts: ArtifactSummary[];
-  chapterAvailability: HarnessAvailability;
-  /** The chapter lane is parked: existing runs stay reviewable, none start. */
-  chapterCreationPaused: boolean;
-  chapters: ChapterView;
   peaksUrl: string | null;
   playlistUrl: string | null;
   posterUrl: string | null;
@@ -105,9 +100,6 @@ export function SourceWorkspace({
   transcriptAnnotationsUrl,
   transcriptRevisions,
   transcriptUrl,
-  chapterAvailability,
-  chapterCreationPaused,
-  chapters,
   topicAvailability,
   topics,
 }: SourceWorkspaceProps) {
@@ -162,9 +154,6 @@ export function SourceWorkspace({
               <TabsTrigger data-testid="topics-tab" value="topics">
                 Topic videos
               </TabsTrigger>
-              <TabsTrigger data-testid="chapters-tab" value="chapters">
-                Chapters
-              </TabsTrigger>
               <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
             </TabsList>
             <TabsContent value="details">
@@ -190,14 +179,6 @@ export function SourceWorkspace({
                 sourceId={source.id}
                 sourceStatus={source.status}
                 title={source.title}
-              />
-            </TabsContent>
-            <TabsContent value="chapters">
-              <ChapterPanel
-                availability={chapterAvailability}
-                creationPaused={chapterCreationPaused}
-                initialView={chapters}
-                sourceId={source.id}
               />
             </TabsContent>
             <TabsContent value="topics">

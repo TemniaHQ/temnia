@@ -187,7 +187,7 @@ export async function startTopicRun(
     return { message: "The topic request is invalid.", ok: false };
   }
   const brief = topicBrief(parsed.data);
-  const availability = harnessSettings("topics");
+  const availability = harnessSettings();
   if (!availability.available) {
     return { message: availability.message, ok: false };
   }
@@ -584,7 +584,7 @@ export async function getPendingTopicWorkflowStatus(
   }
   if (parsed.data.kind === "start") {
     const { intent } = parsed.data;
-    const availability = harnessSettings("topics");
+    const availability = harnessSettings();
     if (!availability.available) {
       return { message: availability.message, state: "unknown" };
     }

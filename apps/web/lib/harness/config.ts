@@ -3,7 +3,6 @@ import {
   ChapterRunConfigSchema,
 } from "@temnia/contracts";
 import { z } from "zod";
-import { DEFAULT_CHAPTER_BRIEF_VERSION } from "@/lib/harness/default-brief";
 
 const HarnessEnvironmentSchema = z.object({
   HARNESS_ALLOW_RECORDED: z.enum(["0", "1"]).default("0"),
@@ -22,43 +21,8 @@ const HarnessEnvironmentSchema = z.object({
   HARNESS_ROUTE_SNAPSHOT_ID: z.string().min(1).max(256).optional(),
 });
 
-const ChapterCreationSchema = z.object({
-  HARNESS_CHAPTERS_ENABLED: z.enum(["0", "1"]).default("1"),
-});
-
-/**
- * One set of server settings feeds two lanes, so an unavailable server has to
- * say which lane the reader is looking at. The words differ; nothing else does.
- */
-export type HarnessFeature = "chapters" | "topics";
-
-const UNAVAILABLE: Record<
-  HarnessFeature,
-  { disabled: string; incomplete: string; limits: string; recorded: string }
-> = {
-  chapters: {
-    disabled: "Chapter editing is not enabled on this server.",
-    incomplete:
-      "Chapter editing is unavailable because its server configuration is incomplete.",
-    limits: "Chapter editing is unavailable because its limits are invalid.",
-    recorded: "The recorded chapter backend is disabled on this server.",
-  },
-  topics: {
-    disabled: "Topic videos are not enabled on this server.",
-    incomplete:
-      "Topic videos are unavailable because the server configuration is incomplete.",
-    limits:
-      "Topic videos are unavailable because the server limits are invalid.",
-    recorded: "The recorded topic backend is disabled on this server.",
-  },
-};
-
-export const CHAPTER_CREATION_PAUSED_MESSAGE =
-  "Chapter creation is paused on this server. Existing chapter runs remain reviewable.";
-
 export interface HarnessSettings {
   config: ChapterRunConfig;
-  defaultBriefVersion: string;
   maxRunBudgetMicros: number;
   synthetic: boolean;
 }
@@ -67,21 +31,30 @@ export type HarnessAvailability =
   | { available: true; settings: HarnessSettings }
   | { available: false; message: string };
 
+/** The one server-side gate for topic generation; the run config it returns must equal the worker's. */
 export function harnessSettings(
-  feature: HarnessFeature = "chapters",
   environment: Record<string, string | undefined> = process.env
 ): HarnessAvailability {
-  const words = UNAVAILABLE[feature];
   const parsed = HarnessEnvironmentSchema.safeParse(environment);
   if (!parsed.success || parsed.data.HARNESS_ENABLED !== "1") {
-    return { available: false, message: words.disabled };
+    return {
+      available: false,
+      message: "Topic videos are not enabled on this server.",
+    };
   }
   if (!(parsed.data.HARNESS_BACKEND && parsed.data.HARNESS_ROUTE_SNAPSHOT_ID)) {
-    return { available: false, message: words.incomplete };
+    return {
+      available: false,
+      message:
+        "Topic videos are unavailable because the server configuration is incomplete.",
+    };
   }
   const synthetic = parsed.data.HARNESS_BACKEND === "recorded";
   if (synthetic && parsed.data.HARNESS_ALLOW_RECORDED !== "1") {
-    return { available: false, message: words.recorded };
+    return {
+      available: false,
+      message: "The recorded topic backend is disabled on this server.",
+    };
   }
   const config = ChapterRunConfigSchema.safeParse({
     backend: parsed.data.HARNESS_BACKEND,
@@ -93,28 +66,18 @@ export function harnessSettings(
     routeSnapshotId: parsed.data.HARNESS_ROUTE_SNAPSHOT_ID,
   });
   if (!config.success) {
-    return { available: false, message: words.limits };
+    return {
+      available: false,
+      message:
+        "Topic videos are unavailable because the server limits are invalid.",
+    };
   }
   return {
     available: true,
     settings: {
       config: config.data,
-      defaultBriefVersion: DEFAULT_CHAPTER_BRIEF_VERSION,
       maxRunBudgetMicros: parsed.data.HARNESS_MAX_RUN_BUDGET_MICROS,
       synthetic,
     },
   };
-}
-
-/**
- * The chapter lane is parked on staging while one worker serves one queue.
- * Only new runs stop; every existing chapter run stays readable and reviewable.
- * A value that is neither "0" nor "1" pauses creation rather than guessing,
- * and the panel says so in words.
- */
-export function chapterCreationPaused(
-  environment: Record<string, string | undefined> = process.env
-): boolean {
-  const parsed = ChapterCreationSchema.safeParse(environment);
-  return !parsed.success || parsed.data.HARNESS_CHAPTERS_ENABLED === "0";
 }

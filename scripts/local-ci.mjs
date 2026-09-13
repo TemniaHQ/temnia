@@ -61,7 +61,7 @@ const STAGES = [
   "fetch immutable substrate model snapshots before offline loading tests",
   "turbo run build lint typecheck test (db isolation probes, pipeline schema contract, transcribe end to end, the substrate's model-loading tests)",
   "docker build apps/web + apps/pipeline",
-  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, transcript correction, chapter render/review/export)",
+  "playwright: web image → Garage/Temporal → pipeline image (upload, ingest, transcript correction, topic render/review/export)",
 ];
 let receivedSignal;
 

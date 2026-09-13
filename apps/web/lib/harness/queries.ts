@@ -108,20 +108,12 @@ export function artifactIdsForRevisionPointers(
   };
 }
 
-export function getChapterView(
-  sourceId: string,
-  selectedRunId?: string,
-  pendingMutationKey?: string
-): Promise<ChapterView> {
-  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, false);
-}
-
 export function getTopicView(
   sourceId: string,
   selectedRunId?: string,
   pendingMutationKey?: string
 ): Promise<ChapterView> {
-  return getHarnessView(sourceId, selectedRunId, pendingMutationKey, true);
+  return getHarnessView(sourceId, selectedRunId, pendingMutationKey);
 }
 
 /** Return scoped immutable references; the browser verifies bytes before editing. */
@@ -195,14 +187,11 @@ export function getTopicEditorialContext(
 function getHarnessView(
   sourceId: string,
   selectedRunId: string | undefined,
-  pendingMutationKey: string | undefined,
-  topics: boolean
+  pendingMutationKey: string | undefined
 ): Promise<ChapterView> {
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one scoped snapshot keeps run pointers, bounded events, and exact immutable descriptors mutually consistent
   return scoped(async (tx) => {
-    const policy = topics
-      ? sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`
-      : sql`COALESCE(${harnessRun.routeSnapshot}->>'editorialPolicy', '') NOT IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`;
+    const policy = sql`${harnessRun.routeSnapshot}->>'editorialPolicy' IN (${TOPIC_POLICY}, ${TOPIC_SELECTION_POLICY}, ${TOPIC_SELECTION_POLICY_V3})`;
     const rows = await tx
       .select()
       .from(harnessRun)
@@ -350,10 +339,7 @@ function getHarnessView(
                 sql`${harnessArtifact.metadata}->>'editSha256' = ${editSha256}`,
                 ...(kind === "render"
                   ? [
-                      sql`${harnessArtifact.metadata}->>'format' = ${topics ? "topic-renders/1" : "chapter-renders/1"}`,
-                      ...(topics
-                        ? []
-                        : [sql`${harnessArtifact.metadata} ? 'renderCount'`]),
+                      sql`${harnessArtifact.metadata}->>'format' = ${"topic-renders/1"}`,
                     ]
                   : [])
               )
@@ -440,18 +426,16 @@ function getHarnessView(
         "Chapter run exceeds the summary grounding report limit."
       );
     }
-    const topicAssessments = topics
-      ? await tx
-          .select()
-          .from(harnessArtifact)
-          .where(
-            and(
-              eq(harnessArtifact.sourceId, sourceId),
-              sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
-              sql`${harnessArtifact.metadata}->>'format' IN ('topic-assessment/1', 'topic-selection-assessment/2', 'topic-selection/2')`
-            )
-          )
-      : [];
+    const topicAssessments = await tx
+      .select()
+      .from(harnessArtifact)
+      .where(
+        and(
+          eq(harnessArtifact.sourceId, sourceId),
+          sql`${harnessArtifact.metadata}->>'runId' = ${selected.id}`,
+          sql`${harnessArtifact.metadata}->>'format' IN ('topic-assessment/1', 'topic-selection-assessment/2', 'topic-selection/2')`
+        )
+      );
     const artifacts = [
       ...editArtifacts,
       ...dependencies,
