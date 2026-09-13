@@ -868,7 +868,7 @@ class ChapterRunInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    brief: Annotated[str, Field(max_length=100000)]
+    brief: Annotated[str | None, Field(max_length=100000)] = None
     budgetMicros: Annotated[int, Field(ge=1, le=9007199254740991)]
     config: ChapterRunConfig
     requestKey: UUID

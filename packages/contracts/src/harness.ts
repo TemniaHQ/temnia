@@ -555,7 +555,9 @@ export type ChapterRunConfig = z.infer<typeof ChapterRunConfigSchema>;
 
 export const ChapterRunInputSchema = z
   .object({
-    brief: z.string().max(100_000),
+    // Absent means the worker applies the lane's single default brief and
+    // freezes the effective text on the run row.
+    brief: z.string().max(100_000).optional(),
     budgetMicros: safePositiveInteger(),
     config: ChapterRunConfigSchema,
     requestKey: z.uuid(),

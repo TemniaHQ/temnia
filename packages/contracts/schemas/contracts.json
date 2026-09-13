@@ -742,7 +742,6 @@
         }
       },
       "required": [
-        "brief",
         "budgetMicros",
         "config",
         "requestKey",
