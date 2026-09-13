@@ -717,7 +717,9 @@ class BudgetedModel(WrapperModel):
                 attempt_id=attempt.id,
                 owner_token=owner_token,
                 outcome_known=conclusive,
-                actual_cost_micros=None,
+                # A conclusive HTTP rejection happened before any generation: the cost is
+                # a known zero, so the reservation is released rather than left pending.
+                actual_cost_micros=0 if conclusive else None,
                 usage={},
                 error_code=f"http-{error.status_code}",
                 error_message="provider request ended with an HTTP error",

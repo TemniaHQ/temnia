@@ -454,8 +454,10 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 break
             saved = await self.save_selection(save)
             if saved.rejection is not None:
+                refused = "; ".join(saved.diagnostics) or "no diagnostic was recorded"
                 stop_reasons.append(
-                    "An invalid repair was retained without changing the prior assessed selection."
+                    "An invalid repair was retained without changing the prior assessed "
+                    f"selection. The repair was refused because: {refused}"
                 )
                 break
             if saved.semantic_key in seen:

@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from temnia_pipeline.contracts import (
+    TopicCandidate,
     TopicSelectionAssessment,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
@@ -210,6 +211,102 @@ def test_physical_only_extension_keeps_original_semantic_annotations() -> None:
     )
     with pytest.raises(HarnessValidationError, match="physical-only extension changed semantic"):
         apply_selection_patch(EVIDENCE, record, selection_sha, assessment, corrupt)
+
+
+def test_physical_only_finding_accepts_replace_extent_that_only_extends_the_edge() -> None:
+    """The prompt allows `replace_extent` for an extension; the rule judges the effect.
+
+    The first staging run lost a six-operation repair because one physical-only
+    correction, a one-sentence opening extension, carried this label.
+    """
+    rubric = make_rubric("Find worthwhile independent discussions.")
+    original = _candidate("discussion", 1, 2)
+    selected = draft(selected=True)
+    selected.proposal.candidates = [original]
+    record = TopicSelectionRecord.model_validate(
+        {
+            "format": "topic-selection/2",
+            "runId": uuid4(),
+            "origin": "model",
+            "parentSelectionSha256": None,
+            "rubric": rubric,
+            "rubricSha256": content_hash(rubric),
+            "evidenceSha256": content_hash(EVIDENCE),
+            "draft": selected,
+        }
+    )
+    selection_sha = content_hash(record)
+    assessment = TopicSelectionAssessment.model_validate(
+        {
+            "format": "topic-selection-assessment/2",
+            "runId": record.runId,
+            "selectionSha256": selection_sha,
+            "evidenceSha256": record.evidenceSha256,
+            "rubricSha256": record.rubricSha256,
+            "coldReviews": [],
+            "portfolioReview": None,
+            "proposerFamily": "author",
+            "verifierFamily": None,
+            "executionStatus": "needs_review",
+            "reasons": [],
+            "responseArtifacts": [],
+            "findings": [
+                {
+                    "id": "physical:discussion:opening",
+                    "kind": "physical_boundary_constraint",
+                    "severity": "required",
+                    "affectedCandidateIds": ["discussion"],
+                    "opportunityIds": ["useful-discussion"],
+                    "evidenceSpans": [_span(0, 1)],
+                    "reason": "The opening requires a wider physical extent.",
+                }
+            ],
+        }
+    )
+    extended = original.model_copy(
+        update={
+            "firstSentenceId": "s000000",
+            "requiredContextSpans": [_span(0)],
+            "reason": "Prose may change; the annotation is normalized.",
+        }
+    )
+
+    def patch_with(replacement: TopicCandidate) -> TopicSelectionPatchV3:
+        return TopicSelectionPatchV3.model_validate(
+            {
+                "baseSelectionSha256": selection_sha,
+                "evidenceSha256": record.evidenceSha256,
+                "rubricSha256": record.rubricSha256,
+                "summary": "Widen the physical opening.",
+                "operations": [
+                    {
+                        "id": "widen",
+                        "kind": "replace_extent",
+                        "findingIds": ["physical:discussion:opening"],
+                        "affectedCandidateIds": ["discussion"],
+                        "replacementCandidates": [replacement],
+                        "opportunities": [],
+                        "reason": "Include the prior sentence to obtain a safe opening.",
+                    }
+                ],
+            }
+        )
+
+    output = apply_selection_patch(
+        EVIDENCE, record, selection_sha, assessment, patch_with(extended)
+    )
+    assert output.proposal.candidates[0].firstSentenceId == "s000000"
+    assert output.proposal.candidates[0].lastSentenceId == original.lastSentenceId
+    both_edges = extended.model_copy(update={"lastSentenceId": "s000003"})
+    trimmed = original.model_copy(update={"firstSentenceId": "s000002"})
+    wrong_edge = original.model_copy(update={"lastSentenceId": "s000003"})
+    for restructured in (both_edges, trimmed):
+        with pytest.raises(HarnessValidationError, match="authorize an edge extension"):
+            apply_selection_patch(
+                EVIDENCE, record, selection_sha, assessment, patch_with(restructured)
+            )
+    with pytest.raises(HarnessValidationError, match="changed an unaffected edge"):
+        apply_selection_patch(EVIDENCE, record, selection_sha, assessment, patch_with(wrong_edge))
 
 
 def test_scoped_extent_replacement_can_trim_and_extend_both_edges() -> None:

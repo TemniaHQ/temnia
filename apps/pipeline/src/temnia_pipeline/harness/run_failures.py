@@ -51,6 +51,12 @@ def known_failure_details(  # noqa: PLR0911
         return "failed", "The run reached its configured physical dispatch limit."
     if error_type == "KnownProviderRejection":
         rejection = _cause_message(cause) or "A route rejected the request."
+        if "(HTTP 402)" in rejection:
+            return "failed", (
+                f"{rejection} The gateway account has insufficient credits or the API key has "
+                "a spending limit; top up or raise the limit, then start a new run. Nothing "
+                "was charged or retried."
+            )
         return "failed", (
             f"{rejection} Change the route snapshot and start a new run; nothing was retried."
         )

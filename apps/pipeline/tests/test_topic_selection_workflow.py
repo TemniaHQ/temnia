@@ -509,6 +509,7 @@ async def test_source_invalid_patch_retains_the_prior_assessed_selection(
     assert run.final_context.selection == selections[0]
     assert any(name == "topic-selection-rejection/2" for name, _ in run.saved)
     assert "invalid repair" in (result.errorMessage or "")
+    assert "The repair was refused because: " in (result.errorMessage or "")
     assert run.render_count == 0
 
 
