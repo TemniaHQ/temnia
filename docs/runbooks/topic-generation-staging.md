@@ -78,6 +78,22 @@ First run: Karma. Expect `needs_review`, nine to eleven videos, about $1, the ru
 export. Second run: World Order (151 min); note each full-source call's duration against the
 payload-scaled deadline. Record the run IDs, cost and durations in the day log.
 
+## Rendering on the GPU
+
+The media app on Modal carries `render_sections`; the deployment file decides whether the
+worker uses it. Once, from a checkout with Modal credentials:
+
+```bash
+cd apps/pipeline && uv run modal deploy --env staging -m temnia_pipeline.modal_app
+```
+
+then in `apps/pipeline/harness/staging.json` set `render` to
+`{"backend": "modal", "encoder": "h264_nvenc"}` and merge. The worker refuses to boot with
+`h264_nvenc` on the local backend, so the order is app first, file second. A run's renders
+then show `render-remote` in the activity heartbeat with the Modal call id; a worker restart
+reattaches to that call rather than rendering twice. GPU and CPU renders are different media
+artifacts, so switching back never reuses a file from the other encoder.
+
 ## Changing the roster or a limit
 
 Edit `apps/pipeline/harness/staging.json` in a PR. A different roster is a new snapshot

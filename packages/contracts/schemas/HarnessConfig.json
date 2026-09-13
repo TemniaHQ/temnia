@@ -38,6 +38,9 @@
           ],
           "minLength": 1
         },
+        "render": {
+          "$ref": "#/$defs/HarnessConfigRender"
+        },
         "routeSnapshot": {
           "$ref": "#/$defs/HarnessConfigRouteSnapshot"
         },
@@ -57,6 +60,7 @@
         "gateway",
         "limits",
         "recordedFixturePath",
+        "render",
         "routeSnapshot",
         "topicShotDetector"
       ],
@@ -122,6 +126,32 @@
       ],
       "additionalProperties": false,
       "title": "HarnessConfigLimits"
+    },
+    "HarnessConfigRender": {
+      "$id": "#/$defs/HarnessConfigRender",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "local",
+            "modal"
+          ]
+        },
+        "encoder": {
+          "type": "string",
+          "enum": [
+            "libx264",
+            "h264_nvenc"
+          ]
+        }
+      },
+      "required": [
+        "backend",
+        "encoder"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessConfigRender"
     },
     "HarnessConfigRouteSnapshot": {
       "$id": "#/$defs/HarnessConfigRouteSnapshot",

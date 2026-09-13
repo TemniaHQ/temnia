@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.gateway_policy import GatewayName
 
 HarnessBackend = Literal["gateway", "recorded"]
+RenderBackend = Literal["local", "modal"]
+RenderEncoder = Literal["libx264", "h264_nvenc"]
 TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
 DEFAULT_MAX_RUN_BUDGET_MICROS = 10_000_000
 REQUIRED_ROUTE_SEATS = frozenset({"propose", "summary", "verify"})
@@ -48,6 +50,18 @@ MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
 CONFIG_PATH_VARIABLE = "HARNESS_CONFIG_PATH"
 SECRET_VARIABLES = frozenset({"OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY"})
 log = logging.getLogger("temnia.harness.settings")
+
+
+def _render_backend(value: str) -> RenderBackend:
+    if value not in {"local", "modal"}:
+        raise ValueError("HARNESS_RENDER_BACKEND must be local or modal")
+    return cast("RenderBackend", value)
+
+
+def _render_encoder(value: str) -> RenderEncoder:
+    if value not in {"libx264", "h264_nvenc"}:
+        raise ValueError("HARNESS_RENDER_ENCODER must be libx264 or h264_nvenc")
+    return cast("RenderEncoder", value)
 
 
 def _flag(env: Mapping[str, str], name: str, default: bool = False) -> bool:
@@ -89,6 +103,9 @@ class HarnessSettings:
     config_path: Path | None = None
     max_in_flight_per_route: int = 2
     min_dispatch_interval_seconds: float = 1.0
+    render_backend: RenderBackend = "local"
+    render_encoder: RenderEncoder = "libx264"
+    render_progress_dict: str = "temnia-render-progress"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> HarnessSettings:
@@ -128,6 +145,9 @@ class HarnessSettings:
             min_dispatch_interval_seconds=float(
                 values.get("HARNESS_MIN_DISPATCH_INTERVAL_SECONDS", "1")
             ),
+            render_backend=_render_backend(values.get("HARNESS_RENDER_BACKEND", "local")),
+            render_encoder=_render_encoder(values.get("HARNESS_RENDER_ENCODER", "libx264")),
+            render_progress_dict=values.get("MODAL_RENDER_PROGRESS_DICT", "temnia-render-progress"),
             gateway=cast("GatewayName", raw_gateway),
             gateway_api_key=values.get(
                 "OPENROUTER_API_KEY" if raw_gateway == "openrouter" else "AI_GATEWAY_API_KEY"
@@ -175,6 +195,9 @@ class HarnessSettings:
             max_render_concurrency=config.limits.maxRenderConcurrency,
             max_in_flight_per_route=config.limits.maxInFlightPerRoute,
             min_dispatch_interval_seconds=config.limits.minDispatchIntervalSeconds,
+            render_backend=_render_backend(str(config.render.backend)),
+            render_encoder=_render_encoder(str(config.render.encoder)),
+            render_progress_dict=env.get("MODAL_RENDER_PROGRESS_DICT", "temnia-render-progress"),
             gateway=gateway,
             gateway_api_key=env.get(
                 "OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY"
@@ -248,6 +271,10 @@ class HarnessSettings:
                     "every standalone-topic stage"
                 )
         config = self.allowed_config()
+        if self.render_backend == "local" and self.render_encoder != "libx264":
+            raise RuntimeError(
+                "local rendering encodes with libx264; h264_nvenc needs the Modal backend"
+            )
         if self.max_run_budget_micros <= 0:
             raise RuntimeError("HARNESS_MAX_RUN_BUDGET_MICROS must be positive")
         snapshot = load_route_snapshot(self.route_snapshot_path)

@@ -72,10 +72,42 @@ class ChapterRenderConfig:
 
     def __post_init__(self) -> None:
         """Refuse settings outside the implemented codec contract."""
-        if self.video_codec != "libx264" or self.audio_codec != "aac":
-            raise ValueError("chapter renderer supports only libx264 video and AAC audio")
+        if self.video_codec not in VIDEO_ENCODERS or self.audio_codec != "aac":
+            raise ValueError("chapter renderer supports only libx264 or h264_nvenc video and AAC")
         if not 0 <= self.video_crf <= MAX_X264_CRF:
             raise ValueError("video CRF must be between 0 and 51")
+        if self.video_codec == "h264_nvenc" and self.video_preset not in NVENC_PRESETS:
+            raise ValueError("h264_nvenc presets are p1 to p7")
+
+    def video_args(self) -> list[str]:
+        """The encoder's own quality flags: x264 takes a CRF, NVENC a constant quality."""
+        if self.video_codec == "h264_nvenc":
+            return [
+                "-c:v",
+                "h264_nvenc",
+                "-preset:v",
+                self.video_preset,
+                "-rc:v",
+                "vbr",
+                "-cq:v",
+                str(self.video_crf),
+                "-b:v",
+                "0",
+                "-profile:v",
+                "high",
+            ]
+        return [
+            "-c:v",
+            self.video_codec,
+            "-preset:v",
+            self.video_preset,
+            "-crf:v",
+            str(self.video_crf),
+        ]
+
+
+VIDEO_ENCODERS = frozenset({"libx264", "h264_nvenc"})
+NVENC_PRESETS = frozenset({f"p{level}" for level in range(1, 8)})
 
 
 def _fraction(value: object, name: str, *, positive: bool = False) -> Fraction:
@@ -374,18 +406,7 @@ async def render_chapter(  # noqa: C901, PLR0912, PLR0915
         args.extend(["-map", "[a]"])
     args.extend(["-sn", "-dn", "-t", _seconds(end - start)])
     if timeline.has_video:
-        args.extend(
-            [
-                "-fps_mode:v:0",
-                "passthrough",
-                "-c:v",
-                config.video_codec,
-                "-preset:v",
-                config.video_preset,
-                "-crf:v",
-                str(config.video_crf),
-            ]
-        )
+        args.extend(["-fps_mode:v:0", "passthrough", *config.video_args()])
         if timeline.rotation:
             args.extend(
                 [

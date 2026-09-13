@@ -31,6 +31,8 @@ decided belongs to an organization and it never sees an organization id.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -524,6 +526,126 @@ async def _transcribe(  # noqa: PLR0913
         gpu_seconds=round(time.monotonic() - started, 3),
         gpu=GPU,
     ).model_dump(mode="json", by_alias=True)
+
+
+RENDER_TIMEOUT_SECONDS = 2 * 60 * 60
+RENDER_CPUS = 8
+RENDER_MEMORY_MB = 16384
+RENDER_CONCURRENCY = 2
+DEFAULT_RENDER_DICT = "temnia-render-progress"
+
+
+async def _write_render_progress(stage: str, percent: int, section_id: str | None) -> None:
+    call_id = modal.current_function_call_id()
+    if call_id is None:
+        return
+    try:
+        notes = modal.Dict.from_name(
+            os.environ.get("MODAL_RENDER_PROGRESS_DICT", DEFAULT_RENDER_DICT),
+            create_if_missing=True,
+        )
+        await notes.put.aio(call_id, {"stage": stage, "percent": percent, "section_id": section_id})
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+@app.function(  # pyright: ignore[reportUnknownMemberType]
+    gpu=GPU,
+    cpu=RENDER_CPUS,
+    memory=RENDER_MEMORY_MB,
+    timeout=RENDER_TIMEOUT_SECONDS,
+    secrets=[modal.Secret.from_name(R2_SECRET)],
+)
+@capture_outcome
+async def render_sections(job: dict[str, Any]) -> dict[str, Any]:
+    """Render every section of one revision from one download of the master, on the card.
+
+    The exact-interval command is the worker's own `render_chapter`; only the encoder
+    differs. Each output is hashed here and verified again by the worker after download,
+    so a truncated upload can never become a published video.
+    """
+    from temnia_pipeline.harness.rendering import timeline_identity  # noqa: PLC0415
+    from temnia_pipeline.media.chapters import (  # noqa: PLC0415
+        ChapterRenderConfig,
+        inspect_timeline,
+        render_chapter,
+    )
+    from temnia_pipeline.render_remote import (  # noqa: PLC0415
+        RenderJob,
+        RenderOutput,
+        RenderResult,
+    )
+
+    settings = StorageSettings.require_env(f"the Modal Secret {R2_SECRET!r}")
+    request = RenderJob.model_validate(job)
+    store = make_store(settings)
+    scratch = scratch_dir("render")
+    try:
+        assert_disk_headroom(scratch, 2 * request.size_bytes + DISK_HEADROOM_BYTES)
+        master = scratch / ("master" + Path(request.master_key).suffix)
+        await _write_render_progress("download", 0, None)
+        await download(store, request.master_key, master, expected_size=request.size_bytes)
+        digest = hashlib.sha256()
+        with master.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != request.master_sha256:
+            msg = "downloaded master bytes differ from the job's master hash"
+            raise RuntimeError(msg)
+        timeline = await inspect_timeline(master, ffprobe="/usr/local/bin/ffprobe")
+        if timeline_identity(timeline) != request.timeline:
+            msg = "master timeline differs from the frozen evidence timeline"
+            raise RuntimeError(msg)
+        config = ChapterRenderConfig(**request.config)
+        gate = asyncio.Semaphore(RENDER_CONCURRENCY)
+        outputs: list[RenderOutput] = []
+
+        async def one(section: Any) -> RenderOutput:  # noqa: ANN401
+            async with gate:
+                path = scratch / f"{section.section_id}.mp4"
+                last = 0.0
+
+                async def progress(value: float) -> None:
+                    nonlocal last
+                    now = time.monotonic()
+                    if now - last >= PROGRESS_INTERVAL_SECONDS:
+                        last = now
+                        await _write_render_progress(
+                            "render", max(0, min(100, int(value * 100))), section.section_id
+                        )
+
+                await render_chapter(
+                    FFMPEG,
+                    master,
+                    path,
+                    start=section.start,
+                    end=section.end,
+                    timeline=timeline,
+                    config=config,
+                    on_progress=progress,
+                    timeout_seconds=RENDER_TIMEOUT_SECONDS,
+                )
+                sha = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                        sha.update(chunk)
+                await _write_render_progress("publish", 0, section.section_id)
+                size = await upload_file(store, section.output_key, path)
+                path.unlink(missing_ok=True)
+                return RenderOutput(
+                    section_id=section.section_id,
+                    output_key=section.output_key,
+                    sha256=sha.hexdigest(),
+                    size_bytes=size,
+                )
+
+        outputs = list(await asyncio.gather(*(one(section) for section in request.sections)))
+        await _write_render_progress("publish", 100, None)
+        return RenderResult(
+            outputs=outputs, encoder=config.video_codec, call_id=modal.current_function_call_id()
+        ).model_dump(mode="json")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.function()  # pyright: ignore[reportUnknownMemberType]

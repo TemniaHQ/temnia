@@ -73,6 +73,7 @@ def _write_config(directory: Path, **overrides: object) -> Path:
         "topicShotDetector": "pyscenedetect-adaptive",
         "allowRecorded": True,
         "recordedFixturePath": "recorded.json",
+        "render": {"backend": "local", "encoder": "libx264"},
         **overrides,
     }
     path = directory / "deployment.json"

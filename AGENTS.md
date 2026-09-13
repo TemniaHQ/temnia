@@ -2,6 +2,21 @@
 
 ## Decisions
 
+**2026-09-13 — Topic videos render on the Modal GPU; the worker verifies and publishes.**
+Second part of `docs/plans/media-placement-360-view.md`. `render_sections` in the media app
+renders every missing section of a revision from one download of the master with the
+worker's own `render_chapter` command and `h264_nvenc` (constant quality 18, preset p5,
+high profile); the worker's `_render_missing_sections_remotely` builds the job, spawns or
+reattaches by the call id carried on the activity heartbeat, verifies every output's size in
+the store and its hash after download, and the per-section loop publishes the file exactly as
+a local render. `ChapterRenderConfig` carries the encoder, so GPU and CPU renders are
+different media artifacts. Smart-cut (copying the master's GOPs and re-encoding only the
+edges) is deferred: mixing parameter sets inside one MP4 is not something browser decoders
+promise to play, and the panel plays these files in the browser. The deployment file's
+`render.backend`/`render.encoder` selects the path; staging stays `local`/`libx264` until the
+media app is deployed with the new function, then one commit switches it. A local backend
+refuses the GPU encoder at boot.
+
 **2026-09-13 — Source sensors are measured at ingest, once; a topic run downloads nothing
 until it renders.** Rajesh asked which steps belong on the GPU and which on the CPU; the plan
 is `docs/plans/media-placement-360-view.md`. The first run on every source used to pay the
