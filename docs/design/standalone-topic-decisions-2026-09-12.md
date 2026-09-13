@@ -83,6 +83,12 @@ flag.
 
 ## 2. Qualify `standalone-topics/2` on staging before enabling it
 
+> **Superseded on 13 September 2026.** The qualification manifest is no longer a gate
+> and the per-version flags are removed; admission is in-run and the ledger protects
+> spend. See the 2026-09-13 AGENTS.md entry and
+> [topic-generation-staging-360-view.md](../plans/topic-generation-staging-360-view.md).
+> The procedure below is kept as the historical record of the v2 admission design.
+
 v2 (`TopicSelectionWorkflow`) is implemented and is the topic-panel default.
 It is not live. New v2 intents stay refused until exact four-schema gateway
 qualification is bound to the **current** production route snapshot and both

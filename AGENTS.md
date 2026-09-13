@@ -2,39 +2,38 @@
 
 ## Decisions
 
-**2026-09-12 — New topic runs stick to FFmpeg `scdet`; AdaptiveDetector is not the default without a trial.**
-Rajesh asked which scene detector to keep if the requested AdaptiveDetector trial
-is not going to run. Keep `scdet`. On the verified Karma master the two detectors
-agreed on 403 cuts (428 adaptive vs 409 `scdet`) while AdaptiveDetector took
-211.5 s against 15.6 s; that is agreement and cost, not editorial ranking.
-AdaptiveDetector’s motion-robust baseline matters for handheld or continuously
-moving picture, not a typical locked-off podcast camera switch. Neither detector
-establishes discussion completion. Record:
-[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md) §1.
-This supersedes the 10 September “use AdaptiveDetector for the next topic trial”
-default. Historical snapshots keep their frozen detector. AdaptiveDetector remains
-an explicit comparison. Do not broaden this into detector shopping or an
-orchestration change. `main` still defaults `pyscenedetect-adaptive` after PR #40;
-apply or withdraw this entry in the next PR that touches `harness/settings.py`.
-
-**2026-09-12 — Topic blockers are editorial operations and calibration; no agent framework.**
-A read-only stage review (evidence, author, review, repair, compile) and a prompt review, each
-re-checked against `main` after PRs #39 and #40, are recorded with per-finding status in
-[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md)
-§3–§9. Open after #40: admission counts one byte as one token with no topic hierarchy, so a
-two-hour source is refused before any editorial question; a cited span outside a candidate's
-extent is refused rather than unioned into it; compiler "pauses" are word gaps, not measured
-silence, and Silero is a binary veto with no fade tier; no critic calibration set and no
-listening judge; every prompt is a user-turn rule list with no `instructions=` and no
-`.describe()` on contract fields; internal topic structure inside one compound candidate is
-unobserved (the r20/r25 failure). Rajesh asked whether LangChain, LangGraph or Google ADK should
-supply checkpoints, resumes or agent loops: no. Their Temporal plugins disable their own
-persistence and add notation only, and Temnia's dispatch guards live inside the PydanticAI model
-activity; the 2026-09-07 typed-program decision stands (§5). KernelCPD change-points are built but
-unreachable from production (`segmenter: Literal["sat"]`); run them as scored hints in a code-side
-source map, never as compiler candidates, measured on the calibration set first (§8). No author or
-reviewer seat is finalized; §9 records why and what an audition needs. Do not present the nine r11
-videos or any later Karma run as acceptance.
+**2026-09-13 — Topic generation on staging is one button, one program, one worker; the
+qualification manifest is no longer a gate.** Rajesh could not start the current program on
+staging: the default button refused for want of a per-version flag on two processes and a
+bound five-stage qualification manifest that every prompt or schema bump invalidated, and
+the routes that finished full-source runs were not in the worker's snapshot. New topic runs
+start only `standalone-topics/3` (its DB literal and workflow type name are unchanged); `/1`
+and `/2` are hidden from the web now and their producer code is deleted in the next PR once a
+staging query shows no non-terminal run of either. The manifest, `bind-topics`, the manifest
+formats and the `HARNESS_TOPIC_SELECTION_*` flags and paths are removed. Admission is in-run:
+the first settled call on a snapshot, route, stage and program identity is the proof; a
+provider refusal ends the run `failed` with a message naming route, stage and HTTP status and
+the charge retained; `outcome_unknown` now carries a message. The ledger's reservation,
+receipt and unknown fences are unchanged; `qualify_harness_gateway.py run` remains an
+optional pre-flight that binds nothing. Chapters (navigation partitions) and topics
+(standalone videos) are distinct lanes since 10 September; only topics are the product now,
+so the chapter lane is parked on staging with `HARNESS_CHAPTERS_ENABLED=0` (creation refused,
+existing runs reviewable) and the one worker carries the OpenRouter topic snapshot. OpenRouter
+is the gateway because the Vercel full-source calls timed out repeatedly. The single default
+brief is the Python `EDITORIAL_BRIEF`; the web omits `brief` when the box is empty and the
+worker freezes the effective text on the run; every topic run carries its program manifest;
+the shot detector default is `scdet` in code. Worker boot checks every pool route against the
+effective topic output ceiling; chapter starts keep their strict run-start check. The staging
+roster (Kimi K3/Fireworks author first, DeepSeek V4 Pro/Fireworks second, Gemini 3.8
+Flash/Vertex reviewer first; Astra excluded) is the r25 snapshot reordered and remains
+provisional under the no-default-vendor rule: it finishes runs, it has not won. Acceptance for
+the first staging run is sentence-complete cuts with the pause owned by the preceding video;
+topic-ownership defects are corrected by hand and the compound-candidate gap is the next
+program problem. Overlap between standalone videos is allowed for setup context both videos
+need, never for core, and any overlap longer than a short premise is an ownership question
+the reviewer must answer. This supersedes the 2026-09-11 four-schema qualification
+requirement and the decisions doc §2 procedure. Plan:
+`docs/plans/topic-generation-staging-360-view.md`.
 
 **2026-09-12 — Human playback accepts sentence-complete Karma cuts; trailing pauses and
 semantic handoffs are the remaining release refinements.** Rajesh reviewed the nine admitted r11
@@ -111,6 +110,60 @@ invalid and retained no changed selection. The run ended `needs_review`. No test
 an editorial winner. The measured remaining representation gap is internal topic structure inside
 one candidate; adjacent overlap and handoff judgments do not observe it. Do not start more model
 arms or add source-specific rules to hide that program limitation.
+
+**2026-09-12 — New topic runs stick to FFmpeg `scdet`; AdaptiveDetector is not the default without a trial.**
+Rajesh asked which scene detector to keep if the requested AdaptiveDetector trial
+is not going to run. Keep `scdet`. On the verified Karma master the two detectors
+agreed on 403 cuts (428 adaptive vs 409 `scdet`) while AdaptiveDetector took
+211.5 s against 15.6 s; that is agreement and cost, not editorial ranking.
+AdaptiveDetector’s motion-robust baseline matters for handheld or continuously
+moving picture, not a typical locked-off podcast camera switch. Neither detector
+establishes discussion completion. Record:
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md) §1.
+This supersedes the 10 September “use AdaptiveDetector for the next topic trial”
+default. Historical snapshots keep their frozen detector. AdaptiveDetector remains
+an explicit comparison. Do not broaden this into detector shopping or an
+orchestration change. This entry is not yet applied in code. As of PR #40 new runs
+take `harness/settings.py` (`HARNESS_TOPIC_SHOT_DETECTOR`, default
+`pyscenedetect-adaptive`) and `topic_experiment.py` defaults to the same; the `scdet` in
+`runtime_types.py` and `runs.py` is only the fallback for snapshots recorded before the
+field existed. The v3 record and the 12 September runs above record AdaptiveDetector. The
+next settings PR changes the code default and the staging variable to `scdet`; until then
+state the detector explicitly per run. Do not leave both defaults standing.
+
+**2026-09-12 — Topic blockers are editorial operations and calibration; no agent framework.**
+A read-only review of the evidence, author, review, repair and compile stages, re-checked
+against `main` after PR #39 (`standalone-topics/3`) and again after PR #40, is recorded in
+[standalone-topic-decisions-2026-09-12.md](docs/design/standalone-topic-decisions-2026-09-12.md)
+§3–§9 with per-finding status. #39 closed the control failures (inventory-first by the reviewer
+family, rationale-free source critic, `replace_extent`, three re-reviewed repairs, a select-only
+render gate). Still open: byte-as-token admission with no topic hierarchy (a two-hour source is
+refused), out-of-extent spans refused instead of unioned, word-gap "pauses" and a binary Silero
+veto in the compiler, no critic calibration set, no listening judge, and prompts that are user-turn
+rule lists with no `instructions=` and no `.describe()` on contract fields. Rajesh asked whether
+LangChain/LangGraph/Google ADK should supply checkpoints, resumes or agent loops: no. Their
+Temporal plugins disable their own persistence and add notation only; Temnia's guards live inside
+the PydanticAI model activity. The 2026-09-07 typed-program decision stands (§5). Rajesh's first
+playback review of the nine admitted r11 Karma videos (13 September, §7) is the measured result
+recorded in the entry above: every cut physically complete, no sentence broken at either edge, two
+defects. Their root causes are code-side, and #40 answered both in part. The trailing pause was
+split because `topic-compiler/2` targeted the word-gap midpoint at every transition on a
+first/mid/last grid; `topic-compiler/3` now gives the whole pause to the preceding video, which
+closes the ending. The opening now starts at the latest safe instant before the first selected
+word with no lead-in; whether a 200–300 ms lead-in sounds better is a listening preference under
+C2, not a defect, and no acoustic silence is measured yet (E2). Two videos shared core content
+(mantra, videos 4 and 5) because core overlap was never computed; `topic-selection-portfolio/4`
+now hands every exact overlap and adjacent handoff to the source reviewer with a required typed
+classification. The classification is still the model's: the deterministic core∩core finding
+proposed in §7b was not adopted, and r20/r25 showed the loophole neither can see, a single compound
+candidate with no overlap to classify. That internal-structure gap is the program's open problem,
+as the entry above states; give it a program answer before starting more model arms (§9).
+One informal review is not a labeled set. KernelCPD change-points are built but unreachable from
+production (`segmenter: Literal["sat"]`); run them as scored hints in a code-side source map,
+never as compiler candidates, measured on the calibration set first (§8). No author or reviewer
+seat is finalized. Transport ceiling is now a selection criterion in its own right: Astra failed
+two full-Karma author calls and Kimi one full-source review inside the frozen 540 s, so those
+routes cannot be auditioned on longer sources at all (§9).
 
 **2026-09-11 — OpenRouter is an explicit model-audition transport.** Rajesh merged
 PR #37 and configured the staging pipeline key. The

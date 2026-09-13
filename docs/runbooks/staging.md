@@ -405,6 +405,12 @@ for writing raises `PermissionError`. Docker still reports a writable bind; the 
 file's ownership and permissions, not protection against container root. Retain the hash-addressed
 file and create a new one for every route change.
 
+## 4c. Topic generation
+
+The harness environment for standalone topic videos, the route snapshot mount, the
+parked chapter lane and the first-run checklist are in
+[topic-generation-staging.md](topic-generation-staging.md).
+
 ## 5. Rules that follow from this setup
 
 - The Hostinger panel's Reboot is a hard reset: no shutdown sequence in the guest, about a minute of
