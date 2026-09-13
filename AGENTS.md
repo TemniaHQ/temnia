@@ -23,7 +23,14 @@ is the gateway because the Vercel full-source calls timed out repeatedly. The si
 brief is the Python `EDITORIAL_BRIEF`; the web omits `brief` when the box is empty and the
 worker freezes the effective text on the run; every topic run carries its program manifest;
 the shot detector default is `scdet` in code. Worker boot checks every pool route against the
-effective topic output ceiling; chapter starts keep their strict run-start check. The staging
+effective topic output ceiling; chapter starts keep their strict run-start check. Long sources:
+admission is `admission/2`, input tokens = ceil(bytes / 2) + protocol overhead (the old 1:1 rule
+refused a 2.5-hour source on every 256k route; the 512 KiB payload cap stays; each run records its
+admission version in the frozen snapshot); a route's frozen aggregate deadline is the unit per
+128 KiB of payload, the model activity's start-to-close is the effective deadline plus 60 s, and
+payloads up to 128 KiB keep exactly the frozen values so recorded runs are unchanged. The per-call
+activity option reaches pydantic-ai through a subclass of its private durable model operation on
+the pinned version; an upgrade that renames it fails at import and the gate, never silently. The staging
 roster (Kimi K3/Fireworks author first, DeepSeek V4 Pro/Fireworks second, Gemini 3.8
 Flash/Vertex reviewer first; Astra excluded) is the r25 snapshot reordered and remains
 provisional under the no-default-vendor rule: it finishes runs, it has not won. Acceptance for
