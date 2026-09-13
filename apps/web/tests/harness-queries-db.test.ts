@@ -222,31 +222,39 @@ suite("chapter view Postgres dependency ownership", () => {
     });
   });
 
-  it("keeps topic history to topic policies, including exact run selection", async () => {
+  it("keeps topic history to the one topic policy, including exact run selection", async () => {
     if (!owner) {
       return;
     }
     const topicRunId = randomUUID();
-    await owner.query(
-      `INSERT INTO harness_run
-         (id, organization_id, source_id, lane, status, brief, request_key,
-          budget_micros, config, route_snapshot, evidence_artifact_id, current_revision)
-       VALUES ($1, $2, $3, 'chapters', 'needs_review', 'topic fixture', $4,
-          1000000, '{"backend":"recorded"}'::jsonb,
-          '{"editorialPolicy":"standalone-topics/1"}'::jsonb, $5, 0)`,
-      [
-        topicRunId,
-        SEEDED_SCOPE.organizationId,
-        sourceId,
-        randomUUID(),
-        evidenceId,
-      ]
-    );
+    const foreignRunId = randomUUID();
+    for (const [id, policy] of [
+      [topicRunId, "standalone-topics/3"],
+      [foreignRunId, "standalone-topics/1"],
+    ] as const) {
+      await owner.query(
+        `INSERT INTO harness_run
+           (id, organization_id, source_id, lane, status, brief, request_key,
+            budget_micros, config, route_snapshot, evidence_artifact_id, current_revision)
+         VALUES ($1, $2, $3, 'chapters', 'needs_review', 'topic fixture', $4,
+            1000000, '{"backend":"recorded"}'::jsonb,
+            jsonb_build_object('editorialPolicy', $6::text), $5, 0)`,
+        [
+          id,
+          SEEDED_SCOPE.organizationId,
+          sourceId,
+          randomUUID(),
+          evidenceId,
+          policy,
+        ]
+      );
+    }
     const [topics, exact, unknown] = await Promise.all([
       getTopicView(sourceId),
       getTopicView(sourceId, runId),
       getTopicView(sourceId, randomUUID()),
     ]);
+    // The deleted programs' rows are not history: only the one policy is listed.
     expect(topics.runs.map((item) => item.id)).toEqual([topicRunId, runId]);
     expect(topics.run?.id).toBe(topicRunId);
     expect(exact.run?.id).toBe(runId);
