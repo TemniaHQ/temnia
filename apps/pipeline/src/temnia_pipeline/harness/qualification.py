@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
-from uuid import UUID
 
 import httpx
 import httpx2
@@ -23,15 +22,10 @@ from pydantic_ai import Agent, ModelResponse, NativeOutput
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models.wrapper import WrapperModel
 
-from temnia_pipeline.contracts import ChapterProposal
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.cassettes import (
     CassetteMetadata,
     request_fingerprint,
-)
-from temnia_pipeline.harness.editorial import (
-    EDITORIAL_REPAIR_SCHEMA_VERSION,
-    EDITORIAL_VERDICT_SCHEMA_VERSION,
 )
 from temnia_pipeline.harness.gateway import (
     CostObservation,
@@ -47,26 +41,6 @@ from temnia_pipeline.harness.gateway import (
 from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noqa: TC001
 from temnia_pipeline.harness.models import (
     COMPACT_PROPOSAL_SCHEMA_VERSION,
-    CompactChapterProposal,
-    EditorialVerdictV1,
-    HierarchicalSummaryV1,
-    canonical_chapter_proposal,
-)
-from temnia_pipeline.harness.prompts.chapter import (
-    COMPACT_PROPOSE_PROMPT_VERSION,
-    PROPOSE_PROMPT_VERSION,
-    SUMMARIZE_PROMPT_VERSION,
-    VERIFY_PROMPT_VERSION,
-    PromptSentence,
-    PromptWindow,
-    render_compact_proposal_prompt,
-    render_proposal_prompt,
-    render_summary_prompt,
-    render_verifier_prompt,
-)
-from temnia_pipeline.harness.qualification_editorial import (
-    editorial_qualification_prompts,
-    validate_editorial_qualification_output,
 )
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_SCHEMAS,
@@ -133,11 +107,6 @@ def _schema_version(stage: str, limits: QualificationLimits) -> str:
         return TOPIC_SELECTION_V3_SCHEMAS[stage]
     if limits.suite == "topic-selection":
         return TOPIC_SELECTION_SCHEMAS[stage]
-    if limits.suite == "editorial":
-        return {
-            "editorial_assess": EDITORIAL_VERDICT_SCHEMA_VERSION,
-            "editorial_repair": EDITORIAL_REPAIR_SCHEMA_VERSION,
-        }[stage]
     if stage == "proposal" and limits.proposal_wire == "compact":
         return COMPACT_PROPOSAL_SCHEMA_VERSION
     return f"qualification-{stage}/1"
@@ -797,94 +766,19 @@ def _provisional_route(candidate: CandidateRoute, observed: date) -> RouteEntry:
     )
 
 
-def qualification_window() -> PromptWindow:
-    """Return the authored, non-customer evidence shared by every candidate."""
-    return PromptWindow(
-        sourceId=UUID("0192e8a0-0000-7000-8000-000000000099"),
-        evidenceSha256="0" * 64,
-        windowId="qualification-window",
-        firstSentenceId="sentence-1",
-        lastSentenceId="sentence-2",
-        sentences=(
-            PromptSentence(
-                id="sentence-1",
-                text="A presenter introduces a solar-powered water pump.",
-                firstWordId="word-1",
-                lastWordId="word-8",
-                speakers=("Presenter",),
-            ),
-            PromptSentence(
-                id="sentence-2",
-                text="The presenter then explains its battery backup.",
-                firstWordId="word-9",
-                lastWordId="word-15",
-                speakers=("Presenter",),
-            ),
-        ),
-    )
-
-
-def _fixed_proposal() -> dict[str, Any]:
-    return {
-        "version": 1,
-        "summary": "The pump and its battery backup form one chapter.",
-        "sections": [
-            {
-                "id": "chapter-1",
-                "kind": "keep",
-                "title": "Solar pump and backup",
-                "reason": "Both sentences describe the same product.",
-                "firstSentenceId": "sentence-1",
-                "lastSentenceId": "sentence-2",
-                "quoteWordIds": ["word-1", "word-9"],
-            }
-        ],
-    }
-
-
 def qualification_prompts(
     proposal_wire: Literal["canonical", "compact"] = "canonical",
     suite: QualificationSuite = "legacy",
 ) -> dict[str, tuple[str, type[Any], str]]:
-    """Render the exact production prompts and output types for the three seats."""
+    """Render the exact production prompts and output types for the topic seats."""
+    _ = proposal_wire
     if suite == "topic-selection-v3":
         return dict(topic_selection_qualification_prompts("standalone-topics/3"))
     if suite == "topic-selection":
         return dict(topic_selection_qualification_prompts())
-    if suite == "editorial":
-        return dict(editorial_qualification_prompts())
-    window = qualification_window()
-    canonical_proposal_prompt = render_proposal_prompt(
-        window,
-        brief="Keep the complete product explanation.",
-        detected_language="en",
+    raise QualificationRefusal(
+        "the chapter qualification suites were removed with the chapter lane"
     )
-    proposal = (
-        (
-            render_compact_proposal_prompt(canonical_proposal_prompt),
-            CompactChapterProposal,
-            COMPACT_PROPOSE_PROMPT_VERSION,
-        )
-        if proposal_wire == "compact"
-        else (canonical_proposal_prompt, ChapterProposal, PROPOSE_PROMPT_VERSION)
-    )
-    return {
-        "summary": (
-            render_summary_prompt(window, detected_language="en"),
-            HierarchicalSummaryV1,
-            SUMMARIZE_PROMPT_VERSION,
-        ),
-        "proposal": proposal,
-        "verify": (
-            render_verifier_prompt(
-                window,
-                proposal=_fixed_proposal(),
-                technical_report={"status": "pass", "checks": ["synthetic-contract-check"]},
-            ),
-            EditorialVerdictV1,
-            VERIFY_PROMPT_VERSION,
-        ),
-    }
 
 
 def _validate_grounding(
@@ -893,6 +787,7 @@ def _validate_grounding(
     proposal_wire: Literal["canonical", "compact"] = "canonical",
     suite: QualificationSuite = "legacy",
 ) -> None:
+    _ = proposal_wire
     if suite == "topic-selection-v3":
         validate_topic_selection_qualification_output(
             stage, output, program_version="standalone-topics/3"
@@ -901,58 +796,9 @@ def _validate_grounding(
     if suite == "topic-selection":
         validate_topic_selection_qualification_output(stage, output)
         return
-    if suite == "editorial":
-        validate_editorial_qualification_output(stage, output)
-        return
-    window = qualification_window()
-    sentence_ids = tuple(sentence.id for sentence in window.sentences)
-    anchors = {
-        sentence.id: {word_id for word_id in (sentence.firstWordId, sentence.lastWordId) if word_id}
-        for sentence in window.sentences
-    }
-    if stage == "summary":
-        value = cast("HierarchicalSummaryV1", output)
-        positions = {sentence: index for index, sentence in enumerate(sentence_ids)}
-        cursor = 0
-        for unit in value.units:
-            if unit.firstSentenceId not in positions or unit.lastSentenceId not in positions:
-                raise ValueError("summary invented a sentence ID")
-            first = positions[unit.firstSentenceId]
-            last = positions[unit.lastSentenceId]
-            allowed: set[str] = {
-                word_id
-                for index in range(first, last + 1)
-                for word_id in anchors[sentence_ids[index]]
-            }
-            if first != cursor or last < first or not set(unit.quoteWordIds) <= allowed:
-                raise ValueError("summary does not exactly cover the authored evidence")
-            cursor = last + 1
-        if cursor != len(sentence_ids):
-            raise ValueError("summary does not cover the authored evidence endpoint")
-    elif stage == "proposal":
-        value = (
-            canonical_chapter_proposal(cast("CompactChapterProposal", output))
-            if proposal_wire == "compact"
-            else cast("ChapterProposal", output)
-        )
-        positions = {sentence: index for index, sentence in enumerate(sentence_ids)}
-        cursor = 0
-        for section in value.sections:
-            if section.firstSentenceId not in positions or section.lastSentenceId not in positions:
-                raise ValueError("proposal invented a sentence ID")
-            first = positions[section.firstSentenceId]
-            last = positions[section.lastSentenceId]
-            quote_ids = {quote.root for quote in section.quoteWordIds}
-            allowed: set[str] = {
-                word_id
-                for index in range(first, last + 1)
-                for word_id in anchors[sentence_ids[index]]
-            }
-            if first != cursor or last < first or not quote_ids <= allowed:
-                raise ValueError("proposal does not exactly cover the authored evidence")
-            cursor = last + 1
-        if cursor != len(sentence_ids):
-            raise ValueError("proposal does not cover the authored evidence endpoint")
+    raise QualificationRefusal(
+        "the chapter qualification suites were removed with the chapter lane"
+    )
 
 
 def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, Any]:

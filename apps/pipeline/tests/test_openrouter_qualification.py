@@ -16,6 +16,7 @@ import httpx
 import httpx2
 import pytest
 
+from qualification_fixtures import API_KEY, _candidate_payload, _paths
 from temnia_pipeline.harness.qualification import (
     CandidateCatalogue,
     CandidateRoute,
@@ -26,7 +27,6 @@ from temnia_pipeline.harness.qualification import (
     reconcile_journal,
     run_qualification,
 )
-from test_harness_gateway_qualification import API_KEY, _candidate_payload, _paths
 from test_harness_settings import snapshot
 from test_topic_selection_qualification import _outputs
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+from harness_fixtures import SOURCE_ID
 from temnia_pipeline.contracts import (
     TopicPortfolioReview,
     TopicSelectionColdReview,
@@ -18,7 +19,6 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from test_harness_compiler import _evidence
-from test_harness_hierarchy_workflow import SOURCE_ID
 from test_topic_selection_workflow import Program, draft
 
 if TYPE_CHECKING:

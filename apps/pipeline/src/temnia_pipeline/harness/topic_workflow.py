@@ -24,7 +24,6 @@ with workflow.unsafe.imports_passed_through():
         TopicColdReview,
         TopicSourceReview,
     )
-    from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
     from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
     from temnia_pipeline.harness.models import (
         TOPIC_AGENTS,
@@ -34,6 +33,7 @@ with workflow.unsafe.imports_passed_through():
         topic_source_review_v1,
     )
     from temnia_pipeline.harness.queues import control_task_queue
+    from temnia_pipeline.harness.run_failures import known_failure_details
     from temnia_pipeline.harness.runtime_types import (
         AcceptInitialRevisionRequest,
         BuildEvidenceRequest,
@@ -68,7 +68,6 @@ with workflow.unsafe.imports_passed_through():
         TopicProposalResult,
         TopicRenderResult,
     )
-    from temnia_pipeline.harness.workflows import _known_failure_details
 
 RETRY = RetryPolicy(maximum_attempts=3)
 
@@ -117,7 +116,7 @@ class TopicRunWorkflow(PydanticAIWorkflow):
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            status, message = _known_failure_details(error)
+            status, message = known_failure_details(error)
             info = workflow.info()
             with contextlib.suppress(Exception):
                 await workflow.execute_activity(
@@ -290,18 +289,6 @@ class TopicRunWorkflow(PydanticAIWorkflow):
                 message="The accepted transcript has no words to ground a standalone topic.",
             )
         navigation = None
-        if run.chapter_llama_config is not None:
-            candidate_result = await workflow.execute_activity(
-                "generate_chapter_llama_candidate",
-                CandidateRequest(
-                    run=ref, evidence=evidence.artifact, configuration=run.chapter_llama_config
-                ),
-                start_to_close_timeout=timedelta(hours=2),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RETRY,
-                result_type=CandidateResult,
-            )
-            navigation = candidate_result.artifact
         context = TopicContext(run=ref, evidence=evidence.artifact, navigation=navigation)
         seen: set[str] = set()
         rejected: set[str] = set()

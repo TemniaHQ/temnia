@@ -27,13 +27,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-chapter-llama = ["peft==0.20.0", "transformers==5.16.1"]
 scene-challenger = ["scenedetect-headless==0.7.1"]
 
 [project.scripts]
 temnia-eval = "temnia_pipeline.evals.runner:main"
 temnia-harness = "temnia_pipeline.harness.cli:main"
-temnia-chapter-llama = "temnia_pipeline.chapter_llama.cli:main"
 
 [dependency-groups]
 dev = [

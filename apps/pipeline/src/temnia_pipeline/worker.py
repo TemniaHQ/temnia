@@ -31,7 +31,6 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflowV3,
 )
 from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
-from temnia_pipeline.harness.workflows import ChapterReviewWorkflow, ChapterRunWorkflow
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
@@ -155,8 +154,6 @@ async def run_worker(settings: TemporalSettings) -> None:
             IngestWorkflow,
             ReaperWorkflow,
             TranscribeWorkflow,
-            ChapterRunWorkflow,
-            ChapterReviewWorkflow,
             TopicRunWorkflow,
             TopicReviewWorkflow,
             TopicSelectionWorkflow,

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from temnia_pipeline import db
-from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import (
     ChapterReviewAction,
     ChapterReviewInput,
@@ -111,11 +110,6 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
     frozen_routes = RouteSnapshot.model_validate_json(json.dumps(route_snapshot["snapshot"]))
     return RunSnapshot(
         admission=run_admission_version(route_snapshot),
-        chapter_llama_config=(
-            ChapterLlamaConfig.model_validate(route_snapshot["chapterLlama"])
-            if route_snapshot.get("chapterLlama") is not None
-            else None
-        ),
         id=row["id"],
         workflow_id=str(row["workflow_id"]),
         workflow_run_id=str(row["workflow_run_id"]),
@@ -140,7 +134,7 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
         route_snapshot=frozen_routes,
         evaluation_program=route_snapshot.get("evaluationProgram"),
         evaluation_program_sha256=route_snapshot.get("evaluationProgramSha256"),
-        editorial_policy=route_snapshot.get("editorialPolicy", "legacy"),
+        editorial_policy=route_snapshot.get("editorialPolicy", TOPIC_SELECTION_POLICY_V3),
         topic_shot_detector=route_snapshot.get("topicShotDetector", "scdet"),
     )
 
@@ -202,18 +196,12 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 ) -> StartRunResult:
     """Create one immutable request-keyed run or return its exact prior identity."""
     request = start.request
-    topic_policy = is_topic_policy(start.editorial_policy)
     selection_policy = start.editorial_policy in {
         TOPIC_SELECTION_POLICY,
         TOPIC_SELECTION_POLICY_V3,
     }
-    if topic_policy:
-        # One default brief lives in Python, so a web run hashes the rubric the r-runs hashed.
-        brief = request.brief if request.brief and request.brief.strip() else EDITORIAL_BRIEF
-    elif request.brief is None or not request.brief.strip():
-        raise IdentityConflict("chapter runs require an explicit editorial brief")
-    else:
-        brief = request.brief
+    # One default brief lives in Python, so a web run hashes the rubric the r-runs hashed.
+    brief = request.brief if request.brief and request.brief.strip() else EDITORIAL_BRIEF
     program_value: object = start.evaluation_program
     if program_value is None and selection_policy:
         # Every topic run freezes its own prompt-template and native-schema bytes.
@@ -365,12 +353,8 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         if evaluation_program is not None:
             route_value["evaluationProgram"] = evaluation_program
             route_value["evaluationProgramSha256"] = evaluation_program_sha
-        if start.editorial_policy != "legacy":
-            route_value["editorialPolicy"] = start.editorial_policy
-            if settings.chapter_llama_config is not None:
-                route_value["chapterLlama"] = settings.chapter_llama_config.model_dump(mode="json")
-        if is_topic_policy(start.editorial_policy):
-            route_value["topicShotDetector"] = settings.topic_shot_detector
+        route_value["editorialPolicy"] = start.editorial_policy
+        route_value["topicShotDetector"] = settings.topic_shot_detector
         row = await (
             await conn.execute(
                 """

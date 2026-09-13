@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 from pydantic_ai import ModelResponse, TextPart
 
+from harness_fixtures import EVIDENCE_REF
 from temnia_pipeline import db
 from temnia_pipeline.contracts import HarnessArtifactKind, HarnessArtifactRef
 from temnia_pipeline.harness import artifacts, ledger
@@ -25,7 +26,6 @@ from temnia_pipeline.harness.topic_selection_runtime import (
 )
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
 from temnia_pipeline.harness.validators import HarnessValidationError
-from test_harness_hierarchy_workflow import EVIDENCE_REF
 from test_topic_output_profiles import profiles
 from test_topic_selection_workflow import Program, cold, draft
 

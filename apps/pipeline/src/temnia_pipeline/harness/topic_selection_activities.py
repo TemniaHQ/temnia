@@ -12,7 +12,6 @@ from pydantic_ai import TextPart
 from temporalio import activity
 
 from temnia_pipeline import db
-from temnia_pipeline.chapter_llama.candidate import CandidatePayload, candidate_hints
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
@@ -314,16 +313,6 @@ class TopicSelectionActivities:
             if inventory is not None and context.inventory is not None:
                 dependencies.append(context.inventory)
             navigation = None
-            if context.navigation is not None:
-                payload = CandidatePayload.model_validate(
-                    await self.read(context, context.navigation)
-                )
-                if payload.configuration != run.chapter_llama_config or verifier.family == "llama":
-                    raise HarnessValidationError(
-                        "navigation changed its frozen identity or reserved family"
-                    )
-                navigation = candidate_hints(payload, evidence, context.evidence)
-                dependencies.append(context.navigation)
             rejected = None
             diagnostics: tuple[str, ...] = context.inventory_diagnostics
             if context.rejection is not None:

@@ -19,6 +19,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import ModelResponse, TextPart
 
+from harness_fixtures import EVIDENCE_REF
 from temnia_pipeline.contracts import HarnessArtifactKind, HarnessArtifactRef, TopicProposal
 from temnia_pipeline.harness import artifacts, topic_activities, topic_workflow
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
@@ -31,7 +32,6 @@ from temnia_pipeline.harness.topic_runtime import (
     TopicProposalValidation,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
-from test_harness_hierarchy_workflow import EVIDENCE_REF
 from test_topic_workflow import EVIDENCE, _Program, _proposal
 
 if TYPE_CHECKING:

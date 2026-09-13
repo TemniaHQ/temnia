@@ -12,10 +12,11 @@ from uuid import UUID
 
 import pytest
 
+from harness_fixtures import EVIDENCE_REF, SCOPE, _request, _settings, _snapshot
 from temnia_pipeline.contracts import HarnessEvidence, HarnessEvidenceShot
 from temnia_pipeline.harness import activities as module
 from temnia_pipeline.harness.activities import HarnessActivities
-from temnia_pipeline.harness.editorial_policy import EDITORIAL_POLICY, TOPIC_POLICY
+from temnia_pipeline.harness.editorial_policy import TOPIC_POLICY
 from temnia_pipeline.harness.runtime_types import (
     BuildEvidenceRequest,
     StartRunRequest,
@@ -25,7 +26,6 @@ from temnia_pipeline.harness.shot_evidence import SourceShotEvidence
 from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
 from temnia_pipeline.substrate.legacy_rules import LegacyRulesSegmenter
 from test_harness_compiler import _clear_coverage, _transcript, _word
-from test_harness_hierarchy_workflow import EVIDENCE_REF, SCOPE, _request, _settings, _snapshot
 from test_harness_shot_evidence import TIMELINE
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ SHOT_ID = UUID("10000000-0000-4000-8000-000000000007")
 SPEECH_ID = UUID("10000000-0000-4000-8000-000000000008")
 
 
-@pytest.mark.parametrize("policy", ["legacy", EDITORIAL_POLICY, TOPIC_POLICY])
+@pytest.mark.parametrize("policy", [TOPIC_POLICY])
 async def test_evidence_uses_frozen_detector_and_preserves_historical_fingerprints(  # noqa: C901, PLR0915
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, policy: str
 ) -> None:

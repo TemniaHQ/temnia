@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, ModelResponse, NativeOutput, TextPart, ThinkingPart
 from pydantic_ai.usage import RequestUsage
 
+from harness_fixtures import EVIDENCE_REF
 from temnia_pipeline.contracts import HarnessArtifactRef, TopicProposal
 from temnia_pipeline.harness import artifacts, models
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER, CassetteStore
@@ -23,7 +24,6 @@ from temnia_pipeline.harness.models import normalize_initial_topic_response
 from temnia_pipeline.harness.topic_compiler import validate_topic_proposal
 from temnia_pipeline.harness.topic_editorial import TOPIC_PROGRAM, TOPIC_PROMPT
 from temnia_pipeline.harness.validators import HarnessValidationError
-from test_harness_hierarchy_workflow import EVIDENCE_REF
 from test_harness_model_transport import _summary_deps
 from test_topic_proposal_recovery import _Recovery
 from test_topic_workflow import EVIDENCE, _proposal

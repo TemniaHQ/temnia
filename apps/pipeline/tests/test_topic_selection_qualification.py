@@ -9,6 +9,14 @@ import json
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
+from qualification_fixtures import (
+    API_KEY,
+    _candidate_file,
+    _candidate_payload,
+    _paths,
+    _request_transport,
+    _three_candidate_lookup_transport,
+)
 from temnia_pipeline.harness.qualification import (
     CandidateRoute,
     QualificationLimits,
@@ -28,14 +36,6 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     candidate_handoff_rows,
     content_hash,
-)
-from test_harness_gateway_qualification import (
-    API_KEY,
-    _candidate_file,
-    _candidate_payload,
-    _paths,
-    _request_transport,
-    _three_candidate_lookup_transport,
 )
 from test_harness_settings import snapshot
 

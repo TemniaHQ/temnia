@@ -14,6 +14,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
+from harness_fixtures import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
 from temnia_pipeline.contracts import (
     HarnessArtifactKind,
     HarnessArtifactRef,
@@ -40,7 +41,6 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV3,
 )
-from test_harness_hierarchy_workflow import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
 from test_topic_compiler import _candidate, _case, _span
 from test_topic_editorial import _cold, _criterion, _source
 

@@ -32,7 +32,7 @@ from temnia_pipeline.harness.routes import (
     RoutePrices,
     estimate_cost,
 )
-from temnia_pipeline.harness.workflows import _known_failure_details
+from temnia_pipeline.harness.run_failures import known_failure_details
 
 
 class Answer(BaseModel):
@@ -77,7 +77,7 @@ def activity_error(
 
 
 def test_route_rejection_names_route_stage_and_status_with_the_next_action() -> None:
-    status, message = _known_failure_details(
+    status, message = known_failure_details(
         activity_error(
             "KnownProviderRejection",
             "Route fixture-route rejected the verify:selection:source:1 request (HTTP 404).",
@@ -97,7 +97,7 @@ def test_context_window_refusal_keeps_the_exact_sentence_from_the_refusing_site(
     assert "fixture-route" in refusal
     assert "19000 payload bytes" in refusal
     assert "20000-token context window" in refusal
-    status, message = _known_failure_details(activity_error("ContextWindowExceeded", refusal))
+    status, message = known_failure_details(activity_error("ContextWindowExceeded", refusal))
     assert (status, message) == ("failed", refusal)
 
 
@@ -112,7 +112,7 @@ def test_context_window_refusal_keeps_the_exact_sentence_from_the_refusing_site(
 def test_invalid_first_response_names_its_stage_and_the_retained_charge(
     activity_type: str, stage: str
 ) -> None:
-    status, message = _known_failure_details(
+    status, message = known_failure_details(
         activity_error(
             "UnexpectedModelBehavior",
             "Exceeded maximum retries",
@@ -127,7 +127,7 @@ def test_invalid_first_response_names_its_stage_and_the_retained_charge(
 
 
 def test_unclassified_activity_failure_names_its_error_type() -> None:
-    assert _known_failure_details(activity_error("KnownMediaFailure", "bounded media")) == (
+    assert known_failure_details(activity_error("KnownMediaFailure", "bounded media")) == (
         "failed",
         "The run stopped after an activity failure: KnownMediaFailure.",
     )
@@ -230,7 +230,7 @@ async def test_conclusive_http_rejection_raises_a_route_stage_and_status_message
 
 
 def test_exhausted_transient_failure_names_the_settled_cause_and_the_next_action() -> None:
-    status, message = _known_failure_details(
+    status, message = known_failure_details(
         activity_error(
             "TransientProviderFailure",
             "Route fixture-route: the verify:selection:source:0 request ended without a "

@@ -19,7 +19,6 @@ with workflow.unsafe.imports_passed_through():
         TopicSelectionColdReview,
         TopicSelectionDraft,
     )
-    from temnia_pipeline.harness.chapter_llama_activity import CandidateRequest, CandidateResult
     from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3, EditorialPolicy
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
@@ -345,20 +344,6 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=HarnessArtifactRef,
         )
         context = context.model_copy(update={"rubric": rubric})
-        if run.chapter_llama_config is not None:
-            navigation = await workflow.execute_activity(
-                "generate_chapter_llama_candidate",
-                CandidateRequest(
-                    run=self.ref(request),
-                    evidence=evidence.artifact,
-                    configuration=run.chapter_llama_config,
-                ),
-                start_to_close_timeout=timedelta(hours=2),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RETRY,
-                result_type=CandidateResult,
-            )
-            context = context.model_copy(update={"navigation": navigation.artifact})
         context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:

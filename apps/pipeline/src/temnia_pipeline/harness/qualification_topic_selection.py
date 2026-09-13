@@ -29,7 +29,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
-from temnia_pipeline.harness.qualification_editorial import editorial_qualification_case
+from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
@@ -94,7 +94,7 @@ def topic_selection_qualification_case(
     *, combined_patch: bool = False
 ) -> tuple[HarnessEvidence, TopicSelectionRecord, TopicSelectionAssessment]:
     """An invented complete discussion with a separate incomplete ending; never customer gold."""
-    evidence, _, _, _ = editorial_qualification_case()
+    evidence = synthetic_qualification_evidence()
     evidence = augment_topic_evidence(evidence)
     span = TopicSentenceSpan(
         firstSentenceId=evidence.sentences[1].id,

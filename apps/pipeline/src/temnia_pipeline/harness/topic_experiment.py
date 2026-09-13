@@ -33,7 +33,7 @@ from temnia_pipeline.contracts import (
     Scope,
     TopicEditorialRubric,
 )
-from temnia_pipeline.evals.chapters import SHA256, EvaluationModel
+from temnia_pipeline.evals.common import SHA256, EvaluationModel
 from temnia_pipeline.evals.topics import TopicProgramManifest, digest
 from temnia_pipeline.harness import runs, topic_selection
 from temnia_pipeline.harness.artifacts import canonical_json
@@ -433,7 +433,6 @@ def assert_runtime(
             pin.verify()
     if (
         not settings.enabled
-        or settings.chapter_llama_config is not None
         or settings.allowed_config() != arm.spec.config
         or settings.topic_shot_detector != prepared.spec.topic_shot_detector
         or settings.max_run_budget_micros != prepared.spec.worker_max_run_budget_micros
@@ -474,7 +473,6 @@ def assert_pinned_run(
         or run.route_snapshot != arm.snapshot
         or run.editorial_policy != prepared.program.policy
         or run.topic_shot_detector != prepared.spec.topic_shot_detector
-        or run.chapter_llama_config is not None
         or run.evaluation_program != prepared.program.model_dump(mode="json", by_alias=True)
         or run.evaluation_program_sha256
         != digest(prepared.program.model_dump(mode="json", by_alias=True))

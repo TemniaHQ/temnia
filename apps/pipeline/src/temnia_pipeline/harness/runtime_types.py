@@ -10,7 +10,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig
 from temnia_pipeline.contracts import (
     ChapterEditSpec,
     ChapterProposal,
@@ -43,7 +42,7 @@ class StartRunRequest(BaseModel):
 
     request: ChapterRunInput
     workflow: WorkflowIdentity
-    editorial_policy: EditorialPolicy = "legacy"
+    editorial_policy: EditorialPolicy = "standalone-topics/3"
     evaluation_program: dict[str, JsonValue] | None = None
 
 
@@ -103,8 +102,7 @@ class RunSnapshot(BaseModel):
     route_snapshot: RouteSnapshot
     evaluation_program: dict[str, JsonValue] | None = None
     evaluation_program_sha256: Annotated[str | None, Field(pattern=r"^[a-f0-9]{64}$")] = None
-    editorial_policy: EditorialPolicy = "legacy"
-    chapter_llama_config: ChapterLlamaConfig | None = None
+    editorial_policy: EditorialPolicy = "standalone-topics/3"
     topic_shot_detector: Literal["pyscenedetect-adaptive", "scdet"] = "scdet"
     # The admission arithmetic frozen at run start; runs that predate the key used the
     # one-byte-one-token estimate and keep reading as `admission/1`.

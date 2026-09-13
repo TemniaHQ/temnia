@@ -13,7 +13,6 @@ from pydantic_ai import TextPart
 from temporalio import activity
 
 from temnia_pipeline import db
-from temnia_pipeline.chapter_llama.candidate import CandidatePayload, candidate_hints
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
@@ -242,17 +241,6 @@ class TopicActivities:
         assessment = await self.assessment(context)
         diagnostic = await self.proposal_validation(context, evidence, family=author.family)
         navigation = None
-        if context.navigation is not None:
-            if verifier.family == "llama":
-                raise HarnessValidationError(
-                    "Chapter-Llama hints cannot share their verifier's family"
-                )
-            payload = CandidatePayload.model_validate(await self.read(context, context.navigation))
-            if payload.configuration != run.chapter_llama_config:
-                raise HarnessValidationError(
-                    "topic navigation differs from this run's frozen deployment"
-                )
-            navigation = candidate_hints(payload, evidence, context.evidence)
         if context.candidate_id is not None:
             if proposal is None:
                 raise HarnessValidationError("cold review requires an accepted proposal")

@@ -32,7 +32,7 @@ from temnia_pipeline.contracts import (
     TopicSelectionRecord,
     TopicSentenceSpan,
 )
-from temnia_pipeline.evals.chapters import SHA256, AttemptFact, EvaluationModel, JSONValue
+from temnia_pipeline.evals.common import SHA256, AttemptFact, EvaluationModel, JSONValue
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.topic_compiler import validate_topic_edit, validate_topic_proposal

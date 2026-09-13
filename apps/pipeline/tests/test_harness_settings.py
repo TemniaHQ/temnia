@@ -10,8 +10,6 @@ from typing import Any
 
 import pytest
 
-from temnia_pipeline.chapter_llama.client import ChapterLlamaConfig, DeploymentIdentity
-from temnia_pipeline.chapter_llama.contracts import ModelConfig, ResourceProfile
 from temnia_pipeline.harness.routes import (
     RouteEligibility,
     RouteEntry,
@@ -20,40 +18,6 @@ from temnia_pipeline.harness.routes import (
     SeatRoutePool,
 )
 from temnia_pipeline.harness.settings import HarnessSettings
-
-
-def test_topic_scene_detection_defaults_to_scdet_and_keeps_pyscenedetect_comparison() -> None:
-    assert HarnessSettings.from_env({}).topic_shot_detector == "scdet"
-    assert (
-        HarnessSettings.from_env(
-            {"HARNESS_TOPIC_SHOT_DETECTOR": "pyscenedetect-adaptive"}
-        ).topic_shot_detector
-        == "pyscenedetect-adaptive"
-    )
-    for invalid in ("", "auto", "opencv", "pyscenedetect"):
-        with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
-            HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": invalid})
-
-
-def test_chapter_llama_is_explicit_and_cannot_dispatch_from_recorded_mode() -> None:
-    assert HarnessSettings.from_env({}).chapter_llama_config is None
-    candidate = ChapterLlamaConfig(
-        app_name="candidate-fixture",
-        environment="fixture",
-        deployment=DeploymentIdentity(
-            build="a" * 64, config=ModelConfig(), resources=ResourceProfile()
-        ),
-    )
-    settings = HarnessSettings.from_env(
-        {
-            "HARNESS_ENABLED": "1",
-            "HARNESS_BACKEND": "recorded",
-            "HARNESS_CHAPTER_LLAMA_CONFIG_JSON": candidate.model_dump_json(),
-        }
-    )
-    assert settings.chapter_llama_config == candidate
-    with pytest.raises(RuntimeError, match="explicit gateway backend"):
-        settings.validate_boot()
 
 
 def route(
@@ -138,6 +102,19 @@ def env(path: Path, value: RouteSnapshot, backend: str) -> dict[str, str]:
         "HARNESS_ROUTE_SNAPSHOT_ID": value.snapshot_id,
         "HARNESS_ROUTE_SNAPSHOT_PATH": str(path),
     }
+
+
+def test_topic_scene_detection_defaults_to_scdet_and_keeps_pyscenedetect_comparison() -> None:
+    assert HarnessSettings.from_env({}).topic_shot_detector == "scdet"
+    assert (
+        HarnessSettings.from_env(
+            {"HARNESS_TOPIC_SHOT_DETECTOR": "pyscenedetect-adaptive"}
+        ).topic_shot_detector
+        == "pyscenedetect-adaptive"
+    )
+    for invalid in ("", "auto", "opencv", "pyscenedetect"):
+        with pytest.raises(ValueError, match="HARNESS_TOPIC_SHOT_DETECTOR"):
+            HarnessSettings.from_env({"HARNESS_TOPIC_SHOT_DETECTOR": invalid})
 
 
 def test_disabled_harness_does_not_require_snapshot() -> None:

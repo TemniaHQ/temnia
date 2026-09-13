@@ -7,18 +7,13 @@ import hashlib
 import json
 import os
 import uuid
-from contextlib import AsyncExitStack
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from temporalio import activity, workflow
-from temporalio.client import WorkflowFailureError
-from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
 
 from temnia_pipeline import db
 from temnia_pipeline.contracts import (
@@ -36,7 +31,6 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import ledger
 from temnia_pipeline.harness.ledger import IdentityConflict, SourceDeleting
-from temnia_pipeline.harness.queues import control_task_queue
 from temnia_pipeline.harness.routes import (
     RouteEligibility,
     RouteEntry,
@@ -71,7 +65,6 @@ from temnia_pipeline.harness.runtime_types import (
 )
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF
-from temnia_pipeline.harness.workflows import ChapterReviewWorkflow
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -385,9 +378,9 @@ async def test_concurrent_duplicate_start_is_one_immutable_run() -> None:
         await db.close_pool()
 
 
-@pytest.mark.parametrize("original_policy", ["legacy", "chapter-editorial/1"])
+@pytest.mark.parametrize("original_policy", ["standalone-topics/1", "standalone-topics/3"])
 async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) -> None:
-    """A deployed continuation cannot upgrade or downgrade an existing run's semantics."""
+    """A replay under another program generation is refused; the stored generation stands."""
     url = pipeline_url()
     value = snapshot()
     source_id = await ready_source(url)
@@ -398,18 +391,21 @@ async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) 
         )
         changed = start.model_copy(
             update={
-                "editorial_policy": "chapter-editorial/1"
-                if original_policy == "legacy"
-                else "legacy"
+                "editorial_policy": "standalone-topics/3"
+                if original_policy == "standalone-topics/1"
+                else "standalone-topics/1"
             }
         )
+        with pytest.raises(IdentityConflict):
+            await start_or_refetch_run(
+                url, start=changed, settings=settings(value), route_snapshot=value
+            )
         resumed = await start_or_refetch_run(
-            url, start=changed, settings=settings(value), route_snapshot=value
+            url, start=start, settings=settings(value), route_snapshot=value
         )
         assert created.run.editorial_policy == resumed.run.editorial_policy == original_policy
         assert resumed.created is False
         assert created.run.config == resumed.run.config == start.request.config
-        assert created.run.brief == resumed.run.brief == start.request.brief
         assert created.run.request_key == resumed.run.request_key
     finally:
         await db.close_pool()
@@ -422,8 +418,6 @@ async def test_editorial_policy_is_frozen_at_first_insert(original_policy: str) 
         ("standalone-topics/1", "scdet"),
         ("standalone-topics/2", "pyscenedetect-adaptive"),
         ("standalone-topics/2", "scdet"),
-        ("legacy", "pyscenedetect-adaptive"),
-        ("chapter-editorial/1", "pyscenedetect-adaptive"),
     ],
 )
 async def test_topic_detector_is_frozen_on_insert_and_historical_lanes_keep_scdet(
@@ -569,22 +563,6 @@ async def test_run_start_freezes_the_admission_arithmetic_it_used() -> None:
     finally:
         await db.close_pool()
 
-
-async def test_chapter_lane_still_requires_an_explicit_brief() -> None:
-    url = pipeline_url()
-    value = snapshot()
-    source_id = await ready_source(url)
-    original = start_request(source_id, value)
-    start = original.model_copy(
-        update={"request": original.request.model_copy(update={"brief": None})}
-    )
-    try:
-        with pytest.raises(IdentityConflict, match="explicit editorial brief"):
-            await start_or_refetch_run(
-                url, start=start, settings=settings(value), route_snapshot=value
-            )
-    finally:
-        await db.close_pool()
 
 
 async def test_known_failure_marks_only_the_active_owner_and_preserves_cancellation() -> None:
@@ -1110,108 +1088,6 @@ async def test_two_distinct_planning_retries_admit_only_one_transition() -> None
         )
         assert after.status == HarnessRunStatus.pending
         assert after.stage == "evidence"
-    finally:
-        await db.close_pool()
-
-
-async def test_actual_budget_exhaustion_pauses_then_raise_resumes_same_run() -> None:
-    url = pipeline_url()
-    value = snapshot()
-    source_id = await ready_source(url)
-    start = start_request(source_id, value)
-    activities = BudgetPauseActivities(url, source_id, start.request.runId)
-    queue = f"chapter-budget-resume-{uuid.uuid4()}"
-    failing_review = ChapterReviewInput(
-        action=ChapterReviewAction.accept,
-        baseRevision=0,
-        boundaryId=None,
-        budgetMicros=None,
-        mutationKey=uuid.uuid4(),
-        otherSectionId=None,
-        reason="Exercise the actual budget boundary.",
-        runId=start.request.runId,
-        scope=SEEDED,
-        sectionId="keep-0",
-        sourceId=source_id,
-        targetRevision=None,
-        targetTimeMs=None,
-    )
-    try:
-        await start_or_refetch_run(url, start=start, settings=settings(value), route_snapshot=value)
-        async with (
-            await WorkflowEnvironment.start_time_skipping(
-                plugins=[PydanticAIPlugin()]
-            ) as environment,
-            AsyncExitStack() as stack,
-        ):
-            await stack.enter_async_context(
-                Worker(
-                    environment.client,
-                    task_queue=queue,
-                    workflows=[ChapterReviewWorkflow, BudgetResumeCaptureWorkflow],
-                    activities=[
-                        activities.exhaust_budget,
-                        activities.capture_resume,
-                        activities.cleanup,
-                    ],
-                )
-            )
-            await stack.enter_async_context(
-                Worker(
-                    environment.client,
-                    task_queue=control_task_queue(queue),
-                    activities=[
-                        activities.mark_failed,
-                        activities.get_snapshot,
-                        activities.apply_review,
-                    ],
-                )
-            )
-            with pytest.raises(WorkflowFailureError):
-                await environment.client.execute_workflow(
-                    ChapterReviewWorkflow.run,
-                    failing_review,
-                    id=f"budget-failure-{uuid.uuid4()}",
-                    task_queue=queue,
-                )
-            paused = await get_run(
-                url,
-                scope=SEEDED,
-                source_id=source_id,
-                run_id=start.request.runId,
-            )
-            assert paused.status == HarnessRunStatus.budget_paused
-            assert paused.error_message is not None
-            assert paused.dispatch_count == 0
-            raise_budget = failing_review.model_copy(
-                update={
-                    "action": ChapterReviewAction.raise_budget,
-                    "budgetMicros": 100,
-                    "mutationKey": uuid.uuid4(),
-                    "sectionId": None,
-                }
-            )
-            result = await environment.client.execute_workflow(
-                ChapterReviewWorkflow.run,
-                raise_budget,
-                id=f"budget-raise-{uuid.uuid4()}",
-                task_queue=queue,
-            )
-            assert result.state == "applied"
-            await asyncio.wait_for(activities.resumed.wait(), timeout=10)
-            resumed = activities.resume_request
-            assert resumed is not None
-            assert resumed.runId == start.request.runId
-            assert resumed.requestKey == start.request.requestKey
-            after = await get_run(
-                url,
-                scope=SEEDED,
-                source_id=source_id,
-                run_id=start.request.runId,
-            )
-            assert after.status == HarnessRunStatus.pending
-            assert after.budget_micros == 100
-            assert after.error_message is None
     finally:
         await db.close_pool()
 

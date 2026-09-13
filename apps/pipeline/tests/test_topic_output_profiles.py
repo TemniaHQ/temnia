@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from harness_fixtures import _request, _settings
 from temnia_pipeline import db
 from temnia_pipeline.harness import ledger, runs
 from temnia_pipeline.harness.routes import RouteSnapshot, SeatRoutePool
@@ -21,7 +22,6 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     selection_call_config,
 )
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
-from test_harness_hierarchy_workflow import _request, _settings
 from test_harness_model_transport import route, snapshot
 from test_harness_settings import env, write_snapshot
 from test_topic_selection_workflow import AgentDouble, Program, add_patch, draft, portfolio
@@ -152,7 +152,7 @@ def test_route_profile_still_needs_protocol_and_nonempty_request_headroom(tmp_pa
         settings.validate_boot()
 
 
-@pytest.mark.parametrize("policy", ["legacy", "chapter-editorial/1", "standalone-topics/1"])
+@pytest.mark.parametrize("policy", ["standalone-topics/1"])
 async def test_non_v2_capacity_refuses_before_creation_or_ownership_query(
     monkeypatch: pytest.MonkeyPatch, policy: str
 ) -> None:

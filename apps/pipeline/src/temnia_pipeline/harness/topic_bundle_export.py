@@ -22,7 +22,7 @@ from temnia_pipeline.contracts import (
     TopicSelectionAssessment,
     TopicSelectionRecord,
 )
-from temnia_pipeline.evals.chapters import SHA256, AttemptFact
+from temnia_pipeline.evals.common import SHA256, AttemptFact
 from temnia_pipeline.evals.topics import (
     StageObservation,
     TopicArtifact,

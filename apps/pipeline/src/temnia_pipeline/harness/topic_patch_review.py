@@ -24,6 +24,7 @@ with workflow.unsafe.imports_passed_through():
         TopicSelectionRecord,
     )
     from temnia_pipeline.harness.queues import control_task_queue
+    from temnia_pipeline.harness.run_failures import known_failure_details
     from temnia_pipeline.harness.runtime_types import (
         CommitReviewMutationRequest,
         CommitReviewMutationResult,
@@ -51,7 +52,6 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.topic_runtime import TopicRenderResult
     from temnia_pipeline.harness.topic_selection import validate_selection
     from temnia_pipeline.harness.validators import HarnessValidationError
-    from temnia_pipeline.harness.workflows import _known_failure_details
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -347,7 +347,7 @@ class TopicEditorialPatchWorkflow:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            status, message = _known_failure_details(error)
+            status, message = known_failure_details(error)
             with contextlib.suppress(Exception):
                 await workflow.execute_activity(
                     "mark_chapter_run_failed",
