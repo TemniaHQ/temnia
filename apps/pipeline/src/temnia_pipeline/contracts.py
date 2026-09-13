@@ -138,7 +138,7 @@ class ChapterRunConfig(BaseModel):
     backend: Backend
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
     maxDispatches: Annotated[int, Field(ge=1, le=128)]
-    maxOutputTokens: Annotated[int, Field(ge=256, le=32768)]
+    maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
     maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
     maxRepairs: Annotated[int, Field(ge=0, le=3)]
     routeSnapshotId: Annotated[str, Field(max_length=256, min_length=1)]

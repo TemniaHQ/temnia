@@ -16,7 +16,10 @@ repair); DeepSeek V4 Pro 0813/Fireworks completed authoring in r24 and authoring
 r25; Kimi as full-source reviewer crossed the 540 s deadline once in one attempt (r24); Astra
 failed two full-source author calls on the deadline. Settled roster: verify pool Gemini 3.8
 Flash first, propose pool Kimi K3 first and DeepSeek V4 Pro second, Astra excluded, all through
-OpenRouter with `gateway-transport/2`. This is a reliability selection recorded with its
+OpenRouter with `gateway-transport/2`; every pool lists all three routes because a production
+seat pool needs three model families. The file is committed as
+`infra/harness/topic-routes-staging-0df7f78d.json` (ID `0df7f78d…`), and the run-config
+ceiling `maxOutputTokens` was raised from 32,768 to 65,536 so the worker boots on it. This is a reliability selection recorded with its
 evidence, not an editorial audition; the no-default-vendor rule's audition is still owed on a
 calibration set. Two technical fixes make the roster hold: a lost stream whose generation
 receipt reports a settled charge is now a known failure (`TransientProviderFailure`) that the

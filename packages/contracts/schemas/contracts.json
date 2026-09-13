@@ -677,7 +677,7 @@
           "default": 8192,
           "type": "integer",
           "minimum": 256,
-          "maximum": 32768
+          "maximum": 65536
         },
         "maxRenderConcurrency": {
           "default": 2,
