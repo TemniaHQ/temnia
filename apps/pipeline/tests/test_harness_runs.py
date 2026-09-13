@@ -564,7 +564,6 @@ async def test_run_start_freezes_the_admission_arithmetic_it_used() -> None:
         await db.close_pool()
 
 
-
 async def test_known_failure_marks_only_the_active_owner_and_preserves_cancellation() -> None:
     url = pipeline_url()
     value = snapshot()
