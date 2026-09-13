@@ -22,7 +22,7 @@ import {
   stableSessionUuid,
   writeSessionIntent,
 } from "@/lib/harness/client";
-import { harnessSettings } from "@/lib/harness/config";
+import { chapterCreationPaused, harnessSettings } from "@/lib/harness/config";
 import { parseDollarMicros } from "@/lib/harness/money";
 import { artifactIdsForRevisionPointers } from "@/lib/harness/queries";
 
@@ -83,7 +83,7 @@ describe("chapter server configuration", () => {
   };
 
   it("returns bounded defaults without exposing route credentials", () => {
-    const result = harnessSettings(configured);
+    const result = harnessSettings("chapters", configured);
     expect(result).toMatchObject({
       available: true,
       settings: {
@@ -100,7 +100,10 @@ describe("chapter server configuration", () => {
 
   it("refuses an unapproved recorded backend in every environment", () => {
     expect(
-      harnessSettings({ ...configured, HARNESS_BACKEND: "recorded" })
+      harnessSettings("chapters", {
+        ...configured,
+        HARNESS_BACKEND: "recorded",
+      })
     ).toEqual({
       available: false,
       message: "The recorded chapter backend is disabled on this server.",
@@ -108,15 +111,47 @@ describe("chapter server configuration", () => {
   });
 
   it("reports missing configuration as unavailable", () => {
-    expect(harnessSettings({})).toEqual({
+    expect(harnessSettings("chapters", {})).toEqual({
       available: false,
       message: "Chapter editing is not enabled on this server.",
     });
   });
 
+  it("names the topic lane in its own words without changing the gate", () => {
+    expect(harnessSettings("topics", {})).toEqual({
+      available: false,
+      message: "Topic videos are not enabled on this server.",
+    });
+    expect(harnessSettings("topics", { HARNESS_ENABLED: "1" })).toEqual({
+      available: false,
+      message:
+        "Topic videos are unavailable because the server configuration is incomplete.",
+    });
+    expect(
+      harnessSettings("topics", { ...configured, HARNESS_BACKEND: "recorded" })
+    ).toEqual({
+      available: false,
+      message: "The recorded topic backend is disabled on this server.",
+    });
+    expect(harnessSettings("topics", configured)).toEqual(
+      harnessSettings("chapters", configured)
+    );
+  });
+
+  it("pauses chapter creation only on an explicit or unreadable setting", () => {
+    expect(chapterCreationPaused({})).toBe(false);
+    expect(chapterCreationPaused({ HARNESS_CHAPTERS_ENABLED: "1" })).toBe(
+      false
+    );
+    expect(chapterCreationPaused({ HARNESS_CHAPTERS_ENABLED: "0" })).toBe(true);
+    expect(chapterCreationPaused({ HARNESS_CHAPTERS_ENABLED: "yes" })).toBe(
+      true
+    );
+  });
+
   it("matches the worker's published shared fixture", () => {
     expect(
-      harnessSettings({
+      harnessSettings("chapters", {
         HARNESS_ALLOW_RECORDED: "1",
         HARNESS_BACKEND: "recorded",
         HARNESS_ENABLED: "1",

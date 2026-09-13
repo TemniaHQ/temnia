@@ -307,6 +307,9 @@ test("chapters render, survive corrections, and export an explicitly accepted ex
   await expect(
     page.getByLabel("Maximum budget in dollars", { exact: true })
   ).toHaveValue("1.00");
+  // The lane is parked only when the server says so; the gate runs it enabled.
+  await expect(page.getByTestId("chapter-creation-paused")).toBeHidden();
+  await expect(page.getByTestId("chapter-start")).toBeEnabled();
   await page.getByTestId("chapter-start").click();
   let state = await checkedRevision(page, sourceId, 0);
   const defaultBrief = resolveChapterBrief({

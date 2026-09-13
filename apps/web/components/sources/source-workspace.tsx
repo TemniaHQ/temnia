@@ -65,12 +65,15 @@ interface ArtifactSummary {
 interface SourceWorkspaceProps {
   artifacts: ArtifactSummary[];
   chapterAvailability: HarnessAvailability;
+  /** The chapter lane is parked: existing runs stay reviewable, none start. */
+  chapterCreationPaused: boolean;
   chapters: ChapterView;
   peaksUrl: string | null;
   playlistUrl: string | null;
   posterUrl: string | null;
   source: SourceSummary;
   speakerLabels: Record<string, string>;
+  topicAvailability: HarnessAvailability;
   topics: ChapterView;
   transcript: TranscriptRowSummary | null;
   transcriptAnnotationsUrl: string | null;
@@ -103,7 +106,9 @@ export function SourceWorkspace({
   transcriptRevisions,
   transcriptUrl,
   chapterAvailability,
+  chapterCreationPaused,
   chapters,
+  topicAvailability,
   topics,
 }: SourceWorkspaceProps) {
   // The one row that is not a string: an absolute instant belongs to the
@@ -190,13 +195,14 @@ export function SourceWorkspace({
             <TabsContent value="chapters">
               <ChapterPanel
                 availability={chapterAvailability}
+                creationPaused={chapterCreationPaused}
                 initialView={chapters}
                 sourceId={source.id}
               />
             </TabsContent>
             <TabsContent value="topics">
               <TopicPanel
-                availability={chapterAvailability}
+                availability={topicAvailability}
                 initialView={topics}
                 sourceId={source.id}
               />

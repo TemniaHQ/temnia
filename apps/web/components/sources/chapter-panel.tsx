@@ -53,12 +53,17 @@ import {
   readSessionIntent,
   writeSessionIntent,
 } from "@/lib/harness/client";
-import type { HarnessAvailability } from "@/lib/harness/config";
+import {
+  CHAPTER_CREATION_PAUSED_MESSAGE,
+  type HarnessAvailability,
+} from "@/lib/harness/config";
 import { formatMicros, parseDollarMicros } from "@/lib/harness/money";
 import type { ChapterView } from "@/lib/harness/queries";
 
 interface ChapterPanelProps {
   availability: HarnessAvailability;
+  /** New runs are refused server-side; existing runs stay reviewable. */
+  creationPaused: boolean;
   initialView: ChapterView;
   sourceId: string;
 }
@@ -173,6 +178,7 @@ async function mapWithConcurrency<Input, Output>(
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this single domain panel coordinates durable run, artifact, and review states that must stay visibly consistent
 export function ChapterPanel({
   availability,
+  creationPaused,
   initialView,
   sourceId,
 }: ChapterPanelProps) {
@@ -828,7 +834,7 @@ export function ChapterPanel({
   };
 
   const begin = () => {
-    if (!availability.available) {
+    if (!availability.available || creationPaused) {
       return;
     }
     const runId = crypto.randomUUID();
@@ -1005,9 +1011,18 @@ export function ChapterPanel({
           onChange={(event) => setNewRunBudget(event.target.value)}
           value={newRunBudget}
         />
-        <Button data-testid="chapter-start" disabled={pending} onClick={begin}>
+        <Button
+          data-testid="chapter-start"
+          disabled={pending || creationPaused}
+          onClick={begin}
+        >
           {pending ? "Starting…" : "Create chapters"}
         </Button>
+        {creationPaused ? (
+          <p data-testid="chapter-creation-paused">
+            {CHAPTER_CREATION_PAUSED_MESSAGE}
+          </p>
+        ) : null}
         {creatingNew && view.run ? (
           <Button
             onClick={() => {

@@ -16,7 +16,6 @@ import { z } from "zod";
 import { scoped } from "@/lib/db";
 import { harnessSettings } from "@/lib/harness/config";
 import {
-  resolveTopicBrief,
   TOPIC_POLICY,
   TOPIC_SELECTION_POLICY,
   TOPIC_SELECTION_POLICY_V3,
@@ -73,30 +72,30 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function topicGeneration(policy: string, input: unknown) {
-  if (policy === TOPIC_SELECTION_POLICY_V3) {
-    return {
-      intent: {
-        editorialPolicy: policy,
-        input,
-        workflow: WORKFLOWS.topicSelectionV3,
-      },
-      prefix: "topic-selection-v3",
+/** One button starts one program; the intent hash covers the input as sent. */
+function topicGeneration(input: unknown) {
+  return {
+    intent: {
+      editorialPolicy: TOPIC_SELECTION_POLICY_V3,
+      input,
       workflow: WORKFLOWS.topicSelectionV3,
-    };
-  }
-  if (policy === TOPIC_SELECTION_POLICY) {
-    return {
-      intent: {
-        editorialPolicy: policy,
-        input,
-        workflow: WORKFLOWS.topicSelection,
-      },
-      prefix: "topic-selection",
-      workflow: WORKFLOWS.topicSelection,
-    };
-  }
-  return { intent: input, prefix: "topic-run", workflow: WORKFLOWS.topicRun };
+    },
+    prefix: "topic-selection-v3",
+    workflow: WORKFLOWS.topicSelectionV3,
+  };
+}
+
+/**
+ * Whitespace is not an instruction. An omitted brief leaves the single default
+ * to the worker, which freezes it into the run row; a typed brief is sent
+ * trimmed, so the two starts are different requests and a replay of either is
+ * byte-identical.
+ */
+function topicBrief(instructions: {
+  brief?: string | undefined;
+}): string | undefined {
+  const trimmed = instructions.brief?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function intentSha256(value: unknown): string {
@@ -187,20 +186,8 @@ export async function startTopicRun(
   if (!parsed.success) {
     return { message: "The topic request is invalid.", ok: false };
   }
-  const brief = resolveTopicBrief(parsed.data);
-  const policy = parsed.data.defaultBriefVersion;
-  const enabled =
-    policy === TOPIC_SELECTION_POLICY_V3
-      ? process.env.HARNESS_TOPIC_SELECTION_V3_ENABLED === "1"
-      : process.env.HARNESS_TOPIC_SELECTION_ENABLED === "1";
-  if (policy !== TOPIC_POLICY && !enabled) {
-    return {
-      message:
-        "The new selection program awaits deployment qualification. Existing topic runs remain reviewable; the earlier program is available for comparison.",
-      ok: false,
-    };
-  }
-  const availability = harnessSettings();
+  const brief = topicBrief(parsed.data);
+  const availability = harnessSettings("topics");
   if (!availability.available) {
     return { message: availability.message, ok: false };
   }
@@ -224,10 +211,12 @@ export async function startTopicRun(
         existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
       );
       const same =
-        existing.routeSnapshot.editorialPolicy === policy &&
+        existing.routeSnapshot.editorialPolicy === TOPIC_SELECTION_POLICY_V3 &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
-        existing.brief === brief &&
+        // An omitted brief is the worker's default, which this process does not
+        // hold; the run row's frozen brief is the only copy of it.
+        (brief === undefined || existing.brief === brief) &&
         initialBudget === budgetMicros &&
         stableJson(existing.config) ===
           stableJson(availability.settings.config);
@@ -265,7 +254,7 @@ export async function startTopicRun(
     }
     return {
       input: ChapterRunInputSchema.parse({
-        brief,
+        ...(brief === undefined ? {} : { brief }),
         budgetMicros,
         config: availability.settings.config,
         requestKey: parsed.data.requestKey,
@@ -281,7 +270,7 @@ export async function startTopicRun(
   if ("existing" in prepared) {
     return { ok: true, runId: parsed.data.runId };
   }
-  const generation = topicGeneration(policy, prepared.input);
+  const generation = topicGeneration(prepared.input);
   const intentHash = intentSha256(generation.intent);
   const workflowId = `${generation.prefix}/${parsed.data.runId}`;
   try {
@@ -595,7 +584,7 @@ export async function getPendingTopicWorkflowStatus(
   }
   if (parsed.data.kind === "start") {
     const { intent } = parsed.data;
-    const availability = harnessSettings();
+    const availability = harnessSettings("topics");
     if (!availability.available) {
       return { message: availability.message, state: "unknown" };
     }
@@ -611,8 +600,9 @@ export async function getPendingTopicWorkflowStatus(
     if (!ownedScope) {
       return { message: "Source not found.", state: "terminal" };
     }
+    const brief = topicBrief(intent);
     const workflowInput = ChapterRunInputSchema.parse({
-      brief: resolveTopicBrief(intent),
+      ...(brief === undefined ? {} : { brief }),
       budgetMicros,
       config: availability.settings.config,
       requestKey: intent.requestKey,
@@ -620,10 +610,7 @@ export async function getPendingTopicWorkflowStatus(
       scope: ownedScope,
       sourceId: intent.sourceId,
     });
-    const generation = topicGeneration(
-      intent.defaultBriefVersion,
-      workflowInput
-    );
+    const generation = topicGeneration(workflowInput);
     const inspection = await inspectTemporalIntent(
       `${generation.prefix}/${intent.runId}`,
       intentSha256(generation.intent)

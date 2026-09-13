@@ -10,7 +10,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { harnessSettings } from "@/lib/harness/config";
+import { chapterCreationPaused, harnessSettings } from "@/lib/harness/config";
 import { getChapterView, getTopicView } from "@/lib/harness/queries";
 import { resolveScope } from "@/lib/scope/resolve-scope";
 import { getSourceWithArtifacts } from "@/lib/sources/queries";
@@ -72,7 +72,8 @@ export default async function SourcePage({
           sizeBytes: a.sizeBytes,
           storageKey: a.storageKey,
         }))}
-        chapterAvailability={harnessSettings()}
+        chapterAvailability={harnessSettings("chapters")}
+        chapterCreationPaused={chapterCreationPaused()}
         chapters={chapters}
         peaksUrl={has("peaks") ? `${prefix}${ARTIFACT_PATHS.peaks}` : null}
         playlistUrl={has("hls") ? `${prefix}${ARTIFACT_PATHS.hlsMaster}` : null}
@@ -97,6 +98,7 @@ export default async function SourcePage({
           width: source.width,
         }}
         speakerLabels={row?.speakerLabels ?? {}}
+        topicAvailability={harnessSettings("topics")}
         topics={topics}
         transcript={
           row

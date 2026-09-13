@@ -13,7 +13,11 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
-import { harnessSettings } from "@/lib/harness/config";
+import {
+  CHAPTER_CREATION_PAUSED_MESSAGE,
+  chapterCreationPaused,
+  harnessSettings,
+} from "@/lib/harness/config";
 import {
   ChapterStartInstructionsSchema,
   resolveChapterBrief,
@@ -152,6 +156,9 @@ export async function startChapterRun(
   const parsed = StartSchema.safeParse(input);
   if (!parsed.success) {
     return { message: "The chapter request is invalid.", ok: false };
+  }
+  if (chapterCreationPaused()) {
+    return { message: CHAPTER_CREATION_PAUSED_MESSAGE, ok: false };
   }
   const brief = resolveChapterBrief(parsed.data);
   const availability = harnessSettings();

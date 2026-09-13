@@ -91,6 +91,7 @@ function temporalClient(workflow: Record<string, unknown>) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.HARNESS_ALLOW_RECORDED = "0";
+  delete process.env.HARNESS_CHAPTERS_ENABLED;
   process.env.HARNESS_BACKEND = "gateway";
   process.env.HARNESS_ENABLED = "1";
   process.env.HARNESS_MAX_RUN_BUDGET_MICROS = "2000000";
@@ -395,6 +396,39 @@ describe("chapter action durable identity", () => {
     ).resolves.toMatchObject({ state: "terminal" });
     expect(mocks.scoped).not.toHaveBeenCalled();
     expect(mocks.getClient).not.toHaveBeenCalled();
+  });
+
+  it("refuses a new run while the chapter lane is paused and starts by default", async () => {
+    mocks.scoped.mockImplementation((fn) =>
+      fn(transaction([[], [readySource]], []), scope)
+    );
+    const start = vi.fn((_workflow, options) =>
+      Promise.resolve({
+        describe: async () => ({
+          memo: options.memo,
+          status: { name: "RUNNING" },
+        }),
+      })
+    );
+    mocks.getClient.mockResolvedValue(temporalClient({ start }));
+    process.env.HARNESS_CHAPTERS_ENABLED = "0";
+    await expect(startChapterRun(startIdentity)).resolves.toEqual({
+      message:
+        "Chapter creation is paused on this server. Existing chapter runs remain reviewable.",
+      ok: false,
+    });
+    expect(mocks.scoped).not.toHaveBeenCalled();
+    expect(mocks.getClient).not.toHaveBeenCalled();
+    delete process.env.HARNESS_CHAPTERS_ENABLED;
+    await expect(startChapterRun(startIdentity)).resolves.toMatchObject({
+      ok: false,
+      pending: true,
+      runId: RUN,
+    });
+    expect(start).toHaveBeenCalledExactlyOnceWith(
+      "ChapterRunWorkflow",
+      expect.objectContaining({ workflowId: `chapter-${RUN}` })
+    );
   });
 
   it("reuses normalized default intent and refuses changed brief or budget", async () => {
