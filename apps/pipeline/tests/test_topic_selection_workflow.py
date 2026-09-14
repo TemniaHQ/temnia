@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+import numpy as np
 import pytest
 
 from harness_fixtures import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
@@ -28,7 +29,6 @@ from temnia_pipeline.contracts import (
     TopicSelectionDraft,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
-    TopicSourceIndex,
 )
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness import topic_selection_workflow as module
@@ -37,6 +37,7 @@ from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
 from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
+from temnia_pipeline.harness.source_index import build_topic_source_index
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection import (
@@ -67,6 +68,14 @@ if TYPE_CHECKING:
 
 EVIDENCE = augment_topic_evidence(_case().model_copy(update={"sourceId": SOURCE_ID}))
 CANDIDATE = _candidate("discussion", 0, 3)
+
+
+class _FixtureEncoder:
+    def encode(
+        self, sentences: list[str], *, normalize_embeddings: bool = True, batch_size: int = 32
+    ) -> object:
+        _ = normalize_embeddings, batch_size
+        return np.ones((len(sentences), 1), dtype=np.float64)
 
 
 class UnexpectedModelBehavior(Exception):  # noqa: N818
@@ -358,43 +367,12 @@ class Program:
                 lexical_state="present",
             )
         if name == "build_topic_source_index":
-            index = TopicSourceIndex.model_validate(
-                {
-                    "format": "topic-source-index/1",
-                    "evidenceSha256": EVIDENCE_REF.sha256,
-                    "sourceId": str(EVIDENCE.sourceId),
-                    "transcriptId": str(EVIDENCE.transcriptId),
-                    "transcriptRevision": EVIDENCE.transcriptRevision,
-                    "embeddingModel": "test/encoder",
-                    "embeddingRevision": "a" * 40,
-                    "embeddingDimensions": 1,
-                    "regionMaxSentences": 32,
-                    "regionMaxCharacters": 8000,
-                    "sentences": [
-                        {
-                            "id": sentence.id,
-                            "startMs": sentence.startMs,
-                            "endMs": sentence.endMs,
-                            "speakers": sentence.speakers,
-                            "text": sentence.text,
-                        }
-                        for sentence in EVIDENCE.sentences
-                    ],
-                    "regions": [
-                        {
-                            "id": "r1",
-                            "ordinal": 0,
-                            "firstSentenceId": EVIDENCE.sentences[0].id,
-                            "lastSentenceId": EVIDENCE.sentences[-1].id,
-                            "startMs": EVIDENCE.sentences[0].startMs,
-                            "endMs": EVIDENCE.sentences[-1].endMs,
-                            "sentenceCount": len(EVIDENCE.sentences),
-                            "keywords": ["fixture"],
-                            "preview": "fixture source",
-                            "embedding": [1.0],
-                        }
-                    ],
-                }
+            index = build_topic_source_index(
+                EVIDENCE,
+                evidence_sha256=EVIDENCE_REF.sha256,
+                encoder=_FixtureEncoder(),
+                embedding_model="test/encoder",
+                embedding_revision="a" * 40,
             )
             return await self.publish(
                 TopicContext(run=value.run, evidence=value.evidence),

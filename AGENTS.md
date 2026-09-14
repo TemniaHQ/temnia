@@ -15,15 +15,17 @@ Cold review remains isolated to the selected speech. Bounded working context, so
 identities, independent judgments, repair authority and the run-level unknown-expense fence
 remain part of the design. Internal discussion structure must be observable; an index alone
 does not prove the compound-candidate problem solved. The first vertical slice is implemented on
-`feat/indexed-editorial-evidence`: a run-scoped `topic-source-index/1`, bounded chronological
-browse, BM25/MiniLM search and exact sentence reads replace transcript bodies in the inventory,
-author and source-review prompts. Every indexed answer must retain a complete browse/search/read
-trace and must have read every sentence in every span it returns. Each tool continuation is a
-separately accounted model request; the gateway admits only the complete three-tool set. A
-2,400-sentence synthetic four-hour source proves bounded initial prompt shape and pagination, not
-editorial quality. The map is flat, PydanticAI still accumulates active tool history, safe cross-run
-reuse and candidate/media tools remain unimplemented, and no real provider, latency, recovery or
-quality result follows. No new model arm or paid run is authorized by this record.
+`feat/indexed-editorial-evidence`: a run-scoped `topic-source-index/2` episode → section → region
+hierarchy, bounded chronological browse, BM25/MiniLM leaf search and exact sentence reads replace
+transcript bodies in the inventory, author and source-review prompts. Every indexed answer must
+retain a complete root-then-sections browse/search/read trace and must have read every sentence in
+every span it returns. Code re-derives the hierarchy's exact ownership, deterministic descriptors
+and bottom-up vectors. Each tool continuation is a separately accounted model request; the gateway
+admits only the complete three-tool set. A 2,400-sentence synthetic four-hour source produces 10
+sections and 75 leaves and proves bounded initial prompt shape and pagination, not editorial
+quality. PydanticAI still accumulates active tool history, safe cross-run reuse and candidate/media
+tools remain unimplemented, and no real provider, latency, recovery or quality result follows. No
+new model arm or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

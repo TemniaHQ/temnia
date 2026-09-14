@@ -587,17 +587,30 @@ class TopicSentenceSpan(BaseModel):
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
 
 
-class TopicSourceIndexRegion(BaseModel):
+class ChildId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class Kind6(StrEnum):
+    episode = "episode"
+    section = "section"
+    region = "region"
+
+
+class TopicSourceIndexNode(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    childIds: list[ChildId]
     embedding: list[float]
     endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
     firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
     keywords: list[str]
+    kind: Kind6
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    parentId: Annotated[str | None, Field(max_length=256, min_length=1)]
     preview: str
     sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
     startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
@@ -614,6 +627,29 @@ class TopicSourceIndexSentence(BaseModel):
     text: str
 
 
+class Kind7(StrEnum):
+    section = "section"
+    region = "region"
+
+
+class TopicSourceNodeHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    childCount: Annotated[int, Field(ge=0, le=9007199254740991)]
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    kind: Kind7
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
+    preview: str
+    score: float | None
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
 class TopicSourceReadPage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -624,21 +660,6 @@ class TopicSourceReadPage(BaseModel):
     sentences: list[TopicSourceIndexSentence]
 
 
-class TopicSourceRegionHit(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
-    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
-    id: Annotated[str, Field(max_length=256, min_length=1)]
-    keywords: list[str]
-    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
-    preview: str
-    score: float | None
-    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
-    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
-
-
 class TopicSourceSearchPage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -646,8 +667,8 @@ class TopicSourceSearchPage(BaseModel):
     complete: bool
     indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
     nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
-    regions: list[TopicSourceRegionHit]
     query: Annotated[str, Field(min_length=1)]
+    regions: list[TopicSourceNodeHit]
 
 
 class TranscribeInput(BaseModel):
@@ -1280,7 +1301,8 @@ class TopicSourceBrowsePage(BaseModel):
     complete: bool
     indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
     nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
-    regions: list[TopicSourceRegionHit]
+    nodes: list[TopicSourceNodeHit]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
 
 
 class TopicSourceIndex(BaseModel):
@@ -1291,10 +1313,12 @@ class TopicSourceIndex(BaseModel):
     embeddingModel: Annotated[str, Field(max_length=256, min_length=1)]
     embeddingRevision: Annotated[str, Field(max_length=256, min_length=1)]
     evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    format: Literal["topic-source-index/1"]
+    format: Literal["topic-source-index/2"]
+    nodes: Annotated[list[TopicSourceIndexNode], Field(min_length=3)]
     regionMaxCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
     regionMaxSentences: Annotated[int, Field(gt=0, le=9007199254740991)]
-    regions: Annotated[list[TopicSourceIndexRegion], Field(min_length=1)]
+    rootNodeId: Annotated[str, Field(max_length=256, min_length=1)]
+    sectionMaxRegions: Annotated[int, Field(gt=0, le=9007199254740991)]
     sentences: Annotated[list[TopicSourceIndexSentence], Field(min_length=1)]
     sourceId: UUID
     transcriptId: UUID

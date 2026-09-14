@@ -18,6 +18,10 @@ settled cost per model round. Inventory, author and source review declare the ex
 `browse_source`, `search_source` and `read_source` tools; if a model calls them, the
 pre-flight executes the local synthetic tools and durably accounts for each continuation
 request under that logical stage. The final native schema remains present on every round.
+The synthetic source uses `topic-source-index/2`: browse starts at the episode root and then
+visits every returned section in order before search and exact read. A direct final answer can
+prove only schema/tool declaration admission; a qualified indexed route has retained successful
+root, section, search and read rounds followed by the typed final round.
 
 The report's `dispatchCount` is therefore model requests, not logical stages. Each logical
 call retains a `rounds` list with request, response, generation and cost identities. Budget

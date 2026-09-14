@@ -31,7 +31,7 @@ class SourceInspectionCall(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tool_name: Literal["browse_source", "search_source", "read_source"]
     arguments: dict[str, Any]
-    region_ids: tuple[str, ...] = ()
+    node_ids: tuple[str, ...] = ()
     sentence_ids: tuple[str, ...] = ()
     complete: bool
     next_cursor: int | None = None

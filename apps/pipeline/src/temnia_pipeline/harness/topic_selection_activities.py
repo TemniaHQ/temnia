@@ -284,7 +284,7 @@ class TopicSelectionActivities:
         await self.require_record(
             context,
             context.source_index,
-            format_name="topic-source-index/1",
+            format_name="topic-source-index/2",
             dependencies=(context.evidence,),
         )
         _, evidence, _, _ = await self.load(context.model_copy(update={"source_index": None}))

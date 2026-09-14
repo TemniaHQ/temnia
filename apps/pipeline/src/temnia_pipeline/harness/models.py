@@ -306,7 +306,7 @@ async def _indexed_source(deps: HarnessModelDeps) -> tuple[TopicSourceIndex, str
         or accepted.sha256 != reference.sha256
         or accepted.size_bytes != reference.sizeBytes
         or accepted.storage_key != reference.storageKey
-        or accepted.metadata.get("format") != "topic-source-index/1"
+        or accepted.metadata.get("format") != "topic-source-index/2"
     ):
         raise ModelPersistenceError("source-index identity differs from the accepted artifact")
     value = await artifacts.read_artifact_json(
@@ -325,17 +325,23 @@ async def _indexed_source(deps: HarnessModelDeps) -> tuple[TopicSourceIndex, str
 
 
 async def browse_source(
-    ctx: RunContext[HarnessModelDeps], cursor: int = 0, limit: int = 8
+    ctx: RunContext[HarnessModelDeps],
+    parent_id: str = "episode",
+    cursor: int = 0,
+    limit: int = 8,
 ) -> TopicSourceBrowsePage:
-    """Browse the source map in chronological pages.
+    """Browse one episode or section node's children in chronological pages.
 
     Args:
         ctx: The immutable run and source-index authority.
+        parent_id: Episode root or section ID whose direct children should be returned.
         cursor: Zero-based region cursor returned by the prior page.
         limit: Number of regions to return, from 1 through 16.
     """
     index, sha256 = await _indexed_source(ctx.deps)
-    return browse_topic_source(index, index_sha256=sha256, cursor=cursor, limit=limit)
+    return browse_topic_source(
+        index, index_sha256=sha256, parent_id=parent_id, cursor=cursor, limit=limit
+    )
 
 
 async def search_source(

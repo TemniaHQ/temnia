@@ -36,25 +36,26 @@ export type TopicSourceIndexSentence = z.infer<
   typeof TopicSourceIndexSentenceSchema
 >;
 
-/** A bounded discovery unit with a pinned semantic vector and exact source extent. */
-export const TopicSourceIndexRegionSchema = z
+/** One node in the exact episode -> section -> region navigation hierarchy. */
+export const TopicSourceIndexNodeSchema = z
   .object({
+    childIds: z.array(identifier()),
     embedding: z.array(z.number().finite()),
     endMs: z.int().nonnegative(),
     firstSentenceId: identifier(),
     id: identifier(),
     keywords: z.array(z.string()),
+    kind: z.enum(["episode", "section", "region"]),
     lastSentenceId: identifier(),
     ordinal: z.int().nonnegative(),
+    parentId: identifier().nullable(),
     preview: z.string(),
     sentenceCount: z.int().positive(),
     startMs: z.int().nonnegative(),
   })
   .strict()
-  .meta({ id: "TopicSourceIndexRegion", title: "TopicSourceIndexRegion" });
-export type TopicSourceIndexRegion = z.infer<
-  typeof TopicSourceIndexRegionSchema
->;
+  .meta({ id: "TopicSourceIndexNode", title: "TopicSourceIndexNode" });
+export type TopicSourceIndexNode = z.infer<typeof TopicSourceIndexNodeSchema>;
 
 /** Immutable hybrid-retrieval input derived only from one accepted evidence artifact. */
 export const TopicSourceIndexSchema = z
@@ -63,10 +64,12 @@ export const TopicSourceIndexSchema = z
     embeddingModel: identifier(),
     embeddingRevision: identifier(),
     evidenceSha256: sha256(),
-    format: z.literal("topic-source-index/1"),
+    format: z.literal("topic-source-index/2"),
+    nodes: z.array(TopicSourceIndexNodeSchema).min(3),
     regionMaxCharacters: z.int().positive(),
     regionMaxSentences: z.int().positive(),
-    regions: z.array(TopicSourceIndexRegionSchema).min(1),
+    rootNodeId: identifier(),
+    sectionMaxRegions: z.int().positive(),
     sentences: z.array(TopicSourceIndexSentenceSchema).min(1),
     sourceId: z.uuid(),
     transcriptId: z.uuid(),
@@ -76,37 +79,46 @@ export const TopicSourceIndexSchema = z
   .meta({ id: "TopicSourceIndex", title: "TopicSourceIndex" });
 export type TopicSourceIndex = z.infer<typeof TopicSourceIndexSchema>;
 
-/** Compact region metadata returned by browse and search tools. */
-export const TopicSourceRegionHitSchema = z
+/** Compact hierarchy metadata returned by browse and search tools. */
+export const TopicSourceNodeHitSchema = z
   .object({
+    childCount: z.int().nonnegative(),
     endMs: z.int().nonnegative(),
     firstSentenceId: identifier(),
     id: identifier(),
     keywords: z.array(z.string()),
+    kind: z.enum(["section", "region"]),
     lastSentenceId: identifier(),
+    parentId: identifier(),
     preview: z.string(),
     score: z.number().finite().nullable(),
     sentenceCount: z.int().positive(),
     startMs: z.int().nonnegative(),
   })
   .strict()
-  .meta({ id: "TopicSourceRegionHit", title: "TopicSourceRegionHit" });
-export type TopicSourceRegionHit = z.infer<typeof TopicSourceRegionHitSchema>;
+  .meta({ id: "TopicSourceNodeHit", title: "TopicSourceNodeHit" });
+export type TopicSourceNodeHit = z.infer<typeof TopicSourceNodeHitSchema>;
 
 export const TopicSourceBrowsePageSchema = z
   .object({
     complete: z.boolean(),
     indexSha256: sha256(),
     nextCursor: z.int().nonnegative().nullable(),
-    regions: z.array(TopicSourceRegionHitSchema),
+    nodes: z.array(TopicSourceNodeHitSchema),
+    parentId: identifier(),
   })
   .strict()
   .meta({ id: "TopicSourceBrowsePage", title: "TopicSourceBrowsePage" });
 export type TopicSourceBrowsePage = z.infer<typeof TopicSourceBrowsePageSchema>;
 
-export const TopicSourceSearchPageSchema = TopicSourceBrowsePageSchema.extend({
-  query: z.string().min(1),
-})
+export const TopicSourceSearchPageSchema = z
+  .object({
+    complete: z.boolean(),
+    indexSha256: sha256(),
+    nextCursor: z.int().nonnegative().nullable(),
+    query: z.string().min(1),
+    regions: z.array(TopicSourceNodeHitSchema),
+  })
   .strict()
   .meta({ id: "TopicSourceSearchPage", title: "TopicSourceSearchPage" });
 export type TopicSourceSearchPage = z.infer<typeof TopicSourceSearchPageSchema>;

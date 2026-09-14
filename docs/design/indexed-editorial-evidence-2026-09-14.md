@@ -5,12 +5,12 @@
 index and give author/reviewer models tools to investigate source evidence. Treat this as a
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
-The first end-to-end vertical slice is implemented on `feat/indexed-editorial-evidence`. It
-replaces whole-transcript prompts for the independent inventory, author and source reviewer with
-one immutable source index and three bounded tools. This is implemented behavior with synthetic
-and local test evidence; it is not a measured editorial improvement or a production qualification.
-The hierarchy, bounded context reconstruction, candidate/media tools and cross-run index reuse
-described below remain subsequent work.
+The first end-to-end vertical slice and its hierarchy milestone are implemented on
+`feat/indexed-editorial-evidence`. They replace whole-transcript prompts for the independent
+inventory, author and source reviewer with one immutable source index and three bounded tools.
+This is implemented behavior with synthetic and local test evidence; it is not a measured
+editorial improvement or a production qualification. Bounded context reconstruction,
+candidate/media tools and cross-run index reuse described below remain subsequent work.
 
 ## Why this changes the design
 
@@ -31,25 +31,29 @@ editorial quality are evaluation questions.
 
 ## Implemented vertical slice
 
-`topic-source-index/1` is a scoped, content-addressed `checks` artifact derived from the exact
+`topic-source-index/2` is a scoped, content-addressed `checks` artifact derived from the exact
 accepted evidence artifact before any editorial model call. It retains every transcript sentence,
-an exact ordered partition, deterministic keywords and first/middle/last previews, plus normalized
-region vectors from the already pinned `sentence-transformers/all-MiniLM-L6-v2` revision. Text is
-embedded in at most 800-character units and averaged into each region vector so later material in a
-region is not silently discarded by the encoder's input ceiling. The current partition normally
-contains at most 32 sentences and 8,000 text characters; a single accepted sentence may be larger
-and exact reads refuse anything above 64,000 characters.
+an exact ordered leaf partition and an episode → section → region hierarchy. Every node has
+deterministic keywords and first/middle/last previews. Leaf vectors use the already pinned
+`sentence-transformers/all-MiniLM-L6-v2` revision; section and episode vectors are normalized,
+sentence-count-weighted averages of their children. Text is embedded in at most 800-character
+units and averaged into each region vector so later material in a region is not silently discarded
+by the encoder's input ceiling. A leaf normally contains at most 32 sentences and 8,000 text
+characters, and a section owns at most eight leaves. A single accepted sentence may be larger and
+exact reads refuse anything above 64,000 characters.
 
 The model prompt carries only index identity, region/sentence counts, transcript duration and tool
-limits. It contains no transcript body. Inventory, author and source-review agents receive exactly
+limits plus episode, section and region counts. It contains no transcript body. Inventory, author
+and source-review agents receive exactly
 `browse_source`, `search_source` and `read_source`; scope, source and index identity come from model
 dependencies and cannot be supplied by the model. `browse_source` returns at most 16 chronological
-regions, `search_source` returns at most 12 BM25/cosine-ranked regions for a query of at most 512
+children of one episode or section, `search_source` returns at most 12 BM25/cosine-ranked leaves for a query of at most 512
 characters, and `read_source` returns at most 80 exact sentences and 64,000 characters with an
 explicit continuation sentence.
 
-The three indexed prompts require a cursor-zero chronological browse through its final page,
-hybrid search and exact reads. Admission reconstructs a no-prose `topic-source-inspection/1` trace
+The three indexed prompts require a cursor-zero browse of every root child followed by every
+section's leaves, all in source order and through the final page, plus hybrid search and exact reads.
+Admission reconstructs a no-prose `topic-source-inspection/1` trace
 from the actual PydanticAI tool calls/results. Code verifies the complete browse chain, at least one
 search, and exact reads of every sentence in every source span claimed by the final typed inventory,
 selection or source review. The accepted editorial artifact depends on the exact index, final model
@@ -64,18 +68,21 @@ typed result. The physical gateway validates the complete three-tool set on ever
 The optional route pre-flight can retain and account for multiple tool/final rounds under one
 logical stage.
 
-A deterministic four-hour fixture with 2,400 six-second sentences produces 75 regions. Its initial
-prompt overview stays below 500 serialized characters, all 75 regions are reachable through bounded
-pagination, a rare lexical phrase is retrieved, and exact reads paginate. This proves request-shape
+A deterministic four-hour fixture with 2,400 six-second sentences produces 75 regions in 10
+sections. Its initial prompt overview stays below 500 serialized characters, all sections and
+regions are reachable through bounded pagination, a rare lexical phrase is retrieved, and exact reads paginate. This proves request-shape
 scaling in the local fixture. It does not prove opportunity recall, editorial judgment, production
 latency, provider tool behavior or useful four-hour video selection.
 
-The current map is flat. Region previews and keywords make every part of the source discoverable,
-but the inventory does not read every original sentence unless it uses that sentence in a returned
-span. PydanticAI also retains tool results in the active agent message history. The current bounded
-map plus selective reads is materially smaller than the transcript, but durable context compaction
-is still required before claiming an indefinitely scalable agent loop. Index artifacts are scoped
-to a run today; safe reuse across runs is not implemented.
+The hierarchy makes every leaf descriptor discoverable, but the inventory does not read every
+original sentence unless it uses that sentence in a returned span. Descriptions are deterministic
+source extracts and keywords, rather than model-generated semantic abstracts; relationship links
+are not implemented. PydanticAI also retains tool results in the active agent message history. The
+bounded map plus selective reads is materially smaller than the transcript, but durable context
+compaction is still required before claiming an indefinitely scalable agent loop. Index artifacts
+are scoped to a run today; safe reuse across runs is not implemented. The exact v2 contract and
+invariants are recorded in
+[topic-source-index-v2-2026-09-14.md](topic-source-index-v2-2026-09-14.md).
 
 ## A source index with both navigation and search
 
@@ -114,16 +121,16 @@ authorize stitching separate passages into a contiguous-only video.
 | --- | --- | --- |
 | Canonical evidence | Exact sentences, words, speakers, timing and source/media identity | Source text and measured facts |
 | Leaf regions | Bounded sentence/turn groups, exact owned spans, contextual overlap, neighbor links | Retrieval boundaries, never final video boundaries |
-| Regional map | Short descriptions, child-region IDs, anchored claims/questions and unresolved continuations | Generated navigation hypotheses |
-| Episode map | A bounded overview with paginated children | Navigation; cannot substitute for source review |
+| Regional map | Deterministic descriptions, child-region IDs and bottom-up vectors; anchored claims and unresolved continuations are later work | Navigation hypotheses |
+| Episode map | A bounded deterministic overview with paginated section children | Navigation; cannot substitute for source review |
 | Search index | Lexical matches and semantic vectors over source-linked regions | Suggestions about where to read |
 | Inspection records | Exact source spans delivered to each role and its recorded decisions | Evidence access and progress; not proof of model comprehension |
 
-The implemented first slice uses one flat sequence of leaf regions. Build later hierarchy levels
-bottom-up from bounded inputs. Every node keeps the identities of its
-children and the exact source ranges it describes. No index-building call may depend on fitting
-the full recording into a prompt. Context used to describe a chunk is itself bounded and
-source-linked. Summaries are never accepted as quotations, selected speech or proof of closure.
+The implemented index builds section and episode levels bottom-up from bounded leaves. Every node
+keeps the identities of its children and the exact source range it describes. Code re-derives every
+ownership edge, description and parent vector during admission. No index-building call depends on
+fitting the full recording into a prompt. Summaries are never accepted as quotations, selected
+speech or proof of closure.
 
 Code verifies complete ordered coverage by leaf ownership. Contextual overlap is allowed without
 double-counting coverage. Oversized regions are subdivided; a malformed transcript with an
@@ -172,7 +179,7 @@ candidate/opportunity. Combined repairs still require conflict checks and portfo
 
 ## Working context and durable progress
 
-The first slice still uses PydanticAI's accumulated active message history. Tools alone are
+The hierarchy slice still uses PydanticAI's accumulated active message history. Tools alone are
 insufficient if every response is appended forever: that eventually recreates
 the enormous prompt. Each task keeps a bounded working context containing its instructions,
 current objective, compact map, unresolved dependencies and currently relevant exact excerpts.
@@ -228,7 +235,7 @@ separate requirements.
 | Full transcript per seat | Retain as a measured baseline where admitted; increasing limits alone does not demonstrate reliable long-source judgments |
 | Fixed windows alone | Useful bounded scan units, but discussions and dependencies cross their edges |
 | Flat semantic top-k retrieval | Useful targeted lookup; insufficient as the discovery/omission mechanism |
-| Chronological hierarchy + hybrid search + exact-read tools | Chosen direction; flat hybrid index and exact-read tools are implemented, hierarchy remains |
+| Chronological hierarchy + hybrid search + exact-read tools | Chosen direction; the three-level hierarchy, hybrid leaf search and exact-read tools are implemented |
 | Full entity/community GraphRAG | Relevant global-search ideas, but a separate graph stack is not yet justified for one recording; a chronology with typed links is the smaller comparison |
 
 Sequence the next design around this foundation:
@@ -236,9 +243,9 @@ Sequence the next design around this foundation:
 1. Freeze source-bound human labels and baseline request/latency/cost evidence; include
    worthwhile unselected discussions and distant-dependency cases.
 2. Implement immutable index construction, source tools, bounded context and the durable
-   model/tool request lifecycle as one coherent vertical slice. Index construction, tools,
-   multi-round accounting and cold-review isolation are implemented; bounded reconstruction and
-   interruption recovery still need proof.
+   model/tool request lifecycle as one coherent vertical slice. Hierarchical index construction,
+   tools, multi-round accounting and cold-review isolation are implemented; bounded reconstruction
+   and interruption recovery still need proof.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
    This includes bounded opportunity/portfolio reconciliation, not one final unbounded dump of
    every candidate. Add mandatory source judgments and internal-structure checks in this design.

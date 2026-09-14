@@ -3335,18 +3335,24 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
-        "regions": {
+        "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/TopicSourceRegionHit"
+            "$ref": "#/$defs/TopicSourceNodeHit"
           }
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "complete",
         "indexSha256",
         "nextCursor",
-        "regions"
+        "nodes",
+        "parentId"
       ],
       "additionalProperties": false,
       "title": "TopicSourceBrowsePage"
@@ -3376,7 +3382,14 @@
         },
         "format": {
           "type": "string",
-          "const": "topic-source-index/1"
+          "const": "topic-source-index/2"
+        },
+        "nodes": {
+          "minItems": 3,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceIndexNode"
+          }
         },
         "regionMaxCharacters": {
           "type": "integer",
@@ -3388,12 +3401,15 @@
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
         },
-        "regions": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceIndexRegion"
-          }
+        "rootNodeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sectionMaxRegions": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         },
         "sentences": {
           "minItems": 1,
@@ -3422,9 +3438,11 @@
         "embeddingRevision",
         "evidenceSha256",
         "format",
+        "nodes",
         "regionMaxCharacters",
         "regionMaxSentences",
-        "regions",
+        "rootNodeId",
+        "sectionMaxRegions",
         "sentences",
         "sourceId",
         "transcriptId",
@@ -3433,10 +3451,18 @@
       "additionalProperties": false,
       "title": "TopicSourceIndex"
     },
-    "TopicSourceIndexRegion": {
-      "$id": "#/$defs/TopicSourceIndexRegion",
+    "TopicSourceIndexNode": {
+      "$id": "#/$defs/TopicSourceIndexNode",
       "type": "object",
       "properties": {
+        "childIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
         "embedding": {
           "type": "array",
           "items": {
@@ -3464,6 +3490,14 @@
             "type": "string"
           }
         },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "episode",
+            "section",
+            "region"
+          ]
+        },
         "lastSentenceId": {
           "type": "string",
           "minLength": 1,
@@ -3473,6 +3507,14 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "parentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
         },
         "preview": {
           "type": "string"
@@ -3489,19 +3531,22 @@
         }
       },
       "required": [
+        "childIds",
         "embedding",
         "endMs",
         "firstSentenceId",
         "id",
         "keywords",
+        "kind",
         "lastSentenceId",
         "ordinal",
+        "parentId",
         "preview",
         "sentenceCount",
         "startMs"
       ],
       "additionalProperties": false,
-      "title": "TopicSourceIndexRegion"
+      "title": "TopicSourceIndexNode"
     },
     "TopicSourceIndexSentence": {
       "$id": "#/$defs/TopicSourceIndexSentence",
@@ -3570,6 +3615,90 @@
       "additionalProperties": false,
       "title": "TopicSourceJudgment"
     },
+    "TopicSourceNodeHit": {
+      "$id": "#/$defs/TopicSourceNodeHit",
+      "type": "object",
+      "properties": {
+        "childCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "section",
+            "region"
+          ]
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "preview": {
+          "type": "string"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "childCount",
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "kind",
+        "lastSentenceId",
+        "parentId",
+        "preview",
+        "score",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceNodeHit"
+    },
     "TopicSourceReadPage": {
       "$id": "#/$defs/TopicSourceReadPage",
       "type": "object",
@@ -3604,70 +3733,6 @@
       ],
       "additionalProperties": false,
       "title": "TopicSourceReadPage"
-    },
-    "TopicSourceRegionHit": {
-      "$id": "#/$defs/TopicSourceRegionHit",
-      "type": "object",
-      "properties": {
-        "endMs": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "firstSentenceId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "keywords": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "lastSentenceId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "preview": {
-          "type": "string"
-        },
-        "score": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "sentenceCount": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "startMs": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "endMs",
-        "firstSentenceId",
-        "id",
-        "keywords",
-        "lastSentenceId",
-        "preview",
-        "score",
-        "sentenceCount",
-        "startMs"
-      ],
-      "additionalProperties": false,
-      "title": "TopicSourceRegionHit"
     },
     "TopicSourceReview": {
       "$id": "#/$defs/TopicSourceReview",
@@ -3710,23 +3775,23 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
-        "regions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TopicSourceRegionHit"
-          }
-        },
         "query": {
           "type": "string",
           "minLength": 1
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceNodeHit"
+          }
         }
       },
       "required": [
         "complete",
         "indexSha256",
         "nextCursor",
-        "regions",
-        "query"
+        "query",
+        "regions"
       ],
       "additionalProperties": false,
       "title": "TopicSourceSearchPage"

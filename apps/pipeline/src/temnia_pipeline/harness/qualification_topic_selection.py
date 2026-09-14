@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
@@ -25,8 +25,8 @@ from temnia_pipeline.contracts import (
     TopicSentenceSpan,
     TopicSourceBrowsePage,
     TopicSourceIndexSentence,
+    TopicSourceNodeHit,
     TopicSourceReadPage,
-    TopicSourceRegionHit,
     TopicSourceSearchPage,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
@@ -71,6 +71,9 @@ TOPIC_SELECTION_V3_SCHEMAS = {
 }
 QUALIFICATION_SOURCE_INDEX = {
     "indexSha256": "0" * 64,
+    "rootNodeId": "episode",
+    "hierarchyDepth": 3,
+    "sectionCount": 1,
     "regionCount": 1,
     "sentenceCount": 5,
     "durationMs": 5_000,
@@ -81,28 +84,39 @@ QUALIFICATION_SOURCE_INDEX = {
 }
 
 
-def _qualification_region() -> TopicSourceRegionHit:
+def _qualification_node(kind: Literal["section", "region"]) -> TopicSourceNodeHit:
     evidence = synthetic_qualification_evidence()
-    return TopicSourceRegionHit(
-        id="r1",
-        firstSentenceId=evidence.sentences[0].id,
-        lastSentenceId=evidence.sentences[-1].id,
-        startMs=evidence.sentences[0].startMs,
-        endMs=evidence.sentences[-1].endMs,
-        sentenceCount=len(evidence.sentences),
-        keywords=["garden", "watering", "roots"],
-        preview="A greeting leads into a complete garden-watering explanation.",
-        score=None,
+    section = kind == "section"
+    return TopicSourceNodeHit.model_validate(
+        {
+            "id": "section-0001" if section else "region-0001",
+            "kind": "section" if section else "region",
+            "parentId": "episode" if section else "section-0001",
+            "childCount": 1 if section else 0,
+            "firstSentenceId": evidence.sentences[0].id,
+            "lastSentenceId": evidence.sentences[-1].id,
+            "startMs": evidence.sentences[0].startMs,
+            "endMs": evidence.sentences[-1].endMs,
+            "sentenceCount": len(evidence.sentences),
+            "keywords": ["garden", "watering", "roots"],
+            "preview": "A greeting leads into a complete garden-watering explanation.",
+            "score": None,
+        }
     )
 
 
-async def browse_source(cursor: int = 0, limit: int = 8) -> TopicSourceBrowsePage:
-    """Browse the synthetic qualification source map in chronological pages."""
+async def browse_source(
+    parent_id: str = "episode", cursor: int = 0, limit: int = 8
+) -> TopicSourceBrowsePage:
+    """Browse the synthetic qualification hierarchy using the production shape."""
     if cursor != 0 or limit < 1:
         raise ValueError("qualification source has only cursor zero")
+    if parent_id not in {"episode", "section-0001"}:
+        raise ValueError("qualification source has one episode and one section")
     return TopicSourceBrowsePage(
         indexSha256="0" * 64,
-        regions=[_qualification_region()],
+        parentId=parent_id,
+        nodes=[_qualification_node("section" if parent_id == "episode" else "region")],
         nextCursor=None,
         complete=True,
     )
@@ -110,10 +124,10 @@ async def browse_source(cursor: int = 0, limit: int = 8) -> TopicSourceBrowsePag
 
 async def search_source(query: str, cursor: int = 0, limit: int = 6) -> TopicSourceSearchPage:
     """Search the synthetic qualification source using the production tool shape."""
-    page = await browse_source(cursor, limit)
-    region = page.regions[0].model_copy(update={"score": 1.0})
+    _ = cursor, limit
+    region = _qualification_node("region").model_copy(update={"score": 1.0})
     return TopicSourceSearchPage(
-        indexSha256=page.indexSha256,
+        indexSha256="0" * 64,
         query=query,
         regions=[region],
         nextCursor=None,

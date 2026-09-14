@@ -19,26 +19,37 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
-        "regions": {
+        "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/TopicSourceRegionHit"
+            "$ref": "#/$defs/TopicSourceNodeHit"
           }
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "complete",
         "indexSha256",
         "nextCursor",
-        "regions"
+        "nodes",
+        "parentId"
       ],
       "additionalProperties": false,
       "title": "TopicSourceBrowsePage"
     },
-    "TopicSourceRegionHit": {
-      "$id": "#/$defs/TopicSourceRegionHit",
+    "TopicSourceNodeHit": {
+      "$id": "#/$defs/TopicSourceNodeHit",
       "type": "object",
       "properties": {
+        "childCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
         "endMs": {
           "type": "integer",
           "minimum": 0,
@@ -60,7 +71,19 @@
             "type": "string"
           }
         },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "section",
+            "region"
+          ]
+        },
         "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 256
@@ -86,18 +109,21 @@
         }
       },
       "required": [
+        "childCount",
         "endMs",
         "firstSentenceId",
         "id",
         "keywords",
+        "kind",
         "lastSentenceId",
+        "parentId",
         "preview",
         "score",
         "sentenceCount",
         "startMs"
       ],
       "additionalProperties": false,
-      "title": "TopicSourceRegionHit"
+      "title": "TopicSourceNodeHit"
     }
   },
   "$id": "TopicSourceBrowsePage.json",
