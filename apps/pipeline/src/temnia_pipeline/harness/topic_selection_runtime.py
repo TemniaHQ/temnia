@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from temnia_pipeline.contracts import (
+    ChapterRunInput,
     HarnessArtifactRef,
     TopicAuthorPackagingManifest,
     TopicAuthorPackagingPlan,
@@ -43,7 +44,10 @@ SelectionProgramVersion = Literal[
 ]
 SourceToolRole = Literal["inventory", "author", "source_reviewer", "cold_reviewer", "repair"]
 SourceInspectionFormat = Literal[
-    "topic-source-inspection/1", "topic-source-inspection/2", "topic-source-inspection/3"
+    "topic-source-inspection/1",
+    "topic-source-inspection/2",
+    "topic-source-inspection/3",
+    "topic-source-inspection/4",
 ]
 
 
@@ -57,6 +61,7 @@ class SourceInspectionCall(BaseModel):
         "read_source",
         "inspect_candidate",
         "read_media_evidence",
+        "read_editorial_context",
     ]
     arguments: dict[str, Any]
     node_ids: tuple[str, ...] = ()
@@ -65,6 +70,8 @@ class SourceInspectionCall(BaseModel):
     complete: bool
     next_cursor: int | None = None
     next_sentence_id: str | None = None
+    next_context_cursor: str | None = None
+    next_character_offset: int | None = None
 
 
 class SourceInspectionTrace(BaseModel):
@@ -81,6 +88,18 @@ class SourceInspectionTrace(BaseModel):
     retained_sentence_ids: tuple[str, ...] = ()
     evicted_sentence_count: int = 0
     observed_sentence_ids: tuple[str, ...] = ()
+    delivered_context_ids: tuple[str, ...] = ()
+    delivered_fragment_ids: tuple[str, ...] = ()
+
+
+class SyntheticSourceInspectionRecord(BaseModel):
+    """Explicit test provenance; never asserts that a model consumed evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    synthetic: Literal[True] = True
+    role: SourceToolRole
+    stage: str
+    note: str = "Recorded fixture; model evidence consumption was not measured."
 
 
 class SelectionContext(BaseModel):
@@ -116,6 +135,71 @@ class SelectionContext(BaseModel):
     verifier_index: int = 0
     request_attempt: int = 0
     recovery_feedback: tuple[str, ...] = ()
+    resume_indexed: bool = False
+
+
+class EditorialWorkInput(BaseModel):
+    """A child owns one editorial decision; continuation carries identities, not history."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    request: ChapterRunInput
+    context: SelectionContext
+    activity_name: str
+    resumed_context: SelectionContext | None = None
+
+    def identity(self) -> str:
+        """Stable through continuation, tied to the exact original editorial assignment."""
+        value = self.model_copy(update={"resumed_context": None})
+        return hashlib.sha256(value.model_dump_json().encode()).hexdigest()
+
+
+class EditorialWorkResult(BaseModel):
+    """Only an admitted artifact or a retained diagnostic returns to the parent."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    saved: dict[str, Any] | None = None
+    context: SelectionContext
+    reason: str | None = None
+    limited: bool = False
+
+
+class EditorialWorkSave(BaseModel):
+    """Persist an admitted decision for exact reuse by a later parent run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    work: EditorialWorkInput
+    result: EditorialWorkResult
+
+
+class EditorialProgress(BaseModel):
+    """The last accepted editorial selection, independently of any review render."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    base_revision: int = 0
+    phase: Literal["review", "render"] = "review"
+    compiled: HarnessArtifactRef | None = None
+    seen_keys: tuple[str, ...] = ()
+
+
+class EditorialResume(BaseModel):
+    """Validated progress with the accepted selection loaded for orchestration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    progress: EditorialProgress
+    draft: TopicSelectionDraft
+
+
+class EditorialResumeLookup(BaseModel):
+    """Typed absent/present progress across the Temporal activity boundary."""
+
+    resume: EditorialResume | None = None
+
+
+class EditorialWorkLookup(BaseModel):
+    """Typed absent/present admitted work across the Temporal activity boundary."""
+
+    result: EditorialWorkResult | None = None
 
 
 class TopicSourceIndexUseRecord(BaseModel):
@@ -158,6 +242,7 @@ class SelectionCallPlan(BaseModel):
     allowed_browse_parent_ids: tuple[str, ...] = ()
     allowed_candidate_ids: tuple[str, ...] = ()
     allowed_sentence_ids: tuple[str, str] | None = None
+    editorial_context: HarnessArtifactRef | None = None
     synthetic_payload: dict[str, object] | None = None
 
 

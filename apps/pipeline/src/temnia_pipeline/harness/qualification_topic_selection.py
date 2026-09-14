@@ -45,6 +45,11 @@ from temnia_pipeline.contracts import (
     TopicSourceSearchPage,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
+from temnia_pipeline.harness.editorial_context import (
+    EditorialContextPage,
+    read_editorial_page,
+    source_review_context,
+)
 from temnia_pipeline.harness.editorial_evidence import read_topic_media_evidence
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.source_progress import compact_source_messages
@@ -66,6 +71,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
+    SELECTION_SOURCE_PAGED_PROMPT,
     SELECTION_SOURCE_PROMPT_V3,
     SELECTION_SOURCE_SHARD_PROMPT,
     apply_selection_patch,
@@ -231,8 +237,11 @@ async def read_source(
     last_sentence_id: str,
     cursor_sentence_id: str | None = None,
     limit: int = 40,
+    cursor_character: int = 0,
 ) -> TopicSourceReadPage:
     """Read exact synthetic sentences using the production bounded-read shape."""
+    if cursor_character:
+        raise ValueError("synthetic whole-sentence reads require a zero character cursor")
     evidence = synthetic_qualification_evidence()
     positions = {sentence.id: offset for offset, sentence in enumerate(evidence.sentences)}
     first = positions[first_sentence_id]
@@ -252,6 +261,8 @@ async def read_source(
     return TopicSourceReadPage(
         indexSha256="0" * 64,
         sentences=sentences,
+        fragments=[],
+        nextCharacterOffset=None,
         nextSentenceId=evidence.sentences[end].id if end <= last else None,
         complete=end > last,
     )
@@ -308,6 +319,15 @@ async def read_media_evidence(
     )
 
 
+async def read_editorial_context(cursor: str = "0:0", limit: int = 4) -> EditorialContextPage:
+    """Read exact assigned structured records through the production pagination contract."""
+    _, record, _ = topic_selection_qualification_case(combined_patch=True)
+    context = source_review_context(record.draft, _v6_qualification_work_item(), "0" * 64)
+    return read_editorial_page(
+        context, context_sha256=content_hash(context), cursor=cursor, limit=limit
+    )
+
+
 def topic_source_qualification_tools(stage: str, suite: str = "topic-selection-v3") -> list[Any]:
     """Expose the exact role-specific indexed production tools."""
     if stage in {"topic_inventory", "topic_inventory_shard", "topic_author"}:
@@ -319,6 +339,7 @@ def topic_source_qualification_tools(stage: str, suite: str = "topic-selection-v
             read_source,
             inspect_candidate,
             read_media_evidence,
+            *([read_editorial_context] if suite == "topic-selection-v7" else []),
         ]
     if stage == "topic_cold" and suite == "topic-selection-v7":
         return [read_source]
@@ -699,6 +720,22 @@ def topic_selection_v7_qualification_prompts() -> dict[str, tuple[str, type[Base
         ),
         TopicSelectionColdReview,
         SELECTION_COLD_PROMPT_V4,
+    )
+    work_item = _v6_qualification_work_item()
+    context = source_review_context(record.draft, work_item, "0" * 64)
+    prompts["topic_source"] = (
+        source_review_shard_prompt(
+            record.draft,
+            record.rubric,
+            QUALIFICATION_SOURCE_INDEX,
+            work_item,
+            editorial_context={
+                "sha256": content_hash(context),
+                "recordCount": len(context.records),
+            },
+        ),
+        TopicPortfolioReviewV4,
+        SELECTION_SOURCE_PAGED_PROMPT,
     )
     plan = _v7_qualification_repair_plan()
     prompts["topic_patch"] = (

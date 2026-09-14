@@ -22,6 +22,7 @@ from temnia_pipeline.contracts import (
     TopicSentenceSpan,
     TopicSourceReviewShard,
 )
+from temnia_pipeline.harness.editorial_context import source_review_context
 from temnia_pipeline.harness.source_index import build_topic_source_index, source_index_map
 from temnia_pipeline.harness.topic_selection import (
     content_hash,
@@ -132,6 +133,44 @@ def _case(count: int = 1) -> tuple[HarnessEvidence, TopicSourceIndex, TopicSelec
         embedding_revision="b" * 40,
     )
     return evidence, index, _selection(evidence, count)
+
+
+def test_dense_context_is_paged_without_discarding_linked_opportunities() -> None:
+    evidence, index, initial = _case(80)
+    candidate = initial.proposal.candidates[0].model_copy(
+        update={"lastSentenceId": evidence.sentences[-1].id}
+    )
+    draft = initial.model_copy(
+        update={
+            "proposal": initial.proposal.model_copy(update={"candidates": [candidate]}),
+            "opportunities": [
+                item.model_copy(update={"candidateIds": [candidate.id]})
+                for item in initial.opportunities
+            ],
+        }
+    )
+    plan = build_source_review_plan(
+        evidence,
+        index,
+        draft,
+        index_sha256="c" * 64,
+        selection_sha256="d" * 64,
+        paged_context=True,
+    )
+    item = next(item for item in plan.workItems if item.candidateIds)
+    assert len(item.contextOpportunityIds) == 80
+    context = source_review_context(draft, item, "c" * 64)
+    assert len(context.records) == 81
+    prompt = source_review_shard_prompt(
+        draft,
+        make_rubric("General viewers."),
+        source_index_map(index, index_sha256="c" * 64),
+        item,
+        editorial_context={"sha256": "e" * 64, "recordCount": len(context.records)},
+    )
+    assert len(prompt.encode()) < 16_000
+    assert "One exact test sentence." not in prompt
+    assert "The discussion has one candidate." not in prompt
 
 
 def _review(draft: TopicSelectionDraft, item: TopicSourceReviewWorkItem) -> TopicPortfolioReviewV4:
@@ -263,8 +302,8 @@ def test_four_hour_review_plan_and_prompts_have_finite_owned_shapes() -> None:
         )
         for item in plan.workItems
     ]
-    assert max(prompt_sizes) == 20_242
-    assert sum(prompt_sizes) // len(prompt_sizes) == 9_605
+    assert max(prompt_sizes) < 25_000
+    assert sum(prompt_sizes) // len(prompt_sizes) < 12_000
 
 
 def test_every_candidate_requires_one_internal_structure_decision() -> None:

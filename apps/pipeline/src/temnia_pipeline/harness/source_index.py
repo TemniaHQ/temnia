@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections import Counter
@@ -22,6 +23,7 @@ from temnia_pipeline.contracts import (
     TopicSourceNodeHit,
     TopicSourceReadPage,
     TopicSourceSearchPage,
+    TopicSourceSentenceFragment,
 )
 from temnia_pipeline.harness.source_progress import inspection_from_messages
 from temnia_pipeline.harness.validators import HarnessValidationError
@@ -51,9 +53,8 @@ SOURCE_INDEX_FORMAT = "topic-source-index/2"
 EMBEDDING_UNIT_MAX_CHARACTERS = 800
 REGION_KEYWORDS = 10
 REGION_PREVIEW_CHARACTERS = 240
-MAX_INDEX_SENTENCE_CHARACTERS = 64_000
 MAX_QUERY_CHARACTERS = 512
-MAX_READ_CHARACTERS = 64_000
+MAX_READ_CHARACTERS = 16_000
 MAX_BROWSE_LIMIT = 16
 MAX_SEARCH_LIMIT = 12
 MAX_READ_SENTENCES = 80
@@ -203,8 +204,6 @@ def build_topic_source_index(
     ]
     if not sentences:
         raise HarnessValidationError("a source index requires at least one transcript sentence")
-    if any(len(sentence.text) > MAX_INDEX_SENTENCE_CHARACTERS for sentence in sentences):
-        raise HarnessValidationError("a transcript sentence exceeds the bounded source-read size")
     groups = _partition(sentences)
     embedding_units: list[str] = []
     region_unit_ranges: list[tuple[int, int]] = []
@@ -485,6 +484,10 @@ def source_index_map(index: TopicSourceIndex, *, index_sha256: str) -> dict[str,
         "searchPageLimit": MAX_SEARCH_LIMIT,
         "readSentenceLimit": MAX_READ_SENTENCES,
         "readCharacterLimit": MAX_READ_CHARACTERS,
+        "readContinuation": (
+            "Follow nextSentenceId; pass nextCharacterOffset as cursor_character (else 0). "
+            "Cite the original sentence only after every fragment."
+        ),
     }
 
 
@@ -618,6 +621,7 @@ def read_topic_source(
     last_sentence_id: str,
     cursor_sentence_id: str | None = None,
     limit: int = 40,
+    cursor_character: int = 0,
 ) -> TopicSourceReadPage:
     """Return an exact bounded sentence range with an explicit continuation ID."""
     if not 1 <= limit <= MAX_READ_SENTENCES:
@@ -631,6 +635,36 @@ def read_topic_source(
         raise ValueError("read range names an unknown sentence") from error
     if last < first or cursor < first or cursor > last:
         raise ValueError("read range or cursor is reversed")
+    sentence = index.sentences[cursor]
+    if cursor_character < 0 or cursor_character >= max(1, len(sentence.text)):
+        raise ValueError("read character cursor is outside its sentence")
+    if len(sentence.text) > MAX_READ_CHARACTERS:
+        end_character = min(len(sentence.text), cursor_character + MAX_READ_CHARACTERS)
+        partial = end_character < len(sentence.text)
+        next_sentence = (
+            sentence.id if partial else index.sentences[cursor + 1].id if cursor < last else None
+        )
+        return TopicSourceReadPage(
+            indexSha256=index_sha256,
+            sentences=[],
+            fragments=[
+                TopicSourceSentenceFragment(
+                    id=hashlib.sha256(
+                        f"{sentence.id}:{cursor_character}:{end_character}".encode()
+                    ).hexdigest(),
+                    sentenceId=sentence.id,
+                    startCharacter=cursor_character,
+                    endCharacter=end_character,
+                    totalCharacters=len(sentence.text),
+                    text=sentence.text[cursor_character:end_character],
+                )
+            ],
+            nextSentenceId=next_sentence,
+            nextCharacterOffset=end_character if partial else None,
+            complete=next_sentence is None,
+        )
+    if cursor_character:
+        raise ValueError("whole-sentence reads require a zero character cursor")
     end = cursor
     characters = 0
     while end <= last and end < cursor + limit:
@@ -642,6 +676,8 @@ def read_topic_source(
     return TopicSourceReadPage(
         indexSha256=index_sha256,
         sentences=index.sentences[cursor:end],
+        fragments=[],
+        nextCharacterOffset=None,
         nextSentenceId=index.sentences[end].id if end <= last else None,
         complete=end > last,
     )
@@ -735,6 +771,8 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
         if call.tool_name == "read_source"
         for identifier in call.sentence_ids
     }
+    fragmented = fragment_read_sentence_ids(index, trace)
+    read_ids.update(fragmented)
     if not read_ids or not read_ids <= known_sentences:
         raise HarnessValidationError("source inspection did not retain any exact indexed speech")
     if trace.format in {"topic-source-inspection/2", "topic-source-inspection/3"}:
@@ -743,7 +781,7 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
             trace.checkpoint_sha256 is None
             or trace.request_sequence < 1
             or len(retained) != len(trace.retained_sentence_ids)
-            or not retained
+            or (not retained and not fragmented)
             or not retained <= read_ids
         ):
             raise HarnessValidationError("source inspection has an invalid compact checkpoint")
@@ -785,11 +823,13 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
         last = call.arguments.get("last_sentence_id")
         continuation = call.arguments.get("cursor_sentence_id")
         requested_limit = call.arguments.get("limit", 40)
+        character = call.arguments.get("cursor_character", 0)
         if (
             not isinstance(first, str)
             or not isinstance(last, str)
             or (continuation is not None and not isinstance(continuation, str))
             or type(requested_limit) is not int
+            or type(character) is not int
         ):
             raise HarnessValidationError("source inspection read arguments are invalid")
         try:
@@ -800,6 +840,7 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
                 last_sentence_id=last,
                 cursor_sentence_id=continuation,
                 limit=requested_limit,
+                cursor_character=character,
             )
         except ValueError as error:
             raise HarnessValidationError("source inspection read range is invalid") from error
@@ -807,8 +848,45 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
             call.sentence_ids != tuple(sentence.id for sentence in expected.sentences)
             or call.next_sentence_id != expected.nextSentenceId
             or call.complete != expected.complete
+            or call.evidence_ids != tuple(fragment.id for fragment in expected.fragments)
+            or call.next_character_offset != expected.nextCharacterOffset
         ):
             raise HarnessValidationError("source inspection read result differs from the index")
+
+
+def fragment_read_sentence_ids(index: TopicSourceIndex, trace: SourceInspectionTrace) -> set[str]:
+    """A fragmented sentence counts only after its complete exact text was delivered."""
+    intervals: dict[str, list[tuple[int, int]]] = {}
+    for call in trace.calls:
+        if call.tool_name != "read_source" or not call.evidence_ids:
+            continue
+        try:
+            page = read_topic_source(index, index_sha256=trace.index_sha256, **call.arguments)
+        except (ValueError, TypeError) as error:
+            raise HarnessValidationError("source fragment read has invalid arguments") from error
+        if (
+            call.evidence_ids != tuple(item.id for item in page.fragments)
+            or call.next_sentence_id != page.nextSentenceId
+            or call.next_character_offset != page.nextCharacterOffset
+            or call.complete != page.complete
+        ):
+            raise HarnessValidationError("source fragment read differs from its exact page")
+        for fragment in page.fragments:
+            if fragment.id in trace.delivered_fragment_ids:
+                intervals.setdefault(fragment.sentenceId, []).append(
+                    (fragment.startCharacter, fragment.endCharacter)
+                )
+    lengths = {sentence.id: len(sentence.text) for sentence in index.sentences}
+    complete: set[str] = set()
+    for identifier, spans in intervals.items():
+        end = 0
+        for start, stop in sorted(spans):
+            if start > end:
+                break
+            end = max(end, stop)
+        if end == lengths[identifier]:
+            complete.add(identifier)
+    return complete
 
 
 def validate_source_read_ids(
@@ -834,6 +912,7 @@ def validate_source_read_ids(
             }
         )
     )
+    read.update(fragment_read_sentence_ids(index, trace))
     missing = required_sentence_ids - read
     if missing:
         sample = ", ".join(sorted(missing)[:8])

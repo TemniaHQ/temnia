@@ -2,6 +2,20 @@
 
 ## Decisions
 
+**2026-09-15 — Close the current indexed recovery batch, then stop.** Rajesh explicitly narrowed
+the active work to finishing the batch, making pipeline tests green and committing. The
+[batch record](docs/design/indexed-harness-recovery-2026-09-15.md) documents paged structured
+review context, exact long-sentence fragments, segmented inspection audit chains, per-decision
+Temporal children with 32-request continuation, admitted-work reuse, editorial resume after a
+review render and reviewer-family reservation. The web action is wired to V7; its new image/browser
+journey and live request qualification have not been verified. Connected-repair staging was removed
+from this batch: existing repair-component bounds remain. Parent history scale, typed internal
+topic decisions, cross-section reconciliation and real provider/editorial/playback evaluation
+remain open. Complete evidence delivery is not complete model comprehension. The
+[completion ledger](docs/plans/indexed-harness-production-completion.md) is paused at this explicit
+user boundary, not marked complete. Do not call this batch production-ready or push/deploy it as
+part of the stopping request.
+
 **2026-09-14 — Reliability recovery must preserve bounded prompts.** Rajesh authorized changing
 technical limits and retry behavior so long recordings receive an attempt rather than an arbitrary
 size refusal. The [recovery record](docs/design/indexed-harness-recovery-2026-09-14.md) distinguishes

@@ -41,11 +41,14 @@ MAX_CHECKPOINT_CALLS = 256
 MAX_CHECKPOINT_IDENTIFIERS = 8_192
 MAX_RETAINED_SENTENCES = 320
 MAX_RETAINED_CHARACTERS = 128 * 1024
+MAX_RETAINED_BYTES = 160 * 1024
 MAX_CHECKPOINT_BYTES = 384 * 1024
 MAX_STALLED_ROUNDS = 6
 STALL_GUIDANCE_ROUND = 2
 MAX_OBSERVATION_BYTES = 96 * 1024
 MAX_WORKING_NOTE_CHARACTERS = 8_000
+AUDIT_SEGMENT_CALLS = 96
+AUDIT_SEGMENT_IDENTIFIERS = 2_048
 SHA256_HEX = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
@@ -70,7 +73,10 @@ class SourceProgressCheckpoint(BaseModel):
     observations: tuple[dict[str, Any], ...] = ()
     working_notes: str = ""
     observed_sentence_ids: tuple[str, ...] = ()
+    delivered_context_ids: tuple[str, ...] = ()
+    delivered_fragment_ids: tuple[str, ...] = ()
     stalled_rounds: int = 0
+    audit_segment: int = 0
 
 
 def _observations(
@@ -105,6 +111,24 @@ def _observations(
     while len(observations) > 1 and len(_canonical(observations)) > MAX_OBSERVATION_BYTES:
         observations.pop(0)
     return tuple(observations), notes
+
+
+def _context_ids(observations: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(
+        str(event["id"])
+        for observation in observations
+        if observation.get("tool") == "read_editorial_context"
+        for event in observation["result"].get("events", [])
+    )
+
+
+def _fragment_ids(observations: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(
+        str(fragment["id"])
+        for observation in observations
+        if observation.get("tool") == "read_source" and isinstance(observation.get("result"), dict)
+        for fragment in observation["result"].get("fragments", [])
+    )
 
 
 def _canonical(value: object) -> bytes:
@@ -173,6 +197,7 @@ def _new_calls(
                     "read_source",
                     "inspect_candidate",
                     "read_media_evidence",
+                    "read_editorial_context",
                 }:
                     pending[part.tool_call_id] = part
             continue
@@ -192,7 +217,7 @@ def _new_calls(
             if not expected_identity:
                 continue
             nodes = cast("list[object]", payload.get("nodes", payload.get("regions", [])))
-            events = cast("list[object]", payload.get("events", []))
+            events = cast("list[object]", payload.get("events", payload.get("fragments", [])))
             returned_sentences = cast("list[object]", payload.get("sentences", []))
             sentence_models = [
                 TopicSourceIndexSentence.model_validate(item)
@@ -218,8 +243,18 @@ def _new_calls(
                             and isinstance(cast("dict[str, Any]", item).get("id"), str)
                         ],
                         "complete": payload.get("complete") is True,
-                        "next_cursor": payload.get("nextCursor"),
+                        "next_cursor": (
+                            payload.get("nextCursor")
+                            if request.tool_name != "read_editorial_context"
+                            else None
+                        ),
+                        "next_context_cursor": (
+                            payload.get("nextCursor")
+                            if request.tool_name == "read_editorial_context"
+                            else None
+                        ),
                         "next_sentence_id": payload.get("nextSentenceId"),
+                        "next_character_offset": payload.get("nextCharacterOffset"),
                     }
                 )
             )
@@ -236,11 +271,15 @@ def _retained_sentences(
         retained = [item for item in retained if item.id != sentence.id]
         retained.append(sentence)
     characters = sum(len(item.text) for item in retained)
+    size_bytes = sum(len(item.text.encode()) for item in retained)
     while retained and (
-        len(retained) > MAX_RETAINED_SENTENCES or characters > MAX_RETAINED_CHARACTERS
+        len(retained) > MAX_RETAINED_SENTENCES
+        or characters > MAX_RETAINED_CHARACTERS
+        or size_bytes > MAX_RETAINED_BYTES
     ):
         removed = retained.pop(0)
         characters -= len(removed.text)
+        size_bytes -= len(removed.text.encode())
         evicted += 1
     return tuple(retained), evicted
 
@@ -367,8 +406,19 @@ def compact_source_messages(
             evicted_sentence_count=(prior.evicted_sentence_count if prior is not None else 0)
             + newly_evicted,
             observations=observations,
+            delivered_context_ids=tuple(
+                dict.fromkeys((*prior.delivered_context_ids, *_context_ids(prior.observations)))
+            )
+            if prior is not None
+            else (),
             working_notes=notes,
+            delivered_fragment_ids=tuple(
+                dict.fromkeys((*prior.delivered_fragment_ids, *_fragment_ids(prior.observations)))
+            )
+            if prior is not None
+            else (),
             stalled_rounds=stalled,
+            audit_segment=prior.audit_segment if prior is not None else 0,
             observed_sentence_ids=tuple(
                 dict.fromkeys(
                     (
@@ -381,6 +431,26 @@ def compact_source_messages(
             else (),
         )
     )
+    identifiers = sum(
+        len(call.node_ids) + len(call.sentence_ids) + len(call.evidence_ids)
+        for call in checkpoint.calls
+    )
+    if prior is not None and (
+        len(checkpoint.calls) > AUDIT_SEGMENT_CALLS
+        or identifiers > AUDIT_SEGMENT_IDENTIFIERS
+        or len(_canonical(checkpoint.model_dump(mode="json"))) > MAX_CHECKPOINT_BYTES
+    ):
+        # The already persisted parent retains older access evidence. Only the next delta
+        # travels to the model; admission reconstructs and verifies the immutable chain.
+        checkpoint = checkpoint.model_copy(
+            update={
+                "audit_segment": prior.audit_segment + 1,
+                "calls": tuple(calls),
+                "observed_sentence_ids": tuple(item.id for item in prior.retained_sentences),
+                "delivered_context_ids": _context_ids(prior.observations),
+                "delivered_fragment_ids": _fragment_ids(prior.observations),
+            }
+        )
     _validate_bounds(checkpoint)
     prompt = _initial_prompt(messages)
     latest_request = next(
@@ -440,7 +510,19 @@ def inspection_from_messages(
 def inspection_from_checkpoint(checkpoint: SourceProgressCheckpoint) -> SourceInspectionTrace:
     """Project one persisted checkpoint into its source-text-free admission record."""
     return SourceInspectionTrace(
-        format="topic-source-inspection/3",
+        format=(
+            "topic-source-inspection/4" if checkpoint.audit_segment else "topic-source-inspection/3"
+        ),
+        delivered_context_ids=tuple(
+            dict.fromkeys(
+                (*checkpoint.delivered_context_ids, *_context_ids(checkpoint.observations))
+            )
+        ),
+        delivered_fragment_ids=tuple(
+            dict.fromkeys(
+                (*checkpoint.delivered_fragment_ids, *_fragment_ids(checkpoint.observations))
+            )
+        ),
         index_sha256=checkpoint.index_sha256,
         role=checkpoint.role,
         stage=checkpoint.stage,
@@ -457,4 +539,38 @@ def inspection_from_checkpoint(checkpoint: SourceProgressCheckpoint) -> SourceIn
                 )
             )
         ),
+    )
+
+
+def aggregate_checkpoint_inspections(
+    checkpoints: Sequence[SourceProgressCheckpoint],
+) -> SourceInspectionTrace:
+    """Reconstruct admission evidence from a verified chain, newest checkpoint first.
+
+    This expanded audit is used in an activity, never returned to the model or workflow.
+    The final checkpoint proves delivery of its retained text; every older checkpoint was
+    the exact prompt for its following settled model request.
+    """
+    if not checkpoints:
+        raise SourceProgressLimitExceeded("source inspection checkpoint chain is empty")
+    newest = checkpoints[0]
+    calls: dict[str, SourceInspectionCall] = {}
+    speech: dict[str, None] = {}
+    context_ids: dict[str, None] = {}
+    fragment_ids: dict[str, None] = {}
+    for checkpoint in reversed(checkpoints):
+        for call in checkpoint.calls:
+            calls.setdefault(_call_signature(call), call)
+        trace = inspection_from_checkpoint(checkpoint)
+        speech.update(dict.fromkeys(trace.observed_sentence_ids))
+        context_ids.update(dict.fromkeys(trace.delivered_context_ids))
+        fragment_ids.update(dict.fromkeys(trace.delivered_fragment_ids))
+    return inspection_from_checkpoint(newest).model_copy(
+        update={
+            "format": "topic-source-inspection/3",
+            "calls": tuple(calls.values()),
+            "observed_sentence_ids": tuple(speech),
+            "delivered_context_ids": tuple(context_ids),
+            "delivered_fragment_ids": tuple(fragment_ids),
+        }
     )

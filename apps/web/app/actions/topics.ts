@@ -81,10 +81,10 @@ function topicGeneration(input: unknown) {
     intent: {
       editorialPolicy: TOPIC_POLICY,
       input,
-      workflow: WORKFLOWS.topicSelection,
+      workflow: WORKFLOWS.topicSelectionV7,
     },
     prefix: "topic-selection",
-    workflow: WORKFLOWS.topicSelection,
+    workflow: WORKFLOWS.topicSelectionV7,
   };
 }
 
@@ -327,7 +327,7 @@ export async function startTopicRun(
 }
 
 const RetrySchema = z.object({ runId: z.uuid(), sourceId: z.uuid() });
-const RESUMABLE_STATUSES = new Set(["failed", "budget_paused"]);
+const RESUMABLE_STATUSES = new Set(["failed", "budget_paused", "needs_review"]);
 
 /**
  * Resume a stopped run on its retained work: the worker replays settled responses by
@@ -362,7 +362,7 @@ export async function retryTopicRun(
         error:
           run.status === "outcome_unknown"
             ? "This run still has an unconfirmed provider charge; it is reconciled automatically and becomes retryable once the receipt arrives."
-            : "Only a failed or budget-paused run can be retried.",
+            : "Only failed, budget-paused, or unfinished review work can be retried.",
       } as const;
     }
     return {

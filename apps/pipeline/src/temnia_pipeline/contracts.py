@@ -778,16 +778,6 @@ class TopicSourceNodeHit(BaseModel):
     startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
 
 
-class TopicSourceReadPage(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    complete: bool
-    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
-    nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
-    sentences: list[TopicSourceIndexSentence]
-
-
 class TopicSourceReviewHandoffTask(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -830,10 +820,10 @@ class TopicSourceReviewWorkItem(BaseModel):
     )
     batchOrdinal: Annotated[int, Field(ge=0, le=9007199254740991)]
     candidateIds: Annotated[list[CandidateId], Field(max_length=4)]
-    contextOpportunityIds: Annotated[list[ContextOpportunityId], Field(max_length=48)]
+    contextOpportunityIds: list[ContextOpportunityId]
     discoverMissingOpportunities: bool
     handoffs: Annotated[list[TopicSourceReviewHandoffTask], Field(max_length=2)]
-    inspectionCandidateIds: Annotated[list[InspectionCandidateId], Field(max_length=16)]
+    inspectionCandidateIds: list[InspectionCandidateId]
     kind: Kind9
     opportunityIds: Annotated[list[OpportunityId], Field(max_length=12)]
     ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
@@ -852,6 +842,18 @@ class TopicSourceSearchPage(BaseModel):
     nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
     query: Annotated[str, Field(min_length=1)]
     regions: list[TopicSourceNodeHit]
+
+
+class TopicSourceSentenceFragment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    sentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    startCharacter: Annotated[int, Field(ge=0, le=9007199254740991)]
+    endCharacter: Annotated[int, Field(gt=0, le=9007199254740991)]
+    totalCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
+    text: str
 
 
 class TranscribeInput(BaseModel):
@@ -1589,6 +1591,18 @@ class TopicSourceJudgment(BaseModel):
     completeContext: TopicCriterion
     distinctPurpose: TopicCriterion
     faithfulMeaning: TopicCriterion
+
+
+class TopicSourceReadPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    sentences: list[TopicSourceIndexSentence]
+    fragments: list[TopicSourceSentenceFragment]
+    nextCharacterOffset: Annotated[int | None, Field(ge=0, le=9007199254740991)]
 
 
 class TopicSourceReview(BaseModel):

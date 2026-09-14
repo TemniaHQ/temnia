@@ -234,6 +234,7 @@ def build_source_review_plan(
     *,
     index_sha256: str,
     selection_sha256: str,
+    paged_context: bool = False,
 ) -> TopicSourceReviewPlan:
     """Freeze bounded candidate, opportunity, overlap, handoff and omission work."""
     candidate_by_section: dict[str, list[str]] = defaultdict(list)
@@ -266,7 +267,7 @@ def build_source_review_plan(
         candidates = candidate_by_section[section.id]
         for chunk in _chunks(candidates, MAX_LOCAL_CANDIDATES):
             context_ids = _linked_opportunity_ids(draft, chunk)
-            if len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
+            if not paged_context and len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
                 raise HarnessValidationError(
                     "one candidate review batch exceeds the bounded opportunity context"
                 )
@@ -283,7 +284,7 @@ def build_source_review_plan(
         opportunities = opportunity_by_section[section.id]
         for chunk in _chunks(opportunities, MAX_LOCAL_OPPORTUNITIES):
             inspection_ids = _linked_candidate_ids(draft, chunk)
-            if len(inspection_ids) > MAX_INSPECTION_CANDIDATES:
+            if not paged_context and len(inspection_ids) > MAX_INSPECTION_CANDIDATES:
                 raise HarnessValidationError(
                     "one opportunity review batch exceeds the bounded candidate inspection set"
                 )
@@ -299,11 +300,11 @@ def build_source_review_plan(
             local_batch += 1
         for batch, region in enumerate(_region_nodes(index, section.id)):
             inspection_ids, context_ids = _omission_context(index, draft, region)
-            if len(inspection_ids) > MAX_INSPECTION_CANDIDATES:
+            if not paged_context and len(inspection_ids) > MAX_INSPECTION_CANDIDATES:
                 raise HarnessValidationError(
                     "one omission scan exceeds the bounded candidate inspection set"
                 )
-            if len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
+            if not paged_context and len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
                 raise HarnessValidationError(
                     "one omission scan exceeds the bounded opportunity context"
                 )
@@ -331,7 +332,7 @@ def build_source_review_plan(
                 )
             )
             context_ids = _linked_opportunity_ids(draft, inspection_ids)
-            if len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
+            if not paged_context and len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
                 raise HarnessValidationError(
                     "one overlap batch exceeds the bounded opportunity context"
                 )
@@ -354,7 +355,7 @@ def build_source_review_plan(
                 )
             )
             context_ids = _linked_opportunity_ids(draft, inspection_ids)
-            if len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
+            if not paged_context and len(context_ids) > MAX_CONTEXT_OPPORTUNITIES:
                 raise HarnessValidationError(
                     "one handoff batch exceeds the bounded opportunity context"
                 )

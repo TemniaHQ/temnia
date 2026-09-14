@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** The one program the button starts; run rows carry it as `editorialPolicy`. */
-export const TOPIC_POLICY = "standalone-topics/3";
+export const TOPIC_POLICY = "standalone-topics/7";
 
 /**
  * Instructions are the whole request. An absent brief is not a web default: the

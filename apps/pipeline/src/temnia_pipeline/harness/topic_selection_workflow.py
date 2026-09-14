@@ -11,15 +11,17 @@ from datetime import timedelta
 from typing import Any, Literal
 
 from temporalio import workflow
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
+    from pydantic_ai.exceptions import UsageLimitExceeded
     from pydantic_ai.usage import UsageLimits
 
     from temnia_pipeline.contracts import (
         ChapterRunInput,
         ChapterRunOutput,
         HarnessArtifactRef,
+        HarnessRunStatus,
         TopicSelectionColdReview,
         TopicSelectionDraft,
     )
@@ -65,6 +67,7 @@ with workflow.unsafe.imports_passed_through():
         topic_selection_source_v8,
     )
     from temnia_pipeline.harness.queues import control_task_queue
+    from temnia_pipeline.harness.run_failures import failure_cause
     from temnia_pipeline.harness.runtime_types import (
         AcceptInitialRevisionRequest,
         BuildEvidenceRequest,
@@ -72,6 +75,7 @@ with workflow.unsafe.imports_passed_through():
         EvidenceResult,
         ResumeRunAssets,
         RunSnapshot,
+        StageUpdate,
         StartRunRequest,
         StartRunResult,
         WorkflowIdentity,
@@ -94,6 +98,12 @@ with workflow.unsafe.imports_passed_through():
         AuthorPackagingShardSaveResult,
         ColdReviewSaveRequest,
         ColdReviewSaveResult,
+        EditorialProgress,
+        EditorialResumeLookup,
+        EditorialWorkInput,
+        EditorialWorkLookup,
+        EditorialWorkResult,
+        EditorialWorkSave,
         OpportunityInventoryManifestRequest,
         OpportunityInventoryManifestResult,
         OpportunityInventoryPlanResult,
@@ -146,16 +156,24 @@ class InvalidSeatOutput(RuntimeError):  # noqa: N818 - workflow-local typed fail
         self.context = context
 
 
+class ContinueIndexedWork(RuntimeError):  # noqa: N818 - workflow-local continuation
+    """A request quantum ended with durable evidence, not an editorial failure."""
+
+    def __init__(self, context: SelectionContext) -> None:
+        super().__init__("Continue the indexed work item from its durable checkpoint.")
+        self.context = context.model_copy(update={"resume_indexed": True})
+
+
 def no_eligible_route(error: Exception) -> bool:
     """The seat pool has no route at the requested fallback position."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name == "NoEligibleRoute"
 
 
 def failure_sentence(error: Exception) -> str:
     """The exact sentence the raising site wrote, across the Temporal boundary."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     message = cause.message if isinstance(cause, ApplicationError) else str(cause)
     return message.strip()
 
@@ -175,6 +193,7 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         operation_config=selection_call_config(plan, request.config.maxOutputTokens),
         input_artifact_ids=tuple(ref.id for ref in plan.input_artifacts),
         source_index=plan.source_index,
+        editorial_context=plan.editorial_context,
         source_tool_role=plan.source_tool_role,
         candidate_selection=plan.candidate_selection,
         media_evidence=plan.media_evidence,
@@ -188,7 +207,7 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
 
 def execution_limit(error: Exception) -> bool:
     """Only known admission limits authorize retaining partial work; uncertainty propagates."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name in {
         "BudgetExceeded",
@@ -203,23 +222,33 @@ def invalid_model_output(error: Exception) -> bool:
     """Recognize a retained paid response that failed typed normalization across Temporal."""
     if isinstance(error, InvalidSeatOutput):
         return True
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name == "UnexpectedModelBehavior"
 
 
 def validation_refusal(error: Exception) -> bool:
     """A deterministic plan or admission refusal is reviewable, not an infrastructure failure."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name in {"HarnessValidationError", "ValidationError", "ValueError"}
 
 
 def transient_provider_failure(error: Exception) -> bool:
     """A lost stream whose charge settled: a fresh paid attempt is allowed, unknowns are not."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name == "TransientProviderFailure"
+
+
+def unavailable_request_route(error: Exception) -> bool:
+    """A conclusive route incompatibility can try another eligible route without replay risk."""
+    cause = failure_cause(error)
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name == "ContextWindowExceeded" or (
+        name == "KnownProviderRejection"
+        and not any(status in str(cause) for status in ("HTTP 401", "HTTP 402"))
+    )
 
 
 # A transient failure (throttling, an outage, a lost stream whose charge settled) is
@@ -258,6 +287,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
     cold_agent = topic_selection_cold_v3
     source_agent = topic_selection_source_v4
     patch_agent = topic_selection_patch_v3
+    continue_indexed_work = False
+    repair_base_count = 0
 
     @workflow.run
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
@@ -282,6 +313,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             ClaimRepairRequest(
                 run=self.ref(request),
                 expected_repair_count=run.repair_count,
+                repair_base_count=self.repair_base_count,
                 workflow=WorkflowIdentity(
                     workflow_id=info.workflow_id, workflow_run_id=info.run_id
                 ),
@@ -380,7 +412,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             }
         )
 
-    async def run_seat(  # noqa: C901
+    async def run_seat(  # noqa: C901, PLR0912, PLR0915
         self,
         agent: Any,  # noqa: ANN401
         request: ChapterRunInput,
@@ -403,10 +435,31 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             except Exception as error:
                 if no_eligible_route(error) and tried:
                     break
+                if unavailable_request_route(error):
+                    last_failure = failure_sentence(error)
+                    tried.append(f"pool position {getattr(context, index_field)}")
+                    context = context.model_copy(
+                        update={
+                            index_field: getattr(context, index_field) + 1,
+                            **({"verifier_index": 0} if seat == "author" else {}),
+                        }
+                    )
+                    continue
                 raise
             stage = plan.stage
             route = plan.author if seat == "author" else plan.verifier
             deps = selection_model_deps(request, plan)
+            if context.resume_indexed and checkpoint is None:
+                recovered = await workflow.execute_activity(
+                    "load_topic_source_checkpoint",
+                    SourceCheckpointLoadRequest(context=context, plan=plan),
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RETRY,
+                    result_type=SourceCheckpointLoadResult,
+                )
+                if recovered.checkpoint is None:
+                    raise RuntimeError("indexed continuation lost its durable checkpoint")
+                checkpoint = SourceProgressCheckpoint.model_validate(recovered.checkpoint)
             settings = {
                 "max_tokens": effective_topic_output_tokens(request.config.maxOutputTokens, route)
             }
@@ -422,11 +475,20 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                         message_history=history,
                         deps=deps,
                         model_settings=settings,
-                        usage_limits=UsageLimits(request_limit=256),
+                        usage_limits=UsageLimits(
+                            request_limit=32 if self.continue_indexed_work else 256
+                        ),
                     )
+                except UsageLimitExceeded as error:
+                    if self.continue_indexed_work and plan.source_tool_role is not None:
+                        raise ContinueIndexedWork(context) from error
+                    raise
                 except Exception as error:
                     if invalid_model_output(error):
                         raise InvalidSeatOutput(error, context) from error
+                    if unavailable_request_route(error):
+                        last_failure = failure_sentence(error)
+                        break
                     if not transient_provider_failure(error):
                         raise
                     last_failure = failure_sentence(error)
@@ -448,9 +510,14 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     continue
                 return result, plan, context
             tried.append(route.id)
-            context = context.model_copy(update={index_field: getattr(context, index_field) + 1})
+            context = context.model_copy(
+                update={
+                    index_field: getattr(context, index_field) + 1,
+                    **({"verifier_index": 0} if seat == "author" else {}),
+                }
+            )
         exhausted = (
-            f"Every qualified {seat} route failed transiently for the {stage} call "
+            f"Every eligible {seat} route was unavailable for the {stage} call "
             f"({', '.join(tried)}); last: {last_failure}"
         )
         raise SeatRoutesExhausted(exhausted)
@@ -483,15 +550,16 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         stage/request identity and the exact diagnostic. Unknown paid outcomes propagate without
         retry; no recovery path can bypass the ledger's exposure or budget fence.
         """
-        feedback: tuple[str, ...] = ()
+        feedback: tuple[str, ...] = context.recovery_feedback
         saved = None
         limited = False
         current = context
-        for attempt in range(3):
+        for attempt in range(context.request_attempt, 3):
             current = context.model_copy(
                 update={
                     "request_attempt": attempt,
                     "recovery_feedback": feedback,
+                    "resume_indexed": context.resume_indexed and attempt == context.request_attempt,
                 }
             )
             try:
@@ -515,13 +583,15 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     }
                 )
             except Exception as error:
+                if isinstance(error, ContinueIndexedWork):
+                    raise
                 if isinstance(error, InvalidSeatOutput):
                     current = self.carry_routes(current, error.context)
                 context = self.carry_routes(context, current)
                 if invalid_model_output(error):
                     payload = request_type(context=current, schema_error=failure_sentence(error))
                 elif execution_limit(error):
-                    cause = error.cause if isinstance(error, ActivityError) else error
+                    cause = failure_cause(error)
                     name = (
                         cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
                     )
@@ -784,11 +854,12 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             }:
                 patch_context = patch_context.model_copy(
                     update={
+                        "verifier_index": 0,
                         "author_families": tuple(
                             dict.fromkeys(
                                 (*patch_context.author_families, patch_plan.author.family)
                             )
-                        )
+                        ),
                     }
                 )
             save = SelectionSaveRequest(context=patch_context, patch=result.output)
@@ -815,7 +886,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             )
         return await self.save_selection(save), patch_context, None, False
 
-    async def program(self, request: ChapterRunInput) -> ChapterRunOutput:  # noqa: C901, PLR0912, PLR0915
+    async def program(self, request: ChapterRunInput) -> ChapterRunOutput:
         """Complete a traceable selection cycle before compiling reviewable videos."""
         info = workflow.info()
         control = control_task_queue(info.task_queue)
@@ -834,8 +905,32 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=StartRunResult,
         )
         run = started.run
+        self.repair_base_count = run.repair_count if self.policy == TOPIC_SELECTION_POLICY_V7 else 0
         if run.editorial_policy != self.policy:
             raise RuntimeError("selection workflow cannot reinterpret another program generation")
+        if self.policy == TOPIC_SELECTION_POLICY_V7:
+            lookup = await workflow.execute_activity(
+                "load_topic_editorial_progress",
+                self.ref(request),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+                result_type=EditorialResumeLookup,
+            )
+            resumed = lookup.resume
+            if resumed is not None and resumed.progress.phase == "review":
+                context = resumed.progress.context.model_copy(
+                    update={
+                        "assessment": None,
+                        "rejection": None,
+                        "source_review_plan": None,
+                        "source_review_work_item_id": None,
+                        "repair_plan": None,
+                        "repair_work_item_id": None,
+                    }
+                )
+                return await self.review_and_compile(
+                    request, context, resumed.draft, run, resumed.progress.seen_keys
+                )
         if run.current_revision:
             assets = await workflow.execute_activity(
                 "get_chapter_resume_assets",
@@ -917,7 +1012,52 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             raise RuntimeError("selection admission returned no accepted draft")
         draft = accepted.draft
         context = context.model_copy(update={"selection": accepted.selection, "rejection": None})
-        seen = {accepted.semantic_key}
+        return await self.review_and_compile(
+            request, context, draft, run, (selection_semantic_key(draft),)
+        )
+
+    async def persist_progress(self, progress: EditorialProgress) -> None:
+        """Keep editorial resume distinct from rendering a compiled revision."""
+        if self.policy == TOPIC_SELECTION_POLICY_V7:
+            await workflow.execute_activity(
+                "save_topic_editorial_progress",
+                progress,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+            )
+
+    async def review_and_compile(  # noqa: C901, PLR0912, PLR0915
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        draft: TopicSelectionDraft,
+        run: RunSnapshot,
+        seen_keys: tuple[str, ...],
+    ) -> ChapterRunOutput:
+        """Resume independent review and repair from the last accepted editorial selection."""
+        seen = set(seen_keys)
+        control = control_task_queue(workflow.info().task_queue)
+        if str(run.stage) != "planning":
+            run = await workflow.execute_activity(
+                "update_chapter_run_stage",
+                StageUpdate(
+                    **self.ref(request).model_dump(),
+                    expected_stage=run.stage,
+                    expected_revision=run.current_revision,
+                    next_stage="planning",
+                    status=HarnessRunStatus.running,
+                ),
+                start_to_close_timeout=timedelta(seconds=30),
+                task_queue=control,
+                retry_policy=RETRY,
+                result_type=RunSnapshot,
+            )
+        repair_ceiling = self.repair_base_count + request.config.maxRepairs
+        await self.persist_progress(
+            EditorialProgress(
+                context=context, base_revision=run.current_revision, seen_keys=tuple(sorted(seen))
+            )
+        )
         cache: dict[str, ColdObservation] = {}
         final: SelectionAssessmentResult
         pending_assessment: SelectionAssessmentResult | None = None
@@ -933,7 +1073,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             final = pending_assessment
             if str(final.assessment.executionStatus) == "complete" or not final.actionable:
                 break
-            if run.repair_count >= request.config.maxRepairs:
+            if run.repair_count >= repair_ceiling:
                 limited = True
                 stop_reasons.append(
                     "The configured repair allowance ended with unresolved editorial findings."
@@ -963,7 +1103,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 break
             if saved.selection is None or saved.draft is None:
                 raise RuntimeError("selection repair returned no valid replacement")
-            seen.add(saved.semantic_key)
+            seen.add(selection_semantic_key(saved.draft))
             draft = saved.draft
             rejection_diagnostics = ()
             pending_assessment = None
@@ -978,6 +1118,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     "repair_plan": None,
                     "repair_work_item_id": None,
                 }
+            )
+            await self.persist_progress(
+                EditorialProgress(
+                    context=context,
+                    base_revision=run.current_revision,
+                    seen_keys=tuple(sorted(seen)),
+                )
             )
         if stop_reasons:
             final = await workflow.execute_activity(
@@ -997,17 +1144,29 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             retry_policy=RETRY,
             result_type=TopicCompilation,
         )
-        await workflow.execute_activity(
+        progress = EditorialProgress(
+            context=context,
+            base_revision=run.current_revision,
+            compiled=compiled.artifact,
+            phase="render" if str(final.assessment.executionStatus) == "complete" else "review",
+            seen_keys=tuple(sorted(seen)),
+        )
+        await self.persist_progress(progress)
+        accepted_run = await workflow.execute_activity(
             "accept_initial_chapter_revision",
             AcceptInitialRevisionRequest(
                 run=self.ref(request),
                 request_key=request.requestKey,
                 edit_artifact_id=compiled.artifact.id,
+                base_revision=run.current_revision,
             ),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RETRY,
             task_queue=control,
             result_type=RunSnapshot,
+        )
+        await self.persist_progress(
+            progress.model_copy(update={"base_revision": accepted_run.current_revision})
         )
         if str(final.assessment.executionStatus) != "complete":
             stop_reasons.append(
@@ -1019,9 +1178,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             )
         return await self.render(
             request,
-            evidence=evidence.artifact,
+            evidence=context.evidence,
             edit=compiled.artifact,
-            revision=1,
+            revision=accepted_run.current_revision,
             reasons=(*compiled.refusals, *stop_reasons),
         )
 
@@ -1194,7 +1353,12 @@ class TopicSelectionWorkflowV5(TopicSelectionWorkflowV4):
             semantic_key=selection_semantic_key(assembled.draft),
             draft=assembled.draft,
         )
-        return accepted, base.model_copy(update={"author_families": families}), run, None
+        return (
+            accepted,
+            base.model_copy(update={"author_families": families, "verifier_index": 0}),
+            run,
+            None,
+        )
 
 
 @workflow.defn(name="TopicSelectionWorkflowV6")
@@ -1414,7 +1578,7 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
 class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
     """Bound inventory, author, source review and atomic connected-component repair."""
 
-    __pydantic_ai_agents__ = TOPIC_SELECTION_V7_AGENTS
+    __pydantic_ai_agents__ = ()
     policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V7
     inventory_agent = topic_opportunity_inventory_v7
     author_agent = topic_selection_author_v7
@@ -1426,6 +1590,34 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
     async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
         """Keep v7 history and model activities disjoint from prior programs."""
         return await super().run(request)
+
+    async def recover_shard(  # noqa: PLR0913
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        *,
+        agent: Any,  # noqa: ANN401, ARG002
+        seat: Seat,  # noqa: ARG002
+        activity_name: str,
+        request_type: Any,  # noqa: ANN401, ARG002
+        result_type: Any,  # noqa: ANN401
+        output_field: str,  # noqa: ARG002
+    ) -> tuple[Any, SelectionContext, str | None, bool]:
+        """Run each indexed decision in its own bounded Temporal history."""
+        work = EditorialWorkInput(request=request, context=context, activity_name=activity_name)
+        identity = work.identity()
+        result = await workflow.execute_child_workflow(
+            "TopicEditorialWorkWorkflow",
+            work,
+            id=f"{workflow.info().workflow_id}:editorial:{identity}",
+            result_type=EditorialWorkResult,
+        )
+        return (
+            result_type.model_validate(result.saved) if result.saved is not None else None,
+            result.context,
+            result.reason,
+            result.limited,
+        )
 
     async def repair_selection(
         self,
@@ -1522,6 +1714,7 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
             )
         patch_context = patch_context.model_copy(
             update={
+                "verifier_index": 0,
                 "author_families": tuple(
                     dict.fromkeys(
                         (
@@ -1529,7 +1722,7 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
                             *(value.root for value in assembled.manifest.authorFamilies),
                         )
                     )
-                )
+                ),
             }
         )
         return (
@@ -1542,3 +1735,97 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
             None,
             False,
         )
+
+
+@workflow.defn(name="TopicEditorialWorkWorkflow")
+class TopicEditorialWorkWorkflow(TopicSelectionWorkflow):
+    """An indexed decision continues across histories without replaying unknown paid calls."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V7_AGENTS
+    continue_indexed_work = True
+
+    @workflow.run
+    async def run(self, work: EditorialWorkInput) -> EditorialWorkResult:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Execute one decision or continue it from the last immutable request checkpoint."""
+        cached = await workflow.execute_activity(
+            "load_topic_editorial_work",
+            work,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=EditorialWorkLookup,
+        )
+        if cached.result is not None:
+            return cached.result
+        stages: dict[str, tuple[Any, Seat, Any, Any, str]] = {
+            "save_topic_inventory_shard_v4": (
+                TopicSelectionWorkflowV7.inventory_agent,
+                "verifier",
+                OpportunityInventoryShardSaveRequest,
+                OpportunityInventoryShardSaveResult,
+                "inventory",
+            ),
+            "save_topic_author_shard_v5": (
+                TopicSelectionWorkflowV7.author_agent,
+                "author",
+                AuthorPackagingShardSaveRequest,
+                AuthorPackagingShardSaveResult,
+                "draft",
+            ),
+            "save_topic_cold_review_v7": (
+                TopicSelectionWorkflowV7.cold_agent,
+                "verifier",
+                ColdReviewSaveRequest,
+                ColdReviewSaveResult,
+                "review",
+            ),
+            "save_topic_source_review_shard_v6": (
+                TopicSelectionWorkflowV7.source_agent,
+                "verifier",
+                SourceReviewShardSaveRequest,
+                SourceReviewShardSaveResult,
+                "review",
+            ),
+            "save_topic_repair_shard_v7": (
+                TopicSelectionWorkflowV7.patch_agent,
+                "author",
+                RepairShardSaveRequest,
+                RepairShardSaveResult,
+                "patch",
+            ),
+        }
+        try:
+            agent, seat, request_type, result_type, output_field = stages[work.activity_name]
+            saved, context, reason, limited = await self.recover_shard(
+                work.request,
+                work.resumed_context or work.context,
+                agent=agent,
+                seat=seat,
+                activity_name=work.activity_name,
+                request_type=request_type,
+                result_type=result_type,
+                output_field=output_field,
+            )
+        except ContinueIndexedWork as continuation:
+            workflow.continue_as_new(
+                work.model_copy(update={"resumed_context": continuation.context})
+            )
+        except Exception as error:
+            cause = failure_cause(error)
+            name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+            raise ApplicationError(
+                failure_sentence(error), type=name, non_retryable=True
+            ) from error
+        result = EditorialWorkResult(
+            saved=saved.model_dump(mode="json") if saved is not None else None,
+            context=context,
+            reason=reason,
+            limited=limited,
+        )
+        if saved is not None and saved.artifact is not None:
+            await workflow.execute_activity(
+                "save_topic_editorial_work",
+                EditorialWorkSave(work=work, result=result),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+            )
+        return result

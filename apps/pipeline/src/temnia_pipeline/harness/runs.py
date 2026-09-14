@@ -185,7 +185,7 @@ async def _lock_ready_source(
     return row
 
 
-RESUMABLE_STATUSES = ("pending", "failed", "budget_paused")
+RESUMABLE_STATUSES = ("pending", "failed", "budget_paused", "needs_review")
 
 
 async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
@@ -300,6 +300,12 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             # its retained artifacts and settled responses are reused, never paid again.
             # An unconfirmed provider outcome keeps its fence until reconciled.
             if existing["status"] in RESUMABLE_STATUSES and not same_execution:
+                if existing["status"] == "needs_review":
+                    refusal = await _planning_retry_refusal(
+                        conn, run=existing, source_id=request.sourceId, run_id=request.runId
+                    )
+                    if refusal is not None:
+                        raise RunStateConflict(refusal)
                 resumed_by = json.dumps(
                     [
                         {
@@ -522,12 +528,14 @@ async def claim_repair(
             return _snapshot(run)
         if current != request.expected_repair_count:
             raise RunStateConflict("repair count changed before the requested claim")
-        if current >= max_repairs:
+        indexed = run["route_snapshot"].get("editorialPolicy") == "standalone-topics/7"
+        base = request.repair_base_count if indexed else 0
+        if base > request.expected_repair_count or current >= base + max_repairs:
             raise RunStateConflict("run exhausted its configured semantic repair limit")
         if (
             run["status"] != "running"
             or run["stage"] != "planning"
-            or int(run["current_revision"]) != 0
+            or (int(run["current_revision"]) != 0 and not indexed)
         ):
             raise RunStateConflict("only active unrevised planning may claim a repair")
         updated = await (
@@ -703,9 +711,15 @@ async def accept_initial_revision(  # noqa: PLR0913
     run_id: UUID,
     request_key: UUID,
     edit_artifact_id: UUID,
+    base_revision: int = 0,
 ) -> RunSnapshot:
-    """Insert immutable revision one and advance only a still-unrevised run."""
-    mutation_key = f"initial:{request_key}"
+    """Insert an immutable compiled revision while comparing its expected base revision."""
+    mutation_key = (
+        f"initial:{request_key}"
+        if base_revision == 0
+        else f"editorial:{request_key}:{base_revision + 1}"
+    )
+    revision = base_revision + 1
     async with db.scoped(database_url, scope) as conn:
         await _lock_ready_source(conn, source_id)
         run = await (
@@ -739,10 +753,10 @@ async def accept_initial_revision(  # noqa: PLR0913
             )
         ).fetchone()
         if existing is not None:
-            if int(existing["revision"]) != 1 or existing["artifact_id"] != edit_artifact_id:
+            if int(existing["revision"]) != revision or existing["artifact_id"] != edit_artifact_id:
                 raise IdentityConflict("initial revision identity maps to a different edit")
             return _snapshot(run)
-        if int(run["current_revision"]) != 0:
+        if int(run["current_revision"]) != base_revision:
             raise RunStateConflict("a newer chapter revision already exists")
         if run["status"] in {"cancelled", "failed", "ready", "outcome_unknown"}:
             raise RunStateConflict("terminal or uncertain run cannot accept an initial revision")
@@ -751,13 +765,15 @@ async def accept_initial_revision(  # noqa: PLR0913
             INSERT INTO chapter_revision
                 (organization_id, source_id, run_id, revision, artifact_id,
                  base_revision, mutation_key)
-            VALUES (%s, %s, %s, 1, %s, NULL, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 scope.organizationId,
                 source_id,
                 run_id,
+                revision,
                 edit_artifact_id,
+                base_revision or None,
                 mutation_key,
             ),
         )
@@ -765,12 +781,12 @@ async def accept_initial_revision(  # noqa: PLR0913
             await conn.execute(
                 """
                 UPDATE harness_run
-                   SET current_revision = 1, stage = 'render', status = 'running',
+                   SET current_revision = %s, stage = 'render', status = 'running',
                        updated_at = now()
-                 WHERE id = %s AND current_revision = 0
+                 WHERE id = %s AND current_revision = %s
                  RETURNING *
                 """,
-                (run_id,),
+                (revision, run_id, base_revision),
             )
         ).fetchone()
         if updated is None:
@@ -799,12 +815,30 @@ async def _planning_retry_refusal(
     ).fetchone()
     if has_edit_row is None:
         raise RuntimeError("planning retry edit check returned no row")
+    indexed_progress = False
+    if run["route_snapshot"].get("editorialPolicy") == "standalone-topics/7":
+        progress = await (
+            await conn.execute(
+                """SELECT metadata FROM harness_artifact
+                    WHERE source_id=%s AND kind='checks'
+                      AND metadata->>'format'='topic-editorial-progress/1'
+                      AND metadata->>'runId'=%s
+                    ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (source_id, str(run_id)),
+            )
+        ).fetchone()
+        indexed_progress = (
+            progress is not None
+            and progress["metadata"].get("phase") == "review"
+            and int(progress["metadata"].get("baseRevision", -1))
+            in {int(run["current_revision"]), int(run["current_revision"]) - 1}
+        )
     if (
         int(run["current_revision"]) != 0
         or run["accepted_revision"] is not None
         or str(run["stage"]) != "needs_review"
         or bool(has_edit_row["value"])
-    ):
+    ) and not (indexed_progress and run["accepted_revision"] is None):
         return "Only revision-zero planning work without an edit may retry."
 
     if int(run["reserved_micros"]) != 0:

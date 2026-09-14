@@ -116,7 +116,8 @@ def test_exhausted_seat_names_every_route_and_the_next_action() -> None:
     assert status == "failed"
     assert message.startswith("Every qualified verifier route failed transiently")
     assert "route-a, route-b" in message
-    assert message.endswith("Retry this run later or change the route snapshot.")
+    assert "Retry this run later or change the route snapshot." in message
+    assert message.endswith("Settled work and charges are retained.")
 
 
 def test_context_window_refusal_keeps_the_exact_sentence_from_the_refusing_site() -> None:

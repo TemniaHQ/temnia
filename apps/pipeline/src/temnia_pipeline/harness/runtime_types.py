@@ -160,6 +160,7 @@ class ClaimRepairRequest(BaseModel):
     run: RunRef
     workflow: WorkflowIdentity
     expected_repair_count: Annotated[int, Field(ge=0)]
+    repair_base_count: int = Field(default=0, ge=0)
 
 
 class ReconcileRunResult(BaseModel):
@@ -213,6 +214,7 @@ class AcceptInitialRevisionRequest(BaseModel):
     run: RunRef
     request_key: UUID
     edit_artifact_id: UUID
+    base_revision: int = Field(default=0, ge=0)
 
 
 class RenderRevisionRequest(BaseModel):

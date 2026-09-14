@@ -77,6 +77,11 @@ from temnia_pipeline.harness.cassettes import (
     request_payload_bytes,
     synthetic_function_model,
 )
+from temnia_pipeline.harness.editorial_context import (
+    EditorialContextPage,
+    EditorialContextRecord,
+    read_editorial_page,
+)
 from temnia_pipeline.harness.editorial_evidence import (
     inspect_topic_candidate,
     read_topic_media_evidence,
@@ -160,6 +165,7 @@ class HarnessModelDeps(BaseModel):
     operation_inputs: dict[str, Any]
     operation_config: dict[str, Any]
     input_artifact_ids: tuple[UUID, ...] = ()
+    editorial_context: HarnessArtifactRef | None = None
     source_index: HarnessArtifactRef | None = None
     source_tool_role: SourceToolRole | None = None
     candidate_selection: HarnessArtifactRef | None = None
@@ -435,6 +441,51 @@ def recoverable_source_tool[**P, R](
 
 
 @recoverable_source_tool
+async def read_editorial_context(
+    ctx: RunContext[HarnessModelDeps],
+    cursor: str = "0:0",
+    limit: int = 4,
+) -> EditorialContextPage:
+    """Read assigned candidate/opportunity/finding records without enlarging the prompt.
+
+    Args:
+        ctx: Immutable source and editorial context authority.
+        cursor: Exact nextCursor returned by the previous page; start with 0:0.
+        limit: Maximum record fragments to return, between one and eight.
+    """
+    reference = ctx.deps.editorial_context
+    if reference is None or reference.id not in ctx.deps.input_artifact_ids:
+        raise ModelPersistenceError("editorial context authority is absent")
+    runtime = _configured_runtime()
+    accepted = await artifacts._artifact_for_read(  # pyright: ignore[reportPrivateUsage]
+        runtime.database_url,
+        scope=ctx.deps.scope,
+        source_id=ctx.deps.source_id,
+        artifact_id=reference.id,
+    )
+    if (
+        accepted.sha256 != reference.sha256
+        or accepted.fingerprint != reference.fingerprint
+        or accepted.metadata.get("format") != "topic-editorial-context/1"
+        or accepted.metadata.get("runId") != str(ctx.deps.run_id)
+    ):
+        raise ModelPersistenceError("editorial context differs from its accepted artifact")
+    value = await artifacts.read_artifact_json(
+        runtime.database_url,
+        scope=ctx.deps.scope,
+        source_id=ctx.deps.source_id,
+        store=runtime.store,
+        artifact_id=reference.id,
+    )
+    if hashlib.sha256(artifacts.canonical_json(value)).hexdigest() != reference.sha256:
+        raise ModelPersistenceError("editorial context bytes differ from their accepted hash")
+    context = EditorialContextRecord.model_validate(value)
+    if ctx.deps.source_index is None or context.index_sha256 != ctx.deps.source_index.sha256:
+        raise ModelPersistenceError("editorial context names another source index")
+    return read_editorial_page(context, context_sha256=reference.sha256, cursor=cursor, limit=limit)
+
+
+@recoverable_source_tool
 async def browse_source(
     ctx: RunContext[HarnessModelDeps],
     parent_id: str = "episode",
@@ -487,12 +538,13 @@ async def search_source(
 
 
 @recoverable_source_tool
-async def read_source(
+async def read_source(  # noqa: PLR0913, PLR0917
     ctx: RunContext[HarnessModelDeps],
     first_sentence_id: str,
     last_sentence_id: str,
     cursor_sentence_id: str | None = None,
     limit: int = 40,
+    cursor_character: int = 0,
 ) -> TopicSourceReadPage:
     """Read exact transcript sentences inside one bounded source range.
 
@@ -502,6 +554,7 @@ async def read_source(
         last_sentence_id: Last allowed sentence in the requested extent.
         cursor_sentence_id: Continuation sentence returned by the prior page, if any.
         limit: Maximum sentences to return, from 1 through 80.
+        cursor_character: Returned nextCharacterOffset for a sentence fragment; otherwise zero.
     """
     index, sha256 = await _indexed_source(ctx.deps)
     if ctx.deps.allowed_sentence_ids is not None:
@@ -523,6 +576,7 @@ async def read_source(
         last_sentence_id=last_sentence_id,
         cursor_sentence_id=cursor_sentence_id,
         limit=limit,
+        cursor_character=cursor_character,
     )
 
 
@@ -1521,19 +1575,22 @@ class PayloadScaledDurability(TemporalDurability[HarnessModelDeps]):
         return bound._replace(request=scaled)
 
 
-def _agent(
+def _agent(  # noqa: PLR0913
     name: str,
     output_type: type[Any],
     *,
     indexed_source: bool = False,
     reviewer_evidence: bool = False,
     cold_evidence: bool = False,
+    editorial_evidence: bool = False,
 ) -> Agent[HarnessModelDeps, Any]:
     if reviewer_evidence and not indexed_source:
         raise ValueError("reviewer evidence tools require indexed source tools")
     tools: list[Any] = [browse_source, search_source, read_source] if indexed_source else []
     if cold_evidence:
         tools = [read_source]
+    if editorial_evidence:
+        tools.append(read_editorial_context)
     if reviewer_evidence:
         tools.extend((inspect_candidate, read_media_evidence))
     return Agent(
@@ -1633,6 +1690,7 @@ topic_selection_source_v8 = _agent(
     TopicPortfolioReviewV4,
     indexed_source=True,
     reviewer_evidence=True,
+    editorial_evidence=True,
 )
 topic_selection_patch_v7 = _agent(
     "topic_selection_patch_v7", TopicSelectionPatchV3, indexed_source=True

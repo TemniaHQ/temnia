@@ -17,7 +17,6 @@ from temnia_pipeline.contracts import HarnessArtifactRef, HarnessEvidence, Topic
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness.source_index import (
     EMBEDDING_UNIT_MAX_CHARACTERS,
-    MAX_INDEX_SENTENCE_CHARACTERS,
     REGION_KEYWORDS,
     REGION_MAX_CHARACTERS,
     REGION_MAX_SENTENCES,
@@ -48,7 +47,7 @@ if TYPE_CHECKING:
 
 
 SOURCE_INDEX_ARTIFACT_KIND = "checks"
-SOURCE_INDEX_BUILDER_VERSION = "topic-source-index-builder/1"
+SOURCE_INDEX_BUILDER_VERSION = "topic-source-index-builder/2"
 DEFAULT_EMBEDDING_REVISION = PINNED_REVISIONS[DEFAULT_EMBEDDING_MODEL]
 
 type EncoderLoader = Callable[[str, str | None], LoadedModel[TextEncoder]]
@@ -76,7 +75,7 @@ def source_index_producer_config() -> dict[str, object]:
         "rootNodeId": ROOT_NODE_ID,
         "regionKeywordCount": REGION_KEYWORDS,
         "regionPreviewCharacters": REGION_PREVIEW_CHARACTERS,
-        "maxIndexSentenceCharacters": MAX_INDEX_SENTENCE_CHARACTERS,
+        "sentenceReadStrategy": "exact-character-fragments/1",
         "pythonVersion": platform.python_version(),
         "numpyVersion": np.__version__,
         "sentenceTransformersVersion": library_version("sentence-transformers"),

@@ -27,6 +27,7 @@ from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchWorkflow
 from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
 from temnia_pipeline.harness.topic_selection_workflow import (
+    TopicEditorialWorkWorkflow,
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
@@ -169,6 +170,7 @@ async def run_worker(settings: TemporalSettings) -> None:
             ReaperWorkflow,
             TranscribeWorkflow,
             TopicReviewWorkflow,
+            TopicEditorialWorkWorkflow,
             TopicSelectionWorkflow,
             TopicSelectionWorkflowV4,
             TopicSelectionWorkflowV5,

@@ -143,7 +143,6 @@
           }
         },
         "contextOpportunityIds": {
-          "maxItems": 48,
           "type": "array",
           "items": {
             "type": "string",
@@ -162,7 +161,6 @@
           }
         },
         "inspectionCandidateIds": {
-          "maxItems": 16,
           "type": "array",
           "items": {
             "type": "string",

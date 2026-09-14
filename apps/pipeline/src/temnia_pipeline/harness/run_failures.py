@@ -5,9 +5,16 @@ from __future__ import annotations
 from typing import Literal
 
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, ChildWorkflowError
 
 ACTIVITY_RETRY = RetryPolicy(maximum_attempts=3)
+
+
+def failure_cause(error: BaseException) -> BaseException:
+    """Preserve paid-outcome and budget semantics across activity and child boundaries."""
+    while isinstance(error, (ActivityError, ChildWorkflowError)) and error.cause is not None:
+        error = error.cause
+    return error
 
 
 _MODEL_STAGE_LABELS = (
@@ -47,7 +54,7 @@ RECONCILED_RUN_MESSAGE = (
 
 def outcome_unknown(error: Exception) -> bool:
     """The run is fenced on an unconfirmed provider outcome."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     error_type = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return error_type == "OutcomeUnknown"
 
@@ -56,7 +63,7 @@ def known_failure_details(  # noqa: PLR0911
     error: Exception,
 ) -> tuple[Literal["failed", "budget_paused"], str]:
     """Map a stopped activity to the run status and the sentence its reader gets."""
-    cause = error.cause if isinstance(error, ActivityError) else error
+    cause = failure_cause(error)
     error_type = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     if error_type == "BudgetExceeded":
         return "budget_paused", "The run budget cannot cover the next qualified operation."
@@ -85,9 +92,9 @@ def known_failure_details(  # noqa: PLR0911
     if error_type == "SeatRoutesExhausted":
         exhausted = _cause_message(cause) or "Every qualified route for one seat failed."
         return "failed", (
-            f"{exhausted} Each route was retried after a pause before the next was tried; "
-            "nothing was charged for a refused request. Retry this run later or change "
-            "the route snapshot."
+            f"{exhausted} Transient failures received a retry after a pause; incompatible "
+            "requests moved to the next eligible route. Retry this run later or change the "
+            "route snapshot. Settled work and charges are retained."
         )
     if error_type == "TransientProviderFailure":
         settled = _cause_message(cause) or "A provider call ended without a response."

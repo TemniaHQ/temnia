@@ -123,12 +123,27 @@ export const TopicSourceSearchPageSchema = z
   .meta({ id: "TopicSourceSearchPage", title: "TopicSourceSearchPage" });
 export type TopicSourceSearchPage = z.infer<typeof TopicSourceSearchPageSchema>;
 
+export const TopicSourceSentenceFragmentSchema = z
+  .object({
+    id: identifier(),
+    sentenceId: identifier(),
+    startCharacter: z.int().nonnegative(),
+    endCharacter: z.int().positive(),
+    totalCharacters: z.int().positive(),
+    text: z.string(),
+  })
+  .strict()
+  .meta({ id: "TopicSourceSentenceFragment", title: "TopicSourceSentenceFragment" });
+export type TopicSourceSentenceFragment = z.infer<typeof TopicSourceSentenceFragmentSchema>;
+
 export const TopicSourceReadPageSchema = z
   .object({
     complete: z.boolean(),
     indexSha256: sha256(),
     nextSentenceId: identifier().nullable(),
     sentences: z.array(TopicSourceIndexSentenceSchema),
+    fragments: z.array(TopicSourceSentenceFragmentSchema).default([]),
+    nextCharacterOffset: z.int().nonnegative().nullable().default(null),
   })
   .strict()
   .meta({ id: "TopicSourceReadPage", title: "TopicSourceReadPage" });
@@ -607,10 +622,10 @@ export const TopicSourceReviewWorkItemSchema = z
   .object({
     batchOrdinal: z.int().nonnegative(),
     candidateIds: z.array(identifier()).max(4),
-    contextOpportunityIds: z.array(identifier()).max(48),
+    contextOpportunityIds: z.array(identifier()),
     discoverMissingOpportunities: z.boolean(),
     handoffs: z.array(TopicSourceReviewHandoffTaskSchema).max(2),
-    inspectionCandidateIds: z.array(identifier()).max(16),
+    inspectionCandidateIds: z.array(identifier()),
     kind: z.enum(["local", "omission", "overlap", "handoff"]),
     opportunityIds: z.array(identifier()).max(12),
     ordinal: z.int().nonnegative(),

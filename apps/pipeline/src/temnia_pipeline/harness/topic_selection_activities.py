@@ -17,6 +17,7 @@ from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
+    Scope,
     TopicAuthorPackagingPlan,
     TopicAuthorPackagingShard,
     TopicCompiledVideo,
@@ -39,6 +40,11 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
+from temnia_pipeline.harness.editorial_context import (
+    EditorialContextRecord,
+    source_review_context,
+    validate_editorial_reads,
+)
 from temnia_pipeline.harness.editorial_evidence import validate_reviewer_inspection
 from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V3,
@@ -48,8 +54,9 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V7,
 )
 from temnia_pipeline.harness.routes import estimate_cost
-from temnia_pipeline.harness.runtime_types import RunSnapshot
+from temnia_pipeline.harness.runtime_types import RunRef, RunSnapshot
 from temnia_pipeline.harness.source_index import (
+    fragment_read_sentence_ids,
     source_index_map,
     validate_source_inspection,
     validate_source_read_ids,
@@ -61,6 +68,7 @@ from temnia_pipeline.harness.source_index_artifacts import (
 from temnia_pipeline.harness.source_progress import (
     CHECKPOINT_FORMAT,
     SourceProgressCheckpoint,
+    aggregate_checkpoint_inspections,
     checkpoint_sha256,
     inspection_from_checkpoint,
 )
@@ -100,6 +108,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
+    SELECTION_SOURCE_PAGED_PROMPT,
     SELECTION_SOURCE_PROMPT_V3,
     SELECTION_SOURCE_SHARD_PROMPT,
     apply_selection_patch,
@@ -131,6 +140,12 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     ColdReviewRecord,
     ColdReviewSaveRequest,
     ColdReviewSaveResult,
+    EditorialProgress,
+    EditorialResume,
+    EditorialResumeLookup,
+    EditorialWorkInput,
+    EditorialWorkLookup,
+    EditorialWorkSave,
     OpportunityInventoryManifestRequest,
     OpportunityInventoryManifestResult,
     OpportunityInventoryPlanResult,
@@ -162,6 +177,7 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SourceReviewShardRejection,
     SourceReviewShardSaveRequest,
     SourceReviewShardSaveResult,
+    SyntheticSourceInspectionRecord,
     TopicSourceIndexUseRecord,
     effective_topic_output_tokens,
     selection_call_config,
@@ -525,6 +541,7 @@ class TopicSelectionActivities:
             selection.draft,
             index_sha256=context.source_index.sha256,
             selection_sha256=context.selection.sha256,
+            paged_context=context.program_version == TOPIC_SELECTION_POLICY_V7,
         )
         if plan != expected or context.source_review_plan.sha256 != content_hash(plan):
             raise HarnessValidationError("source review plan differs from its exact selection")
@@ -730,6 +747,7 @@ class TopicSelectionActivities:
             selection.draft,
             index_sha256=context.source_index.sha256,
             selection_sha256=context.selection.sha256,
+            paged_context=context.program_version == TOPIC_SELECTION_POLICY_V7,
         )
         reference = await self.topics.publish(
             self.common(context),
@@ -794,6 +812,135 @@ class TopicSelectionActivities:
             },
         )
         return RepairPlanResult(artifact=reference, plan=plan)
+
+    @activity.defn(name="save_topic_editorial_progress")
+    async def save_editorial_progress(self, progress: EditorialProgress) -> None:
+        """Save accepted editorial state before moving to another stage or rendering."""
+        context = progress.context
+        _, _, _, selection = await self.load(context)
+        if selection is None:
+            raise HarnessValidationError("editorial progress requires an admitted selection")
+        dependencies = tuple(
+            value
+            for name in type(context).model_fields
+            if isinstance(value := getattr(context, name), HarnessArtifactRef)
+        )
+        await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name="topic-editorial-progress/1",
+            content=progress,
+            dependencies=(
+                *dependencies,
+                *((progress.compiled,) if progress.compiled is not None else ()),
+            ),
+            metadata={"phase": progress.phase, "baseRevision": progress.base_revision},
+        )
+
+    @activity.defn(name="load_topic_editorial_progress")
+    async def load_editorial_progress(self, ref: RunRef) -> EditorialResumeLookup:
+        """Resume unfinished editorial work even when it already produced a review render."""
+        scope = Scope(organizationId=ref.scope_organization_id, userId=ref.scope_user_id)
+        async with db.scoped(self.owner.ctx.settings.database_url, scope) as conn:
+            row = await (
+                await conn.execute(
+                    """SELECT id FROM harness_artifact
+                        WHERE source_id=%s AND kind='checks'
+                          AND metadata->>'format'='topic-editorial-progress/1'
+                          AND metadata->>'runId'=%s
+                        ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (ref.source_id, str(ref.run_id)),
+                )
+            ).fetchone()
+        if row is None:
+            return EditorialResumeLookup()
+        record = await artifacts._artifact_for_read(
+            self.owner.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            artifact_id=row["id"],
+        )
+        reference = self.owner._artifact_ref(record)
+        progress = EditorialProgress.model_validate(
+            await self.topics.read(TopicContext(run=ref, evidence=reference), reference)
+        )
+        if progress.context.run != ref:
+            raise HarnessValidationError("editorial progress belongs to another run")
+        run, _, _, selection = await self.load(progress.context)
+        if selection is None:
+            raise HarnessValidationError("editorial progress lost its accepted selection")
+        if run.current_revision != progress.base_revision:
+            # A crash may fall between committing the compiled revision and saving progress.
+            if progress.compiled is None or run.current_revision != progress.base_revision + 1:
+                return EditorialResumeLookup()
+            assets = await runs.get_resume_assets(
+                self.owner.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                run_id=ref.run_id,
+            )
+            if assets.edit != progress.compiled:
+                return EditorialResumeLookup()
+            progress = progress.model_copy(update={"base_revision": run.current_revision})
+        return EditorialResumeLookup(
+            resume=EditorialResume(progress=progress, draft=selection.draft)
+        )
+
+    @activity.defn(name="load_topic_editorial_work")
+    async def load_editorial_work(self, work: EditorialWorkInput) -> EditorialWorkLookup:
+        """Reuse only a completely admitted decision with the same immutable assignment."""
+        context = work.context
+        await self.load(context)
+        async with db.scoped(
+            self.owner.ctx.settings.database_url, self.topics.scope(self.common(context))
+        ) as conn:
+            row = await (
+                await conn.execute(
+                    """SELECT id FROM harness_artifact
+                        WHERE source_id=%s AND kind='checks'
+                          AND metadata->>'format'='topic-editorial-work/1'
+                          AND metadata->>'runId'=%s AND metadata->>'workIdentity'=%s
+                        ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (context.run.source_id, str(context.run.run_id), work.identity()),
+                )
+            ).fetchone()
+        if row is None:
+            return EditorialWorkLookup()
+        record = await artifacts._artifact_for_read(
+            self.owner.ctx.settings.database_url,
+            scope=self.topics.scope(self.common(context)),
+            source_id=context.run.source_id,
+            artifact_id=row["id"],
+        )
+        saved = EditorialWorkSave.model_validate(
+            await self.read(context, self.owner._artifact_ref(record))
+        )
+        if saved.work.identity() != work.identity() or saved.result.saved is None:
+            raise HarnessValidationError("cached editorial decision changed its assignment")
+        await self.load(saved.result.context)
+        return EditorialWorkLookup(result=saved.result)
+
+    @activity.defn(name="save_topic_editorial_work")
+    async def save_editorial_work(self, request: EditorialWorkSave) -> None:
+        """Retain a completed shard separately from the lifetime of its parent workflow."""
+        context = request.work.context
+        await self.load(context)
+        if request.result.saved is None or request.result.saved.get("artifact") is None:
+            raise HarnessValidationError("only an admitted editorial decision may be cached")
+        artifact = HarnessArtifactRef.model_validate(request.result.saved["artifact"])
+        dependencies = tuple(
+            value
+            for name in type(context).model_fields
+            if isinstance(value := getattr(context, name), HarnessArtifactRef)
+        )
+        await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name="topic-editorial-work/1",
+            content=request,
+            dependencies=(*dependencies, artifact),
+            metadata={"workIdentity": request.work.identity()},
+        )
 
     @activity.defn(name="load_topic_source_checkpoint")
     async def load_source_checkpoint(
@@ -944,9 +1091,12 @@ class TopicSelectionActivities:
             author_index=context.author_index,
             verifier_index=context.verifier_index,
             author_families=context.author_families,
+            reserve_reviewer=context.program_version == TOPIC_SELECTION_POLICY_V7,
         )
         dependencies = [context.evidence, context.rubric]
         source_tool_role = None
+        editorial_context_ref = None
+        editorial_context_record: EditorialContextRecord | None = None
         allowed_browse_parent_ids: tuple[str, ...] = ()
         allowed_candidate_ids: tuple[str, ...] = ()
         allowed_sentence_ids: tuple[str, str] | None = None
@@ -975,7 +1125,11 @@ class TopicSelectionActivities:
                 dependencies.extend((context.source_index, context.selection))
             stage = f"verify:selection:cold:{selection_cold_key(candidate, context.rubric.sha256)}"
             version = SELECTION_COLD_PROMPT_V4 if indexed_cold else SELECTION_COLD_PROMPT_V3
-            synthetic = "topic_selection_cold"
+            synthetic = (
+                f"topic_selection_cold_{context.candidate_id}"
+                if context.program_version == TOPIC_SELECTION_POLICY_V7
+                else "topic_selection_cold"
+            )
         elif (
             selection is not None
             and context.assessment is None
@@ -996,15 +1150,43 @@ class TopicSelectionActivities:
             allowed_candidate_ids = tuple(
                 str(getattr(value, "root", value)) for value in work_item.inspectionCandidateIds
             )
+            if context.program_version == TOPIC_SELECTION_POLICY_V7:
+                editorial_context_record = source_review_context(
+                    selection.draft, work_item, context.source_index.sha256
+                )
+                editorial_context_ref = await self.topics.publish(
+                    self.common(context),
+                    kind="checks",
+                    format_name=editorial_context_record.format,
+                    content=editorial_context_record,
+                    dependencies=tuple(dependencies),
+                    metadata={
+                        "programVersion": context.program_version,
+                        "workItemId": work_item.workItemId,
+                    },
+                )
+                dependencies.append(editorial_context_ref)
             prompt = source_review_shard_prompt(
                 selection.draft,
                 rubric,
                 source_index_map(index, index_sha256=context.source_index.sha256),
                 work_item,
+                editorial_context={
+                    "sha256": editorial_context_ref.sha256,
+                    "recordCount": len(editorial_context_record.records),
+                }
+                if editorial_context_ref is not None and editorial_context_record is not None
+                else None,
             )
             stage = f"verify:selection:source:{context.iteration}:{work_item.workItemId}"
-            version = SELECTION_SOURCE_SHARD_PROMPT
+            version = (
+                SELECTION_SOURCE_PAGED_PROMPT
+                if editorial_context_ref is not None
+                else SELECTION_SOURCE_SHARD_PROMPT
+            )
             synthetic = f"topic_selection_source_{work_item.workItemId}"
+            if context.program_version == TOPIC_SELECTION_POLICY_V7:
+                synthetic += f"_iteration_{context.iteration}"
         elif selection is not None and context.assessment is None:
             if context.selection is None:
                 raise HarnessValidationError("source review requires its exact selection artifact")
@@ -1237,6 +1419,7 @@ class TopicSelectionActivities:
             }
         return SelectionCallPlan(
             prompt=prompt,
+            editorial_context=editorial_context_ref,
             stage=stage,
             prompt_version=version,
             program_version=context.program_version,
@@ -1247,6 +1430,7 @@ class TopicSelectionActivities:
                 SELECTION_INVENTORY_SHARD_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
                 SELECTION_SOURCE_SHARD_PROMPT: "topic-selection-portfolio/4",
+                SELECTION_SOURCE_PAGED_PROMPT: "topic-selection-portfolio/4",
             }.get(version, version),
             author=author,
             verifier=verifier,
@@ -1346,7 +1530,60 @@ class TopicSelectionActivities:
             )
         return matches[0]
 
-    async def inspection_ref(
+    async def inspection_chain(
+        self, context: SelectionContext, plan: SelectionCallPlan, reference: HarnessArtifactRef
+    ) -> list[SourceProgressCheckpoint]:
+        """Verify and expand the source audit in an activity, outside model and workflow history."""
+        chain: list[SourceProgressCheckpoint] = []
+        seen: set[str] = set()
+        while True:
+            checkpoint = SourceProgressCheckpoint.model_validate(
+                await self.read(context, reference)
+            )
+            if (
+                reference.sha256 in seen
+                or checkpoint_sha256(checkpoint) != reference.sha256
+                or checkpoint.stage != plan.stage
+                or checkpoint.role != plan.source_tool_role
+                or context.source_index is None
+                or checkpoint.index_sha256 != context.source_index.sha256
+                or (chain and checkpoint.request_sequence != chain[-1].request_sequence - 1)
+            ):
+                raise HarnessValidationError("source audit checkpoint chain is inconsistent")
+            seen.add(reference.sha256)
+            chain.append(checkpoint)
+            activity.heartbeat("verifying-source-audit", checkpoint.request_sequence)
+            if checkpoint.parent_checkpoint_sha256 is None:
+                if checkpoint.request_sequence != 0:
+                    raise HarnessValidationError("source audit checkpoint chain is incomplete")
+                return chain
+            record = await artifacts._artifact_for_read(
+                self.owner.ctx.settings.database_url,
+                scope=self.topics.scope(self.common(context)),
+                source_id=context.run.source_id,
+                artifact_id=reference.id,
+            )
+            parents: list[HarnessArtifactRef] = []
+            for identifier in record.dependency_ids:
+                parent = await artifacts._artifact_for_read(
+                    self.owner.ctx.settings.database_url,
+                    scope=self.topics.scope(self.common(context)),
+                    source_id=context.run.source_id,
+                    artifact_id=identifier,
+                )
+                if (
+                    parent.sha256 == checkpoint.parent_checkpoint_sha256
+                    and parent.metadata.get("runId") == str(context.run.run_id)
+                    and parent.metadata.get("format") == CHECKPOINT_FORMAT
+                    and parent.metadata.get("stage") == plan.stage
+                    and parent.metadata.get("role") == plan.source_tool_role
+                ):
+                    parents.append(self.owner._artifact_ref(parent))
+            if len(parents) != 1:
+                raise HarnessValidationError("source audit checkpoint lacks its unique parent")
+            reference = parents[0]
+
+    async def inspection_ref(  # noqa: PLR0915
         self,
         context: SelectionContext,
         plan: SelectionCallPlan,
@@ -1360,7 +1597,16 @@ class TopicSelectionActivities:
                 raise HarnessValidationError("non-indexed model call carried a source inspection")
             return None
         if plan.synthetic_payload is not None:
-            return None
+            return await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name="topic-source-inspection/synthetic/1",
+                content=SyntheticSourceInspectionRecord(
+                    role=plan.source_tool_role, stage=plan.stage
+                ),
+                dependencies=(*plan.input_artifacts, response),
+                metadata={"synthetic": True, "role": plan.source_tool_role, "stage": plan.stage},
+            )
         if inspection is None or context.source_index is None:
             raise HarnessValidationError("indexed editorial response has no source inspection")
         if inspection.role != plan.source_tool_role or inspection.stage != plan.stage:
@@ -1368,6 +1614,54 @@ class TopicSelectionActivities:
         index = await self.source_index(context)
         if inspection.index_sha256 != context.source_index.sha256:
             raise HarnessValidationError("source inspection names a different index")
+        checkpoint_ref = None
+        if inspection.format in {
+            "topic-source-inspection/2",
+            "topic-source-inspection/3",
+            "topic-source-inspection/4",
+        }:
+            response_record = await artifacts._artifact_for_read(
+                self.owner.ctx.settings.database_url,
+                scope=self.topics.scope(self.common(context)),
+                source_id=context.run.source_id,
+                artifact_id=response.id,
+            )
+            matches: list[HarnessArtifactRef] = []
+            for dependency_id in response_record.dependency_ids:
+                candidate = await artifacts._artifact_for_read(
+                    self.owner.ctx.settings.database_url,
+                    scope=self.topics.scope(self.common(context)),
+                    source_id=context.run.source_id,
+                    artifact_id=dependency_id,
+                )
+                if (
+                    candidate.kind != "checks"
+                    or candidate.metadata.get("format") != CHECKPOINT_FORMAT
+                    or candidate.metadata.get("checkpointSha256") != inspection.checkpoint_sha256
+                    or candidate.metadata.get("indexSha256") != context.source_index.sha256
+                    or candidate.metadata.get("role") != plan.source_tool_role
+                    or candidate.metadata.get("stage") != plan.stage
+                    or candidate.metadata.get("runId") != str(context.run.run_id)
+                    or candidate.metadata.get("requestSequence") != inspection.request_sequence
+                ):
+                    continue
+                reference = self.owner._artifact_ref(candidate)
+                checkpoint = SourceProgressCheckpoint.model_validate(
+                    await self.read(context, reference)
+                )
+                if inspection_from_checkpoint(checkpoint) == inspection:
+                    matches.append(reference)
+            if len(matches) != 1:
+                raise HarnessValidationError(
+                    "source inspection has no unique durable progress checkpoint"
+                )
+            checkpoint_ref = matches[0]
+        if inspection.format == "topic-source-inspection/4":
+            if checkpoint_ref is None:
+                raise HarnessValidationError("segmented inspection has no checkpoint")
+            inspection = aggregate_checkpoint_inspections(
+                await self.inspection_chain(context, plan, checkpoint_ref)
+            )
         browse_parent_ids = None
         if (
             plan.source_tool_role == "inventory"
@@ -1411,11 +1705,19 @@ class TopicSelectionActivities:
             inspection,
             browse_parent_ids=browse_parent_ids,
         )
+        if plan.editorial_context is not None:
+            editorial_context_record = EditorialContextRecord.model_validate(
+                await self.read(context, plan.editorial_context)
+            )
+            validate_editorial_reads(
+                editorial_context_record, plan.editorial_context.sha256, inspection
+            )
         validate_source_read_ids(index, inspection, required_sentence_ids)
         if plan.source_tool_role == "cold_reviewer":
             delivered = {
                 identifier for call in inspection.calls for identifier in call.sentence_ids
             }
+            delivered.update(fragment_read_sentence_ids(index, inspection))
             if not delivered <= required_sentence_ids:
                 raise HarnessValidationError("cold review inspected speech outside its candidate")
         if plan.source_tool_role == "source_reviewer":
@@ -1437,44 +1739,6 @@ class TopicSelectionActivities:
                     else None
                 ),
             )
-        checkpoint_ref = None
-        if inspection.format in {"topic-source-inspection/2", "topic-source-inspection/3"}:
-            response_record = await artifacts._artifact_for_read(
-                self.owner.ctx.settings.database_url,
-                scope=self.topics.scope(self.common(context)),
-                source_id=context.run.source_id,
-                artifact_id=response.id,
-            )
-            matches: list[HarnessArtifactRef] = []
-            for dependency_id in response_record.dependency_ids:
-                candidate = await artifacts._artifact_for_read(
-                    self.owner.ctx.settings.database_url,
-                    scope=self.topics.scope(self.common(context)),
-                    source_id=context.run.source_id,
-                    artifact_id=dependency_id,
-                )
-                if (
-                    candidate.kind != "checks"
-                    or candidate.metadata.get("format") != CHECKPOINT_FORMAT
-                    or candidate.metadata.get("checkpointSha256") != inspection.checkpoint_sha256
-                    or candidate.metadata.get("indexSha256") != context.source_index.sha256
-                    or candidate.metadata.get("role") != plan.source_tool_role
-                    or candidate.metadata.get("stage") != plan.stage
-                    or candidate.metadata.get("runId") != str(context.run.run_id)
-                    or candidate.metadata.get("requestSequence") != inspection.request_sequence
-                ):
-                    continue
-                reference = self.owner._artifact_ref(candidate)
-                checkpoint = SourceProgressCheckpoint.model_validate(
-                    await self.read(context, reference)
-                )
-                if inspection_from_checkpoint(checkpoint) == inspection:
-                    matches.append(reference)
-            if len(matches) != 1:
-                raise HarnessValidationError(
-                    "source inspection has no unique durable progress checkpoint"
-                )
-            checkpoint_ref = matches[0]
         return await self.topics.publish(
             self.common(context),
             kind="checks",
@@ -2072,6 +2336,7 @@ class TopicSelectionActivities:
                 author_index=context.author_index,
                 verifier_index=context.verifier_index,
                 author_families=context.author_families,
+                reserve_reviewer=context.program_version == TOPIC_SELECTION_POLICY_V7,
             )
             proposer_families = context.author_families or (author.family,)
             self._require_independent_reviewer(verifier.family, proposer_families)
@@ -2251,6 +2516,7 @@ class TopicSelectionActivities:
                 author_index=context.author_index,
                 verifier_index=context.verifier_index,
                 author_families=context.author_families,
+                reserve_reviewer=context.program_version == TOPIC_SELECTION_POLICY_V7,
             )
             shard = admit_repair_shard(
                 evidence,
@@ -2673,6 +2939,7 @@ class TopicSelectionActivities:
             author_index=context.author_index,
             verifier_index=context.verifier_index,
             author_families=context.author_families,
+            reserve_reviewer=context.program_version == TOPIC_SELECTION_POLICY_V7,
         )
         proposer_families = context.author_families or (
             ("deterministic-empty-packaging",)
@@ -2841,6 +3108,10 @@ class TopicSelectionActivities:
             self.prepare_source_review_plan,
             self.prepare_repair_plan,
             self.load_source_checkpoint,
+            self.load_editorial_work,
+            self.save_editorial_work,
+            self.load_editorial_progress,
+            self.save_editorial_progress,
             self.prepare,
             self.save_inventory,
             self.save_inventory_shard,

@@ -55,6 +55,7 @@ from temnia_pipeline.harness.source_progress import (
     SourceProgressLimitExceeded,
 )
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection import (
     content_hash,
@@ -218,6 +219,7 @@ class AgentDouble:
         self.calls: list[HarnessModelDeps] = []
         self.prompts: list[str] = []
         self.call_order = call_order
+        self.objects: dict[UUID, BaseModel] = {}
 
     async def run(self, prompt: str | None, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
         self.call_order.append(self.name)
@@ -230,7 +232,19 @@ class AgentDouble:
         if callable(output):
             assert prompt is not None
             marker = "SOURCE DATA\n" if "SOURCE DATA\n" in prompt else "INPUT:\n"
-            output = output(json.loads(prompt.split(marker, 1)[1]))
+            payload = json.loads(prompt.split(marker, 1)[1])
+            if payload.get("editorialContext") is not None:
+                ref = kwargs["deps"].editorial_context
+                records = self.objects[ref.id].model_dump(mode="json")["records"]
+                candidates = [row["value"] for row in records if row["kind"] == "candidate"]
+                opportunities = [row["value"] for row in records if row["kind"] == "opportunity"]
+                payload["contextCandidatesWithoutAuthorRationale"] = candidates
+                payload["contextOpportunitiesWithoutAuthorRationale"] = opportunities
+                payload["workItem"]["inspectionCandidateIds"] = [item["id"] for item in candidates]
+                payload["workItem"]["contextOpportunityIds"] = [
+                    item["id"] for item in opportunities
+                ]
+            output = output(payload)
         return SimpleNamespace(output=output, all_messages=list)
 
 
@@ -277,6 +291,9 @@ class Program:
         self.cold = AgentDouble("cold", colds if colds is not None else [cold()], self.call_order)
         self.source = AgentDouble("source", sources, self.call_order)
         self.patch = AgentDouble("patch", patches, self.call_order)
+        self.source.objects = self.objects
+        self.work_results: dict[str, module.EditorialWorkResult] = {}
+        self.progress: module.EditorialProgress | None = None
         self.activities = TopicSelectionActivities(
             cast(
                 "HarnessActivities",
@@ -310,6 +327,7 @@ class Program:
         else:
             monkeypatch.setattr(workflow_type, "inventory_agent", self.inventory)
         monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
+        monkeypatch.setattr(module.workflow, "execute_child_workflow", self.execute_child)
         monkeypatch.setattr(
             module.workflow,
             "info",
@@ -317,6 +335,12 @@ class Program:
                 workflow_id="selection", run_id="run", task_queue="selection-tests"
             ),
         )
+
+    async def execute_child(
+        self, name: str, value: module.EditorialWorkInput, **_kwargs: object
+    ) -> module.EditorialWorkResult:
+        assert name == "TopicEditorialWorkWorkflow"
+        return await module.TopicEditorialWorkWorkflow().run(value)
 
     async def load(
         self, context: SelectionContext
@@ -407,7 +431,25 @@ class Program:
             dependencies=(response,),
         )
 
-    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, C901, PLR0911
+    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, C901, PLR0911, PLR0912
+        if name == "load_topic_editorial_work":
+            return module.EditorialWorkLookup(result=self.work_results.get(value.identity()))
+        if name == "save_topic_editorial_work":
+            self.work_results[value.work.identity()] = value.result
+            return None
+        if name == "save_topic_editorial_progress":
+            self.progress = value
+            return None
+        if name == "load_topic_editorial_progress":
+            if self.progress is None:
+                return module.EditorialResumeLookup()
+            assert self.progress.context.selection is not None
+            record = cast("TopicSelectionRecord", self.objects[self.progress.context.selection.id])
+            return module.EditorialResumeLookup(
+                resume=module.EditorialResumeLookup.model_validate(
+                    {"resume": {"progress": self.progress, "draft": record.draft}}
+                ).resume
+            )
         if name == "start_chapter_run":
             assert value.editorial_policy == self.policy
             return StartRunResult(run=self.run, created=True)
@@ -496,7 +538,7 @@ class Program:
             self.compiled = await self.activities.compile(value)
             return self.compiled
         if name == "accept_initial_chapter_revision":
-            self.run = self.run.model_copy(update={"current_revision": 1})
+            self.run = self.run.model_copy(update={"current_revision": value.base_revision + 1})
             return self.run
         if name == "render_topic_revision":
             assert self.compiled is not None
@@ -505,7 +547,9 @@ class Program:
                 count=self.render_count, technical_passed=True, descriptor=self.compiled.artifact
             )
         if name == "update_chapter_run_stage":
-            self.run = self.run.model_copy(update={"status": value.status})
+            self.run = self.run.model_copy(
+                update={"status": value.status, "stage": value.next_stage}
+            )
             return self.run
         message = f"unexpected activity: {name}"
         raise AssertionError(message)
@@ -1062,6 +1106,14 @@ async def test_v7_assembles_every_repair_component_before_one_selection_change(
     ]
     assert [context.repair_work_item_id for context in repair_contexts] == ["repair-component-0001"]
     assert run.patch.calls[0].allowed_browse_parent_ids == ("section-0001",)
+    # A later execution resumes editorial work despite the existing review render.
+    # Exact successful work items are reused, including independent review; no author rerun.
+    assert run.progress is not None
+    run.progress = run.progress.model_copy(update={"phase": "review"})
+    call_order = list(run.call_order)
+    resumed = await TopicSelectionWorkflowV7().program(run.request)
+    assert resumed.revision == 2
+    assert run.call_order == call_order
 
 
 async def test_build_index_records_the_exact_verified_cache_hit(
@@ -1614,3 +1666,62 @@ async def test_a_transient_failure_on_one_route_moves_the_seat_to_the_next_route
     assert run.final_context is not None
     assert run.final_context.verifier_index == 1
     assert run.compiled is not None
+
+
+def test_author_fallback_keeps_one_reviewer_family_out_of_every_contributor() -> None:
+    _, snapshot = _settings()
+    first, reserved = editorial_routes(snapshot, reserve_reviewer=True)
+    fallback, reviewer = editorial_routes(
+        snapshot, author_index=1, author_families=(first.family,), reserve_reviewer=True
+    )
+    assert fallback.family != first.family
+    assert reserved.family not in {first.family, fallback.family}
+    assert reviewer.family == reserved.family
+
+
+async def test_indexed_sdk_quantum_continues_same_work_without_spending_an_admission_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        inventory=inventory,
+        sources=[_bounded_source_review] * 3,
+        patches=[],
+        colds=[cold().model_copy(update={"candidateId": author.proposal.candidates[0].id})],
+        policy=TOPIC_SELECTION_POLICY_V7,
+        workflow_type=TopicSelectionWorkflowV7,
+    )
+    run.inventory.outputs.insert(0, module.UsageLimitExceeded("request quantum exhausted"))
+    continuations: list[module.EditorialWorkInput] = []
+
+    class ContinueRequested(BaseException):
+        def __init__(self, work: module.EditorialWorkInput) -> None:
+            self.work = work
+
+    def continue_as_new(work: module.EditorialWorkInput) -> None:
+        raise ContinueRequested(work)
+
+    async def execute_child(
+        name: str, value: module.EditorialWorkInput, **kwargs: object
+    ) -> module.EditorialWorkResult:
+        try:
+            return await run.execute_child(name, value, **kwargs)
+        except ContinueRequested as continuation:
+            resumed = continuation.work
+            assert resumed.identity() == value.identity()
+            assert resumed.resumed_context is not None
+            assert resumed.resumed_context.resume_indexed
+            assert resumed.resumed_context.request_attempt == value.context.request_attempt
+            continuations.append(resumed)
+            return await run.execute_child(name, resumed, **kwargs)
+
+    monkeypatch.setattr(module.workflow, "continue_as_new", continue_as_new)
+    monkeypatch.setattr(module.workflow, "execute_child_workflow", execute_child)
+    result = await TopicSelectionWorkflowV7().program(run.request)
+    assert result.revision == 1
+    assert len(continuations) == 1
+    assert run.call_order.count("inventory") == 2
+    assert run.call_order.count("author") == 1
+    assert run.render_count == 1

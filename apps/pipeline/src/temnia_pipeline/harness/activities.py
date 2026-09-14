@@ -277,6 +277,7 @@ class HarnessActivities:
             run_id=ref.run_id,
             request_key=request.request_key,
             edit_artifact_id=request.edit_artifact_id,
+            base_revision=request.base_revision,
         )
 
     @activity.defn(name="commit_chapter_review")

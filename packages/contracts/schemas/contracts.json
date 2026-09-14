@@ -4680,13 +4680,31 @@
           "items": {
             "$ref": "#/$defs/TopicSourceIndexSentence"
           }
+        },
+        "fragments": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceSentenceFragment"
+          }
+        },
+        "nextCharacterOffset": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "complete",
         "indexSha256",
         "nextSentenceId",
-        "sentences"
+        "sentences",
+        "fragments",
+        "nextCharacterOffset"
       ],
       "additionalProperties": false,
       "title": "TopicSourceReadPage"
@@ -4973,7 +4991,6 @@
           }
         },
         "contextOpportunityIds": {
-          "maxItems": 48,
           "type": "array",
           "items": {
             "type": "string",
@@ -4992,7 +5009,6 @@
           }
         },
         "inspectionCandidateIds": {
-          "maxItems": 16,
           "type": "array",
           "items": {
             "type": "string",
@@ -5108,6 +5124,50 @@
       ],
       "additionalProperties": false,
       "title": "TopicSourceSearchPage"
+    },
+    "TopicSourceSentenceFragment": {
+      "$id": "#/$defs/TopicSourceSentenceFragment",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "startCharacter": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endCharacter": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "totalCharacters": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sentenceId",
+        "startCharacter",
+        "endCharacter",
+        "totalCharacters",
+        "text"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceSentenceFragment"
     },
     "TopicValueReview": {
       "$id": "#/$defs/TopicValueReview",

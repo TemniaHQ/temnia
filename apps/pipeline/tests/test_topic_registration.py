@@ -13,6 +13,7 @@ from temnia_pipeline.harness.models import harness_pydantic_ai_plugin
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchWorkflow
 from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
 from temnia_pipeline.harness.topic_selection_workflow import (
+    TopicEditorialWorkWorkflow,
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
@@ -37,6 +38,7 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
                 "workflows": [
                     TopicRunWorkflow,
                     TopicReviewWorkflow,
+                    TopicEditorialWorkWorkflow,
                     TopicSelectionWorkflow,
                     TopicSelectionWorkflowV4,
                     TopicSelectionWorkflowV5,

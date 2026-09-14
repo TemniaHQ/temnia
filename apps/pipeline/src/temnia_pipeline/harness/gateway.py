@@ -148,6 +148,8 @@ SOURCE_REVIEW_TOOL_NAMES = frozenset(
     {*SOURCE_TOOL_NAMES, "inspect_candidate", "read_media_evidence"}
 )
 
+EDITORIAL_REVIEW_TOOL_NAMES = frozenset({*SOURCE_REVIEW_TOOL_NAMES, "read_editorial_context"})
+
 
 def _validate_source_tools(body: dict[str, Any]) -> None:
     """Allow only the complete indexed-source toolset on the physical request."""
@@ -175,6 +177,7 @@ def _validate_source_tools(body: dict[str, Any]) -> None:
         SOURCE_TOOL_NAMES,
         SOURCE_REVIEW_TOOL_NAMES,
         COLD_SOURCE_TOOL_NAMES,
+        EDITORIAL_REVIEW_TOOL_NAMES,
     }:
         raise GatewayPolicyError("gateway request contains an unqualified source toolset")
     if body.get("tool_choice") not in {None, "auto"}:
@@ -679,7 +682,12 @@ class GatewayChatModel(WrapperModel):
             or (
                 tool_names
                 and frozenset(tool_names)
-                not in {SOURCE_TOOL_NAMES, SOURCE_REVIEW_TOOL_NAMES, COLD_SOURCE_TOOL_NAMES}
+                not in {
+                    SOURCE_TOOL_NAMES,
+                    SOURCE_REVIEW_TOOL_NAMES,
+                    COLD_SOURCE_TOOL_NAMES,
+                    EDITORIAL_REVIEW_TOOL_NAMES,
+                }
             )
         ):
             raise GatewayPolicyError("only the indexed source function tools are allowed")
