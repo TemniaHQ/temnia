@@ -5,12 +5,12 @@
 index and give author/reviewer models tools to investigate source evidence. Treat this as a
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
-The first end-to-end vertical slice, hierarchy, durable-checkpoint and reviewer-evidence milestones
-are implemented on `feat/indexed-editorial-evidence`. They replace whole-transcript prompts for the
-independent inventory, author and source reviewer with one immutable source index and bounded,
-role-specific tools. This is implemented behavior with synthetic and local test evidence; it is not
-a measured editorial improvement or a production qualification. Safe cross-run index reuse and
-bounded portfolio reconciliation described below remain subsequent work.
+The first end-to-end vertical slice, hierarchy, durable-checkpoint, reviewer-evidence and safe
+cross-run reuse milestones are implemented on `feat/indexed-editorial-evidence`. They replace
+whole-transcript prompts for the independent inventory, author and source reviewer with one
+immutable source index and bounded, role-specific tools. This is implemented behavior with
+synthetic and local test evidence; it is not a measured editorial improvement or a production
+qualification. Bounded portfolio reconciliation described below remains subsequent work.
 
 ## Why this changes the design
 
@@ -87,10 +87,14 @@ original sentence unless it uses that sentence in a returned span. Descriptions 
 source extracts and keywords, rather than model-generated semantic abstracts; relationship links
 are not implemented. The checkpoint prevents active tool results from accumulating on the wire, but
 its final exact-evidence envelope means a large portfolio still needs bounded reconciliation rather
-than one unbounded final answer. Index artifacts are scoped to a run today; safe reuse across runs is
-not implemented. The exact contracts and invariants are recorded in
+than one unbounded final answer. Index artifacts now use an evidence- and producer-bound stable
+identity within one organization/source scope. Every run retains a separate use record, and cache
+hits re-read, hash-check and structurally revalidate the accepted artifact before use. The exact
+contracts and invariants are recorded in
 [topic-source-index-v2-2026-09-14.md](topic-source-index-v2-2026-09-14.md) and
-[indexed-agent-checkpoints-2026-09-14.md](indexed-agent-checkpoints-2026-09-14.md).
+[indexed-agent-checkpoints-2026-09-14.md](indexed-agent-checkpoints-2026-09-14.md). Cache identity,
+authorization and invalidation are recorded in
+[source-index-reuse-2026-09-14.md](source-index-reuse-2026-09-14.md).
 
 ## A source index with both navigation and search
 
@@ -269,9 +273,9 @@ Sequence the next design around this foundation:
    tools, multi-round accounting, cold-review isolation, bounded reconstruction and known-failure
    recovery are implemented and locally tested.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
-   Mandatory candidate inspection and measured-media access are implemented. Bounded
-   opportunity/portfolio reconciliation remains; it cannot be one unbounded dump of every
-   candidate.
+   Mandatory candidate inspection, measured-media access and source-bound index reuse are
+   implemented. Bounded opportunity/portfolio reconciliation remains; it cannot be one unbounded
+   dump of every candidate.
 4. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
    runs and separate held-out sources. A four-hour recording is a test requirement; it has not
    been verified as available in this session. Repeated/copied transcripts test payload handling,

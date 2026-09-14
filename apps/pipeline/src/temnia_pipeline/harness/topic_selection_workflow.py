@@ -61,6 +61,7 @@ with workflow.unsafe.imports_passed_through():
         SelectionStopRequest,
         SourceCheckpointLoadRequest,
         SourceCheckpointLoadResult,
+        SourceIndexBuildResult,
         effective_topic_output_tokens,
         selection_call_config,
         selection_call_inputs,
@@ -565,9 +566,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             start_to_close_timeout=timedelta(minutes=30),
             heartbeat_timeout=timedelta(seconds=30),
             retry_policy=RETRY,
-            result_type=HarnessArtifactRef,
+            result_type=SourceIndexBuildResult,
         )
-        context = context.model_copy(update={"source_index": source_index})
+        context = context.model_copy(update={"source_index": source_index.artifact})
         context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:

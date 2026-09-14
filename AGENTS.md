@@ -15,7 +15,7 @@ Cold review remains isolated to the selected speech. Bounded working context, so
 identities, independent judgments, repair authority and the run-level unknown-expense fence
 remain part of the design. Internal discussion structure must be observable; an index alone
 does not prove the compound-candidate problem solved. The first vertical slice is implemented on
-`feat/indexed-editorial-evidence`: a run-scoped `topic-source-index/2` episode → section → region
+`feat/indexed-editorial-evidence`: a source-bound `topic-source-index/2` episode → section → region
 hierarchy, bounded chronological browse, BM25/MiniLM leaf search and exact sentence reads replace
 transcript bodies in the inventory, author and source-review prompts. Every indexed answer must
 retain a complete root-then-sections browse/search/read trace and must have read every sentence in
@@ -35,9 +35,14 @@ admission requires every cited sentence to remain in the response's exact checkp
 Contract and limits: [indexed-agent-checkpoints-2026-09-14.md](docs/design/indexed-agent-checkpoints-2026-09-14.md).
 Reviewer tool contract:
 [candidate-media-evidence-tools-2026-09-14.md](docs/design/candidate-media-evidence-tools-2026-09-14.md).
-Safe cross-run reuse and bounded portfolio reconciliation remain unimplemented, and no real provider,
-latency, recovery or quality result follows. No new model arm or paid run is authorized by this
-record.
+The index now has a policy-neutral producer identity bound to exact accepted evidence, source,
+transcript revision, immutable encoder, partition constants and relevant runtime versions. A later
+run in the same organization/source scope can reuse it only after exact reference, lineage, stored
+hash and full structural validation; each run publishes `topic-source-index-use/1` with its observed
+build/reuse result. Contract:
+[source-index-reuse-2026-09-14.md](docs/design/source-index-reuse-2026-09-14.md). Bounded portfolio
+reconciliation remains unimplemented, and no real provider, latency, recovery or quality result
+follows. No new model arm or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

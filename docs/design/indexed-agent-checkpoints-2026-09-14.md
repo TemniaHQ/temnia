@@ -169,7 +169,8 @@ This checkpoint layer closes unbounded active tool-history growth and known-fail
 one indexed seat. Candidate-region and measured-media tool calls now use the same checkpoint and
 replay contract; their exact extension is recorded in
 [candidate-media-evidence-tools-2026-09-14.md](candidate-media-evidence-tools-2026-09-14.md).
-Source-bound index reuse across runs and bounded multi-part portfolio reconciliation remain. Reuse
-follows only with explicit revision, authorization and retention identities. Real 44-minute,
-two-hour and four-hour provider and editorial evaluation remains the final gate rather than evidence
-inferred from fixtures.
+Source-bound index reuse across runs is implemented with explicit evidence, producer,
+authorization, retention and per-run use identities; see
+[source-index-reuse-2026-09-14.md](source-index-reuse-2026-09-14.md). Bounded multi-part portfolio
+reconciliation remains. Real 44-minute, two-hour and four-hour provider and editorial evaluation
+remains the final gate rather than evidence inferred from fixtures.

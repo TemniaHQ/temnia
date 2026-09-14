@@ -34,12 +34,13 @@ from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.source_index import (
-    build_topic_source_index,
-    load_topic_source_encoder,
     source_index_map,
     validate_source_inspection,
     validate_source_read_ids,
-    validate_topic_source_index,
+)
+from temnia_pipeline.harness.source_index_artifacts import (
+    build_or_reuse_topic_source_index,
+    load_reusable_topic_source_index,
 )
 from temnia_pipeline.harness.source_progress import (
     CHECKPOINT_FORMAT,
@@ -88,13 +89,14 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionStopRequest,
     SourceCheckpointLoadRequest,
     SourceCheckpointLoadResult,
+    SourceIndexBuildResult,
     SourceInspectionTrace,
+    TopicSourceIndexUseRecord,
     effective_topic_output_tokens,
     selection_call_config,
     selection_call_inputs,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError, validate_evidence
-from temnia_pipeline.substrate.changepoint import DEFAULT_EMBEDDING_MODEL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -290,48 +292,56 @@ class TopicSelectionActivities:
         """Load and prove the exact immutable index derived from accepted evidence."""
         if context.source_index is None:
             raise HarnessValidationError("indexed editorial calls require a source index")
-        await self.require_record(
-            context,
-            context.source_index,
-            format_name="topic-source-index/2",
-            dependencies=(context.evidence,),
-        )
         _, evidence, _, _ = await self.load(context.model_copy(update={"source_index": None}))
-        result = TopicSourceIndex.model_validate(await self.read(context, context.source_index))
-        validate_topic_source_index(evidence, result, evidence_sha256=context.evidence.sha256)
-        return result
+        return await load_reusable_topic_source_index(
+            self.owner.ctx.settings.database_url,
+            scope=self.topics.scope(self.common(context)),
+            source_id=context.run.source_id,
+            store=self.owner.ctx.store,
+            evidence_ref=context.evidence,
+            evidence=evidence,
+            index_ref=context.source_index,
+        )
 
     @activity.defn(name="build_topic_source_index")
-    async def build_index(self, context: SelectionContext) -> HarnessArtifactRef:
-        """Build one content-addressed hybrid index before any editorial model call."""
+    async def build_index(self, context: SelectionContext) -> SourceIndexBuildResult:
+        """Reuse or build one source-bound hybrid index before editorial calls."""
         _, evidence, _, _ = await self.load(context)
         pulse = asyncio.create_task(self._index_heartbeat()) if activity.in_activity() else None
         try:
-            loaded = await asyncio.to_thread(load_topic_source_encoder)
-            index = await asyncio.to_thread(
-                build_topic_source_index,
-                evidence,
-                evidence_sha256=context.evidence.sha256,
-                encoder=loaded.value,
-                embedding_revision=loaded.revision,
-                embedding_model=DEFAULT_EMBEDDING_MODEL,
+            result = await build_or_reuse_topic_source_index(
+                self.owner.ctx.settings.database_url,
+                scope=self.topics.scope(self.common(context)),
+                source_id=context.run.source_id,
+                store=self.owner.ctx.store,
+                evidence_ref=context.evidence,
+                evidence=evidence,
             )
         finally:
             if pulse is not None:
                 pulse.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await pulse
-        return await self.topics.publish(
+        index_ref = self.owner._artifact_ref(result.artifact)
+        use_record = TopicSourceIndexUseRecord(
+            run_id=context.run.run_id,
+            source_id=context.run.source_id,
+            evidence=context.evidence,
+            source_index=index_ref,
+            reused=result.reused,
+        )
+        use_ref = await self.topics.publish(
             self.common(context),
             kind="checks",
-            format_name=index.format,
-            content=index,
-            dependencies=(context.evidence,),
-            metadata={
-                "programVersion": context.program_version,
-                "embeddingModel": index.embeddingModel,
-                "embeddingRevision": index.embeddingRevision,
-            },
+            format_name=use_record.format,
+            content=use_record,
+            dependencies=(context.evidence, index_ref),
+            metadata={"reused": result.reused},
+        )
+        return SourceIndexBuildResult(
+            artifact=index_ref,
+            use_record=use_ref,
+            reused=result.reused,
         )
 
     @activity.defn(name="load_topic_source_checkpoint")

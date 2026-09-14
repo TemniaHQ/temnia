@@ -21,6 +21,7 @@ from temnia_pipeline.harness.topic_selection_activities import TopicSelectionAct
 from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionContext,
     SelectionSaveRequest,
+    SourceIndexBuildResult,
     selection_call_inputs,
 )
 from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
@@ -53,8 +54,11 @@ async def test_response_requires_complete_original_call_identity(  # noqa: C901 
     )
     rubric = await program.activities.rubric(context)
     context = context.model_copy(update={"rubric": rubric})
-    source_index = await program.execute("build_topic_source_index", context)
-    context = context.model_copy(update={"source_index": source_index})
+    source_index = cast(
+        "SourceIndexBuildResult",
+        await program.execute("build_topic_source_index", context),
+    )
+    context = context.model_copy(update={"source_index": source_index.artifact})
     accepted = await program.activities.save(
         SelectionSaveRequest(context=context, draft=draft(selected=True))
     )

@@ -29,15 +29,20 @@ from temnia_pipeline.contracts import (
     TopicSelectionDraft,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
+    TopicSourceIndex,
 )
 from temnia_pipeline.harness import artifacts
+from temnia_pipeline.harness import topic_selection_activities as activities_module
 from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
 from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
-from temnia_pipeline.harness.source_index import build_topic_source_index
+from temnia_pipeline.harness.source_index import (
+    build_topic_source_index,
+    validate_topic_source_index,
+)
 from temnia_pipeline.harness.source_progress import (
     SourceProgressCheckpoint,
     SourceProgressLimitExceeded,
@@ -49,7 +54,12 @@ from temnia_pipeline.harness.topic_selection import (
     make_rubric,
 )
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
-from temnia_pipeline.harness.topic_selection_runtime import SourceCheckpointLoadResult
+from temnia_pipeline.harness.topic_selection_runtime import (
+    SelectionContext,
+    SourceCheckpointLoadResult,
+    SourceIndexBuildResult,
+    TopicSourceIndexUseRecord,
+)
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
 )
@@ -66,7 +76,6 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.models import HarnessModelDeps
     from temnia_pipeline.harness.topic_selection_runtime import (
         SelectionCallPlan,
-        SelectionContext,
         SelectionRejection,
     )
 
@@ -266,12 +275,16 @@ class Program:
                 SimpleNamespace(
                     _recorded_output=lambda _name: None,  # pyright: ignore[reportUnknownLambdaType]
                     _artifact_ref=lambda record: record.ref,  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
-                    ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test-database")),
+                    ctx=SimpleNamespace(
+                        settings=SimpleNamespace(database_url="test-database"),
+                        store=object(),
+                    ),
                 ),
             )
         )
         monkeypatch.setattr(self.activities, "load", self.load)
         monkeypatch.setattr(self.activities, "read", self.read)
+        monkeypatch.setattr(self.activities, "source_index", self.source_index)
         monkeypatch.setattr(artifacts, "_artifact_for_read", self.artifact_for_read)
         monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
         monkeypatch.setattr(
@@ -316,6 +329,12 @@ class Program:
 
     async def read(self, _context: SelectionContext, ref: HarnessArtifactRef) -> object:
         return self.objects[ref.id].model_dump(mode="json")
+
+    async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
+        assert context.source_index is not None
+        index = cast("TopicSourceIndex", self.objects[context.source_index.id])
+        validate_topic_source_index(EVIDENCE, index, evidence_sha256=EVIDENCE_REF.sha256)
+        return index
 
     async def artifact_for_read(
         self, _database_url: str, *, artifact_id: UUID, **_kwargs: object
@@ -380,12 +399,31 @@ class Program:
                 embedding_model="test/encoder",
                 embedding_revision="a" * 40,
             )
-            return await self.publish(
+            index_ref = await self.publish(
                 TopicContext(run=value.run, evidence=value.evidence),
                 content=index,
                 format_name=index.format,
                 kind="checks",
                 dependencies=(value.evidence,),
+            )
+            use_record = TopicSourceIndexUseRecord(
+                run_id=value.run.run_id,
+                source_id=value.run.source_id,
+                evidence=value.evidence,
+                source_index=index_ref,
+                reused=False,
+            )
+            use_ref = await self.publish(
+                TopicContext(run=value.run, evidence=value.evidence),
+                content=use_record,
+                format_name=use_record.format,
+                kind="checks",
+                dependencies=(value.evidence, index_ref),
+            )
+            return SourceIndexBuildResult(
+                artifact=index_ref,
+                use_record=use_ref,
+                reused=False,
             )
         if name == "claim_chapter_repair":
             self.run = self.run.model_copy(update={"repair_count": self.run.repair_count + 1})
@@ -479,6 +517,56 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
         for call in (*run.author.calls, *run.source.calls)
     )
     assert run.author.calls[0].route.family != run.source.calls[0].route.family
+    use_refs = [
+        ref for format_name, ref in run.saved if format_name == "topic-source-index-use/1"
+    ]
+    assert len(use_refs) == 1
+    use_record = cast("TopicSourceIndexUseRecord", run.objects[use_refs[0].id])
+    assert use_record.run_id == run.run.id
+    assert use_record.source_id == run.run.source_id
+    assert use_record.evidence == EVIDENCE_REF
+    assert use_record.reused is False
+
+
+async def test_build_index_records_the_exact_verified_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[v3_portfolio(selected=False)],
+        patches=[],
+    )
+    index = build_topic_source_index(
+        EVIDENCE,
+        evidence_sha256=EVIDENCE_REF.sha256,
+        encoder=_FixtureEncoder(),
+        embedding_model="test/encoder",
+        embedding_revision="a" * 40,
+    )
+    run_ref = TopicSelectionWorkflow.ref(run.request)
+    index_ref = await run.publish(
+        TopicContext(run=run_ref, evidence=EVIDENCE_REF),
+        content=index,
+        format_name=index.format,
+        kind="checks",
+        dependencies=(EVIDENCE_REF,),
+    )
+
+    async def reuse(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(artifact=SimpleNamespace(ref=index_ref), reused=True)
+
+    monkeypatch.setattr(activities_module, "build_or_reuse_topic_source_index", reuse)
+    context = SelectionContext(run=run_ref, evidence=EVIDENCE_REF)
+    result = await run.activities.build_index(context)
+
+    assert result.artifact == index_ref
+    assert result.reused is True
+    use_record = cast("TopicSourceIndexUseRecord", run.objects[result.use_record.id])
+    assert use_record.source_index == index_ref
+    assert use_record.evidence == EVIDENCE_REF
+    assert use_record.reused is True
+    assert run.records[result.use_record.id].dependency_ids == [EVIDENCE_REF.id, index_ref.id]
 
 
 async def test_empty_source_assessment_can_confirm_abstention(

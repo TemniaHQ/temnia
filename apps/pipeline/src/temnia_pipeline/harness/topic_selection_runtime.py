@@ -1,11 +1,12 @@
 """Immutable activity inputs for the second standalone editorial program."""
 
 # Pydantic resolves these runtime DTO annotations while Temporal registers activities.
-# ruff: noqa: TC001
+# ruff: noqa: TC001, TC003
 
 from __future__ import annotations
 
 import hashlib
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -83,6 +84,27 @@ class SelectionContext(BaseModel):
     # keeps failing transiently, sticky for the rest of the run.
     author_index: int = 0
     verifier_index: int = 0
+
+
+class TopicSourceIndexUseRecord(BaseModel):
+    """Run-scoped evidence that one exact stable source index was consumed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-source-index-use/1"] = "topic-source-index-use/1"
+    run_id: uuid.UUID
+    source_id: uuid.UUID
+    evidence: HarnessArtifactRef
+    source_index: HarnessArtifactRef
+    reused: bool
+
+
+class SourceIndexBuildResult(BaseModel):
+    """Workflow result for a built or verified reusable source index."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    use_record: HarnessArtifactRef
+    reused: bool
 
 
 class SelectionCallPlan(BaseModel):

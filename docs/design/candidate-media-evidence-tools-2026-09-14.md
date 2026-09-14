@@ -110,7 +110,8 @@ and the real streaming SDK request shape. Production database and image/browser 
 of the exact-commit repository gate recorded in the day log.
 
 No paid model or GPU call, staging change, deployment, real long-source run, playback evaluation or
-human editorial evaluation was performed for this milestone. Safe cross-run index reuse and bounded
-portfolio reconciliation remain the next implementation items. Real 44-minute, two-hour and
-four-hour provider and editorial runs remain an explicit later evaluation, not a conclusion inferred
-from these fixtures.
+human editorial evaluation was performed for this milestone. Safe cross-run source-index reuse is
+now implemented and recorded in
+[source-index-reuse-2026-09-14.md](source-index-reuse-2026-09-14.md). Bounded portfolio
+reconciliation is the next implementation item. Real 44-minute, two-hour and four-hour provider and
+editorial runs remain an explicit later evaluation, not a conclusion inferred from these fixtures.

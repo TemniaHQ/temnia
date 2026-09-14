@@ -47,6 +47,7 @@ REGION_MAX_SENTENCES = 32
 REGION_MAX_CHARACTERS = 8_000
 SECTION_MAX_REGIONS = 8
 ROOT_NODE_ID = "episode"
+SOURCE_INDEX_FORMAT = "topic-source-index/2"
 EMBEDDING_UNIT_MAX_CHARACTERS = 800
 REGION_KEYWORDS = 10
 REGION_PREVIEW_CHARACTERS = 240
@@ -312,7 +313,7 @@ def build_topic_source_index(
         }
     )
     index = TopicSourceIndex(
-        format="topic-source-index/2",
+        format=SOURCE_INDEX_FORMAT,
         evidenceSha256=evidence_sha256,
         sourceId=evidence.sourceId,
         transcriptId=evidence.transcriptId,

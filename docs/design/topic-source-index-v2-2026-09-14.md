@@ -10,9 +10,10 @@ implemented behavior and local evidence, not provider qualification or editorial
 `topic-source-index/2` is a complete immutable `checks` artifact created from one accepted
 `harness-evidence/2` artifact. Its content identity binds evidence hash, source, transcript ID and
 revision, embedding model and immutable revision, vector dimensions, leaf partition limits,
-section fanout, every exact sentence and every hierarchy node. The ordinary artifact manifest also
-binds organization, run and dependency identities. V1 artifacts remain historical records and are
-not interpreted as v2.
+section fanout, every exact sentence and every hierarchy node. The stable artifact manifest binds
+organization, source, exact evidence dependency and every producer choice while omitting run and
+editorial-policy identity. Each consuming run publishes a separate use record. V1 artifacts remain
+historical records and are not interpreted as v2.
 
 The root ID is `episode`. Its ordered children are `section-0001`, `section-0002`, and so on. Each
 section owns at most eight ordered leaves named `region-0001`, `region-0002`, and so on. Leaves form
@@ -76,12 +77,16 @@ continuation is rebuilt from a durable compact checkpoint and retained exact exc
 
 ## Operational consequences
 
-The v2 artifact is still run-scoped. Cross-run reuse requires a separate source-bound cache identity,
-authorization check, retention policy and reference record; matching a transcript ID alone is not
-sufficient. Active tool returns no longer accumulate on the wire for the indexed roles. The bounded
-checkpoint can still refuse a portfolio whose final required exact excerpts exceed its envelope;
-later bounded portfolio reconciliation must address that explicitly. Cross-run reuse remains
-unavailable and is not hidden by the hierarchy or checkpoint contracts.
+V2 indexes now use a source-bound producer identity and can be reused by later runs in the same
+organization/source scope. Lookup requires the exact accepted evidence identity and revalidates the
+stored hash, lineage, complete structure, model and immutable revision before reporting a cache hit.
+Every run publishes `topic-source-index-use/1` with its exact evidence/index references and observed
+build-or-reuse outcome. The full contract, invalidation and concurrency behavior is recorded in
+[source-index-reuse-2026-09-14.md](source-index-reuse-2026-09-14.md).
+
+Active tool returns no longer accumulate on the wire for the indexed roles. The bounded checkpoint
+can still refuse a portfolio whose final required exact excerpts exceed its envelope; later bounded
+portfolio reconciliation must address that explicitly.
 
 No paid embedding or model route is added by v2. The existing pinned local encoder builds the index,
 and every model continuation retains its existing request, ledger, receipt and unknown-outcome
