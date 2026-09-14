@@ -87,6 +87,10 @@ from temnia_pipeline.harness.editorial_evidence import (
     read_topic_media_evidence,
 )
 from temnia_pipeline.harness.gateway import (
+    COLD_SOURCE_TOOL_NAMES,
+    EDITORIAL_REVIEW_TOOL_NAMES,
+    SOURCE_REVIEW_TOOL_NAMES,
+    SOURCE_TOOL_NAMES,
     CostObservation,
     GatewayConfig,
     GatewayError,
@@ -876,16 +880,30 @@ def _owner_token(runtime: ModelRuntime) -> str:
     raise ModelPersistenceError("harness model request must execute inside a Temporal activity")
 
 
+def expected_source_tools(deps: HarnessModelDeps) -> frozenset[str]:
+    """The one toolset a role may carry; the gateway body validator admits the same sets."""
+    role = deps.source_tool_role
+    if role is None:
+        return frozenset()
+    if role == "cold_reviewer":
+        return COLD_SOURCE_TOOL_NAMES
+    if role == "source_reviewer":
+        return (
+            EDITORIAL_REVIEW_TOOL_NAMES
+            if deps.editorial_context is not None
+            else SOURCE_REVIEW_TOOL_NAMES
+        )
+    return SOURCE_TOOL_NAMES
+
+
 def _validate_request(deps: HarnessModelDeps, parameters: ModelRequestParameters) -> None:
-    source_tools = {"browse_source", "search_source", "read_source"}
-    reviewer_tools = {*source_tools, "inspect_candidate", "read_media_evidence"}
-    allowed = reviewer_tools if deps.source_tool_role == "source_reviewer" else source_tools
-    names = {tool.name for tool in parameters.function_tools}
+    allowed = expected_source_tools(deps)
+    names = frozenset(tool.name for tool in parameters.function_tools)
     if parameters.native_tools or parameters.output_tools:
         raise ModelPersistenceError("native and output tools are disabled on the harness path")
-    if names and (deps.source_tool_role is None or names != allowed):
+    if names and deps.source_tool_role is None:
         raise ModelPersistenceError("model request contains unqualified source tools")
-    if deps.source_tool_role is not None and names != allowed:
+    if names != allowed:
         raise ModelPersistenceError("indexed editorial calls require the exact source toolset")
     if parameters.allow_image_output:
         raise ModelPersistenceError("image output is disabled on the initial harness path")
