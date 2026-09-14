@@ -2,7 +2,7 @@
 
 Date: 2026-09-14  
 Program: `standalone-topics/7`  
-Status: implemented and locally validated; exact clean-commit gate pending; real-route qualification
+Status: implemented and locally validated; exact clean-commit gate passed; real-route qualification
 and long-source editorial evaluation remain open
 
 ## Problem
@@ -203,6 +203,12 @@ writes. A connected mocked workflow runs the full V7 cycle through inventory, au
 review, three source-review shards, one required title finding, indexed repair, atomic selection
 replacement and a fresh complete review. The exact five-stage V7 qualification runs with mocked
 transport and verifies that the patch wire declares only the three repair source tools.
+
+The clean exact-commit repository gate passed for
+`e04e56d738fef895244d5653c8795ee1c76e209b` at `2026-09-14T16:12:26.345Z`. It included 1,268
+passing pipeline tests with one intentional skip, 33 contract tests, 202 web tests, 41 database
+isolation tests, three legacy-boundary tests, two repository-script tests, all lint/type/build checks,
+both cold production images and all 18 Playwright workflow tests.
 
 A pathological four-hour fixture has 2,400 six-second sentences, 1,200 candidates and 1,200
 independent title findings. It produces 1,200 repair components, each with one finding, one candidate

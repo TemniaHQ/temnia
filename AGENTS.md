@@ -97,9 +97,11 @@ conflicting components change nothing. A successful revision receives fresh cold
 review, and repair families join the reviewer-exclusion set. Historical workflows and the web's V3
 default stay unchanged. Contract:
 [bounded-atomic-repair-2026-09-14.md](docs/design/bounded-atomic-repair-2026-09-14.md).
-The optional V7 pre-flight and local four-hour shape test are implemented; the clean exact-commit
-gate is pending. No real provider, latency, recovery or quality result follows, and no new model arm
-or paid run is authorized by this record.
+The optional V7 pre-flight and local four-hour shape test are implemented. The clean exact-commit
+gate passed for `e04e56d` at `2026-09-14T16:12:26.345Z`, including 1,268 pipeline tests with one
+intentional skip, both cold production images and all 18 Playwright workflow tests. No real provider,
+latency, recovery or quality result follows, and no new model arm or paid run is authorized by this
+record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh
