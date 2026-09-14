@@ -24,9 +24,7 @@ from temnia_pipeline.harness.qualification_topic_selection import (
 )
 from temnia_pipeline.modal_build import source_build_id
 
-TopicProgramVersion = Literal[
-    "standalone-topics/3", "standalone-topics/4", "standalone-topics/5"
-]
+TopicProgramVersion = Literal["standalone-topics/3", "standalone-topics/4", "standalone-topics/5"]
 
 
 def current_program(

@@ -477,8 +477,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     context,
                     run,
                     "Initial selection remains invalid after admission corrections; discovery "
-                    "is incomplete. "
-                    + "; ".join(saved.diagnostics)[:1200],
+                    "is incomplete. " + "; ".join(saved.diagnostics)[:1200],
                 )
             run = await self.claim_repair(run, request)
             context = context.model_copy(
@@ -1099,8 +1098,7 @@ class TopicSelectionWorkflowV5(TopicSelectionWorkflowV4):
                 base,
                 run,
                 "Bounded author packaging is incomplete; completed work-item shards and durable "
-                "source checkpoints are retained. "
-                + "; ".join(diagnostics)[:1200],
+                "source checkpoints are retained. " + "; ".join(diagnostics)[:1200],
             )
         assembled = await workflow.execute_activity(
             "assemble_topic_author_v5",

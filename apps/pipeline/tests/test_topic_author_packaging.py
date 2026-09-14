@@ -86,9 +86,7 @@ def _inventory(evidence: HarnessEvidence, section_id: str, count: int) -> TopicS
     )
 
 
-def _packaged(
-    assignment: TopicSelectionDraft, work_item_id: str
-) -> TopicSelectionDraft:
+def _packaged(assignment: TopicSelectionDraft, work_item_id: str) -> TopicSelectionDraft:
     candidates: list[TopicCandidate] = []
     opportunities: list[TopicOpportunity] = []
     for ordinal, opportunity in enumerate(assignment.opportunities):

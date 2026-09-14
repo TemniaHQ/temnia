@@ -754,9 +754,7 @@ async def test_v5_empty_inventory_assembles_without_inventing_an_author_call(
     assert result.revision == 1
     assert run.call_order == ["inventory", "source"]
     assert not run.author.calls
-    manifest_refs = [
-        ref for name, ref in run.saved if name == "topic-author-packaging-manifest/1"
-    ]
+    manifest_refs = [ref for name, ref in run.saved if name == "topic-author-packaging-manifest/1"]
     assert len(manifest_refs) == 1
     manifest = cast("TopicAuthorPackagingManifest", run.objects[manifest_refs[0].id])
     assert manifest.generatorFamilies == []

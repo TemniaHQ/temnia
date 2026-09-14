@@ -1037,8 +1037,7 @@ class TopicSelectionActivities:
         browse_parent_ids = None
         if (
             plan.source_tool_role == "inventory"
-            and context.program_version
-            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            and context.program_version in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
             and context.inventory_section_id is not None
         ):
             browse_parent_ids = (context.inventory_section_id,)
@@ -1182,8 +1181,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version
-            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            context.program_version not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1289,8 +1287,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version
-            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            context.program_version not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1392,9 +1389,7 @@ class TopicSelectionActivities:
                     "workItemId": context.author_work_item_id,
                 },
             )
-            return AuthorPackagingShardSaveResult(
-                rejection=rejection_ref, diagnostics=diagnostics
-            )
+            return AuthorPackagingShardSaveResult(rejection=rejection_ref, diagnostics=diagnostics)
         inspection = None
         try:
             inspection = await self.inspection_ref(
@@ -1436,9 +1431,7 @@ class TopicSelectionActivities:
                     "workItemId": context.author_work_item_id,
                 },
             )
-            return AuthorPackagingShardSaveResult(
-                rejection=rejection_ref, diagnostics=diagnostics
-            )
+            return AuthorPackagingShardSaveResult(rejection=rejection_ref, diagnostics=diagnostics)
         dependencies = (*call_plan.input_artifacts, response)
         if inspection is not None:
             dependencies = (*dependencies, inspection)

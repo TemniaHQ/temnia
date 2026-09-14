@@ -65,9 +65,7 @@ def build_author_plan(
             raise HarnessValidationError("author plan inventory contains duplicate opportunity IDs")
         seen.add(opportunity.id)
         matches = [
-            section_id
-            for section_id in section_ids
-            if opportunity.id.startswith(f"{section_id}:")
+            section_id for section_id in section_ids if opportunity.id.startswith(f"{section_id}:")
         ]
         if len(matches) != 1:
             message = f"author plan cannot resolve section ownership for {opportunity.id}"
@@ -80,15 +78,11 @@ def build_author_plan(
             work_items.append(
                 TopicAuthorWorkItem.model_validate(
                     {
-                        "workItemId": (
-                            f"{section.sectionId}:author-{batch_ordinal + 1:04d}"
-                        ),
+                        "workItemId": (f"{section.sectionId}:author-{batch_ordinal + 1:04d}"),
                         "ordinal": len(work_items),
                         "sectionId": section.sectionId,
                         "batchOrdinal": batch_ordinal,
-                        "opportunityIds": identifiers[
-                            start : start + MAX_AUTHOR_OPPORTUNITIES
-                        ],
+                        "opportunityIds": identifiers[start : start + MAX_AUTHOR_OPPORTUNITIES],
                     }
                 )
             )
@@ -101,9 +95,7 @@ def build_author_plan(
     )
 
 
-def author_work_item(
-    plan: TopicAuthorPackagingPlan, work_item_id: str
-) -> TopicAuthorWorkItem:
+def author_work_item(plan: TopicAuthorPackagingPlan, work_item_id: str) -> TopicAuthorWorkItem:
     """Resolve one exact work item and refuse an absent or duplicated identity."""
     found = [item for item in plan.workItems if item.workItemId == work_item_id]
     if len(found) != 1:
@@ -228,9 +220,7 @@ def assemble_author_manifest(  # noqa: PLR0913
         proposal=TopicProposal(
             version=1,
             candidates=candidates,
-            summary=(
-                f"Author packaging assembled from {len(shards)} complete bounded work items."
-            ),
+            summary=(f"Author packaging assembled from {len(shards)} complete bounded work items."),
         ),
     )
     validate_selection(evidence, selection)

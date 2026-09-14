@@ -77,9 +77,7 @@ SHA256_PATTERN = r"^[a-f0-9]{64}$"
 _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
-QualificationSuite = Literal[
-    "topic-selection-v3", "topic-selection-v4", "topic-selection-v5"
-]
+QualificationSuite = Literal["topic-selection-v3", "topic-selection-v4", "topic-selection-v5"]
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
