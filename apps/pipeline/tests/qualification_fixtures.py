@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from obstore.store import S3Store
 
+    from temnia_pipeline.harness.artifacts import HarnessArtifact
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 API_KEY = "qualification-test-key-marker"
@@ -78,6 +79,80 @@ async def _published_source_index_ref(
         sha256=accepted.sha256,
         sizeBytes=accepted.size_bytes,
         storageKey=accepted.storage_key,
+    )
+
+
+async def _published_reviewer_refs(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    run_id: UUID,
+    store: S3Store,
+) -> tuple[HarnessArtifactRef, HarnessArtifactRef, HarnessArtifactRef]:
+    """Publish one coherent evidence/index/selection authority set for source review."""
+
+    def reference(accepted: HarnessArtifact, kind: HarnessArtifactKind) -> HarnessArtifactRef:
+        return HarnessArtifactRef(
+            id=accepted.id,
+            kind=kind,
+            fingerprint=accepted.fingerprint,
+            sha256=accepted.sha256,
+            sizeBytes=accepted.size_bytes,
+            storageKey=accepted.storage_key,
+        )
+
+    evidence, selection, _ = topic_selection_qualification_case(combined_patch=True)
+    evidence = evidence.model_copy(update={"sourceId": source_id})
+    accepted_evidence = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(
+            kind="evidence",
+            fingerprint="d" * 64,
+            transcript_id=evidence.transcriptId,
+            transcript_revision=evidence.transcriptRevision,
+        ),
+        content=evidence.model_dump(mode="json"),
+        metadata={"format": "harness-evidence/1", "runId": str(run_id)},
+    )
+    evidence_ref = reference(accepted_evidence, HarnessArtifactKind.evidence)
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256=evidence_ref.sha256,
+        encoder=_FixtureEncoder(),
+        embedding_revision="1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    )
+    accepted_index = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="checks", fingerprint="c" * 64),
+        content=index.model_dump(mode="json"),
+        metadata={"format": index.format, "runId": str(run_id)},
+        dependency_ids=(evidence_ref.id,),
+    )
+    index_ref = reference(accepted_index, HarnessArtifactKind.checks)
+    selection = selection.model_copy(
+        update={"runId": run_id, "evidenceSha256": evidence_ref.sha256}
+    )
+    accepted_selection = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="proposal", fingerprint="b" * 64),
+        content=selection.model_dump(mode="json"),
+        metadata={"format": selection.format, "runId": str(run_id)},
+        dependency_ids=(evidence_ref.id, index_ref.id),
+    )
+    return (
+        evidence_ref,
+        index_ref,
+        reference(accepted_selection, HarnessArtifactKind.proposal),
     )
 
 

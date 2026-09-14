@@ -13,7 +13,7 @@ import httpx2
 import pytest
 from obstore.store import MemoryStore
 
-from qualification_fixtures import _outputs_v3, _published_source_index_ref
+from qualification_fixtures import _outputs_v3, _published_reviewer_refs
 from temnia_pipeline import db
 from temnia_pipeline.harness import ledger, models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
@@ -54,8 +54,12 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
     )
     await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
     store = cast("S3Store", MemoryStore())
-    source_index = await _published_source_index_ref(
-        url, scope=SEEDED, source_id=source_id, store=store
+    evidence_ref, source_index, selection_ref = await _published_reviewer_refs(
+        url,
+        scope=SEEDED,
+        source_id=source_id,
+        run_id=start.request.runId,
+        store=store,
     )
     wires: list[dict[str, Any]] = []
     estimates: list[tuple[str, CostEstimate]] = []
@@ -161,6 +165,11 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
             for index, (name, stage, agent, expected_output) in enumerate(stages):
                 prompt, _, version = prompts[name]
                 source_role = source_roles.get(name)
+                reviewer_inputs = (
+                    (source_index, selection_ref, evidence_ref)
+                    if source_role == "source_reviewer"
+                    else ((source_index,) if source_role is not None else ())
+                )
                 plan = SelectionCallPlan(
                     prompt=prompt,
                     stage=stage,
@@ -168,9 +177,13 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
                     schema_version=TOPIC_SELECTION_V3_SCHEMAS[name],
                     author=routes.routes[0],
                     verifier=routes.routes[1],
-                    input_artifacts=(source_index,) if source_role is not None else (),
+                    input_artifacts=reviewer_inputs,
                     source_index=source_index if source_role is not None else None,
                     source_tool_role=source_role,
+                    candidate_selection=(
+                        selection_ref if source_role == "source_reviewer" else None
+                    ),
+                    media_evidence=(evidence_ref if source_role == "source_reviewer" else None),
                 )
                 deps = selection_model_deps(start.request, plan)
                 assert deps.operation_config["maxOutputTokens"] == expected_output
@@ -188,11 +201,16 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
                 if source_role is None:
                     assert "tools" not in wires[index]
                 else:
-                    assert {item["function"]["name"] for item in wires[index]["tools"]} == {
+                    expected_tools = {
                         "browse_source",
                         "search_source",
                         "read_source",
                     }
+                    if source_role == "source_reviewer":
+                        expected_tools.update({"inspect_candidate", "read_media_evidence"})
+                    assert {
+                        item["function"]["name"] for item in wires[index]["tools"]
+                    } == expected_tools
                 assert estimates[-1][0] == deps.route.id
                 assert estimates[-1][1].output_tokens == expected_output
                 async with db.scoped(url, SEEDED) as conn:
