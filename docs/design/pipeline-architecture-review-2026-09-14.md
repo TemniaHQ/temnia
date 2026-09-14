@@ -172,6 +172,30 @@ for its behaviour. #45 made the web rebuild when it changes. The remaining risk 
 one image accepts and the other refuses. Remedy: the web should read the effective configuration
 from the worker (a query on the run or a health endpoint), not from its own copy.
 
+### F14. Rendering is dispatched per video, and the master is downloaded twice (medium)
+
+`render_topic_revision` loops over the revision's videos and calls the render path once per
+video, so a run with nine videos makes nine Modal calls, each downloading the 121 MB master and
+paying its own cold start; the 09:44 run logged the CPU fallback nine times for the same reason.
+Before any of that, the worker downloads the master to the VPS to re-verify its hash, timeline
+and fingerprint, although the ingest-time `source-timeline/1` record and an object head already
+prove the same identity, which is exactly how the evidence stage avoids the download. Remedy:
+one render job per revision carrying every missing section (the job contract already allows it),
+and identity from the ingest record and the object head, with the download only for the CPU
+fallback.
+
+### F15. Physical boundary constraints that the repair loop cannot resolve (medium)
+
+The compiler emits `physical_boundary_constraint` when no cut on the output grid preserves the
+selected words without crossing aligned or detected speech. It is a required finding, so the
+candidate is withheld, and the only remedy is a model repair that widens the edge, competing for
+the three-repair allowance with editorial findings. In the 11:00 run two candidates were withheld
+on this alone after the allowance was spent. The correct edge is computable: the nearest grounded
+cut outside the selected words. Remedy: resolve physical-only findings in code before any model
+repair, as a deterministic edge extension within the candidate's authority, and reserve model
+repairs for editorial findings. Plan W3 groups findings by candidate; physical-only groups should
+never reach a model.
+
 ## 5. Things I looked for and did not find wrong
 
 Secrets are not in images or logs; the Dokploy API output is never printed by our tooling.
@@ -189,5 +213,6 @@ single-box operations (F5, F6). None of the frameworks discussed this week addre
 group; the second is money and a week of work.
 
 Order: F3 and F1 first (both are small, both change what the loop optimises for), W2 alongside
-(so the next change is measured), then F2 and F4 through W3 and W4, then F6 and F5 before the
-first outside user. F8, F10 to F13 are hygiene to schedule, not to block on.
+(so the next change is measured), then F2 and F4 through W3 and W4, with F15 folded into W3 and
+F14 as its own small change, then F6 and F5 before the first outside user. F8, F10 to F13 are
+hygiene to schedule, not to block on.

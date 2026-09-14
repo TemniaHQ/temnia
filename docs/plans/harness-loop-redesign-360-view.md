@@ -197,6 +197,27 @@ to one call per disputed candidate per run; feeds the existing select-only gate.
 **Tests.** Disagreement fixtures both ways; exhaustion with an adjudicator clearance renders,
 without one withholds.
 
+### Two code-side items found on 2026-09-14
+
+Neither touches a prompt or a reviewer; both are in the review as F14 and F15.
+
+**R1. One render job per revision, identity without a download (half a day).** The render
+activity builds one `RenderJob` with every missing section of the revision and spawns once; the
+card downloads the master once and encodes the sections in parallel as the function already
+does. The worker verifies the master's identity from the ingest-time `source-timeline/1` record
+and an object head, the same way the evidence stage does, and downloads only for the CPU
+fallback. Heartbeat carries one call id. Tests: a three-video revision spawns one job; a resumed
+activity reattaches to that one call; identity mismatch refuses before any spawn.
+
+**R2. Physical-only findings resolved in code (one day, rides with W3).** Before any model
+repair, each `physical_boundary_constraint` finding is resolved deterministically: extend the
+affected edge to the nearest grounded cut outside the selected words, within the candidate's
+authority and never into another candidate's core; record it as a physical-only operation with
+the same finding citation the model would have used. Findings that cannot be resolved this way
+(no grounded cut within the authorized window) stay required and are reported as such. Tests:
+the 11:00 run's two withheld candidates resolve without a model call; a candidate hemmed in by
+another's core stays withheld with the reason.
+
 ## 4. Sequencing and effort
 
 | Step | Days | Staging run | Decision entry |
@@ -207,6 +228,8 @@ without one withholds.
 | W3 repair per group | 2 | yes | yes |
 | W4 author with tools | 2 to 3 | yes | yes |
 | W5 adjudication | 1 | yes | yes |
+| R1 one render job per revision | 0.5 | yes | yes |
+| R2 physical-only findings in code (with W3) | 1 | with W3 | yes |
 
 Days are my working days, each ending with a gate-green push. Every PR after W2 reports the
 calibration scores of its staging run against the baseline.
