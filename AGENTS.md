@@ -2,6 +2,22 @@
 
 ## Decisions
 
+**2026-09-15 — Codex's indexed batch is stopped; the topics pipeline goes to production through
+bounded windows and one activity per decision.** Rajesh stopped Codex after Fable's review of
+`cd48459` found that the model-side request validator refused the V7 cold and paged-review
+toolsets on the physical path (fixed in `471cbb5` with a test that drives every registered agent
+through validation), that the web had been switched to that program unverified (restored to V3 in
+`9e11f7d`), and that the design's coverage-by-tool-loop produced a 200 KB per-round checkpoint of
+which 56% is audit data, 4.7 MB of prompt for one whole-source inventory call, a request payload
+carrying the checkpoint twice, and most of the stop conditions in the refusal matrix. The plan is
+[topics-production-360-view.md](docs/plans/topics-production-360-view.md): inline section windows
+for coverage roles, tools only for cross-window lookups, one Temporal activity per decision with a
+flat parent, claim-based admission, complete-with-gaps manifests, a closed list of genuine stop
+reasons with a fault-injection suite, projection before spend, and deletion of V3–V6 once the new
+program passes real 44-minute, two-hour and four-hour runs. Work continues on
+`feat/topics-production` from `../temnia-topics`; the plan awaits Rajesh's review before
+implementation.
+
 **2026-09-15 — Close the current indexed recovery batch, then stop.** Rajesh explicitly narrowed
 the active work to finishing the batch, making pipeline tests green and committing. The
 [batch record](docs/design/indexed-harness-recovery-2026-09-15.md) documents paged structured
