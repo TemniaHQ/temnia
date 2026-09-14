@@ -2,8 +2,8 @@
 
 Date: 2026-09-14  
 Program: `standalone-topics/6`  
-Status: implemented and locally validated; clean exact-commit gate, real-route qualification and
-long-source editorial evaluation remain open
+Status: implemented and locally validated; real-route qualification and long-source editorial
+evaluation remain open
 
 ## Problem
 
@@ -152,6 +152,11 @@ No provider, GPU, deployment or staging system was called while implementing thi
 The focused suite currently reports 45 passing tests across source-review planning/admission,
 connected V6 workflow behavior and exact qualification. Ruff, the full Python type check, contract
 format/lint/type checks and generated-schema drift checks pass.
+
+The clean repository gate passed for exact commit
+`234cd9929a5bf144baa1db4e14894aa4b181e646` at `2026-09-14T15:29:51.984Z`. It included 1,256
+passing pipeline tests with one intentional skip, the full monorepo check and build graph, fresh
+production web and pipeline images, and all 18 Playwright workflow tests.
 
 A pathological four-hour fixture contains 2,400 six-second sentences and 1,200 one-sentence
 candidates. It produces 10 sections, 75 leaves and 1,078 bounded review work items: 403 local

@@ -80,7 +80,9 @@ measured compound-candidate failure observable. Only a complete ordered
 authorize changes; settled responses, checkpoints, shards and rejections remain visible. Historical
 programs and the web's V3 default stay unchanged. Contract:
 [bounded-source-review-2026-09-14.md](docs/design/bounded-source-review-2026-09-14.md).
-The exact-commit gate and real route/editorial evaluation remain open. Repair is the next unbounded
+The clean exact-commit gate passed for `234cd99` at `2026-09-14T15:29:51.984Z`, including 1,256
+pipeline tests with one intentional skip, both cold production images and all 18 Playwright
+workflow tests. Real route/editorial evaluation remains open. Repair is the next unbounded
 final-answer stage. No real provider, latency, recovery or quality result follows, and no new model
 arm or paid run is authorized by this record.
 
