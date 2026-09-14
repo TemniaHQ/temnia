@@ -23,6 +23,7 @@ from temnia_pipeline.harness.runtime_types import RunRef
 
 SelectionProgramVersion = Literal["standalone-topics/3"]
 SourceToolRole = Literal["inventory", "author", "source_reviewer"]
+SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
 
 
 class SourceInspectionCall(BaseModel):
@@ -42,10 +43,15 @@ class SourceInspectionTrace(BaseModel):
     """Tool-backed source access associated with one final typed model answer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+    format: SourceInspectionFormat = "topic-source-inspection/1"
     index_sha256: str
     role: SourceToolRole
     stage: str
+    checkpoint_sha256: str | None = None
+    request_sequence: int = 0
     calls: tuple[SourceInspectionCall, ...] = ()
+    retained_sentence_ids: tuple[str, ...] = ()
+    evicted_sentence_count: int = 0
 
 
 class SelectionContext(BaseModel):
@@ -87,6 +93,21 @@ class SelectionCallPlan(BaseModel):
     source_index: HarnessArtifactRef | None = None
     source_tool_role: SourceToolRole | None = None
     synthetic_payload: dict[str, object] | None = None
+
+
+class SourceCheckpointLoadRequest(BaseModel):
+    """Locate the latest compact state for one exact indexed seat call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    plan: SelectionCallPlan
+
+
+class SourceCheckpointLoadResult(BaseModel):
+    """Bounded checkpoint bytes returned to workflow code for a known retry."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    checkpoint: dict[str, Any] | None = None
 
 
 class SelectionSaveRequest(BaseModel):

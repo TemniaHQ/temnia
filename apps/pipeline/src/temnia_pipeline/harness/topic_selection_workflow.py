@@ -44,6 +44,10 @@ with workflow.unsafe.imports_passed_through():
         WorkflowIdentity,
     )
     from temnia_pipeline.harness.source_index import source_inspection_trace
+    from temnia_pipeline.harness.source_progress import (
+        SourceProgressCheckpoint,
+        messages_from_checkpoint,
+    )
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
     from temnia_pipeline.harness.topic_selection import selection_cold_key
     from temnia_pipeline.harness.topic_selection_runtime import (
@@ -55,6 +59,8 @@ with workflow.unsafe.imports_passed_through():
         SelectionSaveRequest,
         SelectionSaveResult,
         SelectionStopRequest,
+        SourceCheckpointLoadRequest,
+        SourceCheckpointLoadResult,
         effective_topic_output_tokens,
         selection_call_config,
         selection_call_inputs,
@@ -108,7 +114,12 @@ def execution_limit(error: Exception) -> bool:
     """Only known admission limits authorize retaining partial work; uncertainty propagates."""
     cause = error.cause if isinstance(error, ActivityError) else error
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
-    return name in {"BudgetExceeded", "DispatchLimitExceeded", "ContextWindowExceeded"}
+    return name in {
+        "BudgetExceeded",
+        "DispatchLimitExceeded",
+        "ContextWindowExceeded",
+        "SourceProgressLimitExceeded",
+    }
 
 
 def invalid_model_output(error: Exception) -> bool:
@@ -211,6 +222,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         inventory = None
         result = None
         plan = None
+        execution_limited = False
         try:
             result, plan, settled = await self.run_seat(
                 topic_opportunity_inventory_v3, request, context, "verifier"
@@ -226,6 +238,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     ),
                 )
             elif execution_limit(error):
+                execution_limited = True
                 diagnostics = (
                     (
                         "Execution capacity prevented independent source opportunity inventory; "
@@ -234,6 +247,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 )
             else:
                 raise
+        if execution_limited:
+            return context.model_copy(
+                update={
+                    "inventory_attempted": True,
+                    "inventory_diagnostics": diagnostics,
+                }
+            )
         saved = await workflow.execute_activity(
             "save_topic_opportunity_inventory_v3",
             OpportunityInventorySaveRequest(
@@ -284,6 +304,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         tried: list[str] = []
         last_failure = ""
         stage = seat
+        checkpoint: SourceProgressCheckpoint | None = None
         for _ in range(MAX_SEAT_ROUTES):
             try:
                 plan = await self.prepare_selection(context)
@@ -299,11 +320,34 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             }
             for attempt in range(SAME_ROUTE_ATTEMPTS):
                 try:
-                    result = await agent.run(plan.prompt, deps=deps, model_settings=settings)
+                    history = (
+                        messages_from_checkpoint(checkpoint, prompt=plan.prompt)
+                        if checkpoint is not None
+                        else None
+                    )
+                    result = await agent.run(
+                        None if history is not None else plan.prompt,
+                        message_history=history,
+                        deps=deps,
+                        model_settings=settings,
+                    )
                 except Exception as error:
                     if not transient_provider_failure(error):
                         raise
                     last_failure = failure_sentence(error)
+                    if plan.source_tool_role is not None:
+                        recovered = await workflow.execute_activity(
+                            "load_topic_source_checkpoint",
+                            SourceCheckpointLoadRequest(context=context, plan=plan),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RETRY,
+                            result_type=SourceCheckpointLoadResult,
+                        )
+                        if recovered.checkpoint is None:
+                            raise RuntimeError(
+                                "known indexed request failure has no durable checkpoint"
+                            ) from error
+                        checkpoint = SourceProgressCheckpoint.model_validate(recovered.checkpoint)
                     if attempt < SAME_ROUTE_ATTEMPTS - 1:
                         await workflow.sleep(advised_pause(last_failure, SAME_ROUTE_BACKOFF))
                     continue
@@ -545,6 +589,18 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     ),
                 )
             except Exception as error:
+                if execution_limit(error):
+                    return await self.finish(
+                        request,
+                        evidence=evidence.artifact,
+                        edit=None,
+                        revision=0,
+                        message=(
+                            "Execution capacity ended during indexed author discovery; "
+                            "the durable progress checkpoints are retained and no ungrounded "
+                            "selection was admitted."
+                        ),
+                    )
                 if not invalid_model_output(error):
                     raise
                 save = SelectionSaveRequest(

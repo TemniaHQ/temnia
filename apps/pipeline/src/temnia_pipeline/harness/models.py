@@ -20,7 +20,7 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext
-from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.capabilities import ProcessHistory, ResolveModelId
 from pydantic_ai.durable_exec import DurableOperationBackend
 
 # The per-call activity deadline (D6) has no public seam: the durable runtime binds one
@@ -88,6 +88,12 @@ from temnia_pipeline.harness.source_index import (
     load_topic_source_encoder,
     read_topic_source,
     search_topic_source,
+)
+from temnia_pipeline.harness.source_progress import (
+    CHECKPOINT_FORMAT,
+    checkpoint_from_messages,
+    checkpoint_sha256,
+    compact_source_history,
 )
 from temnia_pipeline.harness.topic_selection_runtime import SourceToolRole
 
@@ -473,6 +479,89 @@ def _response_from_artifact(value: object) -> ModelResponse:
     return MODEL_RESPONSE_ADAPTER.validate_python(value)
 
 
+async def _persist_source_checkpoint(
+    runtime: ModelRuntime, deps: HarnessModelDeps, messages: list[ModelMessage]
+) -> artifacts.HarnessArtifact | None:
+    """Publish the compact state before any paid continuation can be dispatched."""
+    if deps.source_index is None:
+        return None
+    checkpoint = checkpoint_from_messages(messages)
+    if checkpoint is None:
+        raise ModelPersistenceError("indexed model request has no compact source checkpoint")
+    if (
+        deps.source_tool_role is None
+        or checkpoint.index_sha256 != deps.source_index.sha256
+        or checkpoint.role != deps.source_tool_role
+        or checkpoint.stage != deps.stage
+    ):
+        raise ModelPersistenceError("indexed model request checkpoint identity changed")
+    content = checkpoint.model_dump(mode="json")
+    sha256 = checkpoint_sha256(checkpoint)
+    fingerprint = _source_checkpoint_fingerprint(deps, sha256)
+    parent = None
+    if checkpoint.parent_checkpoint_sha256 is not None:
+        parent = await artifacts.find_artifact(
+            runtime.database_url,
+            scope=deps.scope,
+            source_id=deps.source_id,
+            identity=artifacts.ArtifactIdentity(
+                kind="checks",
+                fingerprint=_source_checkpoint_fingerprint(
+                    deps, checkpoint.parent_checkpoint_sha256
+                ),
+            ),
+        )
+        if (
+            parent is None
+            or parent.metadata.get("format") != CHECKPOINT_FORMAT
+            or parent.metadata.get("checkpointSha256") != checkpoint.parent_checkpoint_sha256
+            or parent.sha256 != checkpoint.parent_checkpoint_sha256
+            or parent.metadata.get("indexSha256") != deps.source_index.sha256
+            or parent.metadata.get("role") != deps.source_tool_role
+            or parent.metadata.get("runId") != str(deps.run_id)
+            or parent.metadata.get("stage") != deps.stage
+        ):
+            raise ModelPersistenceError("indexed model request checkpoint has no durable parent")
+    return await artifacts.publish_json(
+        runtime.database_url,
+        scope=deps.scope,
+        source_id=deps.source_id,
+        store=runtime.store,
+        identity=artifacts.ArtifactIdentity(kind="checks", fingerprint=fingerprint),
+        content=content,
+        metadata={
+            "checkpointSha256": sha256,
+            "format": CHECKPOINT_FORMAT,
+            "indexSha256": deps.source_index.sha256,
+            "parentCheckpointSha256": checkpoint.parent_checkpoint_sha256,
+            "requestSequence": checkpoint.request_sequence,
+            "role": deps.source_tool_role,
+            "runId": str(deps.run_id),
+            "stage": deps.stage,
+        },
+        dependency_ids=(
+            (*deps.input_artifact_ids, parent.id) if parent is not None else deps.input_artifact_ids
+        ),
+    )
+
+
+def _source_checkpoint_fingerprint(deps: HarnessModelDeps, sha256: str) -> str:
+    """Bind checkpoint identity to its exact run, role, stage and source index."""
+    if deps.source_index is None or deps.source_tool_role is None:
+        raise ModelPersistenceError("source checkpoint identity requires indexed authority")
+    return artifacts.fingerprint_for(
+        kind="checks",
+        inputs={
+            "checkpointSha256": sha256,
+            "indexSha256": deps.source_index.sha256,
+            "role": deps.source_tool_role,
+            "runId": str(deps.run_id),
+            "stage": deps.stage,
+        },
+        config={"format": CHECKPOINT_FORMAT, "programVersion": deps.program_version},
+    )
+
+
 def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> ModelResponse:
     """Reject terminal truncation after settlement, then normalize named cosmetic fields."""
     if (
@@ -698,6 +787,7 @@ class BudgetedModel(WrapperModel):
         runtime = _configured_runtime()
         _validate_request(self.deps, model_request_parameters)
         _validate_route_settings(self.deps, model_settings)
+        source_checkpoint = await _persist_source_checkpoint(runtime, self.deps, messages)
         request_hash, payload_bytes = request_fingerprint(
             messages,
             model_settings,
@@ -1027,6 +1117,7 @@ class BudgetedModel(WrapperModel):
                 response_fingerprint=response_fingerprint,
                 response=response,
                 max_output_tokens=requested_max,
+                source_checkpoint=source_checkpoint,
             )
         except asyncio.CancelledError:
             await self._record_unknown(
@@ -1061,6 +1152,7 @@ class BudgetedModel(WrapperModel):
         response_fingerprint: str,
         response: ModelResponse,
         max_output_tokens: int | None,
+        source_checkpoint: artifacts.HarnessArtifact | None,
     ) -> ModelResponse:
         """Persist the paid response before optional recording and settlement."""
         if response.provider_response_id is not None:
@@ -1098,8 +1190,18 @@ class BudgetedModel(WrapperModel):
                 "schemaVersion": self.deps.schema_version,
                 "synthetic": self.deps.synthetic_payload is not None,
                 "maxOutputTokens": max_output_tokens,
+                "sourceCheckpointId": (
+                    str(source_checkpoint.id) if source_checkpoint is not None else None
+                ),
+                "sourceCheckpointSha256": (
+                    source_checkpoint.sha256 if source_checkpoint is not None else None
+                ),
             },
-            dependency_ids=self.deps.input_artifact_ids,
+            dependency_ids=(
+                (*self.deps.input_artifact_ids, source_checkpoint.id)
+                if source_checkpoint is not None
+                else self.deps.input_artifact_ids
+            ),
         )
         if self.deps.cassette_mode == CassetteMode.RECORD:
             runtime.cassette_store.record(request_hash, _cassette_metadata(self.deps), response)
@@ -1230,6 +1332,7 @@ def _agent(
         retries=0,
         tools=[browse_source, search_source, read_source] if indexed_source else [],
         capabilities=[
+            *([ProcessHistory(compact_source_history)] if indexed_source else []),
             ResolveModelId(resolve_configured_model),
             PayloadScaledDurability(
                 model_activity_config={

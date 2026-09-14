@@ -38,6 +38,10 @@ from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, opera
 from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
 from temnia_pipeline.harness.source_index import build_topic_source_index
+from temnia_pipeline.harness.source_progress import (
+    SourceProgressCheckpoint,
+    SourceProgressLimitExceeded,
+)
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection import (
@@ -45,6 +49,7 @@ from temnia_pipeline.harness.topic_selection import (
     make_rubric,
 )
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+from temnia_pipeline.harness.topic_selection_runtime import SourceCheckpointLoadResult
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
 )
@@ -198,15 +203,16 @@ class AgentDouble:
         self.prompts: list[str] = []
         self.call_order = call_order
 
-    async def run(self, prompt: str, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+    async def run(self, prompt: str | None, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
         self.call_order.append(self.name)
         self.calls.append(kwargs["deps"])
-        self.prompts.append(prompt)
+        self.prompts.append(prompt or "")
         assert self.outputs, "unexpected extra editorial call"
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output
         if callable(output):
+            assert prompt is not None
             output = output(json.loads(prompt.split("SOURCE DATA\n", 1)[1]))
         return SimpleNamespace(output=output, all_messages=list)
 
@@ -384,6 +390,16 @@ class Program:
         if name == "claim_chapter_repair":
             self.run = self.run.model_copy(update={"repair_count": self.run.repair_count + 1})
             return self.run
+        if name == "load_topic_source_checkpoint":
+            assert value.plan.source_index is not None
+            assert value.plan.source_tool_role is not None
+            checkpoint = SourceProgressCheckpoint(
+                index_sha256=value.plan.source_index.sha256,
+                role=value.plan.source_tool_role,
+                stage=value.plan.stage,
+                request_sequence=0,
+            )
+            return SourceCheckpointLoadResult(checkpoint=checkpoint.model_dump(mode="json"))
         operations: dict[str, Callable[..., Any]] = {
             "prepare_topic_selection_rubric": self.activities.rubric,
             "prepare_topic_selection_call": self.activities.prepare,
@@ -773,6 +789,41 @@ async def test_review_execution_limit_preserves_unknown_not_false_pass(
     # The select-only gate withholds every unreviewed candidate; nothing is rendered as a pass.
     assert run.render_count == 0
     assert not run.patch.calls
+
+
+async def test_inventory_progress_limit_is_visible_to_the_author(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=True)],
+        patches=[],
+        inventory=SourceProgressLimitExceeded("bounded progress exhausted"),
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == ["inventory", "author", "cold", "source"]
+    assert (
+        "Execution capacity prevented independent source opportunity inventory"
+        in (run.author.prompts[0])
+    )
+
+
+async def test_author_progress_limit_admits_no_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=cast("Any", SourceProgressLimitExceeded("bounded progress exhausted")),
+        sources=[],
+        patches=[],
+    )
+    output = await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == ["inventory", "author"]
+    assert run.compiled is None
+    assert output.editArtifact is None
+    assert output.errorMessage is not None
+    assert "durable progress checkpoints are retained" in output.errorMessage
 
 
 async def test_unknown_provider_outcome_never_continues_to_render(

@@ -18,6 +18,11 @@ settled cost per model round. Inventory, author and source review declare the ex
 `browse_source`, `search_source` and `read_source` tools; if a model calls them, the
 pre-flight executes the local synthetic tools and durably accounts for each continuation
 request under that logical stage. The final native schema remains present on every round.
+Each indexed continuation also uses the production `topic-agent-checkpoint/1` history processor:
+the next wire request contains the unchanged prompt plus one bounded checkpoint, with earlier
+assistant and tool messages removed. This checks the compact request shape in addition to tool
+declaration.
+
 The synthetic source uses `topic-source-index/2`: browse starts at the episode root and then
 visits every returned section in order before search and exact read. A direct final answer can
 prove only schema/tool declaration admission; a qualified indexed route has retained successful
@@ -31,6 +36,12 @@ prove that it can call the tools; inspect the indexed stages' retained rounds be
 function calling as qualified. The pre-flight does not prove context capacity, long-source
 behaviour, deadline fit or editorial quality; Astra passed every earlier pre-flight call and
 failed two full-Karma author calls on the deadline.
+
+A compact checkpoint is not a provider receipt or permission to replay an unknown request. Each
+continuation still has its own request hash, dispatch, response and cost row. Inspect the logical
+call's `rounds` and require the expected root/section/search/read/final sequence when testing tool
+behavior. The checkpoint processor is documented in
+[indexed-agent-checkpoints-2026-09-14.md](../design/indexed-agent-checkpoints-2026-09-14.md).
 
 ## Running the pre-flight
 

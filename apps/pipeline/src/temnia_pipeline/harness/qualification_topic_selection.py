@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
+from pydantic_ai.messages import (  # noqa: TC002 - inspected at runtime by ProcessHistory
+    ModelMessage,
+)
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.tools import GenerateToolJsonSchema
 
@@ -31,6 +34,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
+from temnia_pipeline.harness.source_progress import compact_source_messages
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
@@ -53,6 +57,8 @@ from temnia_pipeline.harness.topic_selection import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from temnia_pipeline.contracts import HarnessEvidence
 
 TOPIC_SELECTION_V3_STAGES = (
@@ -82,6 +88,30 @@ QUALIFICATION_SOURCE_INDEX = {
     "readSentenceLimit": 80,
     "readCharacterLimit": 64_000,
 }
+
+
+def topic_source_progress_processor(
+    stage: str,
+) -> Callable[[list[ModelMessage]], list[ModelMessage]] | None:
+    """Use the production compaction contract in indexed route pre-flight calls."""
+    roles: dict[str, Literal["inventory", "author", "source_reviewer"]] = {
+        "topic_inventory": "inventory",
+        "topic_author": "author",
+        "topic_source": "source_reviewer",
+    }
+    role = roles.get(stage)
+    if role is None:
+        return None
+
+    def process(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return compact_source_messages(
+            messages,
+            index_sha256=str(QUALIFICATION_SOURCE_INDEX["indexSha256"]),
+            role=role,
+            stage=stage,
+        )
+
+    return process
 
 
 def _qualification_node(kind: Literal["section", "region"]) -> TopicSourceNodeHit:

@@ -51,8 +51,9 @@ fixed BM25/cosine baseline. `read_source` returns exact sentences with bounded p
 
 Inventory, author and source-review prompts must browse the root from cursor zero through
 completion, then browse every returned section in root order through completion. Code reconstructs
-the successful tool calls and results as `topic-source-inspection/1` and independently checks every
-cursor, parent, returned ID and completion marker. Skipping a section, visiting sections out of
+the successful tool calls and results as `topic-source-inspection/2` for new compacted runs and
+independently checks every cursor, parent, returned ID and completion marker. Skipping a section,
+visiting sections out of
 order, jumping to a later cursor, altering a tool result or browsing a leaf is refused. Each role
 must also search and must exactly read every sentence it cites in a final source span.
 
@@ -68,17 +69,19 @@ tests refuse a broken parent, changed deterministic summary, changed parent vect
 out-of-order section and leaf browse.
 
 This establishes local construction, bounded navigation and admission behavior. It does not measure
-provider tool reliability, prompt-history growth, retrieval quality, editorial opportunity recall,
-latency or cost. The next milestone is a durable progress checkpoint and continuation request rebuilt
-from compact state plus explicitly selected exact excerpts.
+provider tool reliability, retrieval quality, editorial opportunity recall, latency or cost. The
+prompt-history milestone is now implemented in
+[indexed-agent-checkpoints-2026-09-14.md](indexed-agent-checkpoints-2026-09-14.md): every new
+continuation is rebuilt from a durable compact checkpoint and retained exact excerpts.
 
 ## Operational consequences
 
 The v2 artifact is still run-scoped. Cross-run reuse requires a separate source-bound cache identity,
 authorization check, retention policy and reference record; matching a transcript ID alone is not
-sufficient. The active PydanticAI message history still accumulates tool returns. A long source can
-therefore exhaust a route even though the initial prompt is bounded. Neither limitation is hidden by
-the hierarchy version bump.
+sufficient. Active tool returns no longer accumulate on the wire for the indexed roles. The bounded
+checkpoint can still refuse a portfolio whose final required exact excerpts exceed its envelope;
+later bounded portfolio reconciliation must address that explicitly. Cross-run reuse remains
+unavailable and is not hidden by the hierarchy or checkpoint contracts.
 
 No paid embedding or model route is added by v2. The existing pinned local encoder builds the index,
 and every model continuation retains its existing request, ledger, receipt and unknown-outcome

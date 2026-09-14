@@ -1,0 +1,336 @@
+"""Bounded, replay-safe progress for indexed editorial model/tool loops."""
+
+# Public limit/refusal messages live beside the checkpoint invariant they enforce.
+# ruff: noqa: EM101, EM102, N818, TRY003
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai import RunContext  # noqa: TC002 - inspected at runtime by ProcessHistory
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
+from temnia_pipeline.contracts import TopicSourceIndexSentence
+from temnia_pipeline.harness.topic_selection_runtime import (
+    SourceInspectionCall,
+    SourceInspectionTrace,
+    SourceToolRole,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+CHECKPOINT_METADATA_KEY = "temniaSourceProgress"
+CHECKPOINT_FORMAT = "topic-agent-checkpoint/1"
+CHECKPOINT_PROMPT_PREFIX = "Temnia indexed-source progress checkpoint (application-authored):\n"
+MAX_CHECKPOINT_CALLS = 256
+MAX_CHECKPOINT_IDENTIFIERS = 8_192
+MAX_RETAINED_SENTENCES = 320
+MAX_RETAINED_CHARACTERS = 128 * 1024
+MAX_CHECKPOINT_BYTES = 384 * 1024
+MAX_IDENTICAL_CALLS = 2
+
+
+class SourceProgressLimitExceeded(RuntimeError):
+    """A bounded indexed loop cannot safely add another progress record."""
+
+
+class SourceProgressCheckpoint(BaseModel):
+    """Compact model-visible state plus source-text-free audit facts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    format: Literal["topic-agent-checkpoint/1"] = CHECKPOINT_FORMAT
+    index_sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+    role: SourceToolRole
+    stage: str
+    request_sequence: int = Field(ge=0)
+    parent_checkpoint_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+    calls: tuple[SourceInspectionCall, ...] = ()
+    retained_sentences: tuple[TopicSourceIndexSentence, ...] = ()
+    evicted_sentence_count: int = Field(default=0, ge=0)
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+
+
+def checkpoint_sha256(checkpoint: SourceProgressCheckpoint) -> str:
+    """Content identity used to chain immutable request checkpoints."""
+    return hashlib.sha256(_canonical(checkpoint.model_dump(mode="json"))).hexdigest()
+
+
+def _checkpoint_from_message(message: ModelMessage) -> SourceProgressCheckpoint | None:
+    if not isinstance(message, ModelRequest) or not isinstance(message.metadata, dict):
+        return None
+    payload = message.metadata.get(CHECKPOINT_METADATA_KEY)
+    if payload is None:
+        return None
+    return SourceProgressCheckpoint.model_validate(payload)
+
+
+def checkpoint_from_messages(
+    messages: Sequence[ModelMessage],
+) -> SourceProgressCheckpoint | None:
+    """Return the last application-authored checkpoint carried by model history."""
+    for message in reversed(messages):
+        checkpoint = _checkpoint_from_message(message)
+        if checkpoint is not None:
+            return checkpoint
+    return None
+
+
+def _initial_prompt(messages: Sequence[ModelMessage]) -> str:
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                if part.content.startswith(CHECKPOINT_PROMPT_PREFIX):
+                    continue
+                return part.content
+    raise SourceProgressLimitExceeded("indexed source history lost its original editorial prompt")
+
+
+def _payload(content: object) -> dict[str, Any] | None:
+    if isinstance(content, BaseModel):
+        return content.model_dump(mode="json")
+    if isinstance(content, dict):
+        return cast("dict[str, Any]", content)
+    return None
+
+
+def _new_calls(
+    messages: Sequence[ModelMessage], *, after: int, index_sha256: str
+) -> tuple[list[SourceInspectionCall], list[TopicSourceIndexSentence]]:
+    pending: dict[str, ToolCallPart] = {}
+    calls: list[SourceInspectionCall] = []
+    sentences: list[TopicSourceIndexSentence] = []
+    for message in messages[after:]:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart) and part.tool_name in {
+                    "browse_source",
+                    "search_source",
+                    "read_source",
+                }:
+                    pending[part.tool_call_id] = part
+            continue
+        for part in message.parts:
+            if not isinstance(part, ToolReturnPart) or part.outcome != "success":
+                continue
+            request = pending.get(part.tool_call_id)
+            payload = _payload(part.content)
+            if request is None or payload is None or payload.get("indexSha256") != index_sha256:
+                continue
+            nodes = cast("list[object]", payload.get("nodes", payload.get("regions", [])))
+            returned_sentences = cast("list[object]", payload.get("sentences", []))
+            sentence_models = [
+                TopicSourceIndexSentence.model_validate(item)
+                for item in returned_sentences
+                if isinstance(item, dict)
+            ]
+            calls.append(
+                SourceInspectionCall.model_validate(
+                    {
+                        "tool_name": request.tool_name,
+                        "arguments": request.args_as_dict(raise_if_invalid=True),
+                        "node_ids": [
+                            str(cast("dict[str, Any]", item)["id"])
+                            for item in nodes
+                            if isinstance(item, dict)
+                            and isinstance(cast("dict[str, Any]", item).get("id"), str)
+                        ],
+                        "sentence_ids": [item.id for item in sentence_models],
+                        "complete": payload.get("complete") is True,
+                        "next_cursor": payload.get("nextCursor"),
+                        "next_sentence_id": payload.get("nextSentenceId"),
+                    }
+                )
+            )
+            sentences.extend(sentence_models)
+    return calls, sentences
+
+
+def _retained_sentences(
+    previous: Sequence[TopicSourceIndexSentence], additions: Sequence[TopicSourceIndexSentence]
+) -> tuple[tuple[TopicSourceIndexSentence, ...], int]:
+    retained = list(previous)
+    evicted = 0
+    for sentence in additions:
+        retained = [item for item in retained if item.id != sentence.id]
+        retained.append(sentence)
+    characters = sum(len(item.text) for item in retained)
+    while retained and (
+        len(retained) > MAX_RETAINED_SENTENCES or characters > MAX_RETAINED_CHARACTERS
+    ):
+        removed = retained.pop(0)
+        characters -= len(removed.text)
+        evicted += 1
+    return tuple(retained), evicted
+
+
+def _call_signature(call: SourceInspectionCall) -> str:
+    return hashlib.sha256(_canonical(call.model_dump(mode="json"))).hexdigest()
+
+
+def _validate_bounds(checkpoint: SourceProgressCheckpoint) -> None:
+    if len(checkpoint.calls) > MAX_CHECKPOINT_CALLS:
+        raise SourceProgressLimitExceeded(
+            f"indexed source progress exceeded {MAX_CHECKPOINT_CALLS} tool calls"
+        )
+    identifier_count = sum(len(call.node_ids) + len(call.sentence_ids) for call in checkpoint.calls)
+    if identifier_count > MAX_CHECKPOINT_IDENTIFIERS:
+        raise SourceProgressLimitExceeded(
+            f"indexed source progress exceeded {MAX_CHECKPOINT_IDENTIFIERS} retained result IDs"
+        )
+    signatures = [_call_signature(call) for call in checkpoint.calls]
+    if any(signatures.count(item) > MAX_IDENTICAL_CALLS for item in set(signatures)):
+        raise SourceProgressLimitExceeded(
+            "indexed source progress repeated the same tool call without new evidence"
+        )
+    size = len(_canonical(checkpoint.model_dump(mode="json")))
+    if size > MAX_CHECKPOINT_BYTES:
+        raise SourceProgressLimitExceeded(
+            f"indexed source progress exceeded its {MAX_CHECKPOINT_BYTES}-byte request envelope"
+        )
+
+
+def _checkpoint_prompt(checkpoint: SourceProgressCheckpoint) -> str:
+    return CHECKPOINT_PROMPT_PREFIX + json.dumps(
+        checkpoint.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+
+
+def messages_from_checkpoint(
+    checkpoint: SourceProgressCheckpoint, *, prompt: str
+) -> list[ModelMessage]:
+    """Recreate the exact bounded request used to resume a known failed dispatch."""
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(prompt), UserPromptPart(_checkpoint_prompt(checkpoint))],
+            metadata={CHECKPOINT_METADATA_KEY: checkpoint.model_dump(mode="json")},
+        )
+    ]
+
+
+def compact_source_messages(
+    messages: list[ModelMessage],
+    *,
+    index_sha256: str,
+    role: SourceToolRole,
+    stage: str,
+) -> list[ModelMessage]:
+    """Rebuild a continuation from one prompt, compact audit state and recent exact excerpts."""
+    prior = None
+    prior_offset = -1
+    for offset in range(len(messages) - 1, -1, -1):
+        prior = _checkpoint_from_message(messages[offset])
+        if prior is not None:
+            prior_offset = offset
+            break
+    if prior is not None and (
+        prior.index_sha256 != index_sha256 or prior.role != role or prior.stage != stage
+    ):
+        raise SourceProgressLimitExceeded("indexed source checkpoint belongs to another request")
+    calls, sentences = _new_calls(messages, after=prior_offset + 1, index_sha256=index_sha256)
+    retained, newly_evicted = _retained_sentences(
+        prior.retained_sentences if prior is not None else (), sentences
+    )
+    checkpoint = (
+        prior
+        if prior is not None and not calls and not sentences
+        else SourceProgressCheckpoint(
+            index_sha256=index_sha256,
+            role=role,
+            stage=stage,
+            request_sequence=(prior.request_sequence + 1 if prior is not None else 0),
+            parent_checkpoint_sha256=(checkpoint_sha256(prior) if prior is not None else None),
+            calls=(*(prior.calls if prior is not None else ()), *calls),
+            retained_sentences=retained,
+            evicted_sentence_count=(prior.evicted_sentence_count if prior is not None else 0)
+            + newly_evicted,
+        )
+    )
+    _validate_bounds(checkpoint)
+    prompt = _initial_prompt(messages)
+    latest_request = next(
+        (message for message in reversed(messages) if isinstance(message, ModelRequest)), None
+    )
+    if latest_request is None:
+        raise SourceProgressLimitExceeded("indexed source history has no pending model request")
+    metadata = dict(latest_request.metadata or {})
+    metadata[CHECKPOINT_METADATA_KEY] = checkpoint.model_dump(mode="json")
+    rebuilt = messages_from_checkpoint(checkpoint, prompt=prompt)[0]
+    return [replace(rebuilt, metadata=metadata)]
+
+
+def compact_source_history(
+    ctx: RunContext[Any], messages: list[ModelMessage]
+) -> list[ModelMessage]:
+    """PydanticAI capability adapter using immutable model dependencies."""
+    deps = ctx.deps
+    if deps.source_index is None or deps.source_tool_role is None:
+        raise SourceProgressLimitExceeded("source progress requires indexed model authority")
+    return compact_source_messages(
+        messages,
+        index_sha256=deps.source_index.sha256,
+        role=deps.source_tool_role,
+        stage=deps.stage,
+    )
+
+
+def inspection_from_messages(
+    messages: Sequence[ModelMessage],
+    *,
+    index_sha256: str,
+    role: SourceToolRole,
+    stage: str,
+) -> SourceInspectionTrace:
+    """Extract the durable compact checkpoint, with a legacy un-compacted fallback."""
+    checkpoint = checkpoint_from_messages(messages)
+    if checkpoint is not None:
+        if (
+            checkpoint.index_sha256 != index_sha256
+            or checkpoint.role != role
+            or checkpoint.stage != stage
+        ):
+            raise SourceProgressLimitExceeded("final source checkpoint identity changed")
+        return inspection_from_checkpoint(checkpoint)
+    calls, sentences = _new_calls(messages, after=0, index_sha256=index_sha256)
+    return SourceInspectionTrace(
+        format="topic-source-inspection/1",
+        index_sha256=index_sha256,
+        role=role,
+        stage=stage,
+        calls=tuple(calls),
+        retained_sentence_ids=tuple(dict.fromkeys(item.id for item in sentences)),
+    )
+
+
+def inspection_from_checkpoint(checkpoint: SourceProgressCheckpoint) -> SourceInspectionTrace:
+    """Project one persisted checkpoint into its source-text-free admission record."""
+    return SourceInspectionTrace(
+        format="topic-source-inspection/2",
+        index_sha256=checkpoint.index_sha256,
+        role=checkpoint.role,
+        stage=checkpoint.stage,
+        checkpoint_sha256=checkpoint_sha256(checkpoint),
+        request_sequence=checkpoint.request_sequence,
+        calls=checkpoint.calls,
+        retained_sentence_ids=tuple(item.id for item in checkpoint.retained_sentences),
+        evicted_sentence_count=checkpoint.evicted_sentence_count,
+    )

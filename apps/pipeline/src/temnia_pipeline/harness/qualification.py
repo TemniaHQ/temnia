@@ -19,6 +19,7 @@ import httpx
 import httpx2
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import Agent, ModelResponse, NativeOutput
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models.wrapper import WrapperModel
 
@@ -43,6 +44,7 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
     topic_selection_qualification_prompts,
+    topic_source_progress_processor,
     topic_source_qualification_tools,
     validate_topic_selection_qualification_output,
 )
@@ -1155,12 +1157,18 @@ async def run_qualification(
                             limits=limits,
                             sleep=sleep,
                         )
+                        progress_processor = topic_source_progress_processor(stage)
                         agent = Agent(
                             model,
                             output_type=NativeOutput(output_type, strict=True),
                             retries=0,
                             tools=topic_source_qualification_tools(stage),
                             model_settings={"max_tokens": limits.max_output_tokens},
+                            capabilities=(
+                                [ProcessHistory(progress_processor)]
+                                if progress_processor is not None
+                                else []
+                            ),
                         )
                         try:
                             result = await agent.run(prompt)

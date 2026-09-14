@@ -9,16 +9,9 @@ import math
 import re
 from collections import Counter
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import BaseModel
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelResponse,
-    ToolCallPart,
-    ToolReturnPart,
-)
 
 from temnia_pipeline.contracts import (
     HarnessEvidence,
@@ -30,11 +23,7 @@ from temnia_pipeline.contracts import (
     TopicSourceReadPage,
     TopicSourceSearchPage,
 )
-from temnia_pipeline.harness.topic_selection_runtime import (
-    SourceInspectionCall,
-    SourceInspectionTrace,
-    SourceToolRole,
-)
+from temnia_pipeline.harness.source_progress import inspection_from_messages
 from temnia_pipeline.harness.validators import HarnessValidationError
 from temnia_pipeline.substrate.backends import (
     LoadedModel,
@@ -46,6 +35,13 @@ from temnia_pipeline.substrate.changepoint import DEFAULT_EMBEDDING_MODEL
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from pydantic_ai.messages import ModelMessage
+
+    from temnia_pipeline.harness.topic_selection_runtime import (
+        SourceInspectionTrace,
+        SourceToolRole,
+    )
 
 REGION_MAX_SENTENCES = 32
 REGION_MAX_CHARACTERS = 8_000
@@ -657,61 +653,12 @@ def source_inspection_trace(
     role: SourceToolRole,
     stage: str,
 ) -> SourceInspectionTrace:
-    """Reduce successful tool messages to replay-safe access facts without source prose."""
-    pending: dict[str, ToolCallPart] = {}
-    calls: list[SourceInspectionCall] = []
-    for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, ToolCallPart) and part.tool_name in {
-                    "browse_source",
-                    "search_source",
-                    "read_source",
-                }:
-                    pending[part.tool_call_id] = part
-        else:
-            for part in message.parts:
-                if not isinstance(part, ToolReturnPart) or part.outcome != "success":
-                    continue
-                request = pending.get(part.tool_call_id)
-                if request is None:
-                    continue
-                content = part.content
-                if isinstance(content, BaseModel):
-                    payload = content.model_dump(mode="json")
-                elif isinstance(content, dict):
-                    payload = cast("dict[str, Any]", content)
-                else:
-                    continue
-                if payload.get("indexSha256") != index_sha256:
-                    continue
-                nodes = cast("list[object]", payload.get("nodes", payload.get("regions", [])))
-                sentences = cast("list[object]", payload.get("sentences", []))
-                calls.append(
-                    SourceInspectionCall.model_validate(
-                        {
-                            "tool_name": request.tool_name,
-                            "arguments": request.args_as_dict(raise_if_invalid=True),
-                            "node_ids": [
-                                str(cast("dict[str, Any]", item)["id"])
-                                for item in nodes
-                                if isinstance(item, dict)
-                                and isinstance(cast("dict[str, Any]", item).get("id"), str)
-                            ],
-                            "sentence_ids": [
-                                str(cast("dict[str, Any]", item)["id"])
-                                for item in sentences
-                                if isinstance(item, dict)
-                                and isinstance(cast("dict[str, Any]", item).get("id"), str)
-                            ],
-                            "complete": payload.get("complete") is True,
-                            "next_cursor": payload.get("nextCursor"),
-                            "next_sentence_id": payload.get("nextSentenceId"),
-                        }
-                    )
-                )
-    return SourceInspectionTrace(
-        index_sha256=index_sha256, role=role, stage=stage, calls=tuple(calls)
+    """Reduce compacted or legacy tool messages to replay-safe access facts."""
+    return inspection_from_messages(
+        messages,
+        index_sha256=index_sha256,
+        role=role,
+        stage=stage,
     )
 
 
@@ -768,6 +715,16 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
     }
     if not read_ids or not read_ids <= known_sentences:
         raise HarnessValidationError("source inspection did not retain any exact indexed speech")
+    if trace.format == "topic-source-inspection/2":
+        retained = set(trace.retained_sentence_ids)
+        if (
+            trace.checkpoint_sha256 is None
+            or trace.request_sequence < 1
+            or len(retained) != len(trace.retained_sentence_ids)
+            or not retained
+            or not retained <= read_ids
+        ):
+            raise HarnessValidationError("source inspection has an invalid compact checkpoint")
     searches = [call for call in trace.calls if call.tool_name == "search_source"]
     if not searches:
         raise HarnessValidationError("source inspection did not use hybrid retrieval")
@@ -836,12 +793,16 @@ def validate_source_read_ids(
     known = {sentence.id for sentence in index.sentences}
     if not required_sentence_ids <= known:
         raise HarnessValidationError("editorial answer cites a sentence outside the source index")
-    read = {
-        identifier
-        for call in trace.calls
-        if call.tool_name == "read_source"
-        for identifier in call.sentence_ids
-    }
+    read = (
+        set(trace.retained_sentence_ids)
+        if trace.format == "topic-source-inspection/2"
+        else {
+            identifier
+            for call in trace.calls
+            if call.tool_name == "read_source"
+            for identifier in call.sentence_ids
+        }
+    )
     missing = required_sentence_ids - read
     if missing:
         sample = ", ".join(sorted(missing)[:8])

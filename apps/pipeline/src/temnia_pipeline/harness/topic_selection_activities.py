@@ -40,6 +40,12 @@ from temnia_pipeline.harness.source_index import (
     validate_source_read_ids,
     validate_topic_source_index,
 )
+from temnia_pipeline.harness.source_progress import (
+    CHECKPOINT_FORMAT,
+    SourceProgressCheckpoint,
+    checkpoint_sha256,
+    inspection_from_checkpoint,
+)
 from temnia_pipeline.harness.topic_activities import TopicActivities
 from temnia_pipeline.harness.topic_compiler import (
     compile_topics_v3,
@@ -79,6 +85,8 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionSaveRequest,
     SelectionSaveResult,
     SelectionStopRequest,
+    SourceCheckpointLoadRequest,
+    SourceCheckpointLoadResult,
     SourceInspectionTrace,
     effective_topic_output_tokens,
     selection_call_config,
@@ -324,6 +332,94 @@ class TopicSelectionActivities:
                 "embeddingRevision": index.embeddingRevision,
             },
         )
+
+    @activity.defn(name="load_topic_source_checkpoint")
+    async def load_source_checkpoint(
+        self, request: SourceCheckpointLoadRequest
+    ) -> SourceCheckpointLoadResult:
+        """Recover the latest exact compact request after a known provider failure."""
+        context = request.context
+        plan = request.plan
+        await self.load(context)
+        if (
+            context.source_index is None
+            or plan.source_index != context.source_index
+            or plan.source_tool_role is None
+            or context.source_index not in plan.input_artifacts
+        ):
+            raise HarnessValidationError(
+                "source checkpoint recovery requires the exact indexed call plan"
+            )
+        async with db.scoped(
+            self.owner.ctx.settings.database_url, self.topics.scope(self.common(context))
+        ) as conn:
+            row = await (
+                await conn.execute(
+                    """SELECT id FROM harness_artifact
+                        WHERE source_id=%s AND kind='checks'
+                          AND metadata->>'format'=%s
+                          AND metadata->>'runId'=%s
+                          AND metadata->>'stage'=%s
+                          AND metadata->>'role'=%s
+                          AND metadata->>'indexSha256'=%s
+                        ORDER BY (metadata->>'requestSequence')::integer DESC
+                        LIMIT 1""",
+                    (
+                        context.run.source_id,
+                        CHECKPOINT_FORMAT,
+                        str(context.run.run_id),
+                        plan.stage,
+                        plan.source_tool_role,
+                        context.source_index.sha256,
+                    ),
+                )
+            ).fetchone()
+        if row is None:
+            return SourceCheckpointLoadResult()
+        record = await artifacts._artifact_for_read(
+            self.owner.ctx.settings.database_url,
+            scope=self.topics.scope(self.common(context)),
+            source_id=context.run.source_id,
+            artifact_id=row["id"],
+        )
+        reference = self.owner._artifact_ref(record)
+        checkpoint = SourceProgressCheckpoint.model_validate(await self.read(context, reference))
+        if (
+            checkpoint_sha256(checkpoint) != record.sha256
+            or checkpoint.index_sha256 != context.source_index.sha256
+            or checkpoint.role != plan.source_tool_role
+            or checkpoint.stage != plan.stage
+            or record.metadata.get("checkpointSha256") != record.sha256
+            or record.metadata.get("requestSequence") != checkpoint.request_sequence
+            or not {item.id for item in plan.input_artifacts} <= set(record.dependency_ids)
+        ):
+            raise HarnessValidationError("source checkpoint recovery found invalid state")
+        if checkpoint.parent_checkpoint_sha256 is not None:
+            parent_matches = 0
+            for dependency_id in record.dependency_ids:
+                dependency = await artifacts._artifact_for_read(
+                    self.owner.ctx.settings.database_url,
+                    scope=self.topics.scope(self.common(context)),
+                    source_id=context.run.source_id,
+                    artifact_id=dependency_id,
+                )
+                if (
+                    dependency.kind == "checks"
+                    and dependency.metadata.get("format") == CHECKPOINT_FORMAT
+                    and dependency.metadata.get("runId") == str(context.run.run_id)
+                    and dependency.metadata.get("stage") == plan.stage
+                    and dependency.metadata.get("role") == plan.source_tool_role
+                    and dependency.metadata.get("indexSha256") == context.source_index.sha256
+                    and dependency.metadata.get("checkpointSha256")
+                    == checkpoint.parent_checkpoint_sha256
+                    and dependency.sha256 == checkpoint.parent_checkpoint_sha256
+                ):
+                    parent_matches += 1
+            if parent_matches != 1:
+                raise HarnessValidationError(
+                    "source checkpoint recovery found an invalid parent chain"
+                )
+        return SourceCheckpointLoadResult(checkpoint=checkpoint.model_dump(mode="json"))
 
     @staticmethod
     async def _index_heartbeat() -> None:
@@ -641,12 +737,54 @@ class TopicSelectionActivities:
             raise HarnessValidationError("source inspection names a different index")
         validate_source_inspection(index, inspection)
         validate_source_read_ids(index, inspection, required_sentence_ids)
+        checkpoint_ref = None
+        if inspection.format == "topic-source-inspection/2":
+            response_record = await artifacts._artifact_for_read(
+                self.owner.ctx.settings.database_url,
+                scope=self.topics.scope(self.common(context)),
+                source_id=context.run.source_id,
+                artifact_id=response.id,
+            )
+            matches: list[HarnessArtifactRef] = []
+            for dependency_id in response_record.dependency_ids:
+                candidate = await artifacts._artifact_for_read(
+                    self.owner.ctx.settings.database_url,
+                    scope=self.topics.scope(self.common(context)),
+                    source_id=context.run.source_id,
+                    artifact_id=dependency_id,
+                )
+                if (
+                    candidate.kind != "checks"
+                    or candidate.metadata.get("format") != CHECKPOINT_FORMAT
+                    or candidate.metadata.get("checkpointSha256") != inspection.checkpoint_sha256
+                    or candidate.metadata.get("indexSha256") != context.source_index.sha256
+                    or candidate.metadata.get("role") != plan.source_tool_role
+                    or candidate.metadata.get("stage") != plan.stage
+                    or candidate.metadata.get("runId") != str(context.run.run_id)
+                    or candidate.metadata.get("requestSequence") != inspection.request_sequence
+                ):
+                    continue
+                reference = self.owner._artifact_ref(candidate)
+                checkpoint = SourceProgressCheckpoint.model_validate(
+                    await self.read(context, reference)
+                )
+                if inspection_from_checkpoint(checkpoint) == inspection:
+                    matches.append(reference)
+            if len(matches) != 1:
+                raise HarnessValidationError(
+                    "source inspection has no unique durable progress checkpoint"
+                )
+            checkpoint_ref = matches[0]
         return await self.topics.publish(
             self.common(context),
             kind="checks",
-            format_name="topic-source-inspection/1",
+            format_name=inspection.format,
             content=inspection,
-            dependencies=(context.evidence, context.source_index, response),
+            dependencies=tuple(
+                item
+                for item in (context.evidence, context.source_index, response, checkpoint_ref)
+                if item is not None
+            ),
             metadata={"role": plan.source_tool_role, "stage": plan.stage},
         )
 
@@ -996,6 +1134,7 @@ class TopicSelectionActivities:
         return (
             self.rubric,
             self.build_index,
+            self.load_source_checkpoint,
             self.prepare,
             self.save_inventory,
             self.save,

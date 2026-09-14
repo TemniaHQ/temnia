@@ -53,20 +53,27 @@ explicit continuation sentence.
 
 The three indexed prompts require a cursor-zero browse of every root child followed by every
 section's leaves, all in source order and through the final page, plus hybrid search and exact reads.
-Admission reconstructs a no-prose `topic-source-inspection/1` trace
-from the actual PydanticAI tool calls/results. Code verifies the complete browse chain, at least one
-search, and exact reads of every sentence in every source span claimed by the final typed inventory,
-selection or source review. The accepted editorial artifact depends on the exact index, final model
-response and inspection trace. Cold review remains isolated and repair keeps its existing bounded,
-finding-authorized evidence.
+Each continuation is now rebuilt from the original prompt plus one bounded
+`topic-agent-checkpoint/1`; earlier assistant and tool messages are removed. The checkpoint retains
+all source access facts and a bounded LRU set of exact sentences. Admission projects its final state
+to a no-prose `topic-source-inspection/2` trace. Code verifies the complete browse chain, at least
+one search, and exact reads of every sentence in every source span claimed by the final typed
+inventory, selection or source review. Every claimed sentence must still be in the final checkpoint,
+so an evicted read cannot authorize a decision. The accepted editorial artifact depends on the exact
+index, final model response, checkpoint and inspection trace. Cold review remains isolated and repair
+keeps its existing bounded, finding-authorized evidence.
 
 PydanticAI executes source tools as Temporal activities with one attempt and a two-minute timeout.
 Every model continuation is a separate ledger operation and request hash; a successful tool-call
 response settles as a successful paid round rather than being mistaken for final typed output.
-Final response admission searches the settled rounds for the unique response that parses to the
-typed result. The physical gateway validates the complete three-tool set on every wire request.
-The optional route pre-flight can retain and account for multiple tool/final rounds under one
-logical stage.
+The checkpoint is published before dispatch in a run/stage/role/index-bound immutable parent chain,
+and each response depends on the checkpoint it saw. After a known provider failure, the workflow
+loads the latest valid checkpoint and retries the same compact request on the current or next
+qualified route without repeating settled source discovery. Unknown outcomes remain fenced. Final
+response admission searches the settled rounds for the unique response that parses to the typed
+result. The physical gateway validates the complete three-tool set on every wire request. The
+optional route pre-flight applies the same compactor and can retain and account for multiple
+tool/final rounds under one logical stage.
 
 A deterministic four-hour fixture with 2,400 six-second sentences produces 75 regions in 10
 sections. Its initial prompt overview stays below 500 serialized characters, all sections and
@@ -77,12 +84,12 @@ latency, provider tool behavior or useful four-hour video selection.
 The hierarchy makes every leaf descriptor discoverable, but the inventory does not read every
 original sentence unless it uses that sentence in a returned span. Descriptions are deterministic
 source extracts and keywords, rather than model-generated semantic abstracts; relationship links
-are not implemented. PydanticAI also retains tool results in the active agent message history. The
-bounded map plus selective reads is materially smaller than the transcript, but durable context
-compaction is still required before claiming an indefinitely scalable agent loop. Index artifacts
-are scoped to a run today; safe reuse across runs is not implemented. The exact v2 contract and
-invariants are recorded in
-[topic-source-index-v2-2026-09-14.md](topic-source-index-v2-2026-09-14.md).
+are not implemented. The checkpoint prevents active tool results from accumulating on the wire, but
+its final exact-evidence envelope means a large portfolio still needs bounded reconciliation rather
+than one unbounded final answer. Index artifacts are scoped to a run today; safe reuse across runs is
+not implemented. The exact contracts and invariants are recorded in
+[topic-source-index-v2-2026-09-14.md](topic-source-index-v2-2026-09-14.md) and
+[indexed-agent-checkpoints-2026-09-14.md](indexed-agent-checkpoints-2026-09-14.md).
 
 ## A source index with both navigation and search
 
@@ -179,14 +186,24 @@ candidate/opportunity. Combined repairs still require conflict checks and portfo
 
 ## Working context and durable progress
 
-The hierarchy slice still uses PydanticAI's accumulated active message history. Tools alone are
-insufficient if every response is appended forever: that eventually recreates
-the enormous prompt. Each task keeps a bounded working context containing its instructions,
-current objective, compact map, unresolved dependencies and currently relevant exact excerpts.
-Persist tool results and findings separately; rebuild subsequent requests from references and
-selected excerpts. Every rebuilt request gets its own identity. Summaries of working notes do
-not become substitute evidence for a verdict. References needed for a substantive decision must
-resolve to exact retained source, and the deciding call must receive the relevant source text.
+The indexed roles now replace PydanticAI's accumulated active message history before every model
+request. Each request contains its versioned prompt and one `topic-agent-checkpoint/1` with compact
+access facts, unresolved pagination identities and currently retained exact excerpts. Previous
+assistant prose and tool results do not cross the wire again. Every new tool result creates a new
+checkpoint and request identity; retry without new evidence preserves the prior checkpoint.
+
+Checkpoint artifacts form a direct parent chain and responses name the exact checkpoint they saw.
+The workflow can load the latest checkpoint only for the same run, stage, role, index and prepared
+inputs after a known provider failure. This supplies bounded recovery across route retry and fallback
+without weakening the existing receipt or unknown-outcome fence. The current envelopes and failure
+states are frozen in
+[indexed-agent-checkpoints-2026-09-14.md](indexed-agent-checkpoints-2026-09-14.md).
+
+Summaries of working notes do not become substitute evidence for a verdict. References needed for a
+substantive decision must resolve to exact retained source, and the deciding call must receive the
+relevant source text. The current admission rule enforces this by requiring all sentences covered by
+final typed spans to remain in the final checkpoint. This closes stale-evidence admission but makes
+bounded portfolio reconciliation necessary when all final evidence cannot fit together.
 
 The index is immutable and bound to organization, source, transcript/evidence hash, index schema,
 chunking configuration, and any embedding or summary model/prompt versions. Raw indexing work
@@ -244,8 +261,8 @@ Sequence the next design around this foundation:
    worthwhile unselected discussions and distant-dependency cases.
 2. Implement immutable index construction, source tools, bounded context and the durable
    model/tool request lifecycle as one coherent vertical slice. Hierarchical index construction,
-   tools, multi-round accounting and cold-review isolation are implemented; bounded reconstruction
-   and interruption recovery still need proof.
+   tools, multi-round accounting, cold-review isolation, bounded reconstruction and known-failure
+   recovery are implemented and locally tested.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
    This includes bounded opportunity/portfolio reconciliation, not one final unbounded dump of
    every candidate. Add mandatory source judgments and internal-structure checks in this design.
@@ -256,10 +273,11 @@ Sequence the next design around this foundation:
 5. Use the observed remaining failures to prioritize repair decomposition and adjudication.
    Resolve PR #48's shared-authority and accounting issues before either change.
 
-The first slice now names the index and inspection artifact contracts, scoped tool arguments and
-results, model continuation/final-response behavior and route validation. Context reconstruction
-and long-source recovery remain open. PydanticAI's support did not make the gateway path capable
-by itself; both model admission and the physical wire validator were changed and tested.
+The first two slices now name the index, checkpoint and inspection artifact contracts, scoped tool
+arguments and results, model continuation/final-response behavior, known-failure recovery and route
+validation. Real long-source provider and editorial recovery remain open. PydanticAI's support did
+not make the gateway path capable by itself; model history processing, admission, persistence,
+workflow retry and the physical wire validator were changed and tested.
 
 The first retrieval baseline is source-local Okapi BM25 plus exact cosine search over the pinned
 MiniLM vectors stored in the existing artifact system. That is an implementation baseline, not a
