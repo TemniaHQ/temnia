@@ -12,6 +12,7 @@ import httpx
 import httpx2
 import numpy as np
 
+from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessArtifactKind,
     HarnessArtifactRef,
@@ -102,8 +103,22 @@ async def _published_reviewer_refs(
             storageKey=accepted.storage_key,
         )
 
+    async with db.scoped(database_url, scope) as conn:
+        transcript = await (
+            await conn.execute(
+                "SELECT id, current_revision FROM transcript WHERE source_id = %s",
+                (source_id,),
+            )
+        ).fetchone()
+    assert transcript is not None
     evidence, selection, _ = topic_selection_qualification_case(combined_patch=True)
-    evidence = evidence.model_copy(update={"sourceId": source_id})
+    evidence = evidence.model_copy(
+        update={
+            "sourceId": source_id,
+            "transcriptId": transcript["id"],
+            "transcriptRevision": transcript["current_revision"],
+        }
+    )
     accepted_evidence = await artifacts.publish_json(
         database_url,
         scope=scope,
