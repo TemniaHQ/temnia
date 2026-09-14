@@ -39,7 +39,7 @@ describe("topic server configuration", () => {
       available: true,
       settings: {
         config: {
-          maxDispatches: 32,
+          maxDispatches: null,
           maxRepairs: 3,
           routeSnapshotId: "snapshot-v1",
         },
@@ -86,7 +86,7 @@ describe("topic server configuration", () => {
       settings: {
         config: {
           backend: "gateway",
-          maxDispatches: 64,
+          maxDispatches: null,
           maxOutputTokens: 65_536,
           routeSnapshotId:
             "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",

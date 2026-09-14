@@ -354,3 +354,41 @@ def test_compaction_delivers_candidate_descriptors_and_measured_media_values() -
     assert checkpoint is not None
     assert checkpoint.observations[0]["result"] == candidate.model_dump(mode="json")
     assert checkpoint.observations[1]["result"] == media.model_dump(mode="json")
+
+
+async def test_source_tool_argument_and_scope_errors_are_correctable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace  # noqa: PLC0415
+    from typing import cast  # noqa: PLC0415
+
+    from pydantic_ai import ModelRetry, RunContext  # noqa: PLC0415
+
+    from temnia_pipeline.harness import models  # noqa: PLC0415
+
+    _, index, _ = _candidate_case()
+
+    async def indexed(_deps: object) -> tuple[TopicSourceIndex, str]:
+        return index, "c" * 64
+
+    monkeypatch.setattr(models, "_indexed_source", indexed)
+    ctx = cast(
+        "RunContext[models.HarnessModelDeps]",
+        SimpleNamespace(
+            deps=SimpleNamespace(
+                allowed_sentence_ids=(index.sentences[1].id, index.sentences[3].id),
+                allowed_browse_parent_ids=("section-0001",),
+                allowed_candidate_ids=("garden-care",),
+            )
+        ),
+    )
+    with pytest.raises(ModelRetry, match="selected candidate"):
+        await models.read_source(ctx, index.sentences[0].id, index.sentences[3].id)
+    with pytest.raises(ModelRetry):
+        await models.read_source(ctx, index.sentences[1].id, index.sentences[3].id, limit=0)
+    with pytest.raises(ModelRetry, match="section-0001"):
+        await models.browse_source(ctx, parent_id="episode")
+    with pytest.raises(ModelRetry, match="garden-care"):
+        await models.inspect_candidate(ctx, candidate_id="foreign-candidate")
+    page = await models.read_source(ctx, index.sentences[1].id, index.sentences[3].id)
+    assert [sentence.id for sentence in page.sentences] == [s.id for s in index.sentences[1:4]]

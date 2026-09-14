@@ -382,7 +382,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
 
     async def run_seat(  # noqa: C901
         self,
-        agent: Any,  # noqa: ANN401  # noqa: ANN401
+        agent: Any,  # noqa: ANN401
         request: ChapterRunInput,
         context: SelectionContext,
         seat: Seat,

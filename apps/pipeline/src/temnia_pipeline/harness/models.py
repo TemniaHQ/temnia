@@ -451,7 +451,9 @@ async def browse_source(
     """
     index, sha256 = await _indexed_source(ctx.deps)
     if ctx.deps.allowed_browse_parent_ids and parent_id not in ctx.deps.allowed_browse_parent_ids:
-        raise ModelPersistenceError("source browse exceeds this call's planned section authority")
+        raise ModelRetry(
+            "Browse only the assigned sections: " + ", ".join(ctx.deps.allowed_browse_parent_ids)
+        )
     return browse_topic_source(
         index, index_sha256=sha256, parent_id=parent_id, cursor=cursor, limit=limit
     )
@@ -540,7 +542,9 @@ async def inspect_candidate(
         limit: Number of intersecting regions to return, from 1 through 16.
     """
     if ctx.deps.allowed_candidate_ids and candidate_id not in ctx.deps.allowed_candidate_ids:
-        raise ModelPersistenceError("candidate inspection exceeds this review work item")
+        raise ModelRetry(
+            "Inspect only the assigned candidates: " + ", ".join(ctx.deps.allowed_candidate_ids)
+        )
     index, index_sha256 = await _indexed_source(ctx.deps)
     selection, evidence = await _reviewer_inputs(ctx.deps)
     evidence_ref = ctx.deps.media_evidence

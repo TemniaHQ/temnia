@@ -65,6 +65,11 @@ delivery, not comprehension, internal topic decomposition or a human publication
 - Evidence assembly no longer refuses solely at 10,000 sentences or 250,000 words. Transcript/layer
   identity and complete word ownership checks remain. Source data is not truncated.
 
+- Web idempotent start lookup no longer compares an existing run against changed server budget
+  or dispatch defaults. It returns the already scoped run with its frozen configuration; source,
+  request IDs, editorial policy and explicitly supplied brief still have to match. No dispatch or
+  budget mutation occurs in that lookup. Local Next.js server-action guidance was reviewed.
+
 ## Runtime decision
 
 Keep Temporal and PydanticAI. The failures above are in Temnia's evidence projection, admission and
@@ -101,3 +106,9 @@ receipt admission and a 10,001-sentence evidence assembly. Final added tests exe
 across 400 sentences with 320 active, bounded cold prompts, model-visible candidate/media observations
 and nullable dispatch contracts. Full gate results will be recorded separately after execution.
 No live provider call, deployment or human acceptance result is claimed here.
+
+The first exact-commit gate on `b488871` stopped at web unit tests: two assertions expected the
+removed default dispatch cap, and the existing-run lookup treated changed server defaults as a new
+user intent. Updated the expectations and corrected that idempotency defect. Pipeline focused
+validation reached 100 passing tests; contract validation reached 34. The gate was rerun after
+these corrections rather than reporting the failed run as a pass.

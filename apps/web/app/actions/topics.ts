@@ -210,19 +210,16 @@ export async function startTopicRun(
       )
       .limit(1);
     if (existing) {
-      const initialBudget = Number(
-        existing.routeSnapshot.initialBudgetMicros ?? existing.budgetMicros
-      );
       const same =
         existing.routeSnapshot.editorialPolicy === TOPIC_POLICY &&
         existing.id === parsed.data.runId &&
         existing.requestKey === parsed.data.requestKey &&
         // An omitted brief is the worker's default, which this process does not
         // hold; the run row's frozen brief is the only copy of it.
-        (brief === undefined || existing.brief === brief) &&
-        initialBudget === budgetMicros &&
-        stableJson(existing.config) ===
-          stableJson(availability.settings.config);
+        (brief === undefined || existing.brief === brief);
+      // Server defaults are not user input. This read-only idempotent lookup
+      // returns the existing run with its own frozen configuration and budget;
+      // it never dispatches it under today's settings.
       return same
         ? { existing: true as const }
         : {

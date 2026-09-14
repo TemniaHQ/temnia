@@ -145,7 +145,7 @@ describe("topic workflow admission and pending identity", () => {
     );
   });
 
-  it("returns an existing run whose default brief only the worker holds", async () => {
+  it("returns an existing run after server defaults change while preserving its frozen brief", async () => {
     rows([
       [
         {
