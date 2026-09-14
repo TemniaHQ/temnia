@@ -30,7 +30,17 @@ OWNER, REPO, BRANCH = "TemniaHQ", "temnia", "main"
 PROJECT, ENVIRONMENT = "temnia", "staging"
 TEMPORAL_HOST = "temporal-staging"
 TEMPORAL_ADDRESS = f"{TEMPORAL_HOST}:7233"
-WEB_WATCH = ["apps/web/**", "packages/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "turbo.json"]
+# The web image carries apps/pipeline/harness (the deployment file the worker also reads),
+# so a change there must rebuild the web too, or the two read different configurations.
+WEB_WATCH = [
+    "apps/web/**",
+    "apps/pipeline/harness/**",
+    "packages/**",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package.json",
+    "turbo.json",
+]
 PIPELINE_WATCH = ["apps/pipeline/**"]
 TEMPORAL_WATCH = ["deploy/temporal/**", "infra/temporal/**"]
 
