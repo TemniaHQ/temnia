@@ -43,6 +43,7 @@ with workflow.unsafe.imports_passed_through():
         StartRunResult,
         WorkflowIdentity,
     )
+    from temnia_pipeline.harness.source_index import source_inspection_trace
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
     from temnia_pipeline.harness.topic_selection import selection_cold_key
     from temnia_pipeline.harness.topic_selection_runtime import (
@@ -96,6 +97,8 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         operation_inputs=selection_call_inputs(plan),
         operation_config=selection_call_config(plan, request.config.maxOutputTokens),
         input_artifact_ids=tuple(ref.id for ref in plan.input_artifacts),
+        source_index=plan.source_index,
+        source_tool_role=plan.source_tool_role,
         dispatch_limit=request.config.maxDispatches,
         synthetic_payload=plan.synthetic_payload,
     )
@@ -206,8 +209,10 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         """Run one independent source inventory, then degrade visibly if it is unavailable."""
         diagnostics: tuple[str, ...] = ()
         inventory = None
+        result = None
+        plan = None
         try:
-            result, _, settled = await self.run_seat(
+            result, plan, settled = await self.run_seat(
                 topic_opportunity_inventory_v3, request, context, "verifier"
             )
             context = self.carry_routes(context, settled)
@@ -235,6 +240,19 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 context=context,
                 inventory=inventory,
                 schema_error=diagnostics[0] if diagnostics else None,
+                inspection=(
+                    source_inspection_trace(
+                        result.all_messages(),
+                        index_sha256=context.source_index.sha256,
+                        role="inventory",
+                        stage=plan.stage,
+                    )
+                    if result is not None
+                    and plan is not None
+                    and inventory is not None
+                    and context.source_index is not None
+                    else None
+                ),
             ),
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RETRY,
@@ -380,15 +398,26 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             cold_candidate_ids.append(candidate.id)
             cold_stages.append(cached[1])
         source_review = None
+        source_inspection = None
         source_dispatched = False
         if not limited:
             try:
-                result, _, settled = await self.run_seat(
+                result, plan, settled = await self.run_seat(
                     self.source_agent, request, context, "verifier"
                 )
                 context = self.carry_routes(context, settled)
                 source_dispatched = True
                 source_review = result.output
+                source_inspection = (
+                    source_inspection_trace(
+                        result.all_messages(),
+                        index_sha256=context.source_index.sha256,
+                        role="source_reviewer",
+                        stage=plan.stage,
+                    )
+                    if context.source_index is not None
+                    else None
+                )
             except Exception as error:
                 if invalid_model_output(error):
                     source_dispatched = True
@@ -413,6 +442,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 unavailable_cold_ids=tuple(unavailable),
                 source_review=source_review,
                 source_dispatched=source_dispatched,
+                source_inspection=source_inspection,
                 reasons=tuple(reasons),
                 execution_limited=limited,
             ),
@@ -483,15 +513,37 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=HarnessArtifactRef,
         )
         context = context.model_copy(update={"rubric": rubric})
+        source_index = await workflow.execute_activity(
+            "build_topic_source_index",
+            context,
+            start_to_close_timeout=timedelta(minutes=30),
+            heartbeat_timeout=timedelta(seconds=30),
+            retry_policy=RETRY,
+            result_type=HarnessArtifactRef,
+        )
+        context = context.model_copy(update={"source_index": source_index})
         context = await self.prepare_author_context(request, context)
         accepted: SelectionSaveResult | None = None
         while accepted is None:
             try:
-                result, _, settled = await self.run_seat(
+                result, plan, settled = await self.run_seat(
                     self.author_agent, request, context, "author"
                 )
                 context = self.carry_routes(context, settled)
-                save = SelectionSaveRequest(context=context, draft=result.output)
+                save = SelectionSaveRequest(
+                    context=context,
+                    draft=result.output,
+                    inspection=(
+                        source_inspection_trace(
+                            result.all_messages(),
+                            index_sha256=context.source_index.sha256,
+                            role="author",
+                            stage=plan.stage,
+                        )
+                        if context.source_index is not None
+                        else None
+                    ),
+                )
             except Exception as error:
                 if not invalid_model_output(error):
                     raise

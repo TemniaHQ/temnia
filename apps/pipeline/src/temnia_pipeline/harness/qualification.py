@@ -43,6 +43,7 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
     topic_selection_qualification_prompts,
+    topic_source_qualification_tools,
     validate_topic_selection_qualification_output,
 )
 from temnia_pipeline.harness.routes import (
@@ -465,6 +466,28 @@ class _QualificationJournal:
             raise QualificationRefusal("qualification evidence contains the gateway credential")
         _private_replace(self.path, self.value)
 
+    @staticmethod
+    def _archive_round(call: dict[str, Any]) -> None:
+        """Retain each paid request inside one logical qualification stage."""
+        round_number = call.get("roundNumber")
+        if type(round_number) is not int:
+            return
+        rounds = cast("list[dict[str, Any]]", call.setdefault("rounds", []))
+        logical = {"candidateId", "stage", "suite", "promptVersion", "schemaVersion", "rounds"}
+        snapshot = {key: value for key, value in call.items() if key not in logical}
+        for offset, item in enumerate(rounds):
+            if item.get("roundNumber") == round_number:
+                rounds[offset] = snapshot
+                return
+        rounds.append(snapshot)
+
+    @staticmethod
+    def _clear_round(call: dict[str, Any]) -> None:
+        logical = {"candidateId", "stage", "suite", "promptVersion", "schemaVersion", "rounds"}
+        for key in tuple(call):
+            if key not in logical:
+                del call[key]
+
     def admit(
         self,
         candidate_id: str,
@@ -477,7 +500,10 @@ class _QualificationJournal:
         schema_version: str | None = None,
     ) -> None:
         call = self._call(candidate_id, stage)
-        if call["state"] != "planned":
+        if call["state"] == "cost_reported" and call.get("finishReason") == "tool_call":
+            self._archive_round(call)
+            self._clear_round(call)
+        elif call["state"] != "planned":
             raise QualificationRefusal("qualification call was already admitted")
         limits = cast("dict[str, Any]", self.value["limits"])
         dispatches = int(self.value["dispatchCount"])
@@ -489,6 +515,7 @@ class _QualificationJournal:
         call.update(
             {
                 "state": "admitted",
+                "roundNumber": len(cast("list[dict[str, Any]]", call.get("rounds", []))) + 1,
                 "admittedAt": _now(),
                 "requestHash": request_hash,
                 "payloadBytes": payload_bytes,
@@ -540,7 +567,8 @@ class _QualificationJournal:
                 code="credential-echo-refused",
             )
             raise QualificationRefusal("gateway response contained a credential marker")
-        path = self.receipts / f"{candidate_id}.{stage}.model-response.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / f"{candidate_id}.{stage}.round-{round_number}.model-response.json"
         try:
             _private_create(path, body)
         except Exception:
@@ -564,6 +592,7 @@ class _QualificationJournal:
                 "generationId": response.provider_response_id,
                 "responseModel": response.model_name,
                 "responseProvider": response.provider_name,
+                "finishReason": response.finish_reason,
             }
         )
         self.save()
@@ -590,7 +619,8 @@ class _QualificationJournal:
             raise QualificationRefusal("HTTP failure arrived without a sent request")
         detail = _sanitized_http_failure(error, forbidden=self.forbidden)
         raw = canonical_json(detail) + b"\n"
-        path = self.receipts / f"{candidate_id}.{stage}.http-failure.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / f"{candidate_id}.{stage}.round-{round_number}.http-failure.json"
         _private_create(path, detail)
         call["httpFailure"] = {
             "path": str(path),
@@ -609,7 +639,10 @@ class _QualificationJournal:
         if self.forbidden in raw:
             raise QualificationHalt("accounting receipt contains a credential marker")
         receipts = cast("list[dict[str, Any]]", call.setdefault("costReceipts", []))
-        path = self.receipts / f"{candidate_id}.{stage}.cost-{len(receipts) + 1}.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / (
+            f"{candidate_id}.{stage}.round-{round_number}.cost-{len(receipts) + 1}.json"
+        )
         _private_create_raw(path, raw)
         receipts.append(
             {
@@ -650,11 +683,13 @@ class _QualificationJournal:
         call = self._call(candidate_id, stage)
         call["validation"] = {"passed": passed, "code": code}
         call["state"] = "passed" if passed else "failed"
+        self._archive_round(call)
         self.save()
 
     def failure(self, candidate_id: str, stage: str, *, state: str, code: str) -> None:
         call = self._call(candidate_id, stage)
         call.update({"state": state, "errorCode": code, "finishedAt": _now()})
+        self._archive_round(call)
         if state in {"outcome_unknown", "cost_unresolved", "identity_failed"}:
             self.value["status"] = "halted"
         self.save()
@@ -786,6 +821,19 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
         )
     if route.accounting_model is not None:
         result["accountingModel"] = route.accounting_model
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        result["functionTools"] = [
+            {
+                "name": cast("dict[str, Any]", cast("dict[str, Any]", item)["function"])["name"],
+                "schemaSha256": _sha(
+                    cast("dict[str, Any]", cast("dict[str, Any]", item)["function"])["parameters"]
+                ),
+            }
+            for item in cast("list[object]", tools)
+            if isinstance(item, dict)
+            and isinstance(cast("dict[str, Any]", item).get("function"), dict)
+        ]
     return result
 
 
@@ -992,7 +1040,10 @@ class _QualificationModel(WrapperModel):
         if (
             self.route.transport is not None
             and self.route.transport.mode == "streaming"
-            and response.finish_reason != "stop"
+            and response.finish_reason
+            not in (
+                {"stop", "tool_call"} if topic_source_qualification_tools(self.stage) else {"stop"}
+            )
         ):
             raise UnexpectedModelBehavior("streamed qualification did not finish successfully")
         return response
@@ -1108,6 +1159,7 @@ async def run_qualification(
                             model,
                             output_type=NativeOutput(output_type, strict=True),
                             retries=0,
+                            tools=topic_source_qualification_tools(stage),
                             model_settings={"max_tokens": limits.max_output_tokens},
                         )
                         try:

@@ -18,6 +18,110 @@ const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const sha256 = () => z.string().regex(SHA256_PATTERN);
 const spans = () => z.array(TopicSentenceSpanSchema);
 
+/** One exact transcript sentence retained in the source index. */
+export const TopicSourceIndexSentenceSchema = z
+  .object({
+    endMs: z.int().nonnegative(),
+    id: identifier(),
+    speakers: z.array(z.string()),
+    startMs: z.int().nonnegative(),
+    text: z.string(),
+  })
+  .strict()
+  .meta({
+    id: "TopicSourceIndexSentence",
+    title: "TopicSourceIndexSentence",
+  });
+export type TopicSourceIndexSentence = z.infer<
+  typeof TopicSourceIndexSentenceSchema
+>;
+
+/** A bounded discovery unit with a pinned semantic vector and exact source extent. */
+export const TopicSourceIndexRegionSchema = z
+  .object({
+    embedding: z.array(z.number().finite()),
+    endMs: z.int().nonnegative(),
+    firstSentenceId: identifier(),
+    id: identifier(),
+    keywords: z.array(z.string()),
+    lastSentenceId: identifier(),
+    ordinal: z.int().nonnegative(),
+    preview: z.string(),
+    sentenceCount: z.int().positive(),
+    startMs: z.int().nonnegative(),
+  })
+  .strict()
+  .meta({ id: "TopicSourceIndexRegion", title: "TopicSourceIndexRegion" });
+export type TopicSourceIndexRegion = z.infer<
+  typeof TopicSourceIndexRegionSchema
+>;
+
+/** Immutable hybrid-retrieval input derived only from one accepted evidence artifact. */
+export const TopicSourceIndexSchema = z
+  .object({
+    embeddingDimensions: z.int().positive(),
+    embeddingModel: identifier(),
+    embeddingRevision: identifier(),
+    evidenceSha256: sha256(),
+    format: z.literal("topic-source-index/1"),
+    regionMaxCharacters: z.int().positive(),
+    regionMaxSentences: z.int().positive(),
+    regions: z.array(TopicSourceIndexRegionSchema).min(1),
+    sentences: z.array(TopicSourceIndexSentenceSchema).min(1),
+    sourceId: z.uuid(),
+    transcriptId: z.uuid(),
+    transcriptRevision: z.int().positive(),
+  })
+  .strict()
+  .meta({ id: "TopicSourceIndex", title: "TopicSourceIndex" });
+export type TopicSourceIndex = z.infer<typeof TopicSourceIndexSchema>;
+
+/** Compact region metadata returned by browse and search tools. */
+export const TopicSourceRegionHitSchema = z
+  .object({
+    endMs: z.int().nonnegative(),
+    firstSentenceId: identifier(),
+    id: identifier(),
+    keywords: z.array(z.string()),
+    lastSentenceId: identifier(),
+    preview: z.string(),
+    score: z.number().finite().nullable(),
+    sentenceCount: z.int().positive(),
+    startMs: z.int().nonnegative(),
+  })
+  .strict()
+  .meta({ id: "TopicSourceRegionHit", title: "TopicSourceRegionHit" });
+export type TopicSourceRegionHit = z.infer<typeof TopicSourceRegionHitSchema>;
+
+export const TopicSourceBrowsePageSchema = z
+  .object({
+    complete: z.boolean(),
+    indexSha256: sha256(),
+    nextCursor: z.int().nonnegative().nullable(),
+    regions: z.array(TopicSourceRegionHitSchema),
+  })
+  .strict()
+  .meta({ id: "TopicSourceBrowsePage", title: "TopicSourceBrowsePage" });
+export type TopicSourceBrowsePage = z.infer<typeof TopicSourceBrowsePageSchema>;
+
+export const TopicSourceSearchPageSchema = TopicSourceBrowsePageSchema.extend({
+  query: z.string().min(1),
+})
+  .strict()
+  .meta({ id: "TopicSourceSearchPage", title: "TopicSourceSearchPage" });
+export type TopicSourceSearchPage = z.infer<typeof TopicSourceSearchPageSchema>;
+
+export const TopicSourceReadPageSchema = z
+  .object({
+    complete: z.boolean(),
+    indexSha256: sha256(),
+    nextSentenceId: identifier().nullable(),
+    sentences: z.array(TopicSourceIndexSentenceSchema),
+  })
+  .strict()
+  .meta({ id: "TopicSourceReadPage", title: "TopicSourceReadPage" });
+export type TopicSourceReadPage = z.infer<typeof TopicSourceReadPageSchema>;
+
 /** Audience information is allowed in cold review; episode answers are not. */
 export const TopicEditorialRubricSchema = z
   .object({

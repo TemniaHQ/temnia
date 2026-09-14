@@ -2,7 +2,7 @@
 
 # Public refusal messages are intentionally defined at the state transition
 # that produces them, and the fixed domain exception names omit Error.
-# ruff: noqa: EM101, N818, TC002, TC003, TRY003
+# ruff: noqa: EM101, N818, SLF001, TC001, TC002, TC003, TRY003
 
 from __future__ import annotations
 
@@ -50,11 +50,16 @@ from temporalio import activity
 from temporalio.common import RetryPolicy
 
 from temnia_pipeline.contracts import (
+    HarnessArtifactRef,
     Scope,
     TopicPortfolioReviewV4,
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionPatchV3,
+    TopicSourceBrowsePage,
+    TopicSourceIndex,
+    TopicSourceReadPage,
+    TopicSourceSearchPage,
 )
 from temnia_pipeline.harness import artifacts, ledger
 from temnia_pipeline.harness.cassettes import (
@@ -78,6 +83,13 @@ from temnia_pipeline.harness.gateway import (
 )
 from temnia_pipeline.harness.gateway_policy import model_activity_timeout_seconds
 from temnia_pipeline.harness.routes import RouteEntry, estimate_cost
+from temnia_pipeline.harness.source_index import (
+    browse_topic_source,
+    load_topic_source_encoder,
+    read_topic_source,
+    search_topic_source,
+)
+from temnia_pipeline.harness.topic_selection_runtime import SourceToolRole
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -133,6 +145,8 @@ class HarnessModelDeps(BaseModel):
     operation_inputs: dict[str, Any]
     operation_config: dict[str, Any]
     input_artifact_ids: tuple[UUID, ...] = ()
+    source_index: HarnessArtifactRef | None = None
+    source_tool_role: SourceToolRole | None = None
     dispatch_limit: Annotated[int, Field(gt=0, le=128)]
     cassette_mode: CassetteMode = CassetteMode.OFF
     synthetic_payload: dict[str, Any] | None = None
@@ -144,6 +158,10 @@ class HarnessModelDeps(BaseModel):
                 raise ValueError("synthetic payload requires an explicit synthetic=true marker")
             if not self.route.id.startswith("synthetic-"):
                 raise ValueError("synthetic payload requires an obvious synthetic route ID")
+        if (self.source_index is None) != (self.source_tool_role is None):
+            raise ValueError("source tools require both an index identity and an editorial role")
+        if self.source_index is not None and self.source_index.id not in self.input_artifact_ids:
+            raise ValueError("source index must be one of the model call's immutable inputs")
         return self
 
 
@@ -269,6 +287,110 @@ def _configured_runtime() -> ModelRuntime:
     return _runtime
 
 
+async def _indexed_source(deps: HarnessModelDeps) -> tuple[TopicSourceIndex, str]:
+    """Load the exact scoped index made available to this one editorial call."""
+    reference = deps.source_index
+    if reference is None or deps.source_tool_role is None:
+        raise ModelPersistenceError("this model call has no source-index authority")
+    runtime = _configured_runtime()
+    accepted = await artifacts._artifact_for_read(  # pyright: ignore[reportPrivateUsage]
+        runtime.database_url,
+        scope=deps.scope,
+        source_id=deps.source_id,
+        artifact_id=reference.id,
+    )
+    if (
+        accepted.id != reference.id
+        or accepted.kind != reference.kind.value
+        or accepted.fingerprint != reference.fingerprint
+        or accepted.sha256 != reference.sha256
+        or accepted.size_bytes != reference.sizeBytes
+        or accepted.storage_key != reference.storageKey
+        or accepted.metadata.get("format") != "topic-source-index/1"
+    ):
+        raise ModelPersistenceError("source-index identity differs from the accepted artifact")
+    value = await artifacts.read_artifact_json(
+        runtime.database_url,
+        scope=deps.scope,
+        source_id=deps.source_id,
+        store=runtime.store,
+        artifact_id=reference.id,
+    )
+    if hashlib.sha256(artifacts.canonical_json(value)).hexdigest() != reference.sha256:
+        raise ModelPersistenceError("source-index bytes differ from their accepted hash")
+    index = TopicSourceIndex.model_validate(value)
+    if index.sourceId != deps.source_id:
+        raise ModelPersistenceError("source index belongs to another source")
+    return index, reference.sha256
+
+
+async def browse_source(
+    ctx: RunContext[HarnessModelDeps], cursor: int = 0, limit: int = 8
+) -> TopicSourceBrowsePage:
+    """Browse the source map in chronological pages.
+
+    Args:
+        ctx: The immutable run and source-index authority.
+        cursor: Zero-based region cursor returned by the prior page.
+        limit: Number of regions to return, from 1 through 16.
+    """
+    index, sha256 = await _indexed_source(ctx.deps)
+    return browse_topic_source(index, index_sha256=sha256, cursor=cursor, limit=limit)
+
+
+async def search_source(
+    ctx: RunContext[HarnessModelDeps], query: str, cursor: int = 0, limit: int = 6
+) -> TopicSourceSearchPage:
+    """Search source regions using lexical and pinned semantic retrieval.
+
+    Args:
+        ctx: The immutable run and source-index authority.
+        query: A concrete topic, claim, person, event, or phrase to retrieve.
+        cursor: Zero-based ranked-result cursor returned by the prior page.
+        limit: Number of ranked regions to return, from 1 through 12.
+    """
+    index, sha256 = await _indexed_source(ctx.deps)
+    loaded = await asyncio.to_thread(
+        load_topic_source_encoder, index.embeddingModel, index.embeddingRevision
+    )
+    return await asyncio.to_thread(
+        search_topic_source,
+        index,
+        index_sha256=sha256,
+        query=query,
+        encoder=loaded.value,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+async def read_source(
+    ctx: RunContext[HarnessModelDeps],
+    first_sentence_id: str,
+    last_sentence_id: str,
+    cursor_sentence_id: str | None = None,
+    limit: int = 40,
+) -> TopicSourceReadPage:
+    """Read exact transcript sentences inside one bounded source range.
+
+    Args:
+        ctx: The immutable run and source-index authority.
+        first_sentence_id: First allowed sentence in the requested extent.
+        last_sentence_id: Last allowed sentence in the requested extent.
+        cursor_sentence_id: Continuation sentence returned by the prior page, if any.
+        limit: Maximum sentences to return, from 1 through 80.
+    """
+    index, sha256 = await _indexed_source(ctx.deps)
+    return read_topic_source(
+        index,
+        index_sha256=sha256,
+        first_sentence_id=first_sentence_id,
+        last_sentence_id=last_sentence_id,
+        cursor_sentence_id=cursor_sentence_id,
+        limit=limit,
+    )
+
+
 async def _unreachable_model(
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: no cover - only a lazy profile carrier
@@ -350,7 +472,8 @@ def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> Mode
     if (
         deps.route.transport is not None
         and deps.route.transport.mode == "streaming"
-        and response.finish_reason != "stop"
+        and response.finish_reason
+        not in ({"stop", "tool_call"} if deps.source_tool_role is not None else {"stop"})
     ):
         raise UnexpectedModelBehavior("streamed model response did not finish successfully")
     return response
@@ -405,9 +528,15 @@ def _owner_token(runtime: ModelRuntime) -> str:
     raise ModelPersistenceError("harness model request must execute inside a Temporal activity")
 
 
-def _validate_request(parameters: ModelRequestParameters) -> None:
-    if parameters.function_tools or parameters.native_tools or parameters.output_tools:
-        raise ModelPersistenceError("tools are disabled on the initial harness path")
+def _validate_request(deps: HarnessModelDeps, parameters: ModelRequestParameters) -> None:
+    allowed = {"browse_source", "search_source", "read_source"}
+    names = {tool.name for tool in parameters.function_tools}
+    if parameters.native_tools or parameters.output_tools:
+        raise ModelPersistenceError("native and output tools are disabled on the harness path")
+    if names and (deps.source_tool_role is None or names != allowed):
+        raise ModelPersistenceError("model request contains unqualified source tools")
+    if deps.source_tool_role is not None and names != allowed:
+        raise ModelPersistenceError("indexed editorial calls require the exact source toolset")
     if parameters.allow_image_output:
         raise ModelPersistenceError("image output is disabled on the initial harness path")
     if parameters.output_mode != "native" or parameters.output_object is None:
@@ -561,7 +690,7 @@ class BudgetedModel(WrapperModel):
     ) -> ModelResponse:
         """Make at most one physical request after the committed dispatch CAS."""
         runtime = _configured_runtime()
-        _validate_request(model_request_parameters)
+        _validate_request(self.deps, model_request_parameters)
         _validate_route_settings(self.deps, model_settings)
         request_hash, payload_bytes = request_fingerprint(
             messages,
@@ -1083,7 +1212,9 @@ class PayloadScaledDurability(TemporalDurability[HarnessModelDeps]):
         return bound._replace(request=scaled)
 
 
-def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
+def _agent(
+    name: str, output_type: type[Any], *, indexed_source: bool = False
+) -> Agent[HarnessModelDeps, Any]:
     return Agent(
         model=MODEL_ALIAS,
         defer_model_check=True,
@@ -1091,6 +1222,7 @@ def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
         deps_type=HarnessModelDeps,
         name=name,
         retries=0,
+        tools=[browse_source, search_source, read_source] if indexed_source else [],
         capabilities=[
             ResolveModelId(resolve_configured_model),
             PayloadScaledDurability(
@@ -1099,16 +1231,26 @@ def _agent(name: str, output_type: type[Any]) -> Agent[HarnessModelDeps, Any]:
                     "start_to_close_timeout": timedelta(minutes=10),
                     "heartbeat_timeout": timedelta(seconds=30),
                     "retry_policy": RetryPolicy(maximum_attempts=1),
-                }
+                },
+                activity_config={
+                    "start_to_close_timeout": timedelta(minutes=2),
+                    "retry_policy": RetryPolicy(maximum_attempts=1),
+                },
             ),
         ],
     )
 
 
-topic_opportunity_inventory_v3 = _agent("topic_opportunity_inventory_v3", TopicSelectionDraft)
-topic_selection_author_v3 = _agent("topic_selection_author_v3", TopicSelectionDraft)
+topic_opportunity_inventory_v3 = _agent(
+    "topic_opportunity_inventory_v3", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_author_v3 = _agent(
+    "topic_selection_author_v3", TopicSelectionDraft, indexed_source=True
+)
 topic_selection_cold_v3 = _agent("topic_selection_cold_v3", TopicSelectionColdReview)
-topic_selection_source_v4 = _agent("topic_selection_source_v4", TopicPortfolioReviewV4)
+topic_selection_source_v4 = _agent(
+    "topic_selection_source_v4", TopicPortfolioReviewV4, indexed_source=True
+)
 topic_selection_patch_v3 = _agent("topic_selection_patch_v3", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.

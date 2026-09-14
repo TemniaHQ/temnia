@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "TopicSourceIndexRegion": {
+      "$id": "#/$defs/TopicSourceIndexRegion",
+      "type": "object",
+      "properties": {
+        "embedding": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "preview": {
+          "type": "string"
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "embedding",
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "lastSentenceId",
+        "ordinal",
+        "preview",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndexRegion"
+    }
+  },
+  "$id": "TopicSourceIndexRegion.json",
+  "$ref": "#/$defs/TopicSourceIndexRegion",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

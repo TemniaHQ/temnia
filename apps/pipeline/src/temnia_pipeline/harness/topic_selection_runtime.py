@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,30 @@ from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
 
 SelectionProgramVersion = Literal["standalone-topics/3"]
+SourceToolRole = Literal["inventory", "author", "source_reviewer"]
+
+
+class SourceInspectionCall(BaseModel):
+    """One successful, bounded source-tool result retained without repeating source text."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    tool_name: Literal["browse_source", "search_source", "read_source"]
+    arguments: dict[str, Any]
+    region_ids: tuple[str, ...] = ()
+    sentence_ids: tuple[str, ...] = ()
+    complete: bool
+    next_cursor: int | None = None
+    next_sentence_id: str | None = None
+
+
+class SourceInspectionTrace(BaseModel):
+    """Tool-backed source access associated with one final typed model answer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    index_sha256: str
+    role: SourceToolRole
+    stage: str
+    calls: tuple[SourceInspectionCall, ...] = ()
 
 
 class SelectionContext(BaseModel):
@@ -32,6 +56,7 @@ class SelectionContext(BaseModel):
     evidence: HarnessArtifactRef
     program_version: SelectionProgramVersion = "standalone-topics/3"
     rubric: HarnessArtifactRef | None = None
+    source_index: HarnessArtifactRef | None = None
     inventory: HarnessArtifactRef | None = None
     inventory_attempted: bool = False
     inventory_diagnostics: tuple[str, ...] = ()
@@ -59,6 +84,8 @@ class SelectionCallPlan(BaseModel):
     author: RouteEntry
     verifier: RouteEntry
     input_artifacts: tuple[HarnessArtifactRef, ...]
+    source_index: HarnessArtifactRef | None = None
+    source_tool_role: SourceToolRole | None = None
     synthetic_payload: dict[str, object] | None = None
 
 
@@ -70,6 +97,7 @@ class SelectionSaveRequest(BaseModel):
     draft: TopicSelectionDraft | None = None
     patch: TopicSelectionPatchV3 | None = None
     schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
 
 
 class SelectionSaveResult(BaseModel):
@@ -90,6 +118,7 @@ class OpportunityInventorySaveRequest(BaseModel):
     context: SelectionContext
     inventory: TopicSelectionDraft | None = None
     schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
 
 
 class SelectionRejection(BaseModel):
@@ -115,6 +144,7 @@ class SelectionReviewRequest(BaseModel):
     unavailable_cold_ids: tuple[str, ...] = ()
     source_review: TopicPortfolioReviewV4 | None = None
     source_dispatched: bool = True
+    source_inspection: SourceInspectionTrace | None = None
     reasons: tuple[str, ...] = ()
     execution_limited: bool = False
 

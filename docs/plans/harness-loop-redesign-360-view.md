@@ -6,6 +6,16 @@ PydanticAI, the ledger, the validators); it adopts no agent framework, per the 2
 decision, for the reasons restated in §8. The architecture review that motivates it is
 [pipeline-architecture-review-2026-09-14.md](../design/pipeline-architecture-review-2026-09-14.md).
 
+**Direction update, 2026-09-14, after review of PR #48.** Rajesh identified indexed source
+evidence and agent tools as the foundation needed for two- and four-hour recordings. The
+author-only W4 scope, its placement after W3, and postponing source-review conversion are
+superseded by [Indexed evidence for the editorial harness](../design/indexed-editorial-evidence-2026-09-14.md).
+That design covers discovery, authoring and source review together, with bounded working
+context, explicit coverage and exact source access. The workstreams below remain the original
+PR #48 proposal for reference; their day estimates, fixed round-cap suggestion and cost/quality
+predictions are not an approved implementation schedule or measured results. Resolve the
+review's accounting, repair-conflict and calibration-identity findings in the detailed design.
+
 ## 1. Problem
 
 The loop is technically robust as of #43 and #45 and editorially blind in three places.

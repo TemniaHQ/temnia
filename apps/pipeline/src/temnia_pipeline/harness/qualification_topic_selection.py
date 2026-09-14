@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
@@ -23,6 +23,11 @@ from temnia_pipeline.contracts import (
     TopicSelectionPatchV3,
     TopicSelectionRecord,
     TopicSentenceSpan,
+    TopicSourceBrowsePage,
+    TopicSourceIndexSentence,
+    TopicSourceReadPage,
+    TopicSourceRegionHit,
+    TopicSourceSearchPage,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
@@ -64,6 +69,96 @@ TOPIC_SELECTION_V3_SCHEMAS = {
     "topic_source": "topic-selection-portfolio/4",
     "topic_patch": SELECTION_PATCH_PROMPT_V3,
 }
+QUALIFICATION_SOURCE_INDEX = {
+    "indexSha256": "0" * 64,
+    "regionCount": 1,
+    "sentenceCount": 5,
+    "durationMs": 5_000,
+    "browsePageLimit": 16,
+    "searchPageLimit": 12,
+    "readSentenceLimit": 80,
+    "readCharacterLimit": 64_000,
+}
+
+
+def _qualification_region() -> TopicSourceRegionHit:
+    evidence = synthetic_qualification_evidence()
+    return TopicSourceRegionHit(
+        id="r1",
+        firstSentenceId=evidence.sentences[0].id,
+        lastSentenceId=evidence.sentences[-1].id,
+        startMs=evidence.sentences[0].startMs,
+        endMs=evidence.sentences[-1].endMs,
+        sentenceCount=len(evidence.sentences),
+        keywords=["garden", "watering", "roots"],
+        preview="A greeting leads into a complete garden-watering explanation.",
+        score=None,
+    )
+
+
+async def browse_source(cursor: int = 0, limit: int = 8) -> TopicSourceBrowsePage:
+    """Browse the synthetic qualification source map in chronological pages."""
+    if cursor != 0 or limit < 1:
+        raise ValueError("qualification source has only cursor zero")
+    return TopicSourceBrowsePage(
+        indexSha256="0" * 64,
+        regions=[_qualification_region()],
+        nextCursor=None,
+        complete=True,
+    )
+
+
+async def search_source(query: str, cursor: int = 0, limit: int = 6) -> TopicSourceSearchPage:
+    """Search the synthetic qualification source using the production tool shape."""
+    page = await browse_source(cursor, limit)
+    region = page.regions[0].model_copy(update={"score": 1.0})
+    return TopicSourceSearchPage(
+        indexSha256=page.indexSha256,
+        query=query,
+        regions=[region],
+        nextCursor=None,
+        complete=True,
+    )
+
+
+async def read_source(
+    first_sentence_id: str,
+    last_sentence_id: str,
+    cursor_sentence_id: str | None = None,
+    limit: int = 40,
+) -> TopicSourceReadPage:
+    """Read exact synthetic sentences using the production bounded-read shape."""
+    evidence = synthetic_qualification_evidence()
+    positions = {sentence.id: offset for offset, sentence in enumerate(evidence.sentences)}
+    first = positions[first_sentence_id]
+    last = positions[last_sentence_id]
+    cursor = positions[cursor_sentence_id] if cursor_sentence_id is not None else first
+    end = min(last + 1, cursor + limit)
+    sentences = [
+        TopicSourceIndexSentence(
+            id=sentence.id,
+            startMs=sentence.startMs,
+            endMs=sentence.endMs,
+            speakers=sentence.speakers,
+            text=sentence.text,
+        )
+        for sentence in evidence.sentences[cursor:end]
+    ]
+    return TopicSourceReadPage(
+        indexSha256="0" * 64,
+        sentences=sentences,
+        nextSentenceId=evidence.sentences[end].id if end <= last else None,
+        complete=end > last,
+    )
+
+
+def topic_source_qualification_tools(stage: str) -> list[Any]:
+    """Expose the exact three tool names only on indexed production stages."""
+    if stage in {"topic_inventory", "topic_author", "topic_source"}:
+        return [browse_source, search_source, read_source]
+    return []
+
+
 STAGE_SEATS = {
     "topic_inventory": "verify",
     "topic_author": "propose",
@@ -246,12 +341,12 @@ def topic_selection_qualification_prompts() -> dict[str, tuple[str, type[BaseMod
     inventory = topic_selection_qualification_inventory()
     return {
         "topic_inventory": (
-            opportunity_inventory_prompt(evidence, record.rubric),
+            opportunity_inventory_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric),
             TopicSelectionDraft,
             SELECTION_INVENTORY_PROMPT,
         ),
         "topic_author": (
-            selection_prompt(evidence, record.rubric, source_inventory=inventory),
+            selection_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric, source_inventory=inventory),
             TopicSelectionDraft,
             SELECTION_AUTHOR_PROMPT_V3,
         ),
@@ -261,7 +356,9 @@ def topic_selection_qualification_prompts() -> dict[str, tuple[str, type[BaseMod
             SELECTION_COLD_PROMPT_V3,
         ),
         "topic_source": (
-            selection_source_prompt(evidence, record.draft, record.rubric),
+            selection_source_prompt(
+                evidence, record.draft, record.rubric, QUALIFICATION_SOURCE_INDEX
+            ),
             TopicPortfolioReviewV4,
             SELECTION_SOURCE_PROMPT_V3,
         ),

@@ -142,6 +142,36 @@ def expected_gateway_headers(route: RouteEntry) -> dict[str, str]:
     return {}
 
 
+SOURCE_TOOL_NAMES = frozenset({"browse_source", "search_source", "read_source"})
+
+
+def _validate_source_tools(body: dict[str, Any]) -> None:
+    """Allow only the complete indexed-source toolset on the physical request."""
+    raw = body.get("tools")
+    if raw is None:
+        if "tool_choice" in body:
+            raise GatewayPolicyError("tool choice was sent without source tools")
+        return
+    if not isinstance(raw, list):
+        raise GatewayPolicyError("gateway source tools are not a list")
+    names: list[str] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            raise GatewayPolicyError("gateway source tool is not an object")
+        tool = cast("dict[str, Any]", item)
+        function = tool.get("function")
+        if tool.get("type") != "function" or not isinstance(function, dict):
+            raise GatewayPolicyError("gateway source tool is not a function")
+        name = cast("dict[str, Any]", function).get("name")
+        if not isinstance(name, str):
+            raise GatewayPolicyError("gateway source tool has no name")
+        names.append(name)
+    if len(names) != len(SOURCE_TOOL_NAMES) or frozenset(names) != SOURCE_TOOL_NAMES:
+        raise GatewayPolicyError("gateway request contains an unqualified source toolset")
+    if body.get("tool_choice") not in {None, "auto"}:
+        raise GatewayPolicyError("gateway source tool choice is not automatic")
+
+
 def validate_gateway_request(  # noqa: C901, PLR0912
     request: httpx2.Request, route: RouteEntry
 ) -> dict[str, Any]:
@@ -167,11 +197,10 @@ def validate_gateway_request(  # noqa: C901, PLR0912
         "plugins",
         "transforms",
         "preset",
-        "tools",
-        "tool_choice",
         "cache",
     } & body.keys():
         raise GatewayPolicyError("unqualified gateway request options")
+    _validate_source_tools(body)
     if name == "openrouter" and "providerOptions" in body:
         raise GatewayPolicyError("OpenRouter request contains Vercel policy")
     if name == "vercel" and "provider" in body:
@@ -633,13 +662,14 @@ class GatewayChatModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Reject tools/images and inject non-overridable ZDR/provider routing."""
+        """Admit the indexed source tools and inject non-overridable routing policy."""
+        tool_names = {tool.name for tool in model_request_parameters.function_tools}
         if (
-            model_request_parameters.function_tools
-            or model_request_parameters.native_tools
+            model_request_parameters.native_tools
             or model_request_parameters.output_tools
+            or (tool_names and frozenset(tool_names) != SOURCE_TOOL_NAMES)
         ):
-            raise GatewayPolicyError("tools are disabled on the initial harness model path")
+            raise GatewayPolicyError("only the indexed source function tools are allowed")
         if model_request_parameters.allow_image_output:
             raise GatewayPolicyError("image output is disabled on the initial harness model path")
         if model_request_parameters.output_mode != "native":

@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "TopicSourceIndex": {
+      "$id": "#/$defs/TopicSourceIndex",
+      "type": "object",
+      "properties": {
+        "embeddingDimensions": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "embeddingModel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "embeddingRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-source-index/1"
+        },
+        "regionMaxCharacters": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "regionMaxSentences": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "regions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceIndexRegion"
+          }
+        },
+        "sentences": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceIndexSentence"
+          }
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transcriptId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transcriptRevision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "embeddingDimensions",
+        "embeddingModel",
+        "embeddingRevision",
+        "evidenceSha256",
+        "format",
+        "regionMaxCharacters",
+        "regionMaxSentences",
+        "regions",
+        "sentences",
+        "sourceId",
+        "transcriptId",
+        "transcriptRevision"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndex"
+    },
+    "TopicSourceIndexRegion": {
+      "$id": "#/$defs/TopicSourceIndexRegion",
+      "type": "object",
+      "properties": {
+        "embedding": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "preview": {
+          "type": "string"
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "embedding",
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "lastSentenceId",
+        "ordinal",
+        "preview",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndexRegion"
+    },
+    "TopicSourceIndexSentence": {
+      "$id": "#/$defs/TopicSourceIndexSentence",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "speakers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "speakers",
+        "startMs",
+        "text"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndexSentence"
+    }
+  },
+  "$id": "TopicSourceIndex.json",
+  "$ref": "#/$defs/TopicSourceIndex",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

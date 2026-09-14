@@ -28,6 +28,7 @@ from temnia_pipeline.contracts import (
     TopicSelectionDraft,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
+    TopicSourceIndex,
 )
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness import topic_selection_workflow as module
@@ -70,6 +71,10 @@ CANDIDATE = _candidate("discussion", 0, 3)
 
 class UnexpectedModelBehavior(Exception):  # noqa: N818
     """A local double for the retained invalid-output failure name."""
+
+
+async def _inspection_none(*_args: object, **_kwargs: object) -> None:
+    return None
 
 
 def opportunity(*, selected: bool) -> TopicOpportunity:
@@ -194,7 +199,7 @@ class AgentDouble:
             raise output
         if callable(output):
             output = output(json.loads(prompt.split("SOURCE DATA\n", 1)[1]))
-        return SimpleNamespace(output=output)
+        return SimpleNamespace(output=output, all_messages=list)
 
 
 class Program:
@@ -254,6 +259,11 @@ class Program:
         monkeypatch.setattr(self.activities, "read", self.read)
         monkeypatch.setattr(artifacts, "_artifact_for_read", self.artifact_for_read)
         monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
+        monkeypatch.setattr(
+            self.activities,
+            "inspection_ref",
+            _inspection_none,
+        )
         monkeypatch.setattr(self.activities.topics, "publish", self.publish)
         monkeypatch.setattr(workflow_type, "author_agent", self.author)
         monkeypatch.setattr(workflow_type, "cold_agent", self.cold)
@@ -335,7 +345,7 @@ class Program:
             format_name="test-paid-response",
         )
 
-    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, PLR0911
+    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, C901, PLR0911
         if name == "start_chapter_run":
             assert value.editorial_policy == self.policy
             return StartRunResult(run=self.run, created=True)
@@ -346,6 +356,52 @@ class Program:
                 word_count=4,
                 duration_ms=4000,
                 lexical_state="present",
+            )
+        if name == "build_topic_source_index":
+            index = TopicSourceIndex.model_validate(
+                {
+                    "format": "topic-source-index/1",
+                    "evidenceSha256": EVIDENCE_REF.sha256,
+                    "sourceId": str(EVIDENCE.sourceId),
+                    "transcriptId": str(EVIDENCE.transcriptId),
+                    "transcriptRevision": EVIDENCE.transcriptRevision,
+                    "embeddingModel": "test/encoder",
+                    "embeddingRevision": "a" * 40,
+                    "embeddingDimensions": 1,
+                    "regionMaxSentences": 32,
+                    "regionMaxCharacters": 8000,
+                    "sentences": [
+                        {
+                            "id": sentence.id,
+                            "startMs": sentence.startMs,
+                            "endMs": sentence.endMs,
+                            "speakers": sentence.speakers,
+                            "text": sentence.text,
+                        }
+                        for sentence in EVIDENCE.sentences
+                    ],
+                    "regions": [
+                        {
+                            "id": "r1",
+                            "ordinal": 0,
+                            "firstSentenceId": EVIDENCE.sentences[0].id,
+                            "lastSentenceId": EVIDENCE.sentences[-1].id,
+                            "startMs": EVIDENCE.sentences[0].startMs,
+                            "endMs": EVIDENCE.sentences[-1].endMs,
+                            "sentenceCount": len(EVIDENCE.sentences),
+                            "keywords": ["fixture"],
+                            "preview": "fixture source",
+                            "embedding": [1.0],
+                        }
+                    ],
+                }
+            )
+            return await self.publish(
+                TopicContext(run=value.run, evidence=value.evidence),
+                content=index,
+                format_name=index.format,
+                kind="checks",
+                dependencies=(value.evidence,),
             )
         if name == "claim_chapter_repair":
             self.run = self.run.model_copy(update={"repair_count": self.run.repair_count + 1})

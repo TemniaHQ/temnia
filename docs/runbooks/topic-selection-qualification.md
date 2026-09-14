@@ -12,11 +12,20 @@ The historical v2 admission design is kept in the
 [decisions document](../design/standalone-topic-decisions-2026-09-12.md) §2.
 
 What remains is an optional pre-flight for auditioning a **new route** before spending a
-full-source run on it. It dispatches the five exact production request shapes
-(inventory, author, cold review, source review, patch) against a five-sentence synthetic
-source and records settled cost per call. It proves request shape, strict native-schema
-admission and cost observation. It does not prove context capacity, long-source
-behaviour, deadline fit or editorial quality; Astra passed every pre-flight call and
+full-source run on it. It starts the five production stage shapes (inventory, author,
+cold review, source review, patch) against a five-sentence synthetic source and records
+settled cost per model round. Inventory, author and source review declare the exact
+`browse_source`, `search_source` and `read_source` tools; if a model calls them, the
+pre-flight executes the local synthetic tools and durably accounts for each continuation
+request under that logical stage. The final native schema remains present on every round.
+
+The report's `dispatchCount` is therefore model requests, not logical stages. Each logical
+call retains a `rounds` list with request, response, generation and cost identities. Budget
+at least five dispatches per candidate and enough additional dispatches for the expected
+tool rounds. A model that answers directly can establish declaration admission but does not
+prove that it can call the tools; inspect the indexed stages' retained rounds before treating
+function calling as qualified. The pre-flight does not prove context capacity, long-source
+behaviour, deadline fit or editorial quality; Astra passed every earlier pre-flight call and
 failed two full-Karma author calls on the deadline.
 
 ## Running the pre-flight
@@ -40,8 +49,8 @@ uv run --frozen python scripts/qualify_harness_gateway.py run \
 The candidate catalogue is the metadata-only format (`gatewayModel`, `provider`,
 `family`, capacity, ZDR claim, prices, optional `reasoningEffort`, `transport` and
 `providerAccountingName` for OpenRouter). Journal, receipts and report paths are
-create-only; a new directory is a new session. Five calls per candidate. Do not restart
-a session to escape an unknown outcome; reconcile it read-only instead:
+create-only; a new directory is a new session. Do not restart a session to escape an
+unknown outcome; reconcile it read-only instead:
 
 ```sh
 uv run --frozen python scripts/qualify_harness_gateway.py reconcile \

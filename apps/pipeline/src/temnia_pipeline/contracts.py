@@ -587,6 +587,69 @@ class TopicSentenceSpan(BaseModel):
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
 
 
+class TopicSourceIndexRegion(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    embedding: list[float]
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    preview: str
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class TopicSourceIndexSentence(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    speakers: list[str]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    text: str
+
+
+class TopicSourceReadPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    sentences: list[TopicSourceIndexSentence]
+
+
+class TopicSourceRegionHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    preview: str
+    score: float | None
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class TopicSourceSearchPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    regions: list[TopicSourceRegionHit]
+    query: Annotated[str, Field(min_length=1)]
+
+
 class TranscribeInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1208,6 +1271,34 @@ class TopicSelectionRecord(BaseModel):
     rubric: TopicEditorialRubric
     rubricSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
     runId: UUID
+
+
+class TopicSourceBrowsePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    regions: list[TopicSourceRegionHit]
+
+
+class TopicSourceIndex(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    embeddingDimensions: Annotated[int, Field(gt=0, le=9007199254740991)]
+    embeddingModel: Annotated[str, Field(max_length=256, min_length=1)]
+    embeddingRevision: Annotated[str, Field(max_length=256, min_length=1)]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-source-index/1"]
+    regionMaxCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
+    regionMaxSentences: Annotated[int, Field(gt=0, le=9007199254740991)]
+    regions: Annotated[list[TopicSourceIndexRegion], Field(min_length=1)]
+    sentences: Annotated[list[TopicSourceIndexSentence], Field(min_length=1)]
+    sourceId: UUID
+    transcriptId: UUID
+    transcriptRevision: Annotated[int, Field(gt=0, le=9007199254740991)]
 
 
 class TopicSourceJudgment(BaseModel):

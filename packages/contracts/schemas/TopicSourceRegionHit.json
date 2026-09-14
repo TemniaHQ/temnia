@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "TopicSourceRegionHit": {
+      "$id": "#/$defs/TopicSourceRegionHit",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "preview": {
+          "type": "string"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "lastSentenceId",
+        "preview",
+        "score",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceRegionHit"
+    }
+  },
+  "$id": "TopicSourceRegionHit.json",
+  "$ref": "#/$defs/TopicSourceRegionHit",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

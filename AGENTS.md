@@ -2,6 +2,29 @@
 
 ## Decisions
 
+**2026-09-14 — Indexed source evidence and tools are a foundation for the editorial roles.**
+Rajesh's direction after reviewing PR #48: repeatedly supplying a whole transcript to an author
+or source reviewer, with intermittent success on 44-minute Karma, is not a demonstrated solution
+for two- or four-hour recordings. Develop a reusable source index and tool-based evidence access
+for discovery, authoring and source review together. Treat this as a foundational design change,
+superseding PR #48's late author-only W4 placement and deferred source-review conversion. The
+initial design is [indexed-editorial-evidence-2026-09-14.md](docs/design/indexed-editorial-evidence-2026-09-14.md):
+bounded chronological coverage plus targeted lexical/semantic retrieval and exact source reads;
+summaries and relationship links are hypotheses, and coverage records do not prove comprehension.
+Cold review remains isolated to the selected speech. Bounded working context, source-bound
+identities, independent judgments, repair authority and the run-level unknown-expense fence
+remain part of the design. Internal discussion structure must be observable; an index alone
+does not prove the compound-candidate problem solved. The first vertical slice is implemented on
+`feat/indexed-editorial-evidence`: a run-scoped `topic-source-index/1`, bounded chronological
+browse, BM25/MiniLM search and exact sentence reads replace transcript bodies in the inventory,
+author and source-review prompts. Every indexed answer must retain a complete browse/search/read
+trace and must have read every sentence in every span it returns. Each tool continuation is a
+separately accounted model request; the gateway admits only the complete three-tool set. A
+2,400-sentence synthetic four-hour source proves bounded initial prompt shape and pagination, not
+editorial quality. The map is flat, PydanticAI still accumulates active tool history, safe cross-run
+reuse and candidate/media tools remain unimplemented, and no real provider, latency, recovery or
+quality result follows. No new model arm or paid run is authorized by this record.
+
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh
 pressed Retry on the run that #46 fixed and it failed in three seconds: the run's frozen

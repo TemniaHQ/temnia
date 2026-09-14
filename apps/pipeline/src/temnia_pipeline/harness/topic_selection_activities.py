@@ -1,11 +1,13 @@
 """Versioned selection decisions using the existing artifact and paid-operation ledger."""
 
 # Activity DTOs need runtime annotations; evidence failures are explicit refusals.
-# ruff: noqa: EM101, TRY003, TC001, SLF001
+# ruff: noqa: C901, EM101, TRY003, TC001, SLF001
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import contextlib
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import TextPart
@@ -23,12 +25,21 @@ from temnia_pipeline.contracts import (
     TopicSelectionDraft,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
+    TopicSourceIndex,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
+from temnia_pipeline.harness.source_index import (
+    build_topic_source_index,
+    load_topic_source_encoder,
+    source_index_map,
+    validate_source_inspection,
+    validate_source_read_ids,
+    validate_topic_source_index,
+)
 from temnia_pipeline.harness.topic_activities import TopicActivities
 from temnia_pipeline.harness.topic_compiler import (
     compile_topics_v3,
@@ -68,11 +79,13 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SelectionSaveRequest,
     SelectionSaveResult,
     SelectionStopRequest,
+    SourceInspectionTrace,
     effective_topic_output_tokens,
     selection_call_config,
     selection_call_inputs,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError, validate_evidence
+from temnia_pipeline.substrate.changepoint import DEFAULT_EMBEDDING_MODEL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -95,6 +108,49 @@ class TopicSelectionActivities:
     async def read(self, context: SelectionContext, ref: HarnessArtifactRef) -> object:
         """Read the exact immutable bytes in the run's source scope."""
         return await self.topics.read(self.common(context), ref)
+
+    @staticmethod
+    def _required_sentence_ids(evidence: HarnessEvidence, *values: BaseModel | None) -> set[str]:
+        """Expand every typed source span so the deciding call must have read it exactly."""
+        positions = {sentence.id: offset for offset, sentence in enumerate(evidence.sentences)}
+        found: set[str] = set()
+
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                mapping = cast("dict[str, object]", value)
+                first = mapping.get("firstSentenceId")
+                last = mapping.get("lastSentenceId")
+                if isinstance(first, str) and isinstance(last, str):
+                    try:
+                        start = positions[first]
+                        end = positions[last]
+                    except KeyError:
+                        found.update((first, last))
+                    else:
+                        if start <= end:
+                            found.update(
+                                sentence.id for sentence in evidence.sentences[start : end + 1]
+                            )
+                        else:
+                            found.update((first, last))
+                for key, child in mapping.items():
+                    if key in {
+                        "firstSentenceId",
+                        "lastSentenceId",
+                        "recommendedLeftLastSentenceId",
+                        "recommendedRightFirstSentenceId",
+                    } and isinstance(child, str):
+                        found.add(child)
+                    else:
+                        visit(child)
+            elif isinstance(value, list):
+                for child in cast("list[object]", value):
+                    visit(child)
+
+        for value in values:
+            if value is not None:
+                visit(value.model_dump(mode="json"))
+        return found
 
     async def require_record(
         self,
@@ -221,6 +277,61 @@ class TopicSelectionActivities:
         validate_opportunity_inventory(evidence, result)
         return result
 
+    async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
+        """Load and prove the exact immutable index derived from accepted evidence."""
+        if context.source_index is None:
+            raise HarnessValidationError("indexed editorial calls require a source index")
+        await self.require_record(
+            context,
+            context.source_index,
+            format_name="topic-source-index/1",
+            dependencies=(context.evidence,),
+        )
+        _, evidence, _, _ = await self.load(context.model_copy(update={"source_index": None}))
+        result = TopicSourceIndex.model_validate(await self.read(context, context.source_index))
+        validate_topic_source_index(evidence, result, evidence_sha256=context.evidence.sha256)
+        return result
+
+    @activity.defn(name="build_topic_source_index")
+    async def build_index(self, context: SelectionContext) -> HarnessArtifactRef:
+        """Build one content-addressed hybrid index before any editorial model call."""
+        _, evidence, _, _ = await self.load(context)
+        pulse = asyncio.create_task(self._index_heartbeat()) if activity.in_activity() else None
+        try:
+            loaded = await asyncio.to_thread(load_topic_source_encoder)
+            index = await asyncio.to_thread(
+                build_topic_source_index,
+                evidence,
+                evidence_sha256=context.evidence.sha256,
+                encoder=loaded.value,
+                embedding_revision=loaded.revision,
+                embedding_model=DEFAULT_EMBEDDING_MODEL,
+            )
+        finally:
+            if pulse is not None:
+                pulse.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pulse
+        return await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=index.format,
+            content=index,
+            dependencies=(context.evidence,),
+            metadata={
+                "programVersion": context.program_version,
+                "embeddingModel": index.embeddingModel,
+                "embeddingRevision": index.embeddingRevision,
+            },
+        )
+
+    @staticmethod
+    async def _index_heartbeat() -> None:
+        """Keep long CPU indexing visible to Temporal without changing its result."""
+        while True:
+            activity.heartbeat("building-topic-source-index")
+            await asyncio.sleep(10)
+
     async def patch_rejection(self, context: SelectionContext) -> SelectionRejection | None:
         """Load a refused settled patch only for the exact assessed request being corrected."""
         if context.rejection is None:
@@ -265,7 +376,7 @@ class TopicSelectionActivities:
         )
 
     @activity.defn(name="prepare_topic_selection_call")
-    async def prepare(self, context: SelectionContext) -> SelectionCallPlan:  # noqa: C901, PLR0912, PLR0915 — four versioned native stages share one receipt path
+    async def prepare(self, context: SelectionContext) -> SelectionCallPlan:  # noqa: PLR0912, PLR0915 — four versioned native stages share one receipt path
         """Prepare one native schema call with all evidence and rubric dependencies."""
         run, evidence, rubric, selection = await self.load(context)
         if rubric is None or context.rubric is None:
@@ -276,6 +387,7 @@ class TopicSelectionActivities:
             verifier_index=context.verifier_index,
         )
         dependencies = [context.evidence, context.rubric]
+        source_tool_role = None
         if context.candidate_id is not None:
             candidate = (
                 next(
@@ -298,7 +410,17 @@ class TopicSelectionActivities:
         elif selection is not None and context.assessment is None:
             if context.selection is None:
                 raise HarnessValidationError("source review requires its exact selection artifact")
-            prompt = selection_source_prompt(evidence, selection.draft, rubric)
+            index = await self.source_index(context)
+            if context.source_index is None:
+                raise HarnessValidationError("source review requires its exact source index")
+            dependencies.append(context.source_index)
+            source_tool_role = "source_reviewer"
+            prompt = selection_source_prompt(
+                evidence,
+                selection.draft,
+                rubric,
+                source_index_map(index, index_sha256=context.source_index.sha256),
+            )
             stage = f"verify:selection:source:{context.iteration}"
             version = SELECTION_SOURCE_PROMPT_V3
             synthetic = (
@@ -327,11 +449,23 @@ class TopicSelectionActivities:
             if context.rejection is not None:
                 dependencies.append(context.rejection)
         elif context.inventory is None and not context.inventory_attempted:
-            prompt = opportunity_inventory_prompt(evidence, rubric)
+            index = await self.source_index(context)
+            if context.source_index is None:
+                raise HarnessValidationError("inventory requires its exact source index")
+            dependencies.append(context.source_index)
+            source_tool_role = "inventory"
+            prompt = opportunity_inventory_prompt(
+                source_index_map(index, index_sha256=context.source_index.sha256), rubric
+            )
             stage = "verify:selection:inventory:0"
             version = SELECTION_INVENTORY_PROMPT
             synthetic = "topic_opportunity_inventory"
         else:
+            index = await self.source_index(context)
+            if context.source_index is None:
+                raise HarnessValidationError("authoring requires its exact source index")
+            dependencies.append(context.source_index)
+            source_tool_role = "author"
             inventory = await self.inventory(context) if context.inventory else None
             if inventory is not None and context.inventory is not None:
                 dependencies.append(context.inventory)
@@ -352,7 +486,7 @@ class TopicSelectionActivities:
                 diagnostics = (*diagnostics, *refusal.diagnostics)
                 dependencies.append(context.rejection)
             prompt = selection_prompt(
-                evidence,
+                source_index_map(index, index_sha256=context.source_index.sha256),
                 rubric,
                 navigation=navigation,
                 source_inventory=inventory,
@@ -396,6 +530,8 @@ class TopicSelectionActivities:
             author=author,
             verifier=verifier,
             input_artifacts=tuple(dependencies),
+            source_index=context.source_index if source_tool_role is not None else None,
+            source_tool_role=source_tool_role,
             synthetic_payload=synthetic_payload,
         )
 
@@ -422,51 +558,97 @@ class TopicSelectionActivities:
                     (run.id, run.source_id, plan.stage),
                 )
             ).fetchall()
-        if len(rows) != 1 or rows[0]["family"] != route.family:
+        if not rows:
             raise HarnessValidationError(
-                "selection call has no unique settled response from its assigned family"
+                "selection call has no settled response from its assigned family"
             )
-        row = rows[0]
-        retained = await artifacts._artifact_for_read(
-            self.owner.ctx.settings.database_url,
-            scope=self.topics.scope(self.common(context)),
-            source_id=run.source_id,
-            artifact_id=row["id"],
-        )
-        metadata = retained.metadata
-        if (
-            retained.kind != "model_response"
-            or metadata.get("runId") != str(run.id)
-            or metadata.get("programVersion") != plan.program_version
-            or metadata.get("promptVersion") != plan.prompt_version
-            or metadata.get("schemaVersion") != plan.schema_version
-            or metadata.get("route") != route.model_dump(mode="json")
-            or not {ref.id for ref in plan.input_artifacts} <= set(retained.dependency_ids)
-            or not isinstance(metadata.get("requestHash"), str)
-        ):
-            raise HarnessValidationError("selection response changed its exact request identity")
-        _, input_hash, config_hash = ledger.operation_identity(
-            run_id=run.id,
-            kind="model",
-            inputs={**selection_call_inputs(plan), "requestHash": metadata["requestHash"]},
-            config={
-                **selection_call_config(plan, run.config.maxOutputTokens),
-                "programVersion": plan.program_version,
-                "promptVersion": plan.prompt_version,
-                "schemaVersion": plan.schema_version,
-                "route": route.model_dump(mode="json"),
-            },
-        )
-        if row["input_hash"] != input_hash or row["config_hash"] != config_hash:
+        matches: list[HarnessArtifactRef] = []
+        for row in rows:
+            if row["family"] != route.family:
+                continue
+            retained = await artifacts._artifact_for_read(
+                self.owner.ctx.settings.database_url,
+                scope=self.topics.scope(self.common(context)),
+                source_id=run.source_id,
+                artifact_id=row["id"],
+            )
+            metadata = retained.metadata
+            if (
+                retained.kind != "model_response"
+                or metadata.get("runId") != str(run.id)
+                or metadata.get("programVersion") != plan.program_version
+                or metadata.get("promptVersion") != plan.prompt_version
+                or metadata.get("schemaVersion") != plan.schema_version
+                or metadata.get("route") != route.model_dump(mode="json")
+                or not {ref.id for ref in plan.input_artifacts} <= set(retained.dependency_ids)
+                or not isinstance(metadata.get("requestHash"), str)
+            ):
+                continue
+            _, input_hash, config_hash = ledger.operation_identity(
+                run_id=run.id,
+                kind="model",
+                inputs={**selection_call_inputs(plan), "requestHash": metadata["requestHash"]},
+                config={
+                    **selection_call_config(plan, run.config.maxOutputTokens),
+                    "programVersion": plan.program_version,
+                    "promptVersion": plan.prompt_version,
+                    "schemaVersion": plan.schema_version,
+                    "route": route.model_dump(mode="json"),
+                },
+            )
+            if row["input_hash"] != input_hash or row["config_hash"] != config_hash:
+                continue
+            reference = self.owner._artifact_ref(retained)
+            response = MODEL_RESPONSE_ADAPTER.validate_python(await self.read(context, reference))
+            text = "".join(part.content for part in response.parts if isinstance(part, TextPart))
+            if output is None:
+                if response.finish_reason != "tool_call":
+                    matches.append(reference)
+                continue
+            try:
+                parsed = type(output).model_validate_json(text)
+            except (ValidationError, ValueError):
+                continue
+            if parsed == output:
+                matches.append(reference)
+        if len(matches) != 1:
             raise HarnessValidationError(
-                "selection response belongs to different prompt or settings"
+                "selection call has no unique final response matching its typed output"
             )
-        reference = self.owner._artifact_ref(retained)
-        response = MODEL_RESPONSE_ADAPTER.validate_python(await self.read(context, reference))
-        text = "".join(part.content for part in response.parts if isinstance(part, TextPart))
-        if output is not None and type(output).model_validate_json(text) != output:
-            raise HarnessValidationError("selection output differs from its original paid response")
-        return reference
+        return matches[0]
+
+    async def inspection_ref(
+        self,
+        context: SelectionContext,
+        plan: SelectionCallPlan,
+        inspection: SourceInspectionTrace | None,
+        response: HarnessArtifactRef,
+        required_sentence_ids: set[str],
+    ) -> HarnessArtifactRef | None:
+        """Retain successful source-tool coverage for one indexed editorial answer."""
+        if plan.source_tool_role is None:
+            if inspection is not None:
+                raise HarnessValidationError("non-indexed model call carried a source inspection")
+            return None
+        if plan.synthetic_payload is not None:
+            return None
+        if inspection is None or context.source_index is None:
+            raise HarnessValidationError("indexed editorial response has no source inspection")
+        if inspection.role != plan.source_tool_role or inspection.stage != plan.stage:
+            raise HarnessValidationError("source inspection belongs to another editorial call")
+        index = await self.source_index(context)
+        if inspection.index_sha256 != context.source_index.sha256:
+            raise HarnessValidationError("source inspection names a different index")
+        validate_source_inspection(index, inspection)
+        validate_source_read_ids(index, inspection, required_sentence_ids)
+        return await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name="topic-source-inspection/1",
+            content=inspection,
+            dependencies=(context.evidence, context.source_index, response),
+            metadata={"role": plan.source_tool_role, "stage": plan.stage},
+        )
 
     @activity.defn(name="save_topic_opportunity_inventory_v3")
     async def save_inventory(self, request: OpportunityInventorySaveRequest) -> SelectionSaveResult:
@@ -489,15 +671,25 @@ class TopicSelectionActivities:
                 diagnostics=(request.schema_error or "Opportunity inventory is unavailable.",)
             )
         try:
+            inspection = await self.inspection_ref(
+                context,
+                plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, request.inventory),
+            )
             validate_opportunity_inventory(evidence, request.inventory)
         except (HarnessValidationError, ValidationError, ValueError) as error:
             return SelectionSaveResult(diagnostics=(str(error),))
+        dependencies = (*plan.input_artifacts, response)
+        if inspection is not None:
+            dependencies = (*dependencies, inspection)
         reference = await self.topics.publish(
             self.common(context),
             kind="proposal",
             format_name="topic-opportunity-inventory/1",
             content=request.inventory,
-            dependencies=(*plan.input_artifacts, response),
+            dependencies=dependencies,
             metadata={
                 "programVersion": context.program_version,
                 "generatorFamily": plan.verifier.family,
@@ -506,9 +698,7 @@ class TopicSelectionActivities:
         return SelectionSaveResult(selection=reference, draft=request.inventory)
 
     @activity.defn(name="save_topic_selection")
-    async def save(  # noqa: C901
-        self, request: SelectionSaveRequest
-    ) -> SelectionSaveResult:
+    async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
         """Apply a known response atomically, retaining refused patches beside prior work."""
         context = request.context
         _, evidence, rubric, previous = await self.load(context)
@@ -521,12 +711,19 @@ class TopicSelectionActivities:
                 "selection saving requires a typed output or schema diagnostic"
             )
         response = await self.response_ref(context, plan, output)
-        dependencies = (*plan.input_artifacts, response)
+        inspection = None
         diagnostics: tuple[str, ...] = ()
         draft = request.draft
         try:
             if request.schema_error is not None:
                 raise HarnessValidationError(request.schema_error)  # noqa: TRY301
+            inspection = await self.inspection_ref(
+                context,
+                plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, draft),
+            )
             if previous is not None:
                 assessment = await self.assessment(context)
                 if request.patch is None or assessment is None or context.selection is None:
@@ -543,6 +740,9 @@ class TopicSelectionActivities:
                     validate_selection_against_inventory(inventory, draft)
         except (HarnessValidationError, ValidationError, ValueError) as error:
             diagnostics = (str(error),)
+        dependencies = (*plan.input_artifacts, response)
+        if inspection is not None:
+            dependencies = (*dependencies, inspection)
         if diagnostics:
             rejection = SelectionRejection(
                 response=response,
@@ -605,6 +805,7 @@ class TopicSelectionActivities:
         ):
             raise HarnessValidationError("cold observations and stages differ")
         response_refs: list[HarnessArtifactRef] = []
+        inspection_refs: list[HarnessArtifactRef] = []
         admitted_cold: list[TopicSelectionColdReview] = []
         reasons = list(request.reasons)
         for cold, candidate_id, stage in zip(
@@ -630,12 +831,27 @@ class TopicSelectionActivities:
             plan = await self.prepare(cold_context)
             response_refs.append(await self.response_ref(cold_context, plan, None))
         source_context = context.model_copy(update={"candidate_id": None, "assessment": None})
+        admitted_source_review = request.source_review
         # Even a schema-invalid source answer is retained and bound; it is never a pass.
         if request.source_dispatched:
             source_plan = await self.prepare(source_context)
             response_refs.append(
                 await self.response_ref(source_context, source_plan, request.source_review)
             )
+            try:
+                source_inspection = await self.inspection_ref(
+                    source_context,
+                    source_plan,
+                    request.source_inspection,
+                    response_refs[-1],
+                    self._required_sentence_ids(evidence, record.draft, request.source_review),
+                )
+            except (HarnessValidationError, ValidationError, ValueError) as error:
+                admitted_source_review = None
+                reasons.append(f"Source inspection is unavailable: {error}")
+            else:
+                if source_inspection is not None:
+                    inspection_refs.append(source_inspection)
         author, verifier = editorial_routes(
             run.route_snapshot,
             author_index=context.author_index,
@@ -646,7 +862,7 @@ class TopicSelectionActivities:
             record,
             context.selection.sha256,
             cold_reviews=admitted_cold,
-            source_review=request.source_review,
+            source_review=admitted_source_review,
             author_family=author.family,
             verifier_family=verifier.family,
             response_artifacts=tuple(response_refs),
@@ -664,7 +880,13 @@ class TopicSelectionActivities:
             kind="checks",
             format_name=assessment.format,
             content=assessment,
-            dependencies=(context.evidence, context.rubric, context.selection, *response_refs),
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.selection,
+                *response_refs,
+                *inspection_refs,
+            ),
             metadata={"selectionSha256": context.selection.sha256},
         )
         return SelectionAssessmentResult(
@@ -773,6 +995,7 @@ class TopicSelectionActivities:
         """Register versioned selection activities without replacing historical names."""
         return (
             self.rubric,
+            self.build_index,
             self.prepare,
             self.save_inventory,
             self.save,

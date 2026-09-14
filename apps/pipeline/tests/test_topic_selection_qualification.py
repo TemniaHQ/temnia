@@ -4,7 +4,11 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
+
+import httpx
+import httpx2
 
 from qualification_fixtures import (
     API_KEY,
@@ -39,6 +43,13 @@ async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) ->
         call["schemaVersion"] == TOPIC_SELECTION_V3_SCHEMAS[call["stage"]]
         for call in report["calls"]
     )
+    indexed = {"topic_inventory", "topic_author", "topic_source"}
+    for call, request in zip(report["calls"], requests, strict=True):
+        tool_names = {tool["function"]["name"] for tool in request.get("tools", [])}
+        if call["stage"] in indexed:
+            assert tool_names == {"browse_source", "search_source", "read_source"}
+        else:
+            assert not tool_names
 
 
 async def test_v3_qualification_can_refresh_only_a_changed_stage(tmp_path: Path) -> None:
@@ -67,3 +78,86 @@ async def test_v3_qualification_can_refresh_only_a_changed_stage(tmp_path: Path)
     assert [(call["stage"], call["promptVersion"]) for call in report["calls"]] == [
         ("topic_author", SELECTION_AUTHOR_PROMPT_V3)
     ]
+
+
+async def test_v3_qualification_accounts_for_tool_and_final_model_rounds(tmp_path: Path) -> None:
+    requests: list[dict[str, Any]] = []
+
+    async def request_handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        generation = f"generation-{len(requests)}"
+        if len(requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "browse-call",
+                        "type": "function",
+                        "function": {
+                            "name": "browse_source",
+                            "arguments": '{"cursor":0,"limit":8}',
+                        },
+                    }
+                ],
+            }
+            finish_reason = "tool_calls"
+        else:
+            message = {"role": "assistant", "content": json.dumps(_outputs_v3()[1])}
+            finish_reason = "stop"
+        return httpx2.Response(
+            200,
+            request=request,
+            json={
+                "id": generation,
+                "object": "chat.completion",
+                "created": 1,
+                "model": body["model"],
+                "choices": [{"index": 0, "finish_reason": finish_reason, "message": message}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            },
+        )
+
+    async def lookup_handler(request: httpx.Request) -> httpx.Response:
+        generation = request.url.params["id"]
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "data": {
+                    "id": generation,
+                    "model": "family/model-one",
+                    "provider_name": "provider-one",
+                    "is_byok": False,
+                    "total_cost": "0.000001",
+                    "tokens_prompt": 10,
+                    "tokens_completion": 10,
+                }
+            },
+        )
+
+    paths = _paths(tmp_path)
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=1),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=QualificationLimits(
+            suite="topic-selection-v3",
+            stages=("topic_author",),
+            max_exposure_micros=100_000,
+            max_dispatches=2,
+            max_output_tokens=256,
+            lookup_wait_seconds=0,
+        ),
+        request_transport=httpx2.MockTransport(request_handler),
+        lookup_transport=httpx.MockTransport(lookup_handler),
+    )
+
+    assert report["passed"] is True
+    assert report["dispatchCount"] == len(requests) == 2
+    call = report["calls"][0]
+    assert [round_["finishReason"] for round_ in call["rounds"]] == ["tool_call", "stop"]
+    assert requests[1]["messages"][-1]["role"] == "tool"
