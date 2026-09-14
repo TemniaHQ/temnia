@@ -1216,7 +1216,7 @@ def _normalize_extent_operation(
     operation: TopicSelectionPatchOperationV3,
     previous: dict[str, TopicCandidate],
 ) -> TopicSelectionPatchOperationV3:
-    """Recognize equivalent extent edits and discard prose drift in extent-only operations."""
+    """Recognize equivalent extent and title edits; discard prose drift in extent-only ones."""
     if (
         str(operation.kind)
         not in {"extend_start", "extend_end", "replace_extent", "replace_candidate"}
@@ -1229,16 +1229,22 @@ def _normalize_extent_operation(
     if original is None or replacement.id != original.id:
         return operation
     if str(operation.kind) == "replace_candidate":
-        # Keep the raw paid response intact. This derived spelling has exactly the
-        # same finding, source and physical authority as any other extent correction.
-        if (
-            replacement.title != original.title
-            or replacement.purpose != original.purpose
-            or (replacement.firstSentenceId, replacement.lastSentenceId)
-            == (original.firstSentenceId, original.lastSentenceId)
-        ):
-            return operation
-        return operation.model_copy(update={"kind": "replace_extent"})
+        # Keep the raw paid response intact. A derived spelling has exactly the finding,
+        # source and physical authority of the operation whose effect it has.
+        edges_changed = (replacement.firstSentenceId, replacement.lastSentenceId) != (
+            original.firstSentenceId,
+            original.lastSentenceId,
+        )
+        prose_unchanged = (
+            replacement.title == original.title and replacement.purpose == original.purpose
+        )
+        if prose_unchanged and edges_changed:
+            return operation.model_copy(update={"kind": "replace_extent"})
+        if replacement.title != original.title and original.model_dump(
+            exclude={"title"}
+        ) == replacement.model_dump(exclude={"title"}):
+            return operation.model_copy(update={"kind": "retitle"})
+        return operation
     normalized = replacement.model_copy(
         update={"title": original.title, "purpose": original.purpose}
     )
@@ -1316,6 +1322,16 @@ def _validate_replace_candidate_authority(
         _refuse("replace_candidate changed content without an extent-related finding")
 
 
+def _validate_retitle_authority(
+    operation: TopicSelectionPatchOperationV3, findings: list[TopicSelectionFinding]
+) -> None:
+    """A title changes only under an unsupported-title finding, whichever label carries it."""
+    if str(operation.kind) == "retitle" and not any(
+        str(f.kind) == "unsupported_title" for f in findings
+    ):
+        _refuse("retitle changed title without an unsupported-title finding")
+
+
 def _patch_authority(  # noqa: C901
     operation: TopicSelectionPatchOperationV3,
     findings: dict[str, TopicSelectionFinding],
@@ -1340,6 +1356,7 @@ def _patch_authority(  # noqa: C901
         _refuse("new opportunity treatment requires an omission finding")
     if str(operation.kind) == "replace_candidate":
         _validate_replace_candidate_authority(operation, valid, previous)
+    _validate_retitle_authority(operation, valid)
     if all(str(f.kind) == "physical_boundary_constraint" for f in valid):
         edge = _physical_extension_edge(operation, previous, evidence)
         for identifier in operation.affectedCandidateIds:

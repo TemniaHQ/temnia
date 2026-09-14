@@ -16,6 +16,7 @@ from temnia_pipeline.contracts import (
     TopicPortfolioReview,
     TopicPortfolioReviewV4,
     TopicProposal,
+    TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionFinding,
@@ -719,6 +720,71 @@ def test_extent_only_replace_candidate_keeps_the_whole_patch_and_raw_output() ->
     ]
     with pytest.raises(HarnessValidationError, match="requires both a content correction"):
         apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, annotation_only)
+
+
+def test_title_only_replace_candidate_is_the_equivalent_retitle() -> None:
+    """A title-only correction is judged as a retitle whichever label it wears."""
+    candidate = _candidate("titled", 0, 3)
+    record = _record(candidate)
+    title_finding = TopicSelectionFinding.model_validate(
+        {
+            "id": "cold:titled:titleFaithful",
+            "kind": "unsupported_title",
+            "severity": "required",
+            "affectedCandidateIds": [candidate.id],
+            "opportunityIds": [f"opportunity-{candidate.id}"],
+            "evidenceSpans": [_span(0, 3)],
+            "reason": "The title promises more than the discussion delivers.",
+        }
+    )
+    focus_finding = title_finding.model_copy(
+        update={"id": "cold:titled:coherentTopic", "kind": "unfocused_extent"}
+    )
+    retitled = candidate.model_copy(update={"title": "A faithful title"})
+
+    def patch(finding: TopicSelectionFinding, kind: str) -> TopicSelectionPatchV3:
+        return TopicSelectionPatchV3.model_validate(
+            {
+                "baseSelectionSha256": content_hash(record),
+                "evidenceSha256": record.evidenceSha256,
+                "rubricSha256": record.rubricSha256,
+                "summary": "Correct the title.",
+                "operations": [
+                    {
+                        "id": "title",
+                        "kind": kind,
+                        "affectedCandidateIds": [candidate.id],
+                        "findingIds": [finding.id],
+                        "opportunities": [],
+                        "replacementCandidates": [retitled],
+                        "reason": "Name what the discussion actually delivers.",
+                    }
+                ],
+            }
+        )
+
+    def assessment(finding: TopicSelectionFinding) -> TopicSelectionAssessment:
+        return _assess(record).model_copy(
+            update={"executionStatus": "needs_review", "findings": [finding]}
+        )
+
+    admitted = apply_selection_patch(
+        EVIDENCE,
+        record,
+        content_hash(record),
+        assessment(title_finding),
+        patch(title_finding, "replace_candidate"),
+    )
+    assert admitted.proposal.candidates == [retitled]
+    for kind in ("retitle", "replace_candidate"):
+        with pytest.raises(HarnessValidationError, match="unsupported-title finding"):
+            apply_selection_patch(
+                EVIDENCE,
+                record,
+                content_hash(record),
+                assessment(focus_finding),
+                patch(focus_finding, kind),
+            )
 
 
 def test_render_gate_withholds_unreviewed_or_known_invalid_candidates() -> None:
