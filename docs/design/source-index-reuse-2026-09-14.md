@@ -107,4 +107,11 @@ unrelated timing race in the upload-resume browser test: successful adoption cou
 two-second grace before the transient waiting label was observed. The test now refreshes the seeded
 upload's liveness immediately before the adopting browser begins, so it still proves both the visible
 grace countdown and reuse of the stored first part. This record does not treat either interrupted gate
-as acceptance evidence; an exact clean-commit pass remains required.
+as acceptance evidence.
+
+The exact clean-commit gate then passed on `f97249a4849766e12a3b7ff9f62a1c7b7e1a7575` at
+`2026-09-14T13:29:33.304Z`: 1,226 pipeline tests passed with one expected skip, alongside 33 contract,
+202 web, 41 database-isolation, three legacy-reference and two script tests. Every lint, type and
+build check passed, both production images built after the required cache prune, and all 18
+containerized Playwright tests passed in 2.5 minutes. This is local integrity and execution evidence;
+the provider and editorial limits above remain unmeasured.
