@@ -34,11 +34,11 @@ async function artifact(page: Page, view: ChapterView, id: string) {
 }
 
 /**
- * One button, one program: the panel starts `standalone-topics/7` and nothing else.
+ * One button, one program: the panel starts `standalone-topics/3` and nothing else.
  * The recorded fixture is a discovery case: inventory, author, source review, one
  * repair, then the cold and source review of the recovered treatment.
  */
-const EXPECTED_DISPATCHES = 8;
+const EXPECTED_DISPATCHES = 6;
 const INSTRUCTIONS = "Keep the speaker's original language in every title.";
 
 test(`${TOPIC_POLICY} generation, human correction and exact accepted exports`, async ({
