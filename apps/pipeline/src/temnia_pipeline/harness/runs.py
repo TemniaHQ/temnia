@@ -206,7 +206,11 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
 
         program_value = current_program()
     # The operator-only manifest is not part of the cross-language run request.
-    from temnia_pipeline.evals.topics import TopicProgramManifest, digest  # noqa: PLC0415
+    from temnia_pipeline.evals.topics import (  # noqa: PLC0415
+        TopicProgramManifest,
+        digest,
+        editorial_identity,
+    )
 
     program = TopicProgramManifest.model_validate(program_value)
     if program.policy != start.editorial_policy:
@@ -252,11 +256,24 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                 start.editorial_policy != prior_policy
             ):
                 raise IdentityConflict("request key was reused across incompatible editorial lanes")
-            if (
-                pinned.get("evaluationProgram") != evaluation_program
-                or pinned.get("evaluationProgramSha256") != evaluation_program_sha
-            ):
-                raise IdentityConflict("request key was reused with different evaluation programme")
+            pinned_program = pinned.get("evaluationProgram")
+            if start.evaluation_program is not None:
+                # An experiment claims exactly the programme it prepared, build included.
+                if (
+                    pinned_program != evaluation_program
+                    or pinned.get("evaluationProgramSha256") != evaluation_program_sha
+                ):
+                    raise IdentityConflict(
+                        "request key was reused with different evaluation programme"
+                    )
+            elif editorial_identity(pinned_program) != editorial_identity(evaluation_program):
+                # A product run resumes under any build that speaks its editorial programme;
+                # the build is recorded below. Changed prompts or schemas are another run.
+                raise IdentityConflict(
+                    "request key was reused with different evaluation programme: the prompts "
+                    "or schemas changed since this run started, so it cannot be resumed; "
+                    "start a new run"
+                )
             expected = (
                 request.runId,
                 request.sourceId,
@@ -283,18 +300,34 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             # its retained artifacts and settled responses are reused, never paid again.
             # An unconfirmed provider outcome keeps its fence until reconciled.
             if existing["status"] in RESUMABLE_STATUSES and not same_execution:
+                resumed_by = json.dumps(
+                    [
+                        {
+                            "implementationSha256": program.implementation_sha256,
+                            "workflowId": start.workflow.workflow_id,
+                            "workflowRunId": start.workflow.workflow_run_id,
+                        }
+                    ]
+                )
                 existing = await (
                     await conn.execute(
                         """
                         UPDATE harness_run
                            SET workflow_id = %s, workflow_run_id = %s,
-                               status = 'running', error_message = NULL, updated_at = now()
+                               status = 'running', error_message = NULL, updated_at = now(),
+                               route_snapshot = jsonb_set(
+                                   route_snapshot,
+                                   '{resumedImplementations}',
+                                   COALESCE(route_snapshot->'resumedImplementations', '[]'::jsonb)
+                                       || %s::jsonb
+                               )
                          WHERE id = %s AND status = ANY(%s)
                          RETURNING *
                         """,
                         (
                             start.workflow.workflow_id,
                             start.workflow.workflow_run_id,
+                            resumed_by,
                             request.runId,
                             list(RESUMABLE_STATUSES),
                         ),

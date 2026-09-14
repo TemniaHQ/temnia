@@ -98,7 +98,9 @@ The media app on Modal carries `render_sections` and deploys from `main` through
 deploys the two images. The deployment file already says `render: modal / h264_nvenc`.
 Until the app deploy has landed, a worker that finds the function absent renders that
 revision on its own CPU with libx264 and logs why; the next run after the deploy uses the
-card. The same fallback applies when the deployed function cannot start (an import error
+card. A run stopped on such a defect is retried after the deploy that fixes it: **Retry this run**
+resumes it under the new build, which is recorded on the run; only a change to the prompts or
+schemas makes an old run non-resumable, and the panel says so. The same fallback applies when the deployed function cannot start (an import error
 in the image): the run finishes on the CPU, the worker log names the error, and the deploy
 smoke's `render_probe` step exists to catch that before any run does. GPU and CPU renders are different media artifacts, so nothing is reused across the
 encoders. A run's GPU render shows `render-remote` in the activity heartbeat with the Modal

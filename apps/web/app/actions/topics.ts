@@ -9,12 +9,17 @@ import {
   WORKFLOWS,
 } from "@temnia/contracts";
 import { chapterReviewEvent, harnessRun, source, transcript } from "@temnia/db";
+import type { WorkflowHandle } from "@temporalio/client";
 import { WorkflowNotFoundError } from "@temporalio/client";
 import { and, eq, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
 import { harnessSettings } from "@/lib/harness/config";
+import {
+  EARLY_FAILURE_WINDOW_MS,
+  earlyFailure,
+} from "@/lib/harness/early-failure";
 import {
   TOPIC_POLICY,
   TopicStartInstructionsSchema,
@@ -382,18 +387,21 @@ export async function retryTopicRun(
   }
   const generation = topicGeneration(prepared.input);
   const workflowId = `${generation.prefix}/${parsed.data.runId}/retry-${crypto.randomUUID()}`;
+  let handle: WorkflowHandle;
   try {
     const client = await getTemporalClient();
-    await client.withDeadline(Date.now() + TEMPORAL_RPC_DEADLINE_MS, () =>
-      client.workflow.start(generation.workflow, {
-        args: [prepared.input],
-        memo: { [INTENT_MEMO_KEY]: intentSha256(generation.intent) },
-        taskQueue: TASK_QUEUES.pipeline,
-        workflowExecutionTimeout: "12 hours",
-        workflowId,
-        workflowIdConflictPolicy: "USE_EXISTING",
-        workflowIdReusePolicy: "REJECT_DUPLICATE",
-      })
+    handle = await client.withDeadline(
+      Date.now() + TEMPORAL_RPC_DEADLINE_MS,
+      () =>
+        client.workflow.start(generation.workflow, {
+          args: [prepared.input],
+          memo: { [INTENT_MEMO_KEY]: intentSha256(generation.intent) },
+          taskQueue: TASK_QUEUES.pipeline,
+          workflowExecutionTimeout: "12 hours",
+          workflowId,
+          workflowIdConflictPolicy: "USE_EXISTING",
+          workflowIdReusePolicy: "REJECT_DUPLICATE",
+        })
     );
   } catch {
     return {
@@ -403,7 +411,17 @@ export async function retryTopicRun(
       runId: parsed.data.runId,
     };
   }
+  // The worker refuses a retry it cannot resume within seconds, before the run is
+  // claimed; that refusal reaches the reader here, not through the run row.
+  const refusal = await earlyFailure(handle, EARLY_FAILURE_WINDOW_MS);
   revalidatePath(`/sources/${parsed.data.sourceId}`);
+  if (refusal !== null) {
+    return {
+      message: `Retry refused: ${refusal}`,
+      ok: false,
+      runId: parsed.data.runId,
+    };
+  }
   return { ok: true, runId: parsed.data.runId };
 }
 

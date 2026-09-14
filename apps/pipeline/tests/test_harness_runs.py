@@ -1885,6 +1885,93 @@ async def test_reasoned_all_drop_revision_can_accept_an_empty_export_without_mod
         await db.close_pool()
 
 
+async def test_a_stopped_run_resumes_after_a_deploy_but_not_after_a_programme_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rajesh's 11:00 run could not be retried after the deploy that fixed its failure."""
+    from temnia_pipeline.harness import topic_program  # noqa: PLC0415
+
+    url = pipeline_url()
+    value = snapshot()
+    source_id = await ready_source(url)
+    start = start_request(source_id, value)
+
+    def resume(tag: str) -> StartRunRequest:
+        return start.model_copy(
+            update={
+                "workflow": WorkflowIdentity(
+                    workflow_id=f"topic-selection/resume/retry-{tag}",
+                    workflow_run_id=f"resume-run/{tag}",
+                )
+            }
+        )
+
+    try:
+        created = await start_or_refetch_run(
+            url, start=start, settings=settings(value), route_snapshot=value
+        )
+        assert created.created
+        assert created.run.evaluation_program is not None
+        pinned_build = str(created.run.evaluation_program["implementationSha256"])
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                "UPDATE harness_run SET status = 'failed', error_message = 'stopped' WHERE id = %s",
+                (start.request.runId,),
+            )
+        # A deploy changes every Python file's hash and nothing editorial.
+        monkeypatch.setattr(topic_program, "source_build_id", lambda: "d" * 64)
+        resumed = await start_or_refetch_run(
+            url, start=resume("deploy"), settings=settings(value), route_snapshot=value
+        )
+        assert str(resumed.run.status) == "running"
+        assert resumed.run.evaluation_program is not None
+        assert resumed.run.evaluation_program["implementationSha256"] == pinned_build
+        async with db.scoped(url, SEEDED) as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT route_snapshot FROM harness_run WHERE id = %s",
+                    (start.request.runId,),
+                )
+            ).fetchone()
+        assert row is not None
+        assert row["route_snapshot"]["resumedImplementations"] == [
+            {
+                "implementationSha256": "d" * 64,
+                "workflowId": "topic-selection/resume/retry-deploy",
+                "workflowRunId": "resume-run/deploy",
+            }
+        ]
+        assert row["route_snapshot"]["evaluationProgram"]["implementationSha256"] == pinned_build
+        # A changed prompt template is another programme; the run is not resumable.
+        async with db.scoped(url, SEEDED) as conn:
+            await conn.execute(
+                "UPDATE harness_run SET status = 'failed' WHERE id = %s", (start.request.runId,)
+            )
+        original = topic_program.current_program
+
+        def reprompted() -> object:
+            manifest = original()
+            stage = manifest.stages["topic_patch"]
+            return manifest.model_copy(
+                update={
+                    "stages": {
+                        **manifest.stages,
+                        "topic_patch": stage.model_copy(
+                            update={"prompt_template_sha256": "e" * 64}
+                        ),
+                    }
+                }
+            )
+
+        monkeypatch.setattr(topic_program, "current_program", reprompted)
+        with pytest.raises(IdentityConflict, match="prompts or schemas changed"):
+            await start_or_refetch_run(
+                url, start=resume("prompt"), settings=settings(value), route_snapshot=value
+            )
+    finally:
+        await db.close_pool()
+
+
 @pytest.mark.parametrize("stopped", ["failed", "budget_paused"])
 async def test_a_new_execution_resumes_a_run_stopped_on_a_known_failure(stopped: str) -> None:
     """The run keeps its identity and artifacts; only the Temporal execution is new."""

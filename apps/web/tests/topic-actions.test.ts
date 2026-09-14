@@ -335,6 +335,42 @@ describe("retrying a stopped run", () => {
     });
   });
 
+  it("reports a retry the worker refuses within the window, innermost sentence first", async () => {
+    rows([[stoppedRun]]);
+    const refused = Object.assign(new Error("Workflow execution failed"), {
+      cause: Object.assign(new Error("Activity task failed"), {
+        cause: new Error(
+          "request key was reused with different evaluation programme: the prompts or schemas changed since this run started, so it cannot be resumed; start a new run"
+        ),
+      }),
+    });
+    mocks.start.mockImplementation(async () => ({
+      describe: async () => ({ status: { name: "FAILED" } }),
+      result: () => Promise.reject(refused),
+    }));
+    const outcome = await retryTopicRun({ runId: RUN, sourceId: SOURCE });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? "" : outcome.message).toBe(
+      "Retry refused: request key was reused with different evaluation programme: the prompts or schemas changed since this run started, so it cannot be resumed; start a new run"
+    );
+  });
+
+  it("treats a retry still running after the window as started", async () => {
+    vi.useFakeTimers();
+    try {
+      rows([[stoppedRun]]);
+      mocks.start.mockImplementation(async () => ({
+        describe: async () => ({ status: { name: "RUNNING" } }),
+        result: () => new Promise<never>(() => undefined),
+      }));
+      const pending = retryTopicRun({ runId: RUN, sourceId: SOURCE });
+      await vi.advanceTimersByTimeAsync(8000);
+      await expect(pending).resolves.toEqual({ ok: true, runId: RUN });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses a run that is running or fenced on an unknown charge", async () => {
     rows([[{ ...stoppedRun, status: "running" }]]);
     await expect(
