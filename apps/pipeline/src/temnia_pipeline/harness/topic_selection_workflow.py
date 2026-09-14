@@ -523,13 +523,17 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         seen = {accepted.semantic_key}
         cache: dict[str, tuple[TopicSelectionColdReview, str]] = {}
         final: SelectionAssessmentResult
+        pending_assessment: SelectionAssessmentResult | None = None
         stop_reasons: list[str] = []
+        rejection_diagnostics: tuple[str, ...] = ()
         limited = False
         while True:
-            final = await self.review_selection(request, context, draft, cache)
-            context = self.carry_routes(context, self.settled_context).model_copy(
-                update={"assessment": final.artifact}
-            )
+            if pending_assessment is None:
+                pending_assessment = await self.review_selection(request, context, draft, cache)
+                context = self.carry_routes(context, self.settled_context).model_copy(
+                    update={"assessment": pending_assessment.artifact}
+                )
+            final = pending_assessment
             if str(final.assessment.executionStatus) == "complete" or not final.actionable:
                 break
             if run.repair_count >= request.config.maxRepairs:
@@ -537,6 +541,11 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 stop_reasons.append(
                     "The configured repair allowance ended with unresolved editorial findings."
                 )
+                if rejection_diagnostics:
+                    stop_reasons.append(
+                        "The last repair was refused without changing the prior assessed "
+                        "selection: " + "; ".join(rejection_diagnostics)
+                    )
                 break
             run = await self.claim_repair(run, request)
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
@@ -563,12 +572,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 break
             saved = await self.save_selection(save)
             if saved.rejection is not None:
-                refused = "; ".join(saved.diagnostics) or "no diagnostic was recorded"
-                stop_reasons.append(
-                    "An invalid repair was retained without changing the prior assessed "
-                    f"selection. The repair was refused because: {refused}"
-                )
-                break
+                rejection_diagnostics = saved.diagnostics
+                context = patch_context.model_copy(update={"rejection": saved.rejection})
+                continue
             if saved.semantic_key in seen:
                 stop_reasons.append(
                     "Repair repeated the same editorial selection without improvement."
@@ -578,8 +584,10 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 raise RuntimeError("selection repair returned no valid replacement")
             seen.add(saved.semantic_key)
             draft = saved.draft
+            rejection_diagnostics = ()
+            pending_assessment = None
             context = patch_context.model_copy(
-                update={"selection": saved.selection, "assessment": None}
+                update={"selection": saved.selection, "assessment": None, "rejection": None}
             )
         if stop_reasons:
             final = await workflow.execute_activity(

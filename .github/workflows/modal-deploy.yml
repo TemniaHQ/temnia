@@ -7,6 +7,10 @@ name: Modal media app deploy
 #
 # One-time setup, not a per-change step: the repository secrets MODAL_TOKEN_ID and
 # MODAL_TOKEN_SECRET hold the temnia-pipeline-staging token (staging.md §2c).
+#
+# The repository's Actions policy allows GitHub-owned and verified actions only and
+# requires every `uses` to be pinned to a commit SHA; a tag ref fails the run at startup.
+# uv is installed from PyPI at its pinned version rather than through a third-party action.
 
 on:
   push:
@@ -39,17 +43,15 @@ jobs:
       run:
         working-directory: apps/pipeline
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Refuse to run without the deploy token
         run: |
           if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
             echo "::error::MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are not set as repository secrets (staging.md §2c)."
             exit 1
           fi
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.12.7"
-          enable-cache: true
+      - name: Install uv at the repository's pinned version
+        run: python3 -m pip install --quiet "uv==0.12.7"
       - name: Install the pipeline project
         run: uv sync --frozen --no-dev
       - name: Deploy the media app to the staging environment

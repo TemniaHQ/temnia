@@ -29,10 +29,11 @@ from temnia_pipeline.contracts import (
     TopicSelectionPatchV3,
     TopicSelectionRecord,
 )
+from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.gateway import parse_retry_after
-from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown
+from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
 from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
@@ -45,17 +46,22 @@ from temnia_pipeline.harness.topic_selection_activities import TopicSelectionAct
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
 )
+from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
 from topic_fixtures import _cold, _criterion, _source
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from pydantic import BaseModel
 
     from temnia_pipeline.harness.activities import HarnessActivities
     from temnia_pipeline.harness.models import HarnessModelDeps
-    from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan, SelectionContext
+    from temnia_pipeline.harness.topic_selection_runtime import (
+        SelectionCallPlan,
+        SelectionContext,
+        SelectionRejection,
+    )
 
 
 EVIDENCE = augment_topic_evidence(_case().model_copy(update={"sourceId": SOURCE_ID}))
@@ -219,6 +225,8 @@ class Program:
         )
         self.run = _snapshot(start, self.routes).model_copy(update={"editorial_policy": policy})
         self.objects: dict[UUID, BaseModel] = {}
+        self.records: dict[UUID, SimpleNamespace] = {}
+        self.prepared_contexts: list[SelectionContext] = []
         self.saved: list[tuple[str, HarnessArtifactRef]] = []
         self.compiled: TopicCompilation | None = None
         self.final_context: SelectionContext | None = None
@@ -233,11 +241,18 @@ class Program:
         self.source = AgentDouble("source", sources, self.call_order)
         self.patch = AgentDouble("patch", patches, self.call_order)
         self.activities = TopicSelectionActivities(
-            cast("HarnessActivities", SimpleNamespace(_recorded_output=lambda _name: None))  # pyright: ignore[reportUnknownLambdaType]
+            cast(
+                "HarnessActivities",
+                SimpleNamespace(
+                    _recorded_output=lambda _name: None,  # pyright: ignore[reportUnknownLambdaType]
+                    _artifact_ref=lambda record: record.ref,  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
+                    ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test-database")),
+                ),
+            )
         )
         monkeypatch.setattr(self.activities, "load", self.load)
         monkeypatch.setattr(self.activities, "read", self.read)
-        monkeypatch.setattr(self.activities, "require_record", self.require_record)
+        monkeypatch.setattr(artifacts, "_artifact_for_read", self.artifact_for_read)
         monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
         monkeypatch.setattr(self.activities.topics, "publish", self.publish)
         monkeypatch.setattr(workflow_type, "author_agent", self.author)
@@ -277,16 +292,19 @@ class Program:
     async def read(self, _context: SelectionContext, ref: HarnessArtifactRef) -> object:
         return self.objects[ref.id].model_dump(mode="json")
 
-    async def require_record(self, *_args: object, **_kwargs: object) -> None:
-        pass
+    async def artifact_for_read(
+        self, _database_url: str, *, artifact_id: UUID, **_kwargs: object
+    ) -> SimpleNamespace:
+        return self.records[artifact_id]
 
     async def publish(
         self,
-        _context: TopicContext,
+        context: TopicContext,
         *,
         content: BaseModel,
         format_name: str,
         kind: str,
+        dependencies: Sequence[HarnessArtifactRef] = (),
         **_kwargs: object,
     ) -> HarnessArtifactRef:
         digest = content_hash(content)
@@ -299,6 +317,11 @@ class Program:
             storageKey=f"tests/{digest}.json",
         )
         self.objects[ref.id] = content
+        self.records[ref.id] = SimpleNamespace(
+            ref=ref,
+            metadata={"format": format_name, "runId": str(context.run.run_id)},
+            dependency_ids=[item.id for item in dependencies],
+        )
         self.saved.append((format_name, ref))
         return ref
 
@@ -336,6 +359,8 @@ class Program:
             "stop_topic_selection": self.activities.stop,
         }
         if name in operations:
+            if name == "prepare_topic_selection_call":
+                self.prepared_contexts.append(value)
             return await operations[name](value)
         if name == "compile_topic_selection":
             self.final_context = value
@@ -502,17 +527,201 @@ async def test_source_invalid_patch_retains_the_prior_assessed_selection(
         monkeypatch,
         initial=draft(selected=False),
         sources=[v3_portfolio(selected=False, missing=True)],
-        patches=[invalid],
+        patches=[invalid, invalid, invalid],
+    )
+    run.request = run.request.model_copy(
+        update={"config": run.request.config.model_copy(update={"maxRepairs": 3})}
     )
     result = await TopicSelectionWorkflow().program(run.request)
     selections = [ref for format_name, ref in run.saved if format_name == "topic-selection/2"]
     assert len(selections) == 1
     assert run.final_context is not None
     assert run.final_context.selection == selections[0]
-    assert any(name == "topic-selection-rejection/2" for name, _ in run.saved)
-    assert "invalid repair" in (result.errorMessage or "")
-    assert "The repair was refused because: " in (result.errorMessage or "")
+    rejections = [ref for name, ref in run.saved if name == "topic-selection-rejection/2"]
+    assert len(rejections) == 3
+    assert run.call_order == ["inventory", "author", "source", "patch", "patch", "patch"]
+    assert run.run.repair_count == 3
+    assert "repair allowance ended" in (result.errorMessage or "")
+    assert "The last repair was refused" in (result.errorMessage or "")
+    assert "unknown or reversed source sentence span" in (result.errorMessage or "")
+    assert [call.stage for call in run.patch.calls] == [
+        "repair:selection:1",
+        "repair:selection:2",
+        "repair:selection:3",
+    ]
+    # Identical refused outputs and diagnostics produce identical correction prompts;
+    # the new immutable rejection dependency still makes each paid operation distinct.
+    assert run.patch.prompts[1] == run.patch.prompts[2]
+    identities = [
+        operation_identity(
+            run_id=call.run_id,
+            kind="model",
+            inputs=call.operation_inputs,
+            config=call.operation_config,
+        )[0]
+        for call in run.patch.calls
+    ]
+    assert len(set(identities)) == 3
+    for call, rejection in zip(run.patch.calls[1:], rejections, strict=False):
+        assert str(rejection.id) in {
+            item["id"] for item in cast("list[dict[str, str]]", call.operation_inputs["artifacts"])
+        }
     assert run.render_count == 0
+
+
+async def test_settled_bad_hash_patch_is_corrected_before_fresh_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def retitle(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+        return TopicSelectionPatchV3.model_validate(
+            {
+                **{
+                    name: payload[name]
+                    for name in ("baseSelectionSha256", "evidenceSha256", "rubricSha256")
+                },
+                "summary": "Correct the unsupported title.",
+                "operations": [
+                    {
+                        "id": "retitle",
+                        "affectedCandidateIds": [CANDIDATE.id],
+                        "findingIds": [f"cold:{CANDIDATE.id}:titleFaithful"],
+                        "kind": "retitle",
+                        "opportunities": [],
+                        "reason": "The replacement accurately describes the existing discussion.",
+                        "replacementCandidates": [
+                            CANDIDATE.model_copy(update={"title": "A faithful replacement title"})
+                        ],
+                    }
+                ],
+            }
+        )
+
+    def bad_hash(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+        return retitle(payload).model_copy(update={"baseSelectionSha256": "0" * 64})
+
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        colds=[cold().model_copy(update={"titleFaithful": _criterion("fail")}), cold()],
+        sources=[v3_portfolio(selected=True), v3_portfolio(selected=True)],
+        patches=[bad_hash, retitle],
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == [
+        "inventory",
+        "author",
+        "cold",
+        "source",
+        "patch",
+        "patch",
+        "cold",
+        "source",
+    ]
+    patch_contexts = [context for context in run.prepared_contexts if context.assessment]
+    assert len(patch_contexts) == 2
+    first, correction = patch_contexts
+    assert first.selection == correction.selection
+    assert first.assessment == correction.assessment
+    assert correction.iteration == first.iteration + 1
+    assert correction.rejection is not None
+    refusal = cast("SelectionRejection", run.objects[correction.rejection.id])
+    payload = json.loads(run.patch.prompts[1].split("SOURCE DATA\n", 1)[1])
+    assert refusal.patch is not None
+    assert payload["rejectedPatch"] == refusal.patch.model_dump(mode="json")
+    assert payload["rejectedPatch"]["baseSelectionSha256"] == "0" * 64
+    assert payload["validationDiagnostics"] == list(refusal.diagnostics)
+    assert "patch base, evidence, rubric or assessment identity differs" in refusal.diagnostics
+    assert first.assessment is not None
+    assert first.selection is not None
+    assert first.rubric is not None
+    assert {
+        first.evidence.id,
+        first.rubric.id,
+        first.selection.id,
+        first.assessment.id,
+        refusal.response.id,
+    } <= set(run.records[correction.rejection.id].dependency_ids)
+    assert str(correction.rejection.id) in {
+        item["id"]
+        for item in cast("list[dict[str, str]]", run.patch.calls[1].operation_inputs["artifacts"])
+    }
+    assert run.final_context is not None
+    assert run.final_context.rejection is None
+    assert run.final_context.selection != first.selection
+    assert run.final_context.assessment != first.assessment
+    assert run.render_count == 1
+
+
+@pytest.mark.parametrize(
+    "stale_part", ["run", "evidence", "rubric", "selection", "assessment", "response", "stage"]
+)
+async def test_patch_correction_refuses_stale_rejection_provenance(
+    monkeypatch: pytest.MonkeyPatch, stale_part: str
+) -> None:
+    def invalid(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+        return add_patch(payload).model_copy(update={"baseSelectionSha256": "0" * 64})
+
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[v3_portfolio(selected=False, missing=True)],
+        patches=[invalid],
+    )
+    run.request = run.request.model_copy(
+        update={"config": run.request.config.model_copy(update={"maxRepairs": 1})}
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    patch_context = next(context for context in run.prepared_contexts if context.assessment)
+    rejection = next(ref for name, ref in run.saved if name == "topic-selection-rejection/2")
+    correction = patch_context.model_copy(
+        update={"rejection": rejection, "iteration": patch_context.iteration + 1}
+    )
+    # The unmodified artifact is from precisely this assessed request.
+    await run.activities.prepare(correction)
+    row = run.records[rejection.id]
+    refusal = cast("SelectionRejection", run.objects[rejection.id])
+    if stale_part == "run":
+        row.metadata["runId"] = str(uuid5(NAMESPACE_URL, "different-run"))
+    elif stale_part == "stage":
+        other = refusal.model_copy(update={"stage": "proposal:selection:1"})
+        other_ref = await run.publish(
+            TopicContext(run=correction.run, evidence=correction.evidence),
+            content=other,
+            kind="checks",
+            format_name=other.format,
+            dependencies=[
+                run.records[identifier].ref
+                for identifier in row.dependency_ids
+                if identifier != EVIDENCE_REF.id
+            ]
+            + [EVIDENCE_REF],
+        )
+        correction = correction.model_copy(update={"rejection": other_ref})
+    else:
+        ref = refusal.response if stale_part == "response" else getattr(correction, stale_part)
+        assert ref is not None
+        row.dependency_ids.remove(ref.id)
+        row.dependency_ids.append(uuid5(NAMESPACE_URL, "unrelated-dependency"))
+    with pytest.raises(HarnessValidationError, match=r"dependencies|preceding typed refusal"):
+        await run.activities.prepare(correction)
+
+
+async def test_unknown_outcome_during_patch_correction_stays_fenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+        return add_patch(payload).model_copy(update={"baseSelectionSha256": "0" * 64})
+
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[v3_portfolio(selected=False, missing=True)],
+        patches=[invalid, OutcomeUnknown("unknown corrective request")],
+    )
+    with pytest.raises(OutcomeUnknown, match="unknown corrective request"):
+        await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == ["inventory", "author", "source", "patch", "patch"]
+    assert run.compiled is None
 
 
 async def test_review_execution_limit_preserves_unknown_not_false_pass(

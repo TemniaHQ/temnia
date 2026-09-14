@@ -2,6 +2,13 @@
 
 ## Decisions
 
+**2026-09-14 — GitHub Actions in this repository: GitHub-owned or verified actions only,
+every `uses` pinned to a commit SHA.** The first `modal-deploy` run failed at startup because
+the repository policy (`allowed_actions: selected`, `sha_pinning_required: true`) refused
+`actions/checkout@v4` and a third-party setup action. Pin `actions/checkout` to its commit
+SHA with the tag in a comment, and install tools from their registries at pinned versions
+(uv from PyPI) instead of through actions.
+
 **2026-09-14 — Every deployable deploys from a push to `main`; nothing ships by hand.** Rajesh,
 handed a `modal deploy` command in a runbook: "deployments should be automatic when code
 merges to main until and unless a manual deployment is required." Dokploy already deployed
@@ -15,6 +22,25 @@ own CPU with libx264 and logs why, instead of a runbook asking for ordering by h
 acceptable manual step is a one-time secret or account action, named once with the reason it
 cannot be automated: here, the `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` repository secrets.
 
+**2026-09-13 — Equivalent extent repairs preserve authority; settled refusals get bounded
+correction.** Karma run `a562673b-6723-47b8-a425-476f061f44dd` withheld four candidates after
+one `replace_candidate` changed both edges and annotations but kept title/purpose. The
+patch prompt suggested that combination while validation required a title/purpose change.
+Patch prompt `/10` distinguishes the operations. The existing in-memory normalizer treats
+this exact extent-only effect as `replace_extent`, preserving raw paid output and every
+finding/source/physical/atomic check. A typed, settled patch rejected by validation now
+uses the remaining shared repair allowance with the rejection artifact and diagnostic
+bound into a distinct request; the unchanged selection is not reviewed again first.
+Rejected-output hashes may themselves be wrong: authority comes from the rejection's
+actual request dependencies. Admitted corrections clear rejection context and receive
+fresh review. Unknown outcomes remain fenced. This repairs admission and bounded
+correction, not the editorial criteria or fresh-execution retry accounting. The original
+four-operation patch passes offline without changing its raw operation labels; its
+editorial adequacy remains unmeasured. Plan: `docs/plans/topic-repair-recovery.md`.
+By the same rule a title-only `replace_candidate` is the equivalent `retitle`, and a title
+changes only under an unsupported-title finding whichever label carries it. A purpose-only or
+annotation-only correction is a `replace_candidate` under that axis's finding (prompt `/11`), so
+no grounded correction is unrepresentable; only prose-only changes are refused.
 **2026-09-13 — Topic videos render on the Modal GPU; the worker verifies and publishes.**
 Second part of `docs/plans/media-placement-360-view.md`. `render_sections` in the media app
 renders every missing section of a revision from one download of the master with the
