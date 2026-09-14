@@ -11,12 +11,20 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import httpx2
 
+from temnia_pipeline.contracts import (
+    HarnessArtifactKind,
+    HarnessArtifactRef,
+    Scope,
+    TopicSourceIndex,
+)
+from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness.qualification import (
     CandidateRoute,
     QualificationLimits,
     _provisional_route,
     run_qualification,
 )
+from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.qualification_topic_selection import (
     topic_selection_qualification_case,
     topic_selection_qualification_inventory,
@@ -25,9 +33,75 @@ from temnia_pipeline.harness.topic_selection import candidate_handoff_rows, cont
 from test_harness_settings import snapshot
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from obstore.store import S3Store
+
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 API_KEY = "qualification-test-key-marker"
+
+
+async def _published_source_index_ref(
+    database_url: str, *, scope: Scope, source_id: UUID, store: S3Store
+) -> HarnessArtifactRef:
+    """Publish one valid scoped synthetic index for model-transport integration tests."""
+    evidence = synthetic_qualification_evidence().model_copy(update={"sourceId": source_id})
+    index = TopicSourceIndex.model_validate(
+        {
+            "format": "topic-source-index/1",
+            "evidenceSha256": "e" * 64,
+            "sourceId": str(source_id),
+            "transcriptId": str(evidence.transcriptId),
+            "transcriptRevision": evidence.transcriptRevision,
+            "embeddingModel": "sentence-transformers/all-MiniLM-L6-v2",
+            "embeddingRevision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+            "embeddingDimensions": 1,
+            "regionMaxSentences": 32,
+            "regionMaxCharacters": 8000,
+            "sentences": [
+                {
+                    "id": sentence.id,
+                    "startMs": sentence.startMs,
+                    "endMs": sentence.endMs,
+                    "speakers": sentence.speakers,
+                    "text": sentence.text,
+                }
+                for sentence in evidence.sentences
+            ],
+            "regions": [
+                {
+                    "id": "r1",
+                    "ordinal": 0,
+                    "firstSentenceId": evidence.sentences[0].id,
+                    "lastSentenceId": evidence.sentences[-1].id,
+                    "startMs": evidence.sentences[0].startMs,
+                    "endMs": evidence.sentences[-1].endMs,
+                    "sentenceCount": len(evidence.sentences),
+                    "keywords": ["garden", "watering", "roots"],
+                    "preview": "Synthetic garden discussion.",
+                    "embedding": [1.0],
+                }
+            ],
+        }
+    )
+    accepted = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="checks", fingerprint="f" * 64),
+        content=index.model_dump(mode="json"),
+        metadata={"format": index.format},
+    )
+    return HarnessArtifactRef(
+        id=accepted.id,
+        kind=HarnessArtifactKind.checks,
+        fingerprint=accepted.fingerprint,
+        sha256=accepted.sha256,
+        sizeBytes=accepted.size_bytes,
+        storageKey=accepted.storage_key,
+    )
 
 
 def _candidate_payload(*, price: int = 1, count: int = 1) -> dict[str, Any]:

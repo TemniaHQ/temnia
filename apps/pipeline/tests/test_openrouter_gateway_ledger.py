@@ -13,7 +13,7 @@ import pytest
 from obstore.store import MemoryStore
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from qualification_fixtures import _outputs_v3
+from qualification_fixtures import _outputs_v3, _published_source_index_ref
 from temnia_pipeline import db
 from temnia_pipeline.harness import models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
@@ -89,6 +89,10 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         }
     )
     await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
+    store = cast("S3Store", MemoryStore())
+    source_index = await _published_source_index_ref(
+        url, scope=SEEDED, source_id=source_id, store=store
+    )
     requests = 0
     lookups = 0
     early_rows: list[dict[str, Any]] = []
@@ -136,6 +140,11 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         assert body[output_key] == 8192
         assert other_key not in body
         assert body["model"] == selected.gateway_model
+        assert {item["function"]["name"] for item in body["tools"]} == {
+            "browse_source",
+            "search_source",
+            "read_source",
+        }
         return httpx2.Response(
             200,
             request=request,
@@ -172,7 +181,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         models.configure_model_runtime(
             ModelRuntime(
                 database_url=url,
-                store=cast("S3Store", MemoryStore()),
+                store=store,
                 cassette_store=CassetteStore(tmp_path),
                 gateway=gateway,
                 model_factory=factory,
@@ -188,7 +197,9 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             schema_version=TOPIC_SELECTION_V3_SCHEMAS["topic_author"],
             author=selected,
             verifier=selected,
-            input_artifacts=(),
+            input_artifacts=(source_index,),
+            source_index=source_index,
+            source_tool_role="author",
         )
         deps = selection_model_deps(start.request, plan)
         agent = models.topic_selection_author_v3
