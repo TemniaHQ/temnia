@@ -64,6 +64,9 @@ responses/checkpoints. Mixed fallback families are recorded, and a participating
 cannot independently review the result. Historical V3/V4 requests remain unchanged; the web stays
 on V3. Contract:
 [bounded-author-packaging-2026-09-14.md](docs/design/bounded-author-packaging-2026-09-14.md).
+The clean exact-commit gate passed for `d354517` at `2026-09-14T14:43:09.646Z`, including 1,247
+pipeline tests with one intentional skip, both cold production images and all 18 Playwright
+workflow tests.
 Whole-portfolio source review and repair are still unbounded final-answer stages, so their
 decomposition is next. No real provider, latency, recovery or quality result follows, and no new
 model arm or paid run is authorized by this record.

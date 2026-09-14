@@ -2,8 +2,8 @@
 
 Date: 2026-09-14  
 Program: `standalone-topics/5`  
-Status: implemented and locally verified; exact-commit gate, real-route qualification and
-long-source editorial evaluation remain open
+Status: implemented; clean exact-commit gate passed; real-route qualification and long-source
+editorial evaluation remain open
 
 ## Problem
 
@@ -136,6 +136,11 @@ selection → source review ordering. A refused author shard stops before source
 publishes a selection. An empty inventory produces the complete empty manifest without an author
 call. The exact five-stage mocked V5 pre-flight passes, and PydanticAI/Temporal registration
 contains one disjoint activity set.
+
+The clean exact-commit gate passed for `d354517f77df5f94f9d3bcd2709cc9c4269451b3` at
+`2026-09-14T14:43:09.646Z`. It ran the complete workspace build, lint, type check and test graph;
+the pipeline suite reported 1,247 passed and one skipped. Both production images were rebuilt from
+cold dependencies, and all 18 Playwright workflow tests passed.
 
 These checks prove finite request shape, provenance and failure behavior. They do not prove that 12
 is the best quality/latency tradeoff, that the model packages opportunities well, or that the final
