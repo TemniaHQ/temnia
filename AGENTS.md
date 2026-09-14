@@ -2,6 +2,19 @@
 
 ## Decisions
 
+**2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
+the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh
+pressed Retry on the run that #46 fixed and it failed in three seconds: the run's frozen
+evaluation programme includes `implementationSha256`, a digest of every Python file in the
+pipeline, so the deploy that fixed the defect made the run non-resumable, and the refusal never
+reached the panel because it happened before the run was claimed. Now a product run (no explicit
+programme on the request) is compared on `editorial_identity`: policy, programme version and the
+five stages' prompt-template and schema hashes; the resuming build is appended to
+`route_snapshot.resumedImplementations`; changed prompts or schemas still refuse, with a sentence
+that says to start a new run. An experiment claim (explicit programme) stays strict, build
+included. The web retry action waits up to eight seconds for an early failure and shows its
+innermost sentence as "Retry refused: ..."; a run still going after the window is a started retry.
+
 **2026-09-14 — The Modal render function imports only light modules, the release smoke proves
 the render path, and a function that cannot start falls back to the CPU.** The first GPU render
 after #45 failed on the card with `No module named 'psycopg'`: `render_sections` imported a

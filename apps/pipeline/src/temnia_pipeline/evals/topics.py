@@ -10,6 +10,7 @@ They do not replace the TypeScript/Python runtime schema owner.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -48,6 +49,18 @@ Identifier = Annotated[str, Field(min_length=1)]
 def digest(value: object) -> str:
     """Hash canonical JSON, not a pretty-printed export file."""
     return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def editorial_identity(program: Mapping[str, object] | None) -> dict[str, object] | None:
+    """The programme without its implementation build: what a resumed run must still speak.
+
+    Prompts, schemas and the policy decide whether retained work and new work belong to
+    one run. The build that produced them is provenance; every deploy changes it, and a
+    run stopped on a defect is resumed precisely after the deploy that fixes it.
+    """
+    if program is None:
+        return None
+    return {key: value for key, value in program.items() if key != "implementationSha256"}
 
 
 class TopicArtifact(EvaluationModel):
