@@ -2,8 +2,8 @@
 
 Date: 2026-09-14  
 Program: `standalone-topics/4`  
-Status: implemented and locally verified; real-route qualification and long-source editorial
-evaluation remain open
+Status: implemented and exact-commit gate passed; real-route qualification and long-source
+editorial evaluation remain open
 
 ## Problem
 
@@ -146,6 +146,14 @@ manifest refuses missing and reordered shards. Scoped inspection accepts a compl
 browse while the V3 whole-hierarchy rule rejects the same trace. A connected workflow test proves
 plan → shard → manifest → author ordering, and another proves that one refused shard prevents the
 author call.
+
+The clean exact-commit gate passed for
+`0ca907d7a38c4866f3f95398de9b4c1785b5a80a` at `2026-09-14T14:08:41.556Z`. It included frozen
+dependency installation, generated-contract drift checks, the database migration and isolation
+suite, the complete web and pipeline build/lint/typecheck/test graph, cold web and pipeline image
+builds, and all 18 Playwright image-to-image workflow tests. The pipeline suite reported 1,237
+passes and one expected environment skip; the contracts, web and database suites reported 33, 202
+and 41 passes respectively.
 
 These tests prove bounded request shape, ownership and failure behavior. They do not prove that a
 model finds all worthwhile opportunities, that three-way concurrency is the best latency/cost

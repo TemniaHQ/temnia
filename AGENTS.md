@@ -52,6 +52,8 @@ history and its whole-source inventory stay unchanged. The V4 experiment and pre
 implemented, but the web keeps starting V3 until the exact V4 request suite is qualified and real
 44-minute/two-hour/four-hour editorial evidence is reviewed. Contract:
 [bounded-opportunity-inventory-2026-09-14.md](docs/design/bounded-opportunity-inventory-2026-09-14.md).
+The clean exact-commit gate passed for `0ca907d` at `2026-09-14T14:08:41.556Z`, including both cold
+production images and all 18 Playwright workflow tests.
 Author packaging and whole-portfolio source review are still unbounded final-answer stages, so
 their decomposition is next. No real provider, latency, recovery or quality result follows, and no
 new model arm or paid run is authorized by this record.
