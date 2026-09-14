@@ -2,6 +2,13 @@
 
 ## Decisions
 
+**2026-09-14 — GitHub Actions in this repository: GitHub-owned or verified actions only,
+every `uses` pinned to a commit SHA.** The first `modal-deploy` run failed at startup because
+the repository policy (`allowed_actions: selected`, `sha_pinning_required: true`) refused
+`actions/checkout@v4` and a third-party setup action. Pin `actions/checkout` to its commit
+SHA with the tag in a comment, and install tools from their registries at pinned versions
+(uv from PyPI) instead of through actions.
+
 **2026-09-14 — Every deployable deploys from a push to `main`; nothing ships by hand.** Rajesh,
 handed a `modal deploy` command in a runbook: "deployments should be automatic when code
 merges to main until and unless a manual deployment is required." Dokploy already deployed
