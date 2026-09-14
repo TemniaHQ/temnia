@@ -33,12 +33,20 @@ def _assert_identity(actual: object, expected: dict[str, str]) -> None:
 
 
 async def run_smoke(app_name: str, environment: str) -> dict[str, Any]:
-    """Resolve only deployed handles and refuse the wrong build before spending on speech."""
+    """Resolve only deployed handles, prove the render path, then spend on speech."""
     expected = {"protocol": CONTRACT_VERSION, "build": source_build_id()}
     identity = _deployed("deployment_identity", app_name, environment)
     speech = _deployed("smoke_transcribe", app_name, environment)
     async with asyncio.timeout(30):
         _assert_identity(await identity.remote.aio(), expected)
+    # The render path first: it is cheap, and a deploy whose render function cannot start
+    # must fail here rather than on a user's run.
+    probe = _deployed("render_probe", app_name, environment)
+    async with asyncio.timeout(15 * 60):
+        render = cast("dict[str, Any]", await probe.remote.aio())
+    if render.get("build") != expected["build"] or not render.get("nvenc"):
+        msg = f"deployed render probe failed: {render!r}"
+        raise RuntimeError(msg)
     meta = json.loads(FIXTURE.with_suffix(".json").read_text())
     async with asyncio.timeout(35 * 60):
         report = cast(
@@ -61,7 +69,7 @@ async def run_smoke(app_name: str, environment: str) -> dict[str, Any]:
     if not report.get("words") or report.get("missing"):
         msg = f"deployed speech smoke failed: {report!r}"
         raise RuntimeError(msg)
-    return {"app": app_name, "environment": environment, **report}
+    return {"app": app_name, "environment": environment, "render": render, **report}
 
 
 def main() -> None:

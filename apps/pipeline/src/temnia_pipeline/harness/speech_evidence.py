@@ -13,13 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from temnia_pipeline.contracts import SpeechCoverage, SpeechCoverageInterval, Status1
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness.ledger import IdentityConflict
-from temnia_pipeline.harness.rendering import timeline_identity
 from temnia_pipeline.media.speech_pcm import (
     SAMPLE_RATE,
     SOURCE_PCM_VERSION,
     source_pcm_sample_count,
     stream_pcm_windows,
 )
+from temnia_pipeline.media.timeline_identity import timeline_identity
 from temnia_pipeline.speech.coverage import DEFAULT_THRESHOLDS, assess_coverage
 from temnia_pipeline.speech.silero import (
     DEFAULT_VAD_CONFIG,

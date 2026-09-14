@@ -16,15 +16,20 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from fractions import Fraction
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from obstore import get_async, head_async
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 from temporalio.exceptions import ApplicationError
 
 from temnia_pipeline.modal_errors import transport_errors
 from temnia_pipeline.modal_protocol import RemoteFailure, read_outcome
+from temnia_pipeline.render_contracts import (
+    RenderJob,
+    RenderOutput,
+    RenderProgress,
+    RenderResult,
+)
 from temnia_pipeline.transcode.modal_client import (
     Done,
     Failed,
@@ -46,73 +51,6 @@ RENDER_FUNCTION = "render_sections"
 DEFAULT_RENDER_PROGRESS_DICT = "temnia-render-progress"
 POLL_SECONDS = 10.0
 UNREACHABLE_TICKS = 18
-RENDER_JOB_VERSION = "render-job/1"
-
-
-class RenderSectionJob(BaseModel):
-    """One exact source interval and where its file goes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    section_id: str
-    start_numerator: int
-    start_denominator: Annotated[int, Field(gt=0)]
-    end_numerator: int
-    end_denominator: Annotated[int, Field(gt=0)]
-    output_key: str
-
-    @property
-    def start(self) -> Fraction:
-        """The exact interval start on the source clock."""
-        return Fraction(self.start_numerator, self.start_denominator)
-
-    @property
-    def end(self) -> Fraction:
-        """The exact interval end on the source clock."""
-        return Fraction(self.end_numerator, self.end_denominator)
-
-
-class RenderJob(BaseModel):
-    """Everything the container needs, and nothing it must look up."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    version: Literal["render-job/1"] = RENDER_JOB_VERSION
-    master_key: str
-    master_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
-    size_bytes: Annotated[int, Field(gt=0)]
-    timeline: dict[str, Any]
-    config: dict[str, Any]
-    sections: Annotated[list[RenderSectionJob], Field(min_length=1)]
-    expected_seconds: Annotated[float, Field(gt=0)]
-
-
-class RenderOutput(BaseModel):
-    """One published section file and its hash, as the container measured it."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    section_id: str
-    output_key: str
-    sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
-    size_bytes: Annotated[int, Field(gt=0)]
-
-
-class RenderResult(BaseModel):
-    """What the call published; the runner verifies every object before trusting it."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    outputs: list[RenderOutput]
-    encoder: str
-    call_id: str | None = None
-
-
-class RenderProgress(BaseModel):
-    """The container's note: which section, how far."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    stage: Literal["download", "render", "publish"]
-    percent: Annotated[int, Field(ge=0, le=100)]
-    section_id: str | None = None
-
-
 ProgressCallback = Callable[[RenderProgress, str], Awaitable[None]]
 
 
@@ -229,6 +167,24 @@ def modal_failure(message: str) -> ApplicationError:
     return ApplicationError(message, type="ModalFailure", non_retryable=False)
 
 
+DEPLOYMENT_DEFECT_MARKERS = (
+    "ModuleNotFoundError",
+    "ImportError",
+    "No module named",
+    "cannot import name",
+)
+
+
+def deployment_defect(message: str) -> bool:
+    """The deployed function cannot even start; retrying and respawning cannot help."""
+    return any(marker in message for marker in DEPLOYMENT_DEFECT_MARKERS)
+
+
+def cannot_start(message: str) -> RenderFunctionAbsent:
+    """A deployed function that fails at import is, for this run, as good as absent."""
+    return RenderFunctionAbsent(f"the deployed {RENDER_FUNCTION} function cannot start: {message}")
+
+
 def classify(message: str) -> ApplicationError:
     """Ffmpeg's own refusals are terminal; everything else is Modal's to retry."""
     lowered = message.lower()
@@ -265,6 +221,8 @@ class ModalRenderer:
                     verified = await self._verify(job, RenderResult.model_validate(result))
                     return verified.model_copy(update={"call_id": verified.call_id or call_id})
                 case Failed(message=message):
+                    if deployment_defect(message):
+                        raise cannot_start(message)
                     raise classify(message)
                 case Unknown():
                     raise modal_failure(f"Modal has no record of render call {call_id}")
@@ -292,6 +250,8 @@ class ModalRenderer:
             case Running() | Done():
                 log.info("reattaching to render call %s", resume)
                 return resume
+            case Failed(message=message) if deployment_defect(message):
+                raise cannot_start(message)
             case Failed(message=message) if classify(message).non_retryable:
                 raise classify(message)
             case Unreachable(message=message):

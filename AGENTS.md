@@ -2,6 +2,19 @@
 
 ## Decisions
 
+**2026-09-14 — The Modal render function imports only light modules, the release smoke proves
+the render path, and a function that cannot start falls back to the CPU.** The first GPU render
+after #45 failed on the card with `No module named 'psycopg'`: `render_sections` imported a
+harness module that imports the database driver, the deploy smoke exercised only speech, and the
+activity retried three times before the run failed at $1.35 spent. Now: the render job contracts
+live in `render_contracts.py` and the timeline identity in `media/timeline_identity.py`, both
+pydantic-and-stdlib only; `RENDER_MODULES` names what the function imports at call time and a test
+loads that list with `psycopg`, `temporalio`, `av` and `torch` made unimportable; `render_probe`
+imports the same list on the card and encodes one second through `h264_nvenc`, and the smoke calls
+it before the speech sample, so a broken render deploy fails the deploy; and a call that fails
+with an import error is treated like an absent function: the worker renders that run on its CPU
+and says why, rather than retrying. Log: `docs/log/2026-09-14.md`.
+
 **2026-09-14 — GitHub Actions in this repository: GitHub-owned or verified actions only,
 every `uses` pinned to a commit SHA.** The first `modal-deploy` run failed at startup because
 the repository policy (`allowed_actions: selected`, `sha_pinning_required: true`) refused

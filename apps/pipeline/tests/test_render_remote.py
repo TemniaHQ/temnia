@@ -13,13 +13,16 @@ from temporalio.exceptions import ApplicationError
 
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.media.chapters import ChapterRenderConfig
-from temnia_pipeline.render_remote import (
-    ModalRenderer,
+from temnia_pipeline.render_contracts import (
     RenderJob,
     RenderOutput,
     RenderProgress,
     RenderResult,
     RenderSectionJob,
+)
+from temnia_pipeline.render_remote import (
+    ModalRenderer,
+    RenderFunctionAbsent,
     download_output,
 )
 from temnia_pipeline.transcode.modal_client import Done, Failed, Running, Unknown, Unreachable
@@ -159,6 +162,27 @@ async def test_a_short_object_or_an_ffmpeg_refusal_is_terminal() -> None:
             job, on_progress=quiet
         )
     assert not lost.value.non_retryable
+
+
+async def test_a_render_function_that_cannot_start_falls_back_like_an_absent_one() -> None:
+    """An import error inside the deployed image is a deploy defect, not a run failure."""
+    store = cast("S3Store", MemoryStore())
+    job = _job()
+
+    async def quiet(_note: RenderProgress, _call: str) -> None:
+        return None
+
+    broken = Failed("ModuleNotFoundError: No module named 'psycopg'")
+    with pytest.raises(RenderFunctionAbsent, match="cannot start"):
+        await ModalRenderer(FakeClient(statuses=[broken]), store, poll_seconds=0).run(
+            job, on_progress=quiet
+        )
+    resumed = FakeClient(statuses=[Failed("ImportError: cannot import name 'x' from 'y'")])
+    with pytest.raises(RenderFunctionAbsent, match="cannot start"):
+        await ModalRenderer(resumed, store, poll_seconds=0).run(
+            job, on_progress=quiet, resume="earlier"
+        )
+    assert resumed.spawned == []
 
 
 def test_nvenc_config_uses_constant_quality_and_its_own_presets() -> None:

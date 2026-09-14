@@ -20,14 +20,14 @@ from temnia_pipeline.contracts import (
     Kind,
 )
 from temnia_pipeline.harness.artifacts import fingerprint_for
-from temnia_pipeline.media.chapters import MediaTimelineFacts
+from temnia_pipeline.media.timeline_identity import fraction_json, timeline_identity
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Mapping, Sequence
+    from collections.abc import Callable, Coroutine, Sequence
     from pathlib import Path
     from uuid import UUID
 
-    from temnia_pipeline.media.chapters import ChapterRenderConfig
+    from temnia_pipeline.media.chapters import ChapterRenderConfig, MediaTimelineFacts
 
 DISK_MARGIN_BYTES = 1024 * 1024 * 1024
 OUTPUT_GROWTH_NUMERATOR = 2
@@ -95,62 +95,6 @@ def kept_sections(edit: ChapterEditSpec) -> tuple[RenderSection, ...]:
     return tuple(found)
 
 
-def _fraction_json(value: Fraction) -> dict[str, int]:
-    return {"numerator": value.numerator, "denominator": value.denominator}
-
-
-def timeline_identity(timeline: MediaTimelineFacts) -> dict[str, object]:
-    """Serialize exact selected-stream facts for an artifact fingerprint."""
-    return {
-        "audioChannels": timeline.audio_channels,
-        "audioCodec": timeline.audio_codec,
-        "audioDuration": (
-            _fraction_json(timeline.audio_duration) if timeline.audio_duration is not None else None
-        ),
-        "audioLayout": timeline.audio_layout,
-        "audioStart": (
-            _fraction_json(timeline.audio_start) if timeline.audio_start is not None else None
-        ),
-        "audioStreamIndex": timeline.audio_stream_index,
-        "audioTimeBase": (
-            _fraction_json(timeline.audio_time_base)
-            if timeline.audio_time_base is not None
-            else None
-        ),
-        "containerStart": _fraction_json(timeline.container_start),
-        "duration": _fraction_json(timeline.duration),
-        "frameRate": (
-            _fraction_json(timeline.frame_rate) if timeline.frame_rate is not None else None
-        ),
-        "hasAudio": timeline.has_audio,
-        "hasVideo": timeline.has_video,
-        "height": timeline.height,
-        "rotation": timeline.rotation,
-        "sampleAspectRatio": (
-            _fraction_json(timeline.sample_aspect_ratio)
-            if timeline.sample_aspect_ratio is not None
-            else None
-        ),
-        "sampleRate": timeline.sample_rate,
-        "sourceStart": _fraction_json(timeline.source_start),
-        "videoStart": (
-            _fraction_json(timeline.video_start) if timeline.video_start is not None else None
-        ),
-        "videoCodec": timeline.video_codec,
-        "videoDuration": (
-            _fraction_json(timeline.video_duration) if timeline.video_duration is not None else None
-        ),
-        "videoStreamIndex": timeline.video_stream_index,
-        "videoTimeBase": (
-            _fraction_json(timeline.video_time_base)
-            if timeline.video_time_base is not None
-            else None
-        ),
-        "variableFrameRate": timeline.variable_frame_rate,
-        "width": timeline.width,
-    }
-
-
 def media_fingerprint(
     *,
     source_fingerprint: str,
@@ -162,9 +106,9 @@ def media_fingerprint(
     return fingerprint_for(
         kind="chapter_media",
         inputs={
-            "end": _fraction_json(section.end),
+            "end": fraction_json(section.end),
             "sourceFingerprint": source_fingerprint,
-            "start": _fraction_json(section.start),
+            "start": fraction_json(section.start),
             "timeline": timeline_identity(timeline),
         },
         config=asdict(config),
@@ -181,12 +125,12 @@ def media_metadata(
     """Describe reusable bytes without falsely associating them with one edit."""
     return {
         "audioStreamIndex": timeline.audio_stream_index,
-        "end": _fraction_json(section.end),
+        "end": fraction_json(section.end),
         "format": MEDIA_FORMAT,
         "rendererVersion": renderer_version,
         "sourceFingerprint": source_fingerprint,
-        "sourceStart": _fraction_json(timeline.source_start),
-        "start": _fraction_json(section.start),
+        "sourceStart": fraction_json(timeline.source_start),
+        "start": fraction_json(section.start),
         "timeline": timeline_identity(timeline),
         "videoStreamIndex": timeline.video_stream_index,
     }
@@ -195,10 +139,10 @@ def media_metadata(
 def caption_metadata(*, section: RenderSection, evidence_sha256: str) -> dict[str, object]:
     """Describe reusable caption bytes and their exact transcript evidence."""
     return {
-        "end": _fraction_json(section.end),
+        "end": fraction_json(section.end),
         "evidenceSha256": evidence_sha256,
         "format": CAPTION_FORMAT,
-        "start": _fraction_json(section.start),
+        "start": fraction_json(section.start),
     }
 
 
@@ -260,15 +204,15 @@ def caption_fingerprint(
     return fingerprint_for(
         kind="chapter_captions",
         inputs={
-            "end": _fraction_json(section.end),
+            "end": fraction_json(section.end),
             "evidenceSha256": evidence_sha256,
-            "start": _fraction_json(section.start),
+            "start": fraction_json(section.start),
             "words": words,
         },
         config={
             "format": CAPTION_FORMAT,
-            "maxCueGapSeconds": _fraction_json(MAX_CUE_GAP_SECONDS),
-            "maxCueSeconds": _fraction_json(MAX_CUE_SECONDS),
+            "maxCueGapSeconds": fraction_json(MAX_CUE_GAP_SECONDS),
+            "maxCueSeconds": fraction_json(MAX_CUE_SECONDS),
             "maxCueWords": MAX_CUE_WORDS,
             "speakerLabels": _speaker_labels(evidence),
         },
@@ -429,44 +373,4 @@ def descriptor_fingerprint(
         kind="chapter_renders",
         inputs={"components": components, "editSha256": edit_sha256},
         config={"rendererVersion": renderer_version},
-    )
-
-
-def timeline_from_identity(value: Mapping[str, object]) -> MediaTimelineFacts:
-    """Rebuild exact selected-stream facts from their frozen identity."""
-
-    def fraction(name: str, *, optional: bool = False) -> Fraction | None:
-        raw = value.get(name)
-        if raw is None and optional:
-            return None
-        if not isinstance(raw, dict):
-            raise TypeError("frozen timeline rational is invalid")
-        parts = cast("dict[str, object]", raw)
-        return Fraction(int(str(parts["numerator"])), int(str(parts["denominator"])))
-
-    return MediaTimelineFacts(
-        duration=cast("Fraction", fraction("duration")),
-        container_start=cast("Fraction", fraction("containerStart")),
-        source_start=cast("Fraction", fraction("sourceStart")),
-        has_video=bool(value.get("hasVideo")),
-        has_audio=bool(value.get("hasAudio")),
-        video_stream_index=cast("int | None", value.get("videoStreamIndex")),
-        audio_stream_index=cast("int | None", value.get("audioStreamIndex")),
-        video_start=fraction("videoStart", optional=True),
-        audio_start=fraction("audioStart", optional=True),
-        video_duration=fraction("videoDuration", optional=True),
-        audio_duration=fraction("audioDuration", optional=True),
-        frame_rate=fraction("frameRate", optional=True),
-        video_time_base=fraction("videoTimeBase", optional=True),
-        audio_time_base=fraction("audioTimeBase", optional=True),
-        sample_rate=cast("int | None", value.get("sampleRate")),
-        width=cast("int | None", value.get("width")),
-        height=cast("int | None", value.get("height")),
-        rotation=cast("int | None", value.get("rotation")),
-        audio_channels=cast("int | None", value.get("audioChannels")),
-        audio_layout=cast("str | None", value.get("audioLayout")),
-        variable_frame_rate=bool(value.get("variableFrameRate")),
-        video_codec=cast("str | None", value.get("videoCodec")),
-        audio_codec=cast("str | None", value.get("audioCodec")),
-        sample_aspect_ratio=fraction("sampleAspectRatio", optional=True),
     )

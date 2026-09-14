@@ -61,8 +61,6 @@ from temnia_pipeline.harness.rendering import (
     preflight_disk,
     required_disk_bytes,
     run_render_batch,
-    timeline_from_identity,
-    timeline_identity,
     write_captions,
 )
 from temnia_pipeline.harness.review import ReviewRefused
@@ -112,13 +110,12 @@ from temnia_pipeline.media.chapters import (
     inspect_timeline,
     render_chapter,
 )
+from temnia_pipeline.media.timeline_identity import timeline_from_identity, timeline_identity
+from temnia_pipeline.render_contracts import RenderJob, RenderProgress, RenderSectionJob
 from temnia_pipeline.render_remote import (
     ModalRenderer,
     RealRenderClient,
     RenderFunctionAbsent,
-    RenderJob,
-    RenderProgress,
-    RenderSectionJob,
     download_output,
 )
 from temnia_pipeline.speech.liveness import run_with_activity_heartbeat

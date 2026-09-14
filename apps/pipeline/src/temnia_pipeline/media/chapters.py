@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, cast
 
+from temnia_pipeline.media.facts import COVER_ART_CODECS
 from temnia_pipeline.media.ffmpeg import run_ffmpeg, run_ffprobe
-from temnia_pipeline.media.probe import COVER_ART_CODECS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -47,7 +47,7 @@ def test_build_identity_covers_source_and_runtime_build_inputs(
     assert source_build_id(tmp_path) != before
 
 
-@pytest.mark.parametrize("wrong_at", ["before", "speech", "gpu", "after", None])
+@pytest.mark.parametrize("wrong_at", ["before", "render", "speech", "gpu", "after", None])
 async def test_smoke_checks_deployed_identity_and_passes_explicit_target(
     monkeypatch: pytest.MonkeyPatch,
     wrong_at: str | None,
@@ -70,6 +70,12 @@ async def test_smoke_checks_deployed_identity_and_passes_explicit_target(
                     wrong_at == "after" and identities == 2
                 )
                 return wrong if is_wrong else wanted
+            if name == "render_probe":
+                return {
+                    "build": "different" if wrong_at == "render" else "expected",
+                    "encoder": "h264_nvenc",
+                    "nvenc": True,
+                }
             speech_calls.append(args)
             assert args[-1] == wanted
             return {
@@ -83,11 +89,14 @@ async def test_smoke_checks_deployed_identity_and_passes_explicit_target(
 
     monkeypatch.setattr(modal_smoke, "_deployed", deployed)
     if wrong_at:
-        with pytest.raises(RuntimeError, match=r"(?:identity|GPU build) mismatch"):
+        with pytest.raises(
+            RuntimeError, match=r"(?:identity|GPU build) mismatch|render probe failed"
+        ):
             await modal_smoke.run_smoke("release-app", "release-env")
     else:
         report = await modal_smoke.run_smoke("release-app", "release-env")
         assert report["app"] == "release-app"
         assert report["environment"] == "release-env"
+        assert report["render"]["nvenc"] is True
     assert all(app == "release-app" and env == "release-env" for _, app, env in looked_up)
-    assert bool(speech_calls) == (wrong_at != "before")
+    assert bool(speech_calls) == (wrong_at not in {"before", "render"})
