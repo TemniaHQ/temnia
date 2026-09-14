@@ -54,9 +54,19 @@ implemented, but the web keeps starting V3 until the exact V4 request suite is q
 [bounded-opportunity-inventory-2026-09-14.md](docs/design/bounded-opportunity-inventory-2026-09-14.md).
 The clean exact-commit gate passed for `0ca907d` at `2026-09-14T14:08:41.556Z`, including both cold
 production images and all 18 Playwright workflow tests.
-Author packaging and whole-portfolio source review are still unbounded final-answer stages, so
-their decomposition is next. No real provider, latency, recovery or quality result follows, and no
-new model arm or paid run is authorized by this record.
+Author packaging is separately versioned in `standalone-topics/5` / `TopicSelectionWorkflowV5`.
+Code groups each section's inventory into immutable work items of at most 12 opportunities. Each
+author call sees one item, must browse its section and ground every cited span, can cross the section
+edge for a complete discussion, and owns candidate IDs under its work-item prefix. A complete
+ordered `topic-author-packaging-manifest/1` is required before the ordinary accepted selection is
+published; missing, invalid, foreign or reordered shards stop before review and retain their exact
+responses/checkpoints. Mixed fallback families are recorded, and a participating author family
+cannot independently review the result. Historical V3/V4 requests remain unchanged; the web stays
+on V3. Contract:
+[bounded-author-packaging-2026-09-14.md](docs/design/bounded-author-packaging-2026-09-14.md).
+Whole-portfolio source review and repair are still unbounded final-answer stages, so their
+decomposition is next. No real provider, latency, recovery or quality result follows, and no new
+model arm or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

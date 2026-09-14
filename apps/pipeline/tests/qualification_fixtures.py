@@ -420,6 +420,23 @@ def _outputs_v4() -> list[dict[str, Any]]:
     return [topic_selection_v4_qualification_inventory().model_dump(mode="json"), *outputs[1:]]
 
 
+def _outputs_v5() -> list[dict[str, Any]]:
+    """Namespace every bounded author candidate to its exact qualification work item."""
+    outputs = _outputs_v4()
+    author = outputs[1]
+    replacements = {
+        candidate["id"]: f"section-0001:author-0001:candidate:{ordinal + 1:04d}"
+        for ordinal, candidate in enumerate(author["proposal"]["candidates"])
+    }
+    for candidate in author["proposal"]["candidates"]:
+        candidate["id"] = replacements[candidate["id"]]
+    for opportunity in author["opportunities"]:
+        opportunity["candidateIds"] = [
+            replacements[identifier] for identifier in opportunity["candidateIds"]
+        ]
+    return outputs
+
+
 def _three_candidate_lookup_transport(
     stages_per_candidate: int = 3,
 ) -> tuple[httpx.MockTransport, list[str]]:

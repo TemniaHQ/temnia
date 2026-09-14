@@ -17,6 +17,8 @@ from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
+    TopicAuthorPackagingPlan,
+    TopicAuthorPackagingShard,
     TopicCompiledVideo,
     TopicEditorialRubric,
     TopicEditSpec,
@@ -36,6 +38,7 @@ from temnia_pipeline.harness.editorial_evidence import validate_reviewer_inspect
 from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V3,
     TOPIC_SELECTION_POLICY_V4,
+    TOPIC_SELECTION_POLICY_V5,
 )
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
@@ -55,6 +58,13 @@ from temnia_pipeline.harness.source_progress import (
     inspection_from_checkpoint,
 )
 from temnia_pipeline.harness.topic_activities import TopicActivities
+from temnia_pipeline.harness.topic_author_packaging import (
+    admit_author_shard,
+    assemble_author_manifest,
+    author_work_item,
+    build_author_plan,
+    inventory_for_work_item,
+)
 from temnia_pipeline.harness.topic_compiler import (
     compile_topics_v3,
     validate_topic_edit,
@@ -69,6 +79,7 @@ from temnia_pipeline.harness.topic_inventory import (
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
+    SELECTION_AUTHOR_SHARD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
@@ -76,6 +87,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
     assess_selection,
+    author_packaging_shard_prompt,
     content_hash,
     make_rubric,
     opportunity_inventory_prompt,
@@ -92,6 +104,12 @@ from temnia_pipeline.harness.topic_selection import (
     validate_selection_against_inventory,
 )
 from temnia_pipeline.harness.topic_selection_runtime import (
+    AuthorPackagingManifestRequest,
+    AuthorPackagingManifestResult,
+    AuthorPackagingPlanResult,
+    AuthorPackagingShardRejection,
+    AuthorPackagingShardSaveRequest,
+    AuthorPackagingShardSaveResult,
     OpportunityInventoryManifestRequest,
     OpportunityInventoryManifestResult,
     OpportunityInventoryPlanResult,
@@ -221,7 +239,12 @@ class TopicSelectionActivities:
         )
         if (
             run.editorial_policy != context.program_version
-            or context.program_version not in {TOPIC_SELECTION_POLICY_V3, TOPIC_SELECTION_POLICY_V4}
+            or context.program_version
+            not in {
+                TOPIC_SELECTION_POLICY_V3,
+                TOPIC_SELECTION_POLICY_V4,
+                TOPIC_SELECTION_POLICY_V5,
+            }
             or run.evidence_artifact_id != context.evidence.id
         ):
             raise HarnessValidationError(
@@ -354,7 +377,7 @@ class TopicSelectionActivities:
         return manifest.inventory
 
     async def inventory_plan(self, context: SelectionContext) -> TopicOpportunityInventoryPlan:
-        """Load and reproduce the exact deterministic v4 section work plan."""
+        """Load and reproduce the exact deterministic section inventory work plan."""
         if context.inventory_plan is None or context.source_index is None:
             raise HarnessValidationError("bounded inventory requires an index and plan identity")
         await self.require_record(
@@ -370,6 +393,46 @@ class TopicSelectionActivities:
         expected = build_inventory_plan(index, index_sha256=context.source_index.sha256)
         if plan != expected or context.inventory_plan.sha256 != content_hash(plan):
             raise HarnessValidationError("inventory plan differs from its exact source index")
+        return plan
+
+    async def author_plan(self, context: SelectionContext) -> TopicAuthorPackagingPlan:
+        """Load and reproduce the exact deterministic v5 author work plan."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V5
+            or context.author_plan is None
+            or context.inventory is None
+            or context.inventory_plan is None
+            or context.source_index is None
+            or context.rubric is None
+        ):
+            raise HarnessValidationError("bounded author packaging requires its exact plan state")
+        await self.require_record(
+            context,
+            context.author_plan,
+            format_name="topic-author-packaging-plan/1",
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+                context.inventory,
+            ),
+        )
+        plan = TopicAuthorPackagingPlan.model_validate(
+            await self.read(context, context.author_plan)
+        )
+        inventory_plan = await self.inventory_plan(context)
+        inventory = await self.inventory(context)
+        if inventory is None:
+            raise HarnessValidationError("author plan has no complete opportunity inventory")
+        expected = build_author_plan(
+            inventory_plan,
+            inventory,
+            index_sha256=context.source_index.sha256,
+            inventory_sha256=context.inventory.sha256,
+        )
+        if plan != expected or context.author_plan.sha256 != content_hash(plan):
+            raise HarnessValidationError("author plan differs from its exact inventory")
         return plan
 
     async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
@@ -433,8 +496,11 @@ class TopicSelectionActivities:
         self, context: SelectionContext
     ) -> OpportunityInventoryPlanResult:
         """Publish the complete ordered section roster before any shard is dispatched."""
-        if context.program_version != TOPIC_SELECTION_POLICY_V4:
-            raise HarnessValidationError("bounded inventory planning requires standalone-topics/4")
+        if context.program_version not in {
+            TOPIC_SELECTION_POLICY_V4,
+            TOPIC_SELECTION_POLICY_V5,
+        }:
+            raise HarnessValidationError("bounded inventory planning requires v4 or v5")
         if context.source_index is None or context.inventory_plan is not None:
             raise HarnessValidationError(
                 "bounded inventory planning requires one fresh source index"
@@ -454,6 +520,52 @@ class TopicSelectionActivities:
             },
         )
         return OpportunityInventoryPlanResult(artifact=reference, plan=plan)
+
+    @activity.defn(name="prepare_topic_author_plan_v5")
+    async def prepare_author_packaging_plan(
+        self, context: SelectionContext
+    ) -> AuthorPackagingPlanResult:
+        """Publish every bounded author assignment before dispatching the first one."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V5
+            or context.source_index is None
+            or context.inventory_plan is None
+            or context.inventory is None
+            or context.author_plan is not None
+            or context.selection is not None
+        ):
+            raise HarnessValidationError("author planning requires the complete fresh v5 inventory")
+        _, evidence, rubric, _ = await self.load(context)
+        if rubric is None or context.rubric is None:
+            raise HarnessValidationError("author planning requires the frozen rubric")
+        inventory = await self.inventory(context)
+        if inventory is None:
+            raise HarnessValidationError("author planning requires the complete inventory")
+        validate_opportunity_inventory(evidence, inventory)
+        plan = build_author_plan(
+            await self.inventory_plan(context),
+            inventory,
+            index_sha256=context.source_index.sha256,
+            inventory_sha256=context.inventory.sha256,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=plan.format,
+            content=plan,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+                context.inventory,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "workItemCount": len(plan.workItems),
+            },
+        )
+        return AuthorPackagingPlanResult(artifact=reference, plan=plan)
 
     @activity.defn(name="load_topic_source_checkpoint")
     async def load_source_checkpoint(
@@ -666,10 +778,13 @@ class TopicSelectionActivities:
             dependencies.extend((context.selection, context.assessment))
             if context.rejection is not None:
                 dependencies.append(context.rejection)
-        elif context.program_version == TOPIC_SELECTION_POLICY_V4 and context.inventory is None:
+        elif (
+            context.program_version in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            and context.inventory is None
+        ):
             if context.inventory_section_id is None or context.inventory_plan is None:
                 raise HarnessValidationError(
-                    "v4 inventory calls require one planned section identity"
+                    "bounded inventory calls require one planned section identity"
                 )
             index = await self.source_index(context)
             plan = await self.inventory_plan(context)
@@ -686,6 +801,38 @@ class TopicSelectionActivities:
             stage = f"verify:selection:inventory:{section.sectionId}"
             version = SELECTION_INVENTORY_SHARD_PROMPT
             synthetic = f"topic_opportunity_inventory_{section.sectionId}"
+        elif (
+            context.program_version == TOPIC_SELECTION_POLICY_V5
+            and context.author_plan is not None
+            and context.author_work_item_id is not None
+            and context.inventory is not None
+            and context.inventory_plan is not None
+        ):
+            index = await self.source_index(context)
+            author_plan = await self.author_plan(context)
+            work_item = author_work_item(author_plan, context.author_work_item_id)
+            inventory = await self.inventory(context)
+            if inventory is None or context.source_index is None:
+                raise HarnessValidationError("bounded author call requires its index and inventory")
+            assignment = inventory_for_work_item(inventory, work_item)
+            dependencies.extend(
+                (
+                    context.source_index,
+                    context.inventory_plan,
+                    context.inventory,
+                    context.author_plan,
+                )
+            )
+            source_tool_role = "author"
+            prompt = author_packaging_shard_prompt(
+                source_index_map(index, index_sha256=context.source_index.sha256),
+                rubric,
+                work_item,
+                assignment,
+            )
+            stage = f"proposal:selection:author:{work_item.workItemId}"
+            version = SELECTION_AUTHOR_SHARD_PROMPT
+            synthetic = f"topic_selection_author_{work_item.workItemId}"
         elif (
             context.program_version == TOPIC_SELECTION_POLICY_V3
             and context.inventory is None
@@ -766,6 +913,7 @@ class TopicSelectionActivities:
             program_version=context.program_version,
             schema_version={
                 SELECTION_AUTHOR_PROMPT_V3: "topic-selection-draft/2",
+                SELECTION_AUTHOR_SHARD_PROMPT: "topic-selection-draft/2",
                 SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
                 SELECTION_INVENTORY_SHARD_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
@@ -886,14 +1034,27 @@ class TopicSelectionActivities:
         index = await self.source_index(context)
         if inspection.index_sha256 != context.source_index.sha256:
             raise HarnessValidationError("source inspection names a different index")
+        browse_parent_ids = None
+        if (
+            plan.source_tool_role == "inventory"
+            and context.program_version
+            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            and context.inventory_section_id is not None
+        ):
+            browse_parent_ids = (context.inventory_section_id,)
+        elif (
+            plan.source_tool_role == "author"
+            and context.program_version == TOPIC_SELECTION_POLICY_V5
+            and context.author_work_item_id is not None
+        ):
+            work_item = author_work_item(
+                await self.author_plan(context), context.author_work_item_id
+            )
+            browse_parent_ids = (work_item.sectionId,)
         validate_source_inspection(
             index,
             inspection,
-            browse_parent_ids=(context.inventory_section_id,)
-            if plan.source_tool_role == "inventory"
-            and context.program_version == TOPIC_SELECTION_POLICY_V4
-            and context.inventory_section_id is not None
-            else None,
+            browse_parent_ids=browse_parent_ids,
         )
         validate_source_read_ids(index, inspection, required_sentence_ids)
         if plan.source_tool_role == "source_reviewer":
@@ -1021,7 +1182,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V4
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1127,7 +1289,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V4
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1181,6 +1344,228 @@ class TopicSelectionActivities:
             },
         )
         return OpportunityInventoryManifestResult(artifact=reference, manifest=manifest)
+
+    @activity.defn(name="save_topic_author_shard_v5")
+    async def save_author_shard(
+        self, request: AuthorPackagingShardSaveRequest
+    ) -> AuthorPackagingShardSaveResult:
+        """Admit one bounded author assignment without claiming a complete selection."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V5
+            or rubric is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.inventory_plan is None
+            or context.inventory is None
+            or context.author_plan is None
+            or context.author_work_item_id is None
+            or selection is not None
+        ):
+            raise HarnessValidationError("author shard saving requires one fresh v5 work item")
+        inventory = await self.inventory(context)
+        if inventory is None:
+            raise HarnessValidationError("author shard saving requires the complete inventory")
+        plan = await self.author_plan(context)
+        call_plan = await self.prepare(context)
+        if request.schema_error is None and request.draft is None:
+            raise HarnessValidationError("author shard requires a typed output or diagnostic")
+        response = await self.response_ref(context, call_plan, request.draft)
+        if request.schema_error is not None or request.draft is None:
+            diagnostics = (request.schema_error or "Author shard is unavailable.",)
+            rejection = AuthorPackagingShardRejection(
+                response=response,
+                work_item_id=context.author_work_item_id,
+                draft=request.draft,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=(*call_plan.input_artifacts, response),
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.author_plan.sha256,
+                    "workItemId": context.author_work_item_id,
+                },
+            )
+            return AuthorPackagingShardSaveResult(
+                rejection=rejection_ref, diagnostics=diagnostics
+            )
+        inspection = None
+        try:
+            inspection = await self.inspection_ref(
+                context,
+                call_plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, request.draft),
+            )
+            shard = admit_author_shard(
+                evidence,
+                inventory,
+                plan,
+                plan_sha256=context.author_plan.sha256,
+                work_item_id=context.author_work_item_id,
+                draft=request.draft,
+                generator_family=call_plan.author.family,
+            )
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            diagnostics = (str(error),)
+            dependencies = (*call_plan.input_artifacts, response)
+            if inspection is not None:
+                dependencies = (*dependencies, inspection)
+            rejection = AuthorPackagingShardRejection(
+                response=response,
+                work_item_id=context.author_work_item_id,
+                draft=request.draft,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=dependencies,
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.author_plan.sha256,
+                    "workItemId": context.author_work_item_id,
+                },
+            )
+            return AuthorPackagingShardSaveResult(
+                rejection=rejection_ref, diagnostics=diagnostics
+            )
+        dependencies = (*call_plan.input_artifacts, response)
+        if inspection is not None:
+            dependencies = (*dependencies, inspection)
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=shard.format,
+            content=shard,
+            dependencies=dependencies,
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamily": shard.generatorFamily,
+                "planSha256": context.author_plan.sha256,
+                "workItemId": context.author_work_item_id,
+            },
+        )
+        return AuthorPackagingShardSaveResult(artifact=reference, shard=shard)
+
+    @activity.defn(name="assemble_topic_author_v5")
+    async def assemble_author(
+        self, request: AuthorPackagingManifestRequest
+    ) -> AuthorPackagingManifestResult:
+        """Publish an accepted selection only from every exact planned author shard."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V5
+            or rubric is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.inventory_plan is None
+            or context.inventory is None
+            or context.author_plan is None
+            or context.author_work_item_id is not None
+            or selection is not None
+        ):
+            raise HarnessValidationError("author assembly requires the complete fresh v5 plan")
+        inventory = await self.inventory(context)
+        if inventory is None:
+            raise HarnessValidationError("author assembly requires the complete inventory")
+        plan = await self.author_plan(context)
+        shards: list[TopicAuthorPackagingShard] = []
+        for reference in request.shard_artifacts:
+            await self.require_record(
+                context,
+                reference,
+                format_name="topic-author-packaging-shard/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.inventory_plan,
+                    context.inventory,
+                    context.author_plan,
+                ),
+            )
+            shards.append(
+                TopicAuthorPackagingShard.model_validate(await self.read(context, reference))
+            )
+        manifest = assemble_author_manifest(
+            evidence,
+            inventory,
+            plan,
+            index_sha256=context.source_index.sha256,
+            inventory_sha256=context.inventory.sha256,
+            plan_sha256=context.author_plan.sha256,
+            shards=shards,
+            shard_artifacts=request.shard_artifacts,
+        )
+        manifest_ref = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=manifest.format,
+            content=manifest,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+                context.inventory,
+                context.author_plan,
+                *request.shard_artifacts,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "planSha256": context.author_plan.sha256,
+                "workItemCount": len(plan.workItems),
+                "generatorFamilies": [value.root for value in manifest.generatorFamilies],
+            },
+        )
+        record = TopicSelectionRecord.model_validate(
+            {
+                "draft": manifest.selection.model_dump(mode="json"),
+                "evidenceSha256": context.evidence.sha256,
+                "format": "topic-selection/2",
+                "origin": "model",
+                "parentSelectionSha256": None,
+                "rubric": rubric.model_dump(mode="json"),
+                "rubricSha256": context.rubric.sha256,
+                "runId": str(context.run.run_id),
+            }
+        )
+        selection_ref = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=record.format,
+            content=record,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+                context.inventory,
+                context.author_plan,
+                manifest_ref,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamilies": [value.root for value in manifest.generatorFamilies],
+            },
+        )
+        return AuthorPackagingManifestResult(
+            artifact=manifest_ref,
+            selection=selection_ref,
+            manifest=manifest,
+            draft=manifest.selection,
+        )
 
     @activity.defn(name="save_topic_selection")
     async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
@@ -1342,13 +1727,23 @@ class TopicSelectionActivities:
             author_index=context.author_index,
             verifier_index=context.verifier_index,
         )
+        proposer_families = context.author_families or (
+            ("deterministic-empty-packaging",)
+            if context.program_version == TOPIC_SELECTION_POLICY_V5
+            and context.author_plan is not None
+            else (author.family,)
+        )
+        if verifier.family in proposer_families:
+            raise HarnessValidationError(
+                "selection assessment reviewer participated in author packaging"
+            )
         assessment = assess_selection(
             evidence,
             record,
             context.selection.sha256,
             cold_reviews=admitted_cold,
             source_review=admitted_source_review,
-            author_family=author.family,
+            author_family="+".join(proposer_families),
             verifier_family=verifier.family,
             response_artifacts=tuple(response_refs),
             reasons=reasons,
@@ -1482,11 +1877,14 @@ class TopicSelectionActivities:
             self.rubric,
             self.build_index,
             self.prepare_inventory_plan,
+            self.prepare_author_packaging_plan,
             self.load_source_checkpoint,
             self.prepare,
             self.save_inventory,
             self.save_inventory_shard,
             self.assemble_inventory,
+            self.save_author_shard,
+            self.assemble_author,
             self.save,
             self.save_assessment,
             self.stop,

@@ -58,6 +58,7 @@ Nonempty = Annotated[str, Field(min_length=1)]
 WORKFLOW_TYPES = {
     "standalone-topics/3": "TopicSelectionWorkflow",
     "standalone-topics/4": "TopicSelectionWorkflowV4",
+    "standalone-topics/5": "TopicSelectionWorkflowV5",
 }
 WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/3"]
 MEMO_KEY = "temniaExperimentSha256"
@@ -118,7 +119,9 @@ class ExperimentSpec(EvaluationModel):
     temporal_address: Nonempty
     temporal_namespace: Nonempty
     topic_shot_detector: TopicShotDetector = "scdet"
-    program_version: Literal["standalone-topics/3", "standalone-topics/4"] = "standalone-topics/3"
+    program_version: Literal[
+        "standalone-topics/3", "standalone-topics/4", "standalone-topics/5"
+    ] = "standalone-topics/3"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]
 

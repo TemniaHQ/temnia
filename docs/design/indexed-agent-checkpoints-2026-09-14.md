@@ -174,6 +174,8 @@ authorization, retention and per-run use identities; see
 [source-index-reuse-2026-09-14.md](source-index-reuse-2026-09-14.md). Independent opportunity
 discovery is now decomposed into section-owned calls and one complete-manifest gate; see
 [bounded-opportunity-inventory-2026-09-14.md](bounded-opportunity-inventory-2026-09-14.md).
-Author packaging and whole-portfolio source review still need bounded reconciliation. Real
+Author packaging now uses the same checkpoint contract in bounded work-item calls; see
+[bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md).
+Whole-portfolio source review and repair still need bounded reconciliation. Real
 44-minute, two-hour and four-hour provider and editorial evaluation
 remains the final gate rather than evidence inferred from fixtures.

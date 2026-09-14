@@ -343,6 +343,79 @@ export type TopicOpportunityInventoryManifest = z.infer<
   typeof TopicOpportunityInventoryManifestSchema
 >;
 
+/** One bounded set of inventoried opportunities that must be packaged together. */
+export const TopicAuthorWorkItemSchema = z
+  .object({
+    batchOrdinal: z.int().nonnegative(),
+    opportunityIds: z.array(identifier()).min(1).max(12),
+    ordinal: z.int().nonnegative(),
+    sectionId: identifier(),
+    workItemId: identifier(),
+  })
+  .strict()
+  .meta({ id: "TopicAuthorWorkItem", title: "TopicAuthorWorkItem" });
+export type TopicAuthorWorkItem = z.infer<typeof TopicAuthorWorkItemSchema>;
+
+/** Complete deterministic work plan for bounded author packaging. */
+export const TopicAuthorPackagingPlanSchema = z
+  .object({
+    format: z.literal("topic-author-packaging-plan/1"),
+    indexSha256: sha256(),
+    inventorySha256: sha256(),
+    maxOpportunitiesPerWorkItem: z.literal(12),
+    workItems: z.array(TopicAuthorWorkItemSchema),
+  })
+  .strict()
+  .meta({
+    id: "TopicAuthorPackagingPlan",
+    title: "TopicAuthorPackagingPlan",
+  });
+export type TopicAuthorPackagingPlan = z.infer<
+  typeof TopicAuthorPackagingPlanSchema
+>;
+
+/** One admitted author answer restricted to its exact opportunity work item. */
+export const TopicAuthorPackagingShardSchema = z
+  .object({
+    draft: TopicSelectionDraftSchema,
+    format: z.literal("topic-author-packaging-shard/1"),
+    generatorFamily: reason(),
+    indexSha256: sha256(),
+    inventorySha256: sha256(),
+    planSha256: sha256(),
+    workItem: TopicAuthorWorkItemSchema,
+  })
+  .strict()
+  .meta({
+    id: "TopicAuthorPackagingShard",
+    title: "TopicAuthorPackagingShard",
+  });
+export type TopicAuthorPackagingShard = z.infer<
+  typeof TopicAuthorPackagingShardSchema
+>;
+
+/** Whole selection assembled only after every author work item has been admitted. */
+export const TopicAuthorPackagingManifestSchema = z
+  .object({
+    complete: z.literal(true),
+    format: z.literal("topic-author-packaging-manifest/1"),
+    generatorFamilies: z.array(reason()),
+    indexSha256: sha256(),
+    inventorySha256: sha256(),
+    planSha256: sha256(),
+    selection: TopicSelectionDraftSchema,
+    shardArtifacts: z.array(HarnessArtifactRefSchema),
+    workItemIds: z.array(identifier()),
+  })
+  .strict()
+  .meta({
+    id: "TopicAuthorPackagingManifest",
+    title: "TopicAuthorPackagingManifest",
+  });
+export type TopicAuthorPackagingManifest = z.infer<
+  typeof TopicAuthorPackagingManifestSchema
+>;
+
 export const TopicValueReviewSchema = z
   .object({
     deliveredValue: TopicCriterionSchema,

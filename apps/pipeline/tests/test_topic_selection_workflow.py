@@ -20,6 +20,7 @@ from temnia_pipeline.contracts import (
     HarnessArtifactKind,
     HarnessArtifactRef,
     HarnessEvidence,
+    TopicAuthorPackagingManifest,
     TopicEditorialRubric,
     TopicOpportunity,
     TopicPortfolioReview,
@@ -37,6 +38,7 @@ from temnia_pipeline.harness import topic_selection_workflow as module
 from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V3,
     TOPIC_SELECTION_POLICY_V4,
+    TOPIC_SELECTION_POLICY_V5,
 )
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
@@ -66,6 +68,7 @@ from temnia_pipeline.harness.topic_selection_runtime import (
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV4,
+    TopicSelectionWorkflowV5,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
@@ -447,10 +450,13 @@ class Program:
         operations: dict[str, Callable[..., Any]] = {
             "prepare_topic_selection_rubric": self.activities.rubric,
             "prepare_topic_inventory_plan_v4": self.activities.prepare_inventory_plan,
+            "prepare_topic_author_plan_v5": self.activities.prepare_author_packaging_plan,
             "prepare_topic_selection_call": self.activities.prepare,
             "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
             "save_topic_inventory_shard_v4": self.activities.save_inventory_shard,
             "assemble_topic_inventory_v4": self.activities.assemble_inventory,
+            "save_topic_author_shard_v5": self.activities.save_author_shard,
+            "assemble_topic_author_v5": self.activities.assemble_author,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -592,6 +598,169 @@ async def test_v4_refuses_partial_inventory_before_authoring(
     saved_formats = [name for name, _ in run.saved]
     assert "topic-opportunity-inventory-shard-rejection/1" in saved_formats
     assert "topic-opportunity-inventory-manifest/1" not in saved_formats
+
+
+async def test_v5_assembles_every_author_work_item_before_source_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    author = TopicSelectionDraft(
+        opportunities=[
+            TopicOpportunity.model_validate(
+                {
+                    **inventory_opportunity.model_dump(mode="json"),
+                    "disposition": "not_useful_for_audience",
+                    "dispositionReason": "This fixture exercises bounded packaging without video.",
+                }
+            )
+        ],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="The assigned opportunity is completely decided without a candidate.",
+        ),
+    )
+    source = TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "opportunities": [
+                {
+                    "opportunityId": inventory_opportunity.id,
+                    "candidateIds": [],
+                    "evidenceSpans": [_span(1)],
+                    "reason": "The bounded author left the opportunity explicitly declined.",
+                    "status": "not_useful_for_audience",
+                }
+            ],
+            "selection": [],
+            "summary": "The exact declined opportunity was independently reviewed.",
+            "overlaps": [],
+            "handoffs": [],
+        }
+    )
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[source],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-author-packaging-plan/1") == 1
+    assert saved_formats.count("topic-author-packaging-shard/1") == 1
+    assert saved_formats.count("topic-author-packaging-manifest/1") == 1
+    assert saved_formats.count("topic-selection/2") == 1
+    author_contexts = [
+        context for context in run.prepared_contexts if context.author_work_item_id is not None
+    ]
+    assert [context.author_work_item_id for context in author_contexts] == [
+        "section-0001:author-0001"
+    ]
+    assert run.author.calls[0].program_version == TOPIC_SELECTION_POLICY_V5
+
+
+async def test_v5_refuses_partial_author_packaging_before_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    invalid_author = TopicSelectionDraft(
+        opportunities=[
+            TopicOpportunity.model_validate(
+                {
+                    **inventory_opportunity.model_dump(mode="json"),
+                    "candidateIds": [CANDIDATE.id],
+                    "disposition": "proposed",
+                    "dispositionReason": "The candidate lacks its required work-item namespace.",
+                }
+            )
+        ],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[CANDIDATE],
+            summary="An invalid bounded author answer retained for diagnosis.",
+        ),
+    )
+    run = Program(
+        monkeypatch,
+        initial=invalid_author,
+        sources=[],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision is None
+    assert str(result.status) == "needs_review"
+    assert run.call_order == ["inventory", "author"]
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-author-packaging-shard-rejection/1" in saved_formats
+    assert "topic-author-packaging-manifest/1" not in saved_formats
+    assert "topic-selection/2" not in saved_formats
+
+
+async def test_v5_empty_inventory_assembles_without_inventing_an_author_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=False)],
+        patches=[],
+        inventory=draft(selected=False),
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "source"]
+    assert not run.author.calls
+    manifest_refs = [
+        ref for name, ref in run.saved if name == "topic-author-packaging-manifest/1"
+    ]
+    assert len(manifest_refs) == 1
+    manifest = cast("TopicAuthorPackagingManifest", run.objects[manifest_refs[0].id])
+    assert manifest.generatorFamilies == []
+    assert manifest.shardArtifacts == []
 
 
 async def test_build_index_records_the_exact_verified_cache_hit(

@@ -48,6 +48,13 @@ their program version even where their prompt and schema versions are unchanged.
 not qualify the V4 shard request. Contract:
 [bounded-opportunity-inventory-2026-09-14.md](../design/bounded-opportunity-inventory-2026-09-14.md).
 
+`--suite topic-selection-v5` retains the bounded inventory request and replaces the author shape
+with `topic-selection-author-shard/1`. The synthetic assignment contains one exact section-owned
+opportunity batch. The author must browse that section, use hybrid retrieval, read its evidence and
+namespace every candidate to the work item. Production admission checks the answer against the
+exact assignment. V3 and V4 reports do not qualify this request. Contract:
+[bounded-author-packaging-2026-09-14.md](../design/bounded-author-packaging-2026-09-14.md).
+
 A compact checkpoint is not a provider receipt or permission to replay an unknown request. Each
 continuation still has its own request hash, dispatch, response and cost row. Inspect the logical
 call's `rounds` and require the expected root/section/search/read/final sequence when testing tool
@@ -83,6 +90,22 @@ uv run --frozen python scripts/qualify_harness_gateway.py run \
   --journal /private/tmp/topic-v4-preflight/journal.json \
   --receipts /private/tmp/topic-v4-preflight/receipts \
   --report /private/tmp/topic-v4-preflight/report.json \
+  --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
+  --max-dispatches "$REVIEWED_DISPATCHES" \
+  --max-output-tokens 32768
+```
+
+For bounded inventory and author packaging, use another create-only directory with
+`--suite topic-selection-v5`. Keep the same reviewed exposure, dispatch and output limits; the
+report records the different prompt and program identities.
+
+```sh
+uv run --frozen python scripts/qualify_harness_gateway.py run \
+  --suite topic-selection-v5 \
+  --candidates /private/tmp/topic-v5-preflight/candidates.json \
+  --journal /private/tmp/topic-v5-preflight/journal.json \
+  --receipts /private/tmp/topic-v5-preflight/receipts \
+  --report /private/tmp/topic-v5-preflight/report.json \
   --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
   --max-dispatches "$REVIEWED_DISPATCHES" \
   --max-output-tokens 32768

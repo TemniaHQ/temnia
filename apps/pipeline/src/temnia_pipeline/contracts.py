@@ -433,6 +433,29 @@ class Status2(StrEnum):
     rejected = "rejected"
 
 
+class GeneratorFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class WorkItemId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class OpportunityId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicAuthorWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    batchOrdinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=12, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class Edge(StrEnum):
     opening = "opening"
     ending = "ending"
@@ -1174,6 +1197,17 @@ class SpeechCoverage(BaseModel):
     warnings: list[str]
 
 
+class TopicAuthorPackagingPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-author-packaging-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxOpportunitiesPerWorkItem: Literal[12]
+    workItems: list[TopicAuthorWorkItem]
+
+
 class TopicCandidate(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1563,6 +1597,34 @@ class HarnessEvidence(BaseModel):
     version: Literal[1]
     videoTimeBase: PositiveRational | None
     words: list[HarnessEvidenceWord]
+
+
+class TopicAuthorPackagingManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-author-packaging-manifest/1"]
+    generatorFamilies: list[GeneratorFamily]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    selection: TopicSelectionDraft
+    shardArtifacts: list[HarnessArtifactRef]
+    workItemIds: list[WorkItemId]
+
+
+class TopicAuthorPackagingShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    draft: TopicSelectionDraft
+    format: Literal["topic-author-packaging-shard/1"]
+    generatorFamily: Annotated[str, Field(min_length=1)]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicAuthorWorkItem
 
 
 class TopicColdReview(BaseModel):

@@ -24,22 +24,29 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.editorial_policy import (
         TOPIC_SELECTION_POLICY_V3,
         TOPIC_SELECTION_POLICY_V4,
+        TOPIC_SELECTION_POLICY_V5,
         EditorialPolicy,
     )
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
         TOPIC_SELECTION_V4_AGENTS,
+        TOPIC_SELECTION_V5_AGENTS,
         HarnessModelDeps,
         topic_opportunity_inventory_v3,
         topic_opportunity_inventory_v4,
+        topic_opportunity_inventory_v5,
         topic_selection_author_v3,
         topic_selection_author_v4,
+        topic_selection_author_v5,
         topic_selection_cold_v3,
         topic_selection_cold_v4,
+        topic_selection_cold_v5,
         topic_selection_patch_v3,
         topic_selection_patch_v4,
+        topic_selection_patch_v5,
         topic_selection_source_v4,
         topic_selection_source_v5,
+        topic_selection_source_v6,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -59,8 +66,16 @@ with workflow.unsafe.imports_passed_through():
         messages_from_checkpoint,
     )
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
-    from temnia_pipeline.harness.topic_selection import selection_cold_key
+    from temnia_pipeline.harness.topic_selection import (
+        selection_cold_key,
+        selection_semantic_key,
+    )
     from temnia_pipeline.harness.topic_selection_runtime import (
+        AuthorPackagingManifestRequest,
+        AuthorPackagingManifestResult,
+        AuthorPackagingPlanResult,
+        AuthorPackagingShardSaveRequest,
+        AuthorPackagingShardSaveResult,
         OpportunityInventoryManifestRequest,
         OpportunityInventoryManifestResult,
         OpportunityInventoryPlanResult,
@@ -175,6 +190,7 @@ MAX_SEAT_ROUTES = 4
 # worker's per-route gate bounds what actually reaches the provider.
 COLD_REVIEW_FAN_OUT = 3
 INVENTORY_FAN_OUT = 3
+AUTHOR_FAN_OUT = 3
 PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 
 
@@ -403,6 +419,73 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             }
         )
 
+    async def author_selection(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        run: RunSnapshot,
+    ) -> tuple[SelectionSaveResult | None, SelectionContext, RunSnapshot, str | None]:
+        """Run the historical whole-selection author and its admission correction loop."""
+        accepted: SelectionSaveResult | None = None
+        while accepted is None:
+            try:
+                result, plan, settled = await self.run_seat(
+                    self.author_agent, request, context, "author"
+                )
+                context = self.carry_routes(context, settled)
+                save = SelectionSaveRequest(
+                    context=context,
+                    draft=result.output,
+                    inspection=(
+                        source_inspection_trace(
+                            result.all_messages(),
+                            index_sha256=context.source_index.sha256,
+                            role="author",
+                            stage=plan.stage,
+                        )
+                        if context.source_index is not None
+                        else None
+                    ),
+                )
+            except Exception as error:
+                if isinstance(error, InvalidSeatOutput):
+                    context = self.carry_routes(context, error.context)
+                if execution_limit(error):
+                    return (
+                        None,
+                        context,
+                        run,
+                        (
+                            "Execution capacity ended during indexed author discovery; the "
+                            "durable progress checkpoints are retained and no ungrounded "
+                            "selection was admitted."
+                        ),
+                    )
+                if not invalid_model_output(error):
+                    raise
+                save = SelectionSaveRequest(
+                    context=context,
+                    schema_error="Author response did not match the selection schema.",
+                )
+            saved = await self.save_selection(save)
+            if saved.rejection is None:
+                accepted = saved
+                break
+            if run.repair_count >= request.config.maxRepairs:
+                return (
+                    None,
+                    context,
+                    run,
+                    "Initial selection remains invalid after admission corrections; discovery "
+                    "is incomplete. "
+                    + "; ".join(saved.diagnostics)[:1200],
+                )
+            run = await self.claim_repair(run, request)
+            context = context.model_copy(
+                update={"rejection": saved.rejection, "iteration": context.iteration + 1}
+            )
+        return accepted, context, run, None
+
     async def review_selection(  # noqa: C901, PLR0912, PLR0915
         self,
         request: ChapterRunInput,
@@ -610,7 +693,9 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         )
         context = context.model_copy(update={"source_index": source_index.artifact})
         context = await self.prepare_author_context(request, context)
-        if self.policy == TOPIC_SELECTION_POLICY_V4 and context.inventory is None:
+        if self.policy in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5} and (
+            context.inventory is None
+        ):
             return await self.finish(
                 request,
                 evidence=evidence.artifact,
@@ -622,64 +707,14 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     + "; ".join(context.inventory_diagnostics)[:1200]
                 ),
             )
-        accepted: SelectionSaveResult | None = None
-        while accepted is None:
-            try:
-                result, plan, settled = await self.run_seat(
-                    self.author_agent, request, context, "author"
-                )
-                context = self.carry_routes(context, settled)
-                save = SelectionSaveRequest(
-                    context=context,
-                    draft=result.output,
-                    inspection=(
-                        source_inspection_trace(
-                            result.all_messages(),
-                            index_sha256=context.source_index.sha256,
-                            role="author",
-                            stage=plan.stage,
-                        )
-                        if context.source_index is not None
-                        else None
-                    ),
-                )
-            except Exception as error:
-                if isinstance(error, InvalidSeatOutput):
-                    context = self.carry_routes(context, error.context)
-                if execution_limit(error):
-                    return await self.finish(
-                        request,
-                        evidence=evidence.artifact,
-                        edit=None,
-                        revision=0,
-                        message=(
-                            "Execution capacity ended during indexed author discovery; "
-                            "the durable progress checkpoints are retained and no ungrounded "
-                            "selection was admitted."
-                        ),
-                    )
-                if not invalid_model_output(error):
-                    raise
-                save = SelectionSaveRequest(
-                    context=context,
-                    schema_error="Author response did not match the selection schema.",
-                )
-            saved = await self.save_selection(save)
-            if saved.rejection is None:
-                accepted = saved
-                break
-            if run.repair_count >= request.config.maxRepairs:
-                return await self.finish(
-                    request,
-                    evidence=evidence.artifact,
-                    edit=None,
-                    revision=0,
-                    message="Initial selection remains invalid after admission corrections; "
-                    "discovery is incomplete. " + "; ".join(saved.diagnostics)[:1200],
-                )
-            run = await self.claim_repair(run, request)
-            context = context.model_copy(
-                update={"rejection": saved.rejection, "iteration": context.iteration + 1}
+        accepted, context, run, author_error = await self.author_selection(request, context, run)
+        if accepted is None:
+            return await self.finish(
+                request,
+                evidence=evidence.artifact,
+                edit=None,
+                revision=0,
+                message=author_error or "Author packaging is incomplete.",
             )
         if accepted.selection is None or accepted.draft is None:
             raise RuntimeError("selection admission returned no accepted draft")
@@ -715,10 +750,20 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             run = await self.claim_repair(run, request)
             patch_context = context.model_copy(update={"iteration": context.iteration + 1})
             try:
-                result, _, settled = await self.run_seat(
+                result, patch_plan, settled = await self.run_seat(
                     self.patch_agent, request, patch_context, "author"
                 )
                 patch_context = self.carry_routes(patch_context, settled)
+                if patch_context.program_version == TOPIC_SELECTION_POLICY_V5:
+                    patch_context = patch_context.model_copy(
+                        update={
+                            "author_families": tuple(
+                                dict.fromkeys(
+                                    (*patch_context.author_families, patch_plan.author.family)
+                                )
+                            )
+                        }
+                    )
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except Exception as error:
                 if isinstance(error, InvalidSeatOutput):
@@ -930,3 +975,144 @@ class TopicSelectionWorkflowV4(TopicSelectionWorkflow):
             result_type=OpportunityInventoryManifestResult,
         )
         return base.model_copy(update={"inventory": assembled.artifact})
+
+
+@workflow.defn(name="TopicSelectionWorkflowV5")
+class TopicSelectionWorkflowV5(TopicSelectionWorkflowV4):
+    """Bound both source inventory and author packaging before portfolio review."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V5_AGENTS
+    policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V5
+    inventory_agent = topic_opportunity_inventory_v5
+    author_agent = topic_selection_author_v5
+    cold_agent = topic_selection_cold_v5
+    source_agent = topic_selection_source_v6
+    patch_agent = topic_selection_patch_v5
+
+    @workflow.run
+    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
+        """Keep v5 history and model activities disjoint from prior programs."""
+        return await super().run(request)
+
+    async def author_selection(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        run: RunSnapshot,
+    ) -> tuple[SelectionSaveResult | None, SelectionContext, RunSnapshot, str | None]:
+        """Package every planned opportunity batch before publishing one selection."""
+        prepared = await workflow.execute_activity(
+            "prepare_topic_author_plan_v5",
+            context,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=AuthorPackagingPlanResult,
+        )
+        context = context.model_copy(update={"author_plan": prepared.artifact})
+        fan_out = asyncio.Semaphore(AUTHOR_FAN_OUT)
+
+        async def author_one(
+            work_item_id: str,
+        ) -> tuple[
+            AuthorPackagingShardSaveResult | None,
+            SelectionContext,
+            str | None,
+        ]:
+            async with fan_out:
+                shard_context = context.model_copy(update={"author_work_item_id": work_item_id})
+                try:
+                    result, plan, settled = await self.run_seat(
+                        self.author_agent, request, shard_context, "author"
+                    )
+                    shard_context = self.carry_routes(shard_context, settled)
+                    saved = await workflow.execute_activity(
+                        "save_topic_author_shard_v5",
+                        AuthorPackagingShardSaveRequest(
+                            context=shard_context,
+                            draft=result.output,
+                            inspection=(
+                                source_inspection_trace(
+                                    result.all_messages(),
+                                    index_sha256=shard_context.source_index.sha256,
+                                    role="author",
+                                    stage=plan.stage,
+                                )
+                                if shard_context.source_index is not None
+                                else None
+                            ),
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=RETRY,
+                        result_type=AuthorPackagingShardSaveResult,
+                    )
+                except Exception as error:
+                    if isinstance(error, InvalidSeatOutput):
+                        shard_context = self.carry_routes(shard_context, error.context)
+                    if invalid_model_output(error):
+                        saved = await workflow.execute_activity(
+                            "save_topic_author_shard_v5",
+                            AuthorPackagingShardSaveRequest(
+                                context=shard_context,
+                                schema_error=(
+                                    f"Author response for {work_item_id} did not match the "
+                                    "selection schema."
+                                ),
+                            ),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RETRY,
+                            result_type=AuthorPackagingShardSaveResult,
+                        )
+                        return saved, shard_context, "; ".join(saved.diagnostics)
+                    if execution_limit(error):
+                        return (
+                            None,
+                            shard_context,
+                            f"Execution capacity ended while packaging {work_item_id}.",
+                        )
+                    raise
+                if saved.artifact is None:
+                    return saved, shard_context, "; ".join(saved.diagnostics)
+                return saved, shard_context, None
+
+        outcomes = await asyncio.gather(
+            *(author_one(item.workItemId) for item in prepared.plan.workItems)
+        )
+        settled_author = max(
+            (settled.author_index for _, settled, _ in outcomes),
+            default=context.author_index,
+        )
+        diagnostics = tuple(dict.fromkeys(reason for _, _, reason in outcomes if reason))
+        artifacts = tuple(
+            saved.artifact
+            for saved, _, _ in outcomes
+            if saved is not None and saved.artifact is not None
+        )
+        base = context.model_copy(
+            update={
+                "author_work_item_id": None,
+                "author_index": settled_author,
+            }
+        )
+        if len(artifacts) != len(prepared.plan.workItems):
+            return (
+                None,
+                base,
+                run,
+                "Bounded author packaging is incomplete; completed work-item shards and durable "
+                "source checkpoints are retained. "
+                + "; ".join(diagnostics)[:1200],
+            )
+        assembled = await workflow.execute_activity(
+            "assemble_topic_author_v5",
+            AuthorPackagingManifestRequest(context=base, shard_artifacts=artifacts),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=AuthorPackagingManifestResult,
+        )
+        families = tuple(value.root for value in assembled.manifest.generatorFamilies)
+        accepted = SelectionSaveResult(
+            selection=assembled.selection,
+            semantic_key=selection_semantic_key(assembled.draft),
+            draft=assembled.draft,
+        )
+        return accepted, base.model_copy(update={"author_families": families}), run, None

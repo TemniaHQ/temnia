@@ -14,8 +14,8 @@ that answer. This is workable for some sources, but its final evidence and outpu
 worthwhile discussion. A four-hour recording must not depend on one model retaining and returning
 the complete opportunity map in one call.
 
-This milestone decomposes independent opportunity discovery. It does not yet decompose author
-packaging or whole-portfolio source review; those are the next reconciliation stages.
+This milestone decomposes independent opportunity discovery. Author packaging is now decomposed by
+`standalone-topics/5`; whole-portfolio source review is the next reconciliation stage.
 
 ## Program boundary
 
@@ -163,8 +163,9 @@ two-hour and four-hour sources, with source-wide opportunity labels, cold judgme
 
 ## Next ordered milestone
 
-The assembled opportunity manifest and a large candidate portfolio can still make the author and
-source reviewer produce one growing final answer. The next change should decompose author packaging
-and independent source review into candidate/opportunity batches, then reconcile them through an
-immutable complete-plan gate. Internal topic splits must be visible inside a candidate; adjacent
-handoff checks alone do not solve the measured compound-candidate failure.
+`standalone-topics/5` now decomposes author packaging and admits a selection only after every exact
+author shard is present. The remaining growing answer is independent whole-portfolio source review.
+Its next design must batch candidate/opportunity judgments and exact overlap/handoff decisions,
+then reconcile them through an immutable complete-plan gate. Internal topic splits must be visible
+inside every candidate; adjacent handoff checks alone do not solve the measured compound-candidate
+failure. Contract: [bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md).

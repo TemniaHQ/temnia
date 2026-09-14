@@ -1536,6 +1536,20 @@ topic_selection_source_v5 = _agent(
     reviewer_evidence=True,
 )
 topic_selection_patch_v4 = _agent("topic_selection_patch_v4", TopicSelectionPatchV3)
+topic_opportunity_inventory_v5 = _agent(
+    "topic_opportunity_inventory_v5", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_author_v5 = _agent(
+    "topic_selection_author_v5", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_cold_v5 = _agent("topic_selection_cold_v5", TopicSelectionColdReview)
+topic_selection_source_v6 = _agent(
+    "topic_selection_source_v6",
+    TopicPortfolioReviewV4,
+    indexed_source=True,
+    reviewer_evidence=True,
+)
+topic_selection_patch_v5 = _agent("topic_selection_patch_v5", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
 TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
@@ -1552,7 +1566,18 @@ TOPIC_SELECTION_V4_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_selection_source_v5,
     topic_selection_patch_v4,
 )
-HARNESS_AGENTS = (*TOPIC_SELECTION_AGENTS, *TOPIC_SELECTION_V4_AGENTS)
+TOPIC_SELECTION_V5_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
+    topic_opportunity_inventory_v5,
+    topic_selection_author_v5,
+    topic_selection_cold_v5,
+    topic_selection_source_v6,
+    topic_selection_patch_v5,
+)
+HARNESS_AGENTS = (
+    *TOPIC_SELECTION_AGENTS,
+    *TOPIC_SELECTION_V4_AGENTS,
+    *TOPIC_SELECTION_V5_AGENTS,
+)
 
 
 def harness_pydantic_ai_plugin() -> PydanticAIPlugin:

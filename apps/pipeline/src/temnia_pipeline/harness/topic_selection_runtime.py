@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict
 
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
+    TopicAuthorPackagingManifest,
+    TopicAuthorPackagingPlan,
+    TopicAuthorPackagingShard,
     TopicOpportunityInventoryManifest,
     TopicOpportunityInventoryPlan,
     TopicOpportunityInventoryShard,
@@ -25,7 +28,9 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
 
-SelectionProgramVersion = Literal["standalone-topics/3", "standalone-topics/4"]
+SelectionProgramVersion = Literal[
+    "standalone-topics/3", "standalone-topics/4", "standalone-topics/5"
+]
 SourceToolRole = Literal["inventory", "author", "source_reviewer"]
 SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
 
@@ -79,6 +84,9 @@ class SelectionContext(BaseModel):
     inventory: HarnessArtifactRef | None = None
     inventory_attempted: bool = False
     inventory_diagnostics: tuple[str, ...] = ()
+    author_plan: HarnessArtifactRef | None = None
+    author_work_item_id: str | None = None
+    author_families: tuple[str, ...] = ()
     selection: HarnessArtifactRef | None = None
     assessment: HarnessArtifactRef | None = None
     navigation: HarnessArtifactRef | None = None
@@ -233,6 +241,65 @@ class OpportunityInventoryManifestResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     artifact: HarnessArtifactRef
     manifest: TopicOpportunityInventoryManifest
+
+
+class AuthorPackagingPlanResult(BaseModel):
+    """Deterministic bounded author work plan and its immutable identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    plan: TopicAuthorPackagingPlan
+
+
+class AuthorPackagingShardSaveRequest(BaseModel):
+    """One settled bounded author answer and its indexed inspection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    draft: TopicSelectionDraft | None = None
+    schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
+
+
+class AuthorPackagingShardSaveResult(BaseModel):
+    """One admitted author shard, or an exact retained refusal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    shard: TopicAuthorPackagingShard | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+class AuthorPackagingShardRejection(BaseModel):
+    """Settled bounded author output refused before whole-selection assembly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-author-packaging-shard-rejection/1"] = (
+        "topic-author-packaging-shard-rejection/1"
+    )
+    response: HarnessArtifactRef
+    work_item_id: str
+    draft: TopicSelectionDraft | None = None
+    diagnostics: tuple[str, ...]
+
+
+class AuthorPackagingManifestRequest(BaseModel):
+    """Exact ordered author shards supplied to the complete-manifest gate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    shard_artifacts: tuple[HarnessArtifactRef, ...]
+
+
+class AuthorPackagingManifestResult(BaseModel):
+    """Complete author manifest and ordinary accepted selection identities."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    selection: HarnessArtifactRef
+    manifest: TopicAuthorPackagingManifest
+    draft: TopicSelectionDraft
 
 
 class SelectionRejection(BaseModel):

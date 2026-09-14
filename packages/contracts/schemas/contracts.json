@@ -1991,6 +1991,194 @@
       "additionalProperties": false,
       "title": "TopicAssessmentCandidate"
     },
+    "TopicAuthorPackagingManifest": {
+      "$id": "#/$defs/TopicAuthorPackagingManifest",
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean",
+          "const": true
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-author-packaging-manifest/1"
+        },
+        "generatorFamilies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventorySha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "selection": {
+          "$ref": "#/$defs/TopicSelectionDraft"
+        },
+        "shardArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessArtifactRef"
+          }
+        },
+        "workItemIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "complete",
+        "format",
+        "generatorFamilies",
+        "indexSha256",
+        "inventorySha256",
+        "planSha256",
+        "selection",
+        "shardArtifacts",
+        "workItemIds"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorPackagingManifest"
+    },
+    "TopicAuthorPackagingPlan": {
+      "$id": "#/$defs/TopicAuthorPackagingPlan",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "topic-author-packaging-plan/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventorySha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "maxOpportunitiesPerWorkItem": {
+          "type": "number",
+          "const": 12
+        },
+        "workItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicAuthorWorkItem"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "indexSha256",
+        "inventorySha256",
+        "maxOpportunitiesPerWorkItem",
+        "workItems"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorPackagingPlan"
+    },
+    "TopicAuthorPackagingShard": {
+      "$id": "#/$defs/TopicAuthorPackagingShard",
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/TopicSelectionDraft"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-author-packaging-shard/1"
+        },
+        "generatorFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventorySha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "workItem": {
+          "$ref": "#/$defs/TopicAuthorWorkItem"
+        }
+      },
+      "required": [
+        "draft",
+        "format",
+        "generatorFamily",
+        "indexSha256",
+        "inventorySha256",
+        "planSha256",
+        "workItem"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorPackagingShard"
+    },
+    "TopicAuthorWorkItem": {
+      "$id": "#/$defs/TopicAuthorWorkItem",
+      "type": "object",
+      "properties": {
+        "batchOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "opportunityIds": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "batchOrdinal",
+        "opportunityIds",
+        "ordinal",
+        "sectionId",
+        "workItemId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorWorkItem"
+    },
     "TopicBoundaryIssue": {
       "$id": "#/$defs/TopicBoundaryIssue",
       "type": "object",

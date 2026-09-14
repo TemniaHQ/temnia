@@ -17,12 +17,14 @@ from pydantic_ai.tools import GenerateToolJsonSchema
 
 from temnia_pipeline.contracts import (
     Relation,
+    TopicAuthorWorkItem,
     TopicCandidate,
     TopicCandidateInspectionPage,
     TopicCandidateRegionHit,
     TopicInventorySection,
     TopicMediaEvidencePage,
     TopicOpportunity,
+    TopicOpportunityInventoryPlan,
     TopicPortfolioReviewV4,
     TopicProposal,
     TopicSelectionAssessment,
@@ -41,9 +43,14 @@ from temnia_pipeline.harness.artifacts import canonical_json
 from temnia_pipeline.harness.editorial_evidence import read_topic_media_evidence
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.source_progress import compact_source_messages
+from temnia_pipeline.harness.topic_author_packaging import (
+    admit_author_shard,
+    build_author_plan,
+)
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
+    SELECTION_AUTHOR_SHARD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
@@ -51,6 +58,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
     assess_selection,
+    author_packaging_shard_prompt,
     content_hash,
     make_rubric,
     opportunity_inventory_prompt,
@@ -97,6 +105,8 @@ TOPIC_SELECTION_V4_SCHEMAS = {
     "topic_source": "topic-selection-portfolio/4",
     "topic_patch": SELECTION_PATCH_PROMPT_V3,
 }
+TOPIC_SELECTION_V5_STAGES = TOPIC_SELECTION_V4_STAGES
+TOPIC_SELECTION_V5_SCHEMAS = dict(TOPIC_SELECTION_V4_SCHEMAS)
 QUALIFICATION_SOURCE_INDEX = {
     "indexSha256": "0" * 64,
     "rootNodeId": "episode",
@@ -550,6 +560,38 @@ def topic_selection_v4_qualification_prompts() -> dict[str, tuple[str, type[Base
     }
 
 
+def _v5_qualification_work_item() -> TopicAuthorWorkItem:
+    inventory = topic_selection_v4_qualification_inventory()
+    return TopicAuthorWorkItem.model_validate(
+        {
+            "workItemId": "section-0001:author-0001",
+            "ordinal": 0,
+            "sectionId": "section-0001",
+            "batchOrdinal": 0,
+            "opportunityIds": [item.id for item in inventory.opportunities],
+        }
+    )
+
+
+def topic_selection_v5_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
+    """Render the exact bounded-inventory and bounded-author request shapes."""
+    prompts = topic_selection_v4_qualification_prompts()
+    _, record, _ = topic_selection_qualification_case(combined_patch=True)
+    inventory = topic_selection_v4_qualification_inventory()
+    work_item = _v5_qualification_work_item()
+    prompts["topic_author"] = (
+        author_packaging_shard_prompt(
+            QUALIFICATION_SOURCE_INDEX,
+            record.rubric,
+            work_item,
+            inventory,
+        ),
+        TopicSelectionDraft,
+        SELECTION_AUTHOR_SHARD_PROMPT,
+    )
+    return prompts
+
+
 def validate_topic_selection_qualification_output(stage: str, output: object) -> None:
     """Source admission is measured separately from schema transport and publication quality."""
     evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
@@ -598,6 +640,49 @@ def validate_topic_selection_v4_qualification_output(stage: str, output: object)
         validate_selection_against_inventory(topic_selection_v4_qualification_inventory(), output)
         return
     validate_topic_selection_qualification_output(stage, output)
+
+
+def validate_topic_selection_v5_qualification_output(stage: str, output: object) -> None:
+    """Ground the bounded author shard against its exact synthetic inventory assignment."""
+    if stage != "topic_author":
+        validate_topic_selection_v4_qualification_output(stage, output)
+        return
+    if not isinstance(output, TopicSelectionDraft):
+        raise TypeError("topic qualification author output has the wrong type")
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    inventory = topic_selection_v4_qualification_inventory()
+    # Qualification uses the same deterministic author admission. Only its tiny section plan is
+    # synthetic; the prompt, native schema and output validation are the production functions.
+    section = TopicInventorySection(
+        sectionId="section-0001",
+        ordinal=0,
+        ownershipSpan=TopicSentenceSpan(
+            firstSentenceId=evidence.sentences[0].id,
+            lastSentenceId=evidence.sentences[-1].id,
+        ),
+        previousSectionId=None,
+        nextSectionId=None,
+    )
+    inventory_plan = TopicOpportunityInventoryPlan(
+        format="topic-opportunity-inventory-plan/1",
+        indexSha256="0" * 64,
+        sections=[section],
+    )
+    plan = build_author_plan(
+        inventory_plan,
+        inventory,
+        index_sha256="0" * 64,
+        inventory_sha256="3" * 64,
+    )
+    admit_author_shard(
+        evidence,
+        inventory,
+        plan,
+        plan_sha256="4" * 64,
+        work_item_id=plan.workItems[0].workItemId,
+        draft=output,
+        generator_family="synthetic-author",
+    )
 
 
 def native_schema_sha256(output_type: type[BaseModel]) -> str:
