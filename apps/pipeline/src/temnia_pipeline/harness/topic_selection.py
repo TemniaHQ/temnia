@@ -48,7 +48,7 @@ MIN_COMPOUND_CANDIDATES = 2
 SELECTION_INVENTORY_PROMPT = "topic-opportunity-inventory/3"
 SELECTION_AUTHOR_PROMPT_V3 = "topic-selection-author/8"
 SELECTION_COLD_PROMPT_V3 = "topic-selection-cold/3"
-SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/10"
+SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/11"
 SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/11"
 _OPPORTUNITY_SPANS = (
     "coreSpans",
@@ -438,6 +438,15 @@ cursor 0 through its complete page, then browse every returned section from curs
 complete page in chronological order. Use search_source to challenge the inventory and read_source
 to inspect exact speech for candidate ownership, every reported source span, and plausible missing
 discussions.
+Call inspect_candidate for every current candidate, from cursor zero through its complete page.
+Treat the returned internal regions and descriptions as navigation hypotheses: read the exact speech
+across each candidate's internal region changes before deciding whether its named purpose is one
+coherent discussion or a compound treatment requiring a split. A candidate spanning one region may
+still be compound, and a candidate spanning several regions may still have one coherent purpose.
+read_media_evidence is available for measured sentence alignment, boundary, pause, shot and speech
+coverage records. Use it only when those sensor facts bear on a claim. They are not playback and do
+not authorize an audio or visual observation; the deterministic compiler remains the authority for
+physical cut feasibility.
 Ranked hits are discovery leads, not proof of source-wide completeness.
 Each continuation replaces old tool prose with an application-authored progress checkpoint and
 bounded recent exact excerpts. Immediately before the final answer, reread every exact range the

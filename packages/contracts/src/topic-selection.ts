@@ -134,6 +134,100 @@ export const TopicSourceReadPageSchema = z
   .meta({ id: "TopicSourceReadPage", title: "TopicSourceReadPage" });
 export type TopicSourceReadPage = z.infer<typeof TopicSourceReadPageSchema>;
 
+/** One source-index leaf as it intersects a selected candidate extent. */
+export const TopicCandidateRegionHitSchema = z
+  .object({
+    endMs: z.int().nonnegative(),
+    firstSentenceId: identifier(),
+    id: identifier(),
+    keywords: z.array(z.string()),
+    lastSentenceId: identifier(),
+    parentId: identifier(),
+    preview: z.string(),
+    relation: z.enum([
+      "same_extent",
+      "inside_candidate",
+      "covers_candidate",
+      "opening_overlap",
+      "closing_overlap",
+    ]),
+    selectedFirstSentenceId: identifier(),
+    selectedLastSentenceId: identifier(),
+    sentenceCount: z.int().positive(),
+    startMs: z.int().nonnegative(),
+  })
+  .strict()
+  .meta({ id: "TopicCandidateRegionHit", title: "TopicCandidateRegionHit" });
+export type TopicCandidateRegionHit = z.infer<
+  typeof TopicCandidateRegionHitSchema
+>;
+
+/** Bounded internal source map for one candidate from one immutable selection. */
+export const TopicCandidateInspectionPageSchema = z
+  .object({
+    candidateId: identifier(),
+    complete: z.boolean(),
+    indexSha256: sha256(),
+    nextCursor: z.int().nonnegative().nullable(),
+    regions: z.array(TopicCandidateRegionHitSchema),
+    selectionSha256: sha256(),
+  })
+  .strict()
+  .meta({
+    id: "TopicCandidateInspectionPage",
+    title: "TopicCandidateInspectionPage",
+  });
+export type TopicCandidateInspectionPage = z.infer<
+  typeof TopicCandidateInspectionPageSchema
+>;
+
+/** One already-measured event; it is sensor data rather than playback observation. */
+export const TopicMediaEvidenceEventSchema = z
+  .object({
+    alignedWordCount: z.int().nonnegative().nullable(),
+    boundaryKind: z
+      .enum(["edge", "sentence", "turn", "pause", "shot"])
+      .nullable(),
+    clearanceMs: z.int().nonnegative().nullable(),
+    endMs: z.int().nonnegative().nullable(),
+    id: identifier(),
+    interpolatedWordCount: z.int().nonnegative().nullable(),
+    kind: z.enum(["sentence", "boundary", "pause", "shot", "speech_interval"]),
+    minimumConfidence: z.number().min(0).max(1).nullable(),
+    reasons: z.array(z.string()),
+    relatedIds: z.array(identifier()),
+    requiresReview: z.boolean().nullable(),
+    score: z.number().finite().nullable(),
+    sentenceId: identifier().nullable(),
+    timeMs: z.int().nonnegative(),
+    wordCount: z.int().nonnegative().nullable(),
+  })
+  .strict()
+  .meta({ id: "TopicMediaEvidenceEvent", title: "TopicMediaEvidenceEvent" });
+export type TopicMediaEvidenceEvent = z.infer<
+  typeof TopicMediaEvidenceEventSchema
+>;
+
+/** Chronological, paginated sensor evidence for an exact transcript span. */
+export const TopicMediaEvidencePageSchema = z
+  .object({
+    complete: z.boolean(),
+    detector: z.string().nullable(),
+    detectorRevision: z.string().nullable(),
+    events: z.array(TopicMediaEvidenceEventSchema),
+    evidenceSha256: sha256(),
+    nextCursor: z.int().nonnegative().nullable(),
+    sourceId: z.uuid(),
+    span: TopicSentenceSpanSchema,
+    speechCoverageStatus: z.enum(["unknown", "clear", "needs_review"]),
+    warnings: z.array(z.string()),
+  })
+  .strict()
+  .meta({ id: "TopicMediaEvidencePage", title: "TopicMediaEvidencePage" });
+export type TopicMediaEvidencePage = z.infer<
+  typeof TopicMediaEvidencePageSchema
+>;
+
 /** Audience information is allowed in cold review; episode answers are not. */
 export const TopicEditorialRubricSchema = z
   .object({

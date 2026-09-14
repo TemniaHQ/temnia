@@ -8,7 +8,7 @@
 from __future__ import annotations
 from typing import Annotated, Any, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, constr
-from enum import StrEnum
+from enum import Enum, StrEnum
 from uuid import UUID
 from typing_extensions import TypeAliasType
 
@@ -466,6 +466,32 @@ class Classification1(StrEnum):
     unresolved = "unresolved"
 
 
+class Relation(StrEnum):
+    same_extent = "same_extent"
+    inside_candidate = "inside_candidate"
+    covers_candidate = "covers_candidate"
+    opening_overlap = "opening_overlap"
+    closing_overlap = "closing_overlap"
+
+
+class TopicCandidateRegionHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
+    preview: str
+    relation: Relation
+    selectedFirstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    selectedLastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
 class Status3(StrEnum):
     pass_ = "pass"
     fail = "fail"
@@ -493,6 +519,53 @@ class TopicEditorialRubric(BaseModel):
     originalInstructions: str
     version: Literal[1]
     viewerGoals: list[str]
+
+
+class BoundaryKind(Enum):
+    edge = "edge"
+    sentence = "sentence"
+    turn = "turn"
+    pause = "pause"
+    shot = "shot"
+
+
+class Kind4(StrEnum):
+    sentence = "sentence"
+    boundary = "boundary"
+    pause = "pause"
+    shot = "shot"
+    speech_interval = "speech_interval"
+
+
+class RelatedId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicMediaEvidenceEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    alignedWordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    boundaryKind: BoundaryKind | None
+    clearanceMs: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    endMs: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    interpolatedWordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    kind: Kind4
+    minimumConfidence: Annotated[float | None, Field(ge=0.0, le=1.0)]
+    reasons: list[str]
+    relatedIds: list[RelatedId]
+    requiresReview: bool | None
+    score: float | None
+    sentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    timeMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    wordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+
+
+class SpeechCoverageStatus(StrEnum):
+    unknown = "unknown"
+    clear = "clear"
+    needs_review = "needs_review"
 
 
 class Disposition(StrEnum):
@@ -542,7 +615,7 @@ class Disposition1(StrEnum):
     unresolved = "unresolved"
 
 
-class Kind4(StrEnum):
+class Kind5(StrEnum):
     missing_setup = "missing_setup"
     missing_qualification = "missing_qualification"
     unfinished_discussion = "unfinished_discussion"
@@ -561,7 +634,7 @@ class Severity(StrEnum):
     unknown = "unknown"
 
 
-class Kind5(StrEnum):
+class Kind6(StrEnum):
     extend_start = "extend_start"
     extend_end = "extend_end"
     replace_extent = "replace_extent"
@@ -591,7 +664,7 @@ class ChildId(RootModel[str]):
     root: Annotated[str, Field(max_length=256, min_length=1)]
 
 
-class Kind6(StrEnum):
+class Kind7(StrEnum):
     episode = "episode"
     section = "section"
     region = "region"
@@ -607,7 +680,7 @@ class TopicSourceIndexNode(BaseModel):
     firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
     keywords: list[str]
-    kind: Kind6
+    kind: Kind7
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
     parentId: Annotated[str | None, Field(max_length=256, min_length=1)]
@@ -627,7 +700,7 @@ class TopicSourceIndexSentence(BaseModel):
     text: str
 
 
-class Kind7(StrEnum):
+class Kind8(StrEnum):
     section = "section"
     region = "region"
 
@@ -641,7 +714,7 @@ class TopicSourceNodeHit(BaseModel):
     firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
     keywords: list[str]
-    kind: Kind7
+    kind: Kind8
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     parentId: Annotated[str, Field(max_length=256, min_length=1)]
     preview: str
@@ -1126,6 +1199,18 @@ class TopicCandidateHandoffJudgment(BaseModel):
     rightContextSpan: TopicSentenceSpan
 
 
+class TopicCandidateInspectionPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    regions: list[TopicCandidateRegionHit]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+
+
 class TopicCandidateOverlapJudgment(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1189,6 +1274,22 @@ class TopicExport(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class TopicMediaEvidencePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    detector: str | None
+    detectorRevision: str | None
+    events: list[TopicMediaEvidenceEvent]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    sourceId: UUID
+    span: TopicSentenceSpan
+    speechCoverageStatus: SpeechCoverageStatus
+    warnings: list[str]
+
+
 class TopicOpportunity(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1250,7 +1351,7 @@ class TopicSelectionFinding(BaseModel):
     affectedCandidateIds: list[str]
     evidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind4
+    kind: Kind5
     opportunityIds: list[str]
     reason: Annotated[str, Field(min_length=1)]
     severity: Severity
@@ -1263,7 +1364,7 @@ class TopicSelectionPatchOperationV3(BaseModel):
     affectedCandidateIds: list[str]
     findingIds: Annotated[list[str], Field(min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind5
+    kind: Kind6
     opportunities: list[TopicOpportunity]
     reason: Annotated[str, Field(min_length=1)]
     replacementCandidates: list[TopicCandidate]

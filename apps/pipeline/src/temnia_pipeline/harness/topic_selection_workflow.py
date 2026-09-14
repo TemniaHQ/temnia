@@ -105,6 +105,8 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         input_artifact_ids=tuple(ref.id for ref in plan.input_artifacts),
         source_index=plan.source_index,
         source_tool_role=plan.source_tool_role,
+        candidate_selection=plan.candidate_selection,
+        media_evidence=plan.media_evidence,
         dispatch_limit=request.config.maxDispatches,
         synthetic_payload=plan.synthetic_payload,
     )

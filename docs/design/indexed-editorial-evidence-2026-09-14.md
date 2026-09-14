@@ -5,12 +5,12 @@
 index and give author/reviewer models tools to investigate source evidence. Treat this as a
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
-The first end-to-end vertical slice and its hierarchy milestone are implemented on
-`feat/indexed-editorial-evidence`. They replace whole-transcript prompts for the independent
-inventory, author and source reviewer with one immutable source index and three bounded tools.
-This is implemented behavior with synthetic and local test evidence; it is not a measured
-editorial improvement or a production qualification. Bounded context reconstruction,
-candidate/media tools and cross-run index reuse described below remain subsequent work.
+The first end-to-end vertical slice, hierarchy, durable-checkpoint and reviewer-evidence milestones
+are implemented on `feat/indexed-editorial-evidence`. They replace whole-transcript prompts for the
+independent inventory, author and source reviewer with one immutable source index and bounded,
+role-specific tools. This is implemented behavior with synthetic and local test evidence; it is not
+a measured editorial improvement or a production qualification. Safe cross-run index reuse and
+bounded portfolio reconciliation described below remain subsequent work.
 
 ## Why this changes the design
 
@@ -71,7 +71,8 @@ and each response depends on the checkpoint it saw. After a known provider failu
 loads the latest valid checkpoint and retries the same compact request on the current or next
 qualified route without repeating settled source discovery. Unknown outcomes remain fenced. Final
 response admission searches the settled rounds for the unique response that parses to the typed
-result. The physical gateway validates the complete three-tool set on every wire request. The
+result. The physical gateway validates the complete role-specific three- or five-tool set on every
+wire request. The
 optional route pre-flight applies the same compactor and can retain and account for multiple
 tool/final rounds under one logical stage.
 
@@ -153,8 +154,8 @@ Start with a small, explicit tool surface:
 | `browse_source(parent_id, cursor)` | Traverse the chronological map and discover pending regions |
 | `search_source(query, scope, cursor)` | Find exact phrases and related meanings anywhere in the permitted source |
 | `read_source(first_sentence_id, last_sentence_id, cursor)` | Return exact speech with source identity, neighbors and explicit pagination |
-| `inspect_candidate(candidate_id)` | Follow-up: return its exact extent, internal region boundaries and relevant relationship hypotheses |
-| `read_media_evidence(span)` | Follow-up: return already measured speech/shot/alignment evidence when a role needs it |
+| `inspect_candidate(candidate_id, cursor)` | Source reviewer: page through the exact internal regions intersecting one accepted candidate |
+| `read_media_evidence(span, cursor)` | Source reviewer: page through already measured speech/shot/alignment evidence when it bears on a claim |
 
 The runtime supplies organization, source, evidence revision and role; models cannot substitute
 them as arbitrary tool arguments. Every result names the index/evidence identity, returned spans,
@@ -168,11 +169,15 @@ opportunity exists. The author explores the inventory, reads its actual speech, 
 and proposes candidates. Missing regional results stay visible; a top-level summary cannot
 silently turn incomplete discovery into complete coverage.
 
-The source reviewer starts from the exact candidate and makes its own retrieval decisions. It
-checks the opening premise, closing qualifications, attribution and internal discussion
-structure, and can follow evidence to any part of that same source. A generated map shared with
-the author is a navigation aid, not an independent judgment. The reviewer must have access to
-raw regions and must not inherit the author's pass verdict or persuasive rationale.
+The source reviewer starts from the exact candidate and makes its own retrieval decisions. It must
+page through every candidate's intersecting regions and read exact speech across internal region
+changes. It checks the opening premise, closing qualifications, attribution and internal discussion
+structure, and can follow evidence to any part of that same source. It can optionally inspect
+already measured media events, which are sensor facts rather than playback. A generated map shared
+with the author is a navigation aid, not an independent judgment. The reviewer must have access to
+raw regions and must not inherit the author's pass verdict or persuasive rationale. The exact tool,
+identity and admission contract is recorded in
+[candidate-media-evidence-tools-2026-09-14.md](candidate-media-evidence-tools-2026-09-14.md).
 
 Cold review receives only the selected speech, local IDs and the agreed audience/title policy.
 It has no episode map or whole-source search. If a candidate itself exceeds one request's
@@ -264,8 +269,9 @@ Sequence the next design around this foundation:
    tools, multi-round accounting, cold-review isolation, bounded reconstruction and known-failure
    recovery are implemented and locally tested.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
-   This includes bounded opportunity/portfolio reconciliation, not one final unbounded dump of
-   every candidate. Add mandatory source judgments and internal-structure checks in this design.
+   Mandatory candidate inspection and measured-media access are implemented. Bounded
+   opportunity/portfolio reconciliation remains; it cannot be one unbounded dump of every
+   candidate.
 4. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
    runs and separate held-out sources. A four-hour recording is a test requirement; it has not
    been verified as available in this session. Repeated/copied transcripts test payload handling,
@@ -273,9 +279,10 @@ Sequence the next design around this foundation:
 5. Use the observed remaining failures to prioritize repair decomposition and adjudication.
    Resolve PR #48's shared-authority and accounting issues before either change.
 
-The first two slices now name the index, checkpoint and inspection artifact contracts, scoped tool
-arguments and results, model continuation/final-response behavior, known-failure recovery and route
-validation. Real long-source provider and editorial recovery remain open. PydanticAI's support did
+The implemented slices now name the index, checkpoint, candidate/media and inspection artifact
+contracts, scoped tool arguments and results, model continuation/final-response behavior,
+known-failure recovery and route validation. Real long-source provider and editorial recovery remain
+open. PydanticAI's support did
 not make the gateway path capable by itself; model history processing, admission, persistence,
 workflow retry and the physical wire validator were changed and tested.
 

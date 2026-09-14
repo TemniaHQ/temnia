@@ -143,6 +143,9 @@ def expected_gateway_headers(route: RouteEntry) -> dict[str, str]:
 
 
 SOURCE_TOOL_NAMES = frozenset({"browse_source", "search_source", "read_source"})
+SOURCE_REVIEW_TOOL_NAMES = frozenset(
+    {*SOURCE_TOOL_NAMES, "inspect_candidate", "read_media_evidence"}
+)
 
 
 def _validate_source_tools(body: dict[str, Any]) -> None:
@@ -166,7 +169,11 @@ def _validate_source_tools(body: dict[str, Any]) -> None:
         if not isinstance(name, str):
             raise GatewayPolicyError("gateway source tool has no name")
         names.append(name)
-    if len(names) != len(SOURCE_TOOL_NAMES) or frozenset(names) != SOURCE_TOOL_NAMES:
+    toolset = frozenset(names)
+    if len(names) != len(toolset) or toolset not in {
+        SOURCE_TOOL_NAMES,
+        SOURCE_REVIEW_TOOL_NAMES,
+    }:
         raise GatewayPolicyError("gateway request contains an unqualified source toolset")
     if body.get("tool_choice") not in {None, "auto"}:
         raise GatewayPolicyError("gateway source tool choice is not automatic")
@@ -667,7 +674,10 @@ class GatewayChatModel(WrapperModel):
         if (
             model_request_parameters.native_tools
             or model_request_parameters.output_tools
-            or (tool_names and frozenset(tool_names) != SOURCE_TOOL_NAMES)
+            or (
+                tool_names
+                and frozenset(tool_names) not in {SOURCE_TOOL_NAMES, SOURCE_REVIEW_TOOL_NAMES}
+            )
         ):
             raise GatewayPolicyError("only the indexed source function tools are allowed")
         if model_request_parameters.allow_image_output:

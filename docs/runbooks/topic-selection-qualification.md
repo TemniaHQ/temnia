@@ -14,19 +14,22 @@ The historical v2 admission design is kept in the
 What remains is an optional pre-flight for auditioning a **new route** before spending a
 full-source run on it. It starts the five production stage shapes (inventory, author,
 cold review, source review, patch) against a five-sentence synthetic source and records
-settled cost per model round. Inventory, author and source review declare the exact
-`browse_source`, `search_source` and `read_source` tools; if a model calls them, the
-pre-flight executes the local synthetic tools and durably accounts for each continuation
+settled cost per model round. Inventory and author declare exactly `browse_source`,
+`search_source` and `read_source`. Source review declares those tools plus exactly
+`inspect_candidate` and `read_media_evidence`. If a model calls them, the pre-flight executes
+the local synthetic tools with production result shapes and durably accounts for each continuation
 request under that logical stage. The final native schema remains present on every round.
 Each indexed continuation also uses the production `topic-agent-checkpoint/1` history processor:
 the next wire request contains the unchanged prompt plus one bounded checkpoint, with earlier
 assistant and tool messages removed. This checks the compact request shape in addition to tool
 declaration.
 
-The synthetic source uses `topic-source-index/2`: browse starts at the episode root and then
-visits every returned section in order before search and exact read. A direct final answer can
-prove only schema/tool declaration admission; a qualified indexed route has retained successful
-root, section, search and read rounds followed by the typed final round.
+The synthetic source uses `topic-source-index/2`: browse starts at the episode root and then visits
+every returned section in order before search and exact read. Source review also has one accepted
+candidate and measured evidence fixture. A direct final answer can prove only schema/tool declaration
+admission; a qualified indexed route has retained successful root, section, search and read rounds
+followed by the typed final round. Qualification of source review additionally requires observed
+candidate/media tool rounds when those capabilities are being relied on for a production route.
 
 The report's `dispatchCount` is therefore model requests, not logical stages. Each logical
 call retains a `rounds` list with request, response, generation and cost identities. Budget
@@ -42,6 +45,8 @@ continuation still has its own request hash, dispatch, response and cost row. In
 call's `rounds` and require the expected root/section/search/read/final sequence when testing tool
 behavior. The checkpoint processor is documented in
 [indexed-agent-checkpoints-2026-09-14.md](../design/indexed-agent-checkpoints-2026-09-14.md).
+The reviewer-only tool contract is
+[candidate-media-evidence-tools-2026-09-14.md](../design/candidate-media-evidence-tools-2026-09-14.md).
 
 ## Running the pre-flight
 

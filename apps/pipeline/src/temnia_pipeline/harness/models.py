@@ -51,11 +51,15 @@ from temporalio.common import RetryPolicy
 
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
+    HarnessEvidence,
     Scope,
+    TopicCandidateInspectionPage,
+    TopicMediaEvidencePage,
     TopicPortfolioReviewV4,
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionPatchV3,
+    TopicSelectionRecord,
     TopicSourceBrowsePage,
     TopicSourceIndex,
     TopicSourceReadPage,
@@ -71,6 +75,10 @@ from temnia_pipeline.harness.cassettes import (
     request_fingerprint,
     request_payload_bytes,
     synthetic_function_model,
+)
+from temnia_pipeline.harness.editorial_evidence import (
+    inspect_topic_candidate,
+    read_topic_media_evidence,
 )
 from temnia_pipeline.harness.gateway import (
     CostObservation,
@@ -153,6 +161,8 @@ class HarnessModelDeps(BaseModel):
     input_artifact_ids: tuple[UUID, ...] = ()
     source_index: HarnessArtifactRef | None = None
     source_tool_role: SourceToolRole | None = None
+    candidate_selection: HarnessArtifactRef | None = None
+    media_evidence: HarnessArtifactRef | None = None
     dispatch_limit: Annotated[int, Field(gt=0, le=128)]
     cassette_mode: CassetteMode = CassetteMode.OFF
     synthetic_payload: dict[str, Any] | None = None
@@ -168,6 +178,17 @@ class HarnessModelDeps(BaseModel):
             raise ValueError("source tools require both an index identity and an editorial role")
         if self.source_index is not None and self.source_index.id not in self.input_artifact_ids:
             raise ValueError("source index must be one of the model call's immutable inputs")
+        reviewer_refs = (self.candidate_selection, self.media_evidence)
+        if self.source_tool_role == "source_reviewer":
+            if any(item is None for item in reviewer_refs):
+                raise ValueError("source reviewer tools require selection and evidence authority")
+            if any(
+                item is not None and item.id not in self.input_artifact_ids
+                for item in reviewer_refs
+            ):
+                raise ValueError("reviewer tool authority must be an immutable model input")
+        elif any(item is not None for item in reviewer_refs):
+            raise ValueError("candidate and media tools are restricted to source review")
         return self
 
 
@@ -330,6 +351,62 @@ async def _indexed_source(deps: HarnessModelDeps) -> tuple[TopicSourceIndex, str
     return index, reference.sha256
 
 
+async def _reviewer_inputs(
+    deps: HarnessModelDeps,
+) -> tuple[TopicSelectionRecord, HarnessEvidence]:
+    """Load the exact accepted selection and measured evidence for source-review tools."""
+    if deps.source_tool_role != "source_reviewer":
+        raise ModelPersistenceError("candidate and media tools are restricted to source review")
+    selection_ref = deps.candidate_selection
+    evidence_ref = deps.media_evidence
+    if selection_ref is None or evidence_ref is None:
+        raise ModelPersistenceError("source reviewer tool authority is incomplete")
+    runtime = _configured_runtime()
+
+    async def load(reference: HarnessArtifactRef, *, kind: str, format_name: str) -> dict[str, Any]:
+        accepted = await artifacts._artifact_for_read(  # pyright: ignore[reportPrivateUsage]
+            runtime.database_url,
+            scope=deps.scope,
+            source_id=deps.source_id,
+            artifact_id=reference.id,
+        )
+        if (
+            accepted.id != reference.id
+            or accepted.kind != kind
+            or accepted.fingerprint != reference.fingerprint
+            or accepted.sha256 != reference.sha256
+            or accepted.size_bytes != reference.sizeBytes
+            or accepted.storage_key != reference.storageKey
+            or accepted.metadata.get("format") != format_name
+            or accepted.metadata.get("runId") != str(deps.run_id)
+        ):
+            raise ModelPersistenceError("reviewer tool input differs from its accepted artifact")
+        value = await artifacts.read_artifact_json(
+            runtime.database_url,
+            scope=deps.scope,
+            source_id=deps.source_id,
+            store=runtime.store,
+            artifact_id=reference.id,
+        )
+        if hashlib.sha256(artifacts.canonical_json(value)).hexdigest() != reference.sha256:
+            raise ModelPersistenceError("reviewer tool input bytes differ from their accepted hash")
+        return cast("dict[str, Any]", value)
+
+    selection_value, evidence_value = await asyncio.gather(
+        load(selection_ref, kind="proposal", format_name="topic-selection/2"),
+        load(evidence_ref, kind="evidence", format_name="harness-evidence/1"),
+    )
+    selection = TopicSelectionRecord.model_validate(selection_value)
+    evidence = HarnessEvidence.model_validate(evidence_value)
+    if (
+        selection.runId != deps.run_id
+        or selection.evidenceSha256 != evidence_ref.sha256
+        or evidence.sourceId != deps.source_id
+    ):
+        raise ModelPersistenceError("reviewer tool inputs do not describe the same run and source")
+    return selection, evidence
+
+
 async def browse_source(
     ctx: RunContext[HarnessModelDeps],
     parent_id: str = "episode",
@@ -399,6 +476,76 @@ async def read_source(
         first_sentence_id=first_sentence_id,
         last_sentence_id=last_sentence_id,
         cursor_sentence_id=cursor_sentence_id,
+        limit=limit,
+    )
+
+
+async def inspect_candidate(
+    ctx: RunContext[HarnessModelDeps],
+    candidate_id: str,
+    cursor: int = 0,
+    limit: int = 8,
+) -> TopicCandidateInspectionPage:
+    """Browse the internal index regions intersecting one accepted candidate.
+
+    Args:
+        ctx: The immutable run, selection and source-index authority.
+        candidate_id: Candidate ID from the accepted selection under review.
+        cursor: Zero-based region cursor returned by the prior page.
+        limit: Number of intersecting regions to return, from 1 through 16.
+    """
+    index, index_sha256 = await _indexed_source(ctx.deps)
+    selection, evidence = await _reviewer_inputs(ctx.deps)
+    evidence_ref = ctx.deps.media_evidence
+    if evidence_ref is None:  # pragma: no cover - guarded by dependency validation
+        raise ModelPersistenceError("media evidence authority is absent")
+    if index.evidenceSha256 != evidence_ref.sha256:
+        raise ModelPersistenceError("candidate index and measured evidence identities differ")
+    if (
+        evidence.transcriptId != index.transcriptId
+        or evidence.transcriptRevision != index.transcriptRevision
+    ):
+        raise ModelPersistenceError("candidate index and measured evidence revisions differ")
+    selection_ref = ctx.deps.candidate_selection
+    if selection_ref is None:  # pragma: no cover - guarded by dependency validation
+        raise ModelPersistenceError("candidate selection authority is absent")
+    return inspect_topic_candidate(
+        index,
+        selection,
+        index_sha256=index_sha256,
+        selection_sha256=selection_ref.sha256,
+        candidate_id=candidate_id,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+async def read_media_evidence(
+    ctx: RunContext[HarnessModelDeps],
+    first_sentence_id: str,
+    last_sentence_id: str,
+    cursor: int = 0,
+    limit: int = 40,
+) -> TopicMediaEvidencePage:
+    """Read already-measured media sensor events for one exact sentence span.
+
+    Args:
+        ctx: The immutable run and evidence authority.
+        first_sentence_id: First transcript sentence in the requested span.
+        last_sentence_id: Last transcript sentence in the requested span.
+        cursor: Zero-based event cursor returned by the prior page.
+        limit: Number of chronological events to return, from 1 through 80.
+    """
+    _, evidence = await _reviewer_inputs(ctx.deps)
+    evidence_ref = ctx.deps.media_evidence
+    if evidence_ref is None:  # pragma: no cover - guarded by dependency validation
+        raise ModelPersistenceError("media evidence authority is absent")
+    return read_topic_media_evidence(
+        evidence,
+        evidence_sha256=evidence_ref.sha256,
+        first_sentence_id=first_sentence_id,
+        last_sentence_id=last_sentence_id,
+        cursor=cursor,
         limit=limit,
     )
 
@@ -624,7 +771,9 @@ def _owner_token(runtime: ModelRuntime) -> str:
 
 
 def _validate_request(deps: HarnessModelDeps, parameters: ModelRequestParameters) -> None:
-    allowed = {"browse_source", "search_source", "read_source"}
+    source_tools = {"browse_source", "search_source", "read_source"}
+    reviewer_tools = {*source_tools, "inspect_candidate", "read_media_evidence"}
+    allowed = reviewer_tools if deps.source_tool_role == "source_reviewer" else source_tools
     names = {tool.name for tool in parameters.function_tools}
     if parameters.native_tools or parameters.output_tools:
         raise ModelPersistenceError("native and output tools are disabled on the harness path")
@@ -1321,8 +1470,17 @@ class PayloadScaledDurability(TemporalDurability[HarnessModelDeps]):
 
 
 def _agent(
-    name: str, output_type: type[Any], *, indexed_source: bool = False
+    name: str,
+    output_type: type[Any],
+    *,
+    indexed_source: bool = False,
+    reviewer_evidence: bool = False,
 ) -> Agent[HarnessModelDeps, Any]:
+    if reviewer_evidence and not indexed_source:
+        raise ValueError("reviewer evidence tools require indexed source tools")
+    tools: list[Any] = [browse_source, search_source, read_source] if indexed_source else []
+    if reviewer_evidence:
+        tools.extend((inspect_candidate, read_media_evidence))
     return Agent(
         model=MODEL_ALIAS,
         defer_model_check=True,
@@ -1330,7 +1488,7 @@ def _agent(
         deps_type=HarnessModelDeps,
         name=name,
         retries=0,
-        tools=[browse_source, search_source, read_source] if indexed_source else [],
+        tools=tools,
         capabilities=[
             *([ProcessHistory(compact_source_history)] if indexed_source else []),
             ResolveModelId(resolve_configured_model),
@@ -1358,7 +1516,10 @@ topic_selection_author_v3 = _agent(
 )
 topic_selection_cold_v3 = _agent("topic_selection_cold_v3", TopicSelectionColdReview)
 topic_selection_source_v4 = _agent(
-    "topic_selection_source_v4", TopicPortfolioReviewV4, indexed_source=True
+    "topic_selection_source_v4",
+    TopicPortfolioReviewV4,
+    indexed_source=True,
+    reviewer_evidence=True,
 )
 topic_selection_patch_v3 = _agent("topic_selection_patch_v3", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.

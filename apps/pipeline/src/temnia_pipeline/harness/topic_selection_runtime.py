@@ -30,10 +30,17 @@ class SourceInspectionCall(BaseModel):
     """One successful, bounded source-tool result retained without repeating source text."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    tool_name: Literal["browse_source", "search_source", "read_source"]
+    tool_name: Literal[
+        "browse_source",
+        "search_source",
+        "read_source",
+        "inspect_candidate",
+        "read_media_evidence",
+    ]
     arguments: dict[str, Any]
     node_ids: tuple[str, ...] = ()
     sentence_ids: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
     complete: bool
     next_cursor: int | None = None
     next_sentence_id: str | None = None
@@ -92,6 +99,8 @@ class SelectionCallPlan(BaseModel):
     input_artifacts: tuple[HarnessArtifactRef, ...]
     source_index: HarnessArtifactRef | None = None
     source_tool_role: SourceToolRole | None = None
+    candidate_selection: HarnessArtifactRef | None = None
+    media_evidence: HarnessArtifactRef | None = None
     synthetic_payload: dict[str, object] | None = None
 
 

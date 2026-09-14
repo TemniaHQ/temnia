@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "TopicCandidateRegionHit": {
+      "$id": "#/$defs/TopicCandidateRegionHit",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "preview": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string",
+          "enum": [
+            "same_extent",
+            "inside_candidate",
+            "covers_candidate",
+            "opening_overlap",
+            "closing_overlap"
+          ]
+        },
+        "selectedFirstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "selectedLastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "lastSentenceId",
+        "parentId",
+        "preview",
+        "relation",
+        "selectedFirstSentenceId",
+        "selectedLastSentenceId",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidateRegionHit"
+    }
+  },
+  "$id": "TopicCandidateRegionHit.json",
+  "$ref": "#/$defs/TopicCandidateRegionHit",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

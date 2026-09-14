@@ -16,7 +16,11 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.tools import GenerateToolJsonSchema
 
 from temnia_pipeline.contracts import (
+    Relation,
     TopicCandidate,
+    TopicCandidateInspectionPage,
+    TopicCandidateRegionHit,
+    TopicMediaEvidencePage,
     TopicOpportunity,
     TopicPortfolioReviewV4,
     TopicProposal,
@@ -33,6 +37,7 @@ from temnia_pipeline.contracts import (
     TopicSourceSearchPage,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
+from temnia_pipeline.harness.editorial_evidence import read_topic_media_evidence
 from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.source_progress import compact_source_messages
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
@@ -196,10 +201,69 @@ async def read_source(
     )
 
 
+async def inspect_candidate(
+    candidate_id: str, cursor: int = 0, limit: int = 8
+) -> TopicCandidateInspectionPage:
+    """Inspect the one synthetic candidate using the production result shape."""
+    if candidate_id != "garden-care" or cursor != 0 or limit < 1:
+        raise ValueError("qualification selection has one candidate at cursor zero")
+    _, selection, _ = topic_selection_qualification_case()
+    candidate = selection.draft.proposal.candidates[0]
+    node = _qualification_node("region")
+    return TopicCandidateInspectionPage(
+        candidateId=candidate_id,
+        complete=True,
+        indexSha256="0" * 64,
+        nextCursor=None,
+        regions=[
+            TopicCandidateRegionHit(
+                id=node.id,
+                parentId=node.parentId,
+                firstSentenceId=node.firstSentenceId,
+                lastSentenceId=node.lastSentenceId,
+                selectedFirstSentenceId=candidate.firstSentenceId,
+                selectedLastSentenceId=candidate.lastSentenceId,
+                startMs=node.startMs,
+                endMs=node.endMs,
+                sentenceCount=node.sentenceCount,
+                keywords=node.keywords,
+                preview=node.preview,
+                relation=Relation.covers_candidate,
+            )
+        ],
+        selectionSha256="2" * 64,
+    )
+
+
+async def read_media_evidence(
+    first_sentence_id: str,
+    last_sentence_id: str,
+    cursor: int = 0,
+    limit: int = 40,
+) -> TopicMediaEvidencePage:
+    """Read synthetic measured events using the production result shape."""
+    return read_topic_media_evidence(
+        synthetic_qualification_evidence(),
+        evidence_sha256="1" * 64,
+        first_sentence_id=first_sentence_id,
+        last_sentence_id=last_sentence_id,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
 def topic_source_qualification_tools(stage: str) -> list[Any]:
-    """Expose the exact three tool names only on indexed production stages."""
-    if stage in {"topic_inventory", "topic_author", "topic_source"}:
+    """Expose the exact role-specific indexed production tools."""
+    if stage in {"topic_inventory", "topic_author"}:
         return [browse_source, search_source, read_source]
+    if stage == "topic_source":
+        return [
+            browse_source,
+            search_source,
+            read_source,
+            inspect_candidate,
+            read_media_evidence,
+        ]
     return []
 
 

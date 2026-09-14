@@ -20,8 +20,11 @@ hierarchy, bounded chronological browse, BM25/MiniLM leaf search and exact sente
 transcript bodies in the inventory, author and source-review prompts. Every indexed answer must
 retain a complete root-then-sections browse/search/read trace and must have read every sentence in
 every span it returns. Code re-derives the hierarchy's exact ownership, deterministic descriptors
-and bottom-up vectors. Each tool continuation is a separately accounted model request; the gateway
-admits only the complete three-tool set. A 2,400-sentence synthetic four-hour source produces 10
+and bottom-up vectors. Each tool continuation is a separately accounted model request. Inventory
+and author requests admit only the exact three source tools; source review adds mandatory paginated
+`inspect_candidate` and optional measured `read_media_evidence` under immutable selection/evidence
+authority, with exact checkpoint and admission replay. The gateway admits only the complete
+role-specific three- or five-tool set. A 2,400-sentence synthetic four-hour source produces 10
 sections and 75 leaves and proves bounded initial prompt shape and pagination, not editorial
 quality. New indexed calls rebuild every continuation from the unchanged prompt plus one bounded
 `topic-agent-checkpoint/1`; old assistant/tool messages are removed. The checkpoint retains progress
@@ -30,9 +33,11 @@ run/stage/role/index-bound parent chain, and is loaded unchanged after a known p
 route retry or fallback does not repeat settled discovery. Final `topic-source-inspection/2`
 admission requires every cited sentence to remain in the response's exact checkpoint dependency.
 Contract and limits: [indexed-agent-checkpoints-2026-09-14.md](docs/design/indexed-agent-checkpoints-2026-09-14.md).
-Safe cross-run reuse, bounded portfolio reconciliation and candidate/media tools remain
-unimplemented, and no real provider, latency, recovery or quality result follows. No new model arm
-or paid run is authorized by this record.
+Reviewer tool contract:
+[candidate-media-evidence-tools-2026-09-14.md](docs/design/candidate-media-evidence-tools-2026-09-14.md).
+Safe cross-run reuse and bounded portfolio reconciliation remain unimplemented, and no real provider,
+latency, recovery or quality result follows. No new model arm or paid run is authorized by this
+record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

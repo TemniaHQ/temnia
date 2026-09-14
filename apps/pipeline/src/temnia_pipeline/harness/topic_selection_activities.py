@@ -1,7 +1,7 @@
 """Versioned selection decisions using the existing artifact and paid-operation ledger."""
 
 # Activity DTOs need runtime annotations; evidence failures are explicit refusals.
-# ruff: noqa: C901, EM101, TRY003, TC001, SLF001
+# ruff: noqa: C901, EM101, PLR0912, TRY003, TC001, SLF001
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from temnia_pipeline.contracts import (
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
+from temnia_pipeline.harness.editorial_evidence import validate_reviewer_inspection
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
@@ -472,7 +473,7 @@ class TopicSelectionActivities:
         )
 
     @activity.defn(name="prepare_topic_selection_call")
-    async def prepare(self, context: SelectionContext) -> SelectionCallPlan:  # noqa: PLR0912, PLR0915 — four versioned native stages share one receipt path
+    async def prepare(self, context: SelectionContext) -> SelectionCallPlan:  # noqa: PLR0915 — four versioned native stages share one receipt path
         """Prepare one native schema call with all evidence and rubric dependencies."""
         run, evidence, rubric, selection = await self.load(context)
         if rubric is None or context.rubric is None:
@@ -628,6 +629,10 @@ class TopicSelectionActivities:
             input_artifacts=tuple(dependencies),
             source_index=context.source_index if source_tool_role is not None else None,
             source_tool_role=source_tool_role,
+            candidate_selection=(
+                context.selection if source_tool_role == "source_reviewer" else None
+            ),
+            media_evidence=(context.evidence if source_tool_role == "source_reviewer" else None),
             synthetic_payload=synthetic_payload,
         )
 
@@ -737,6 +742,19 @@ class TopicSelectionActivities:
             raise HarnessValidationError("source inspection names a different index")
         validate_source_inspection(index, inspection)
         validate_source_read_ids(index, inspection, required_sentence_ids)
+        if plan.source_tool_role == "source_reviewer":
+            _, evidence, _, selection = await self.load(context)
+            if selection is None or context.selection is None:
+                raise HarnessValidationError("source reviewer inspection has no accepted selection")
+            validate_reviewer_inspection(
+                index,
+                selection,
+                evidence,
+                inspection,
+                index_sha256=context.source_index.sha256,
+                selection_sha256=context.selection.sha256,
+                evidence_sha256=context.evidence.sha256,
+            )
         checkpoint_ref = None
         if inspection.format == "topic-source-inspection/2":
             response_record = await artifacts._artifact_for_read(
@@ -782,7 +800,13 @@ class TopicSelectionActivities:
             content=inspection,
             dependencies=tuple(
                 item
-                for item in (context.evidence, context.source_index, response, checkpoint_ref)
+                for item in (
+                    context.evidence,
+                    context.source_index,
+                    context.selection if plan.source_tool_role == "source_reviewer" else None,
+                    response,
+                    checkpoint_ref,
+                )
                 if item is not None
             ),
             metadata={"role": plan.source_tool_role, "stage": plan.stage},

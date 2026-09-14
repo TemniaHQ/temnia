@@ -43,11 +43,18 @@ async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) ->
         call["schemaVersion"] == TOPIC_SELECTION_V3_SCHEMAS[call["stage"]]
         for call in report["calls"]
     )
-    indexed = {"topic_inventory", "topic_author", "topic_source"}
     for call, request in zip(report["calls"], requests, strict=True):
         tool_names = {tool["function"]["name"] for tool in request.get("tools", [])}
-        if call["stage"] in indexed:
+        if call["stage"] in {"topic_inventory", "topic_author"}:
             assert tool_names == {"browse_source", "search_source", "read_source"}
+        elif call["stage"] == "topic_source":
+            assert tool_names == {
+                "browse_source",
+                "search_source",
+                "read_source",
+                "inspect_candidate",
+                "read_media_evidence",
+            }
         else:
             assert not tool_names
 

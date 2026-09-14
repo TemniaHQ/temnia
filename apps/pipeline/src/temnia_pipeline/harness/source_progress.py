@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -40,6 +41,7 @@ MAX_RETAINED_SENTENCES = 320
 MAX_RETAINED_CHARACTERS = 128 * 1024
 MAX_CHECKPOINT_BYTES = 384 * 1024
 MAX_IDENTICAL_CALLS = 2
+SHA256_HEX = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
 class SourceProgressLimitExceeded(RuntimeError):
@@ -126,6 +128,8 @@ def _new_calls(
                     "browse_source",
                     "search_source",
                     "read_source",
+                    "inspect_candidate",
+                    "read_media_evidence",
                 }:
                     pending[part.tool_call_id] = part
             continue
@@ -134,9 +138,18 @@ def _new_calls(
                 continue
             request = pending.get(part.tool_call_id)
             payload = _payload(part.content)
-            if request is None or payload is None or payload.get("indexSha256") != index_sha256:
+            if request is None or payload is None:
+                continue
+            expected_identity = (
+                isinstance(payload.get("evidenceSha256"), str)
+                and SHA256_HEX.fullmatch(cast("str", payload["evidenceSha256"])) is not None
+                if request.tool_name == "read_media_evidence"
+                else payload.get("indexSha256") == index_sha256
+            )
+            if not expected_identity:
                 continue
             nodes = cast("list[object]", payload.get("nodes", payload.get("regions", [])))
+            events = cast("list[object]", payload.get("events", []))
             returned_sentences = cast("list[object]", payload.get("sentences", []))
             sentence_models = [
                 TopicSourceIndexSentence.model_validate(item)
@@ -155,6 +168,12 @@ def _new_calls(
                             and isinstance(cast("dict[str, Any]", item).get("id"), str)
                         ],
                         "sentence_ids": [item.id for item in sentence_models],
+                        "evidence_ids": [
+                            str(cast("dict[str, Any]", item)["id"])
+                            for item in events
+                            if isinstance(item, dict)
+                            and isinstance(cast("dict[str, Any]", item).get("id"), str)
+                        ],
                         "complete": payload.get("complete") is True,
                         "next_cursor": payload.get("nextCursor"),
                         "next_sentence_id": payload.get("nextSentenceId"),
@@ -192,7 +211,10 @@ def _validate_bounds(checkpoint: SourceProgressCheckpoint) -> None:
         raise SourceProgressLimitExceeded(
             f"indexed source progress exceeded {MAX_CHECKPOINT_CALLS} tool calls"
         )
-    identifier_count = sum(len(call.node_ids) + len(call.sentence_ids) for call in checkpoint.calls)
+    identifier_count = sum(
+        len(call.node_ids) + len(call.sentence_ids) + len(call.evidence_ids)
+        for call in checkpoint.calls
+    )
     if identifier_count > MAX_CHECKPOINT_IDENTIFIERS:
         raise SourceProgressLimitExceeded(
             f"indexed source progress exceeded {MAX_CHECKPOINT_IDENTIFIERS} retained result IDs"

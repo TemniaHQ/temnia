@@ -43,8 +43,8 @@ flowchart LR
 
 - source-index SHA-256, editorial role and exact stage;
 - zero-based request sequence and the parent checkpoint content hash;
-- every successful source-tool call as arguments, returned node/sentence IDs, completion state and
-  continuation identity;
+- every successful source-tool call as arguments, returned node/sentence/evidence-event IDs,
+  completion state and continuation identity;
 - an ordered least-recently-used set of exact source sentences available to the next request; and
 - the count of exact sentences evicted from working context.
 
@@ -73,7 +73,7 @@ The current safety envelopes are code constants rather than editorial targets:
 | Envelope | Current refusal boundary |
 | --- | ---: |
 | Successful source calls | 256 |
-| Returned node and sentence IDs in the progress map | 8,192 |
+| Returned node, sentence and evidence-event IDs in the progress map | 8,192 |
 | Exact sentences in working context | 320 |
 | Exact sentence text in working context | 128 KiB |
 | Canonical checkpoint bytes | 384 KiB |
@@ -166,8 +166,10 @@ deployment or human editorial evaluation was performed for this milestone.
 ## Remaining scale work
 
 This checkpoint layer closes unbounded active tool-history growth and known-failure restart within
-one indexed seat. It does not yet provide source-bound index reuse across runs, candidate inspection,
-media-evidence tools or bounded multi-part portfolio reconciliation. The next implementation item is
-the candidate and measured-media evidence surface; source-index reuse follows only with explicit
-revision, authorization and retention identities. Real 44-minute, two-hour and four-hour provider
-and editorial evaluation remains the final gate rather than evidence inferred from fixtures.
+one indexed seat. Candidate-region and measured-media tool calls now use the same checkpoint and
+replay contract; their exact extension is recorded in
+[candidate-media-evidence-tools-2026-09-14.md](candidate-media-evidence-tools-2026-09-14.md).
+Source-bound index reuse across runs and bounded multi-part portfolio reconciliation remain. Reuse
+follows only with explicit revision, authorization and retention identities. Real 44-minute,
+two-hour and four-hour provider and editorial evaluation remains the final gate rather than evidence
+inferred from fixtures.
