@@ -30,10 +30,12 @@ from temnia_pipeline.contracts import (
     IngestOutput,
     ProbeResult,
 )
+from temnia_pipeline.harness.source_sensors import SourceSensorsResult, measure_source_sensors
 from temnia_pipeline.media import derive, hls, peaks
 from temnia_pipeline.media.ffmpeg import FfmpegError
 from temnia_pipeline.media.probe import InvalidMediaError, probe
 from temnia_pipeline.settings import PipelineSettings, StorageSettings
+from temnia_pipeline.speech.liveness import run_with_activity_heartbeat
 from temnia_pipeline.transcode import LadderJob
 from temnia_pipeline.transcode.factory import make_transcoder
 from temnia_pipeline.transcription.factory import make_transcription
@@ -394,6 +396,39 @@ class Ingest:
         msg = "no video rendition found in storage for derivation"
         raise ApplicationError(msg, type="DeriveFailure")
 
+    @activity.defn(name="measure_source_sensors")
+    async def measure_source_sensors(
+        self, request: IngestInput, probed: ProbeResult
+    ) -> SourceSensorsResult:
+        """Measure the master's timeline, shots and speech once, while it is still here.
+
+        A topic run reads these records instead of downloading the master. A sensor that
+        cannot be measured records that fact; it never fails the ingest.
+        """
+        await self._progress(request, "sensors", None)
+        master = await self._ensure_master(request, expected_size=probed.sizeBytes)
+        try:
+            return await run_with_activity_heartbeat(
+                lambda: measure_source_sensors(
+                    self.ctx.settings.database_url,
+                    scope=request.scope,
+                    source_id=request.sourceId,
+                    store=self.ctx.store,
+                    master_path=master,
+                    storage_key=request.masterKey,
+                    size_bytes=probed.sizeBytes,
+                    ffmpeg=self.ctx.settings.ffmpeg,
+                    ffprobe=self.ctx.settings.ffprobe,
+                    detector_path=self.ctx.settings.transcription.speech_vad_model_path,
+                ),
+                details={"stage": "sensors"},
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            log.warning("source sensors were not measured", exc_info=True)
+            return SourceSensorsResult(error=f"{type(error).__name__}: {error}")
+
     @activity.defn(name="finalize_source")
     async def finalize_source(
         self,
@@ -439,6 +474,7 @@ class Ingest:
             self.probe_source,
             self.transcode_source,
             self.derive_source,
+            self.measure_source_sensors,
             self.finalize_source,
             self.fail_source,
         ]

@@ -35,6 +35,10 @@ SHOT_ID = UUID("10000000-0000-4000-8000-000000000007")
 SPEECH_ID = UUID("10000000-0000-4000-8000-000000000008")
 
 
+async def _no_record(*_args: object, **_kwargs: object) -> None:
+    return None
+
+
 @pytest.mark.parametrize("policy", [TOPIC_SELECTION_POLICY_V3])
 async def test_evidence_uses_frozen_detector_and_preserves_historical_fingerprints(  # noqa: C901, PLR0915
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, policy: str
@@ -131,6 +135,10 @@ async def test_evidence_uses_frozen_detector_and_preserves_historical_fingerprin
     monkeypatch.setattr(module, "inspect_timeline", timeline)
     monkeypatch.setattr(module.obs, "get_async", download)
     monkeypatch.setattr(module, "build_source_shot_evidence", shots)
+    # The download-free path is exercised elsewhere; here the stubs are the sensors.
+    monkeypatch.setattr(module, "find_source_timeline", _no_record)
+    monkeypatch.setattr(module, "find_source_shot_evidence", _no_record)
+    monkeypatch.setattr(module, "find_source_speech_coverage", _no_record)
     monkeypatch.setattr(module, "build_source_speech_coverage", speech)
     monkeypatch.setattr(module, "make_segmenter", segmenter)
     monkeypatch.setattr(module.artifacts, "publish_json", publish)

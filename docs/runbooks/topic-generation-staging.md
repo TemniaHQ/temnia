@@ -78,6 +78,21 @@ First run: Karma. Expect `needs_review`, nine to eleven videos, about $1, the ru
 export. Second run: World Order (151 min); note each full-source call's duration against the
 payload-scaled deadline. Record the run IDs, cost and durations in the day log.
 
+## Rendering on the GPU
+
+The media app on Modal carries `render_sections` and deploys from `main` through the
+`modal-deploy` GitHub Actions workflow (deploy, then the GPU smoke), the same way Dokploy
+deploys the two images. The deployment file already says `render: modal / h264_nvenc`.
+Until the app deploy has landed, a worker that finds the function absent renders that
+revision on its own CPU with libx264 and logs why; the next run after the deploy uses the
+card. GPU and CPU renders are different media artifacts, so nothing is reused across the
+encoders. A run's GPU render shows `render-remote` in the activity heartbeat with the Modal
+call id; a worker restart reattaches to that call rather than rendering twice.
+
+One-time, not per change: the repository secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`
+hold the `temnia-pipeline-staging` token (staging.md §2c). Without them the workflow stops
+at its first step and says so.
+
 ## Changing the roster or a limit
 
 Edit `apps/pipeline/harness/staging.json` in a PR. A different roster is a new snapshot
@@ -85,6 +100,14 @@ file with a new ID (build it with the pipeline's `RouteSnapshot` model and `comp
 never edit an existing snapshot) and the file's `routeSnapshot` block points at it. The gate
 refuses a configuration that does not boot. Merge, deploy; nothing to set on the box.
 Production gets its own file and sets `HARNESS_CONFIG_PATH` to it in Dokploy, once.
+
+## What a run does before its first model call
+
+Nothing heavy. Ingest measured the master's timeline, shot boundaries and speech coverage
+once (`measure_source_sensors`, the `sensors` stage in the source's progress), so a topic run
+heads the object, reads those records and assembles evidence in seconds. A source ingested
+before 13 September has no records: its first run downloads the master and measures, as
+before, and caches the result for later runs. Rendering still fetches the master.
 
 ## What each stop means
 

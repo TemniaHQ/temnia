@@ -2,6 +2,53 @@
 
 ## Decisions
 
+**2026-09-14 — Every deployable deploys from a push to `main`; nothing ships by hand.** Rajesh,
+handed a `modal deploy` command in a runbook: "deployments should be automatic when code
+merges to main until and unless a manual deployment is required." Dokploy already deployed
+the two images from main; the Modal media app was the exception, and
+`.github/workflows/modal-deploy.yml` removes it (deploy on push to main touching the pipeline
+package, then the GPU smoke, environment `staging`). Two rules follow. A PR that adds a
+deployable adds its automation in the same PR. Configuration that depends on a deploy must
+degrade gracefully until the deploy lands: the deployment file now says `render: modal /
+h264_nvenc`, and a worker that finds `render_sections` absent renders that revision on its
+own CPU with libx264 and logs why, instead of a runbook asking for ordering by hand. The only
+acceptable manual step is a one-time secret or account action, named once with the reason it
+cannot be automated: here, the `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` repository secrets.
+
+**2026-09-13 — Topic videos render on the Modal GPU; the worker verifies and publishes.**
+Second part of `docs/plans/media-placement-360-view.md`. `render_sections` in the media app
+renders every missing section of a revision from one download of the master with the
+worker's own `render_chapter` command and `h264_nvenc` (constant quality 18, preset p5,
+high profile); the worker's `_render_missing_sections_remotely` builds the job, spawns or
+reattaches by the call id carried on the activity heartbeat, verifies every output's size in
+the store and its hash after download, and the per-section loop publishes the file exactly as
+a local render. `ChapterRenderConfig` carries the encoder, so GPU and CPU renders are
+different media artifacts. Smart-cut (copying the master's GOPs and re-encoding only the
+edges) is deferred: mixing parameter sets inside one MP4 is not something browser decoders
+promise to play, and the panel plays these files in the browser. The deployment file's
+`render.backend`/`render.encoder` selects the path; staging stays `local`/`libx264` until the
+media app is deployed with the new function, then one commit switches it. A local backend
+refuses the GPU encoder at boot.
+
+**2026-09-13 — Source sensors are measured at ingest, once; a topic run downloads nothing
+until it renders.** Rajesh asked which steps belong on the GPU and which on the CPU; the plan
+is `docs/plans/media-placement-360-view.md`. The first run on every source used to pay the
+master download, `scdet` over the whole master and Silero VAD inside the topic run, on the
+VPS, before the first model call. Now `measure_source_sensors` runs in the ingest workflow
+after `derive_source`, while the master is still in the source work directory, and publishes
+three records bound to the master's object identity (ETag or version ID, key, size):
+`source-timeline/1` (the master's sha256 and exact stream facts), the shot record and the
+speech record. `build_chapter_evidence` heads the object, finds the timeline record, takes
+the hash and timeline from it, finds the two sensor records by their bindings and assembles
+evidence with no download; a source without records (ingested before this, or a sensor that
+failed at ingest) falls back to the download path unchanged. Two identity rules changed to
+make this hold: the shot record's fingerprint no longer includes the ffmpeg binary hash (it
+stays in the body as provenance, so a deploy with a new ffmpeg does not send every source
+back through a decode), and speech is measured without a transcript (the duration equality
+check moved to the projection onto a transcript, where it belongs). A sensor that fails at
+ingest never fails the ingest. Rendering still fetches the master; moving that encode to the
+Modal GPU is the plan's second part.
+
 **2026-09-13 — A transient provider failure never ends a run; it retries, falls back, and the
 run can always be resumed.** Rajesh, after three staging runs (one success, a 402, a 429 that
 discarded $0.38 of work): "With such inconsistency how can we even launch our product to the

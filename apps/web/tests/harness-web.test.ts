@@ -119,6 +119,7 @@ describe("topic server configuration", () => {
         maxRunBudgetMicros: 20_000_000,
       },
       recordedFixturePath: null,
+      render: { backend: "local", encoder: "libx264" },
       routeSnapshot: { id: "a".repeat(64), path: "routes.json" },
       topicShotDetector: "scdet",
     };

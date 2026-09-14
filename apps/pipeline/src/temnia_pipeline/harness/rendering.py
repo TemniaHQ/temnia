@@ -20,13 +20,14 @@ from temnia_pipeline.contracts import (
     Kind,
 )
 from temnia_pipeline.harness.artifacts import fingerprint_for
+from temnia_pipeline.media.chapters import MediaTimelineFacts
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Sequence
+    from collections.abc import Callable, Coroutine, Mapping, Sequence
     from pathlib import Path
     from uuid import UUID
 
-    from temnia_pipeline.media.chapters import ChapterRenderConfig, MediaTimelineFacts
+    from temnia_pipeline.media.chapters import ChapterRenderConfig
 
 DISK_MARGIN_BYTES = 1024 * 1024 * 1024
 OUTPUT_GROWTH_NUMERATOR = 2
@@ -428,4 +429,44 @@ def descriptor_fingerprint(
         kind="chapter_renders",
         inputs={"components": components, "editSha256": edit_sha256},
         config={"rendererVersion": renderer_version},
+    )
+
+
+def timeline_from_identity(value: Mapping[str, object]) -> MediaTimelineFacts:
+    """Rebuild exact selected-stream facts from their frozen identity."""
+
+    def fraction(name: str, *, optional: bool = False) -> Fraction | None:
+        raw = value.get(name)
+        if raw is None and optional:
+            return None
+        if not isinstance(raw, dict):
+            raise TypeError("frozen timeline rational is invalid")
+        parts = cast("dict[str, object]", raw)
+        return Fraction(int(str(parts["numerator"])), int(str(parts["denominator"])))
+
+    return MediaTimelineFacts(
+        duration=cast("Fraction", fraction("duration")),
+        container_start=cast("Fraction", fraction("containerStart")),
+        source_start=cast("Fraction", fraction("sourceStart")),
+        has_video=bool(value.get("hasVideo")),
+        has_audio=bool(value.get("hasAudio")),
+        video_stream_index=cast("int | None", value.get("videoStreamIndex")),
+        audio_stream_index=cast("int | None", value.get("audioStreamIndex")),
+        video_start=fraction("videoStart", optional=True),
+        audio_start=fraction("audioStart", optional=True),
+        video_duration=fraction("videoDuration", optional=True),
+        audio_duration=fraction("audioDuration", optional=True),
+        frame_rate=fraction("frameRate", optional=True),
+        video_time_base=fraction("videoTimeBase", optional=True),
+        audio_time_base=fraction("audioTimeBase", optional=True),
+        sample_rate=cast("int | None", value.get("sampleRate")),
+        width=cast("int | None", value.get("width")),
+        height=cast("int | None", value.get("height")),
+        rotation=cast("int | None", value.get("rotation")),
+        audio_channels=cast("int | None", value.get("audioChannels")),
+        audio_layout=cast("str | None", value.get("audioLayout")),
+        variable_frame_rate=bool(value.get("variableFrameRate")),
+        video_codec=cast("str | None", value.get("videoCodec")),
+        audio_codec=cast("str | None", value.get("audioCodec")),
+        sample_aspect_ratio=fraction("sampleAspectRatio", optional=True),
     )

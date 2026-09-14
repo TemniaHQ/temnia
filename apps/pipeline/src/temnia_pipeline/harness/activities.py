@@ -11,8 +11,10 @@ import fcntl
 import functools
 import hashlib
 import json
+import logging
 import shutil
 import time
+from dataclasses import asdict
 from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
@@ -59,6 +61,7 @@ from temnia_pipeline.harness.rendering import (
     preflight_disk,
     required_disk_bytes,
     run_render_batch,
+    timeline_from_identity,
     timeline_identity,
     write_captions,
 )
@@ -82,8 +85,15 @@ from temnia_pipeline.harness.runtime_types import (
     StartRunRequest,
     StartRunResult,
 )
-from temnia_pipeline.harness.shot_evidence import build_source_shot_evidence
-from temnia_pipeline.harness.speech_evidence import build_source_speech_coverage
+from temnia_pipeline.harness.shot_evidence import (
+    build_source_shot_evidence,
+    find_source_shot_evidence,
+)
+from temnia_pipeline.harness.source_sensors import find_source_timeline, object_identity
+from temnia_pipeline.harness.speech_evidence import (
+    build_source_speech_coverage,
+    find_source_speech_coverage,
+)
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
@@ -102,8 +112,19 @@ from temnia_pipeline.media.chapters import (
     inspect_timeline,
     render_chapter,
 )
+from temnia_pipeline.render_remote import (
+    ModalRenderer,
+    RealRenderClient,
+    RenderFunctionAbsent,
+    RenderJob,
+    RenderProgress,
+    RenderSectionJob,
+    download_output,
+)
 from temnia_pipeline.speech.liveness import run_with_activity_heartbeat
 from temnia_pipeline.substrate.factory import make_segmenter
+
+log = logging.getLogger("temnia.harness.activities")
 
 CANCELLATION_POLL_SECONDS = 5
 SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS = 3 * 60
@@ -314,7 +335,7 @@ class HarnessActivities:
         )
         return self._try_cleanup_source_cache(request.run_id)
 
-    async def _build_chapter_evidence_locked(
+    async def _build_chapter_evidence_locked(  # noqa: C901, PLR0912, PLR0915
         self,
         request: BuildEvidenceRequest,
         run: RunSnapshot,
@@ -331,8 +352,24 @@ class HarnessActivities:
             raise RuntimeError("source master size changed after run creation")
         observed = self._object_identity(master)
         self._validate_pinned_object(run, observed)
-        source_path, source_sha = await self._source_path(run, observed=observed)
-        timeline = await inspect_timeline(source_path, ffprobe=self.ctx.settings.ffprobe)
+        # Ingest measured this master already: take its hash and timeline from the record
+        # and assemble evidence without a download. A source ingested before the sensors
+        # existed, or whose sensors are missing, goes through the download path below.
+        recorded = await find_source_timeline(
+            self.ctx.settings.database_url,
+            scope=scope,
+            source_id=ref.source_id,
+            store=self.ctx.store,
+            storage_key=run.source.storage_key,
+            size_bytes=run.source.size_bytes,
+            observed=observed,
+        )
+        source_path: Path | None = None
+        if recorded is not None:
+            source_sha, timeline = recorded
+        else:
+            source_path, source_sha = await self._source_path(run, observed=observed)
+            timeline = await inspect_timeline(source_path, ffprobe=self.ctx.settings.ffprobe)
         stored = await obs.get_async(self.ctx.store, run.transcript.storage_key)
         body = bytes(await stored.bytes_async())
         if len(body) != run.transcript.size_bytes:
@@ -355,17 +392,33 @@ class HarnessActivities:
         }
         shot_record = None
         if is_topic_policy(run.editorial_policy):
-            shot_record = await build_source_shot_evidence(
+            shot_record = await find_source_shot_evidence(
                 self.ctx.settings.database_url,
                 scope=scope,
                 source_id=ref.source_id,
                 store=self.ctx.store,
-                source_path=source_path,
                 source_object=source_object,
                 timeline=timeline,
                 ffmpeg=self.ctx.settings.ffmpeg,
                 detector=run.topic_shot_detector,
             )
+            if shot_record is None:
+                # No record for this master yet: fetch it once and measure here.
+                if source_path is None:
+                    source_path, _ = await self._source_path(
+                        run, observed=observed, expected_sha256=source_sha
+                    )
+                shot_record = await build_source_shot_evidence(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    source_path=source_path,
+                    source_object=source_object,
+                    timeline=timeline,
+                    ffmpeg=self.ctx.settings.ffmpeg,
+                    detector=run.topic_shot_detector,
+                )
         layers = await asyncio.to_thread(
             make_segmenter(request.segmenter).segment,
             transcript.words,
@@ -373,18 +426,34 @@ class HarnessActivities:
         )
         speech = None
         if is_topic_policy(run.editorial_policy):
-            speech = await build_source_speech_coverage(
+            speech = await find_source_speech_coverage(
                 self.ctx.settings.database_url,
                 scope=scope,
                 source_id=ref.source_id,
                 store=self.ctx.store,
-                source_path=source_path,
                 source_object=source_object,
                 timeline=timeline,
                 transcript=transcript,
                 detector_path=self.ctx.settings.transcription.speech_vad_model_path,
                 ffmpeg=self.ctx.settings.ffmpeg,
             )
+            if speech is None:
+                if source_path is None:
+                    source_path, _ = await self._source_path(
+                        run, observed=observed, expected_sha256=source_sha
+                    )
+                speech = await build_source_speech_coverage(
+                    self.ctx.settings.database_url,
+                    scope=scope,
+                    source_id=ref.source_id,
+                    store=self.ctx.store,
+                    source_path=source_path,
+                    source_object=source_object,
+                    timeline=timeline,
+                    transcript=transcript,
+                    detector_path=self.ctx.settings.transcription.speech_vad_model_path,
+                    ffmpeg=self.ctx.settings.ffmpeg,
+                )
         evidence = build_evidence(
             transcript,
             layers,
@@ -532,41 +601,7 @@ class HarnessActivities:
 
     @staticmethod
     def _timeline_from_identity(value: dict[str, object]) -> MediaTimelineFacts:
-        def fraction(name: str, *, optional: bool = False) -> Fraction | None:
-            raw = value.get(name)
-            if raw is None and optional:
-                return None
-            if not isinstance(raw, dict):
-                raise TypeError("frozen timeline rational is invalid")
-            parts = cast("dict[str, object]", raw)
-            return Fraction(int(str(parts["numerator"])), int(str(parts["denominator"])))
-
-        return MediaTimelineFacts(
-            duration=cast("Fraction", fraction("duration")),
-            container_start=cast("Fraction", fraction("containerStart")),
-            source_start=cast("Fraction", fraction("sourceStart")),
-            has_video=bool(value.get("hasVideo")),
-            has_audio=bool(value.get("hasAudio")),
-            video_stream_index=cast("int | None", value.get("videoStreamIndex")),
-            audio_stream_index=cast("int | None", value.get("audioStreamIndex")),
-            video_start=fraction("videoStart", optional=True),
-            audio_start=fraction("audioStart", optional=True),
-            video_duration=fraction("videoDuration", optional=True),
-            audio_duration=fraction("audioDuration", optional=True),
-            frame_rate=fraction("frameRate", optional=True),
-            video_time_base=fraction("videoTimeBase", optional=True),
-            audio_time_base=fraction("audioTimeBase", optional=True),
-            sample_rate=cast("int | None", value.get("sampleRate")),
-            width=cast("int | None", value.get("width")),
-            height=cast("int | None", value.get("height")),
-            rotation=cast("int | None", value.get("rotation")),
-            audio_channels=cast("int | None", value.get("audioChannels")),
-            audio_layout=cast("str | None", value.get("audioLayout")),
-            variable_frame_rate=bool(value.get("variableFrameRate")),
-            video_codec=cast("str | None", value.get("videoCodec")),
-            audio_codec=cast("str | None", value.get("audioCodec")),
-            sample_aspect_ratio=fraction("sampleAspectRatio", optional=True),
-        )
+        return timeline_from_identity(value)
 
     @activity.defn(name="render_chapter_revision")
     async def render_chapter_revision(self, request: RenderRevisionRequest) -> RenderRevisionResult:
@@ -594,6 +629,102 @@ class HarnessActivities:
             operation,
             details={"stage": "render-chapter-revision"},
         )
+
+    async def _render_missing_sections_remotely(  # noqa: PLR0913
+        self,
+        request: RenderRevisionRequest,
+        run: RunSnapshot,
+        scope: Scope,
+        *,
+        evidence: HarnessEvidence,
+        sections: Sequence[RenderSection],
+        timeline: MediaTimelineFacts,
+        config: ChapterRenderConfig,
+        source_sha: str,
+        workspace: Path,
+    ) -> None:
+        """One Modal call renders every section without a media artifact; outputs land locally.
+
+        The call id rides on the heartbeat, so a retried activity reattaches instead of
+        rendering twice. Each output is verified by size in the store and by hash after
+        download; the per-section loop then publishes it exactly as a local render.
+        """
+        ref = request.run
+        missing: list[RenderSection] = []
+        for section in sections:
+            identity = artifacts.ArtifactIdentity(
+                kind="render",
+                fingerprint=media_fingerprint(
+                    source_fingerprint=evidence.sourceFingerprint,
+                    section=section,
+                    timeline=timeline,
+                    config=config,
+                ),
+            )
+            existing = await artifacts.find_artifact(
+                self.ctx.settings.database_url,
+                scope=scope,
+                source_id=ref.source_id,
+                identity=identity,
+            )
+            if existing is None:
+                missing.append(section)
+        if not missing:
+            return
+        prefix = (
+            f"org/{scope.organizationId}/source/{ref.source_id}/harness/remote-render/"
+            f"{ref.run_id}/{request.revision}/"
+        )
+        job = RenderJob(
+            master_key=run.source.storage_key,
+            master_sha256=source_sha,
+            size_bytes=run.source.size_bytes,
+            timeline=timeline_identity(timeline),
+            config=asdict(config),
+            sections=[
+                RenderSectionJob(
+                    section_id=section.section_id,
+                    start_numerator=section.start.numerator,
+                    start_denominator=section.start.denominator,
+                    end_numerator=section.end.numerator,
+                    end_denominator=section.end.denominator,
+                    output_key=f"{prefix}{hashlib.sha256(section.section_id.encode()).hexdigest()[:16]}.mp4",
+                )
+                for section in missing
+            ],
+            expected_seconds=float(sum(section.duration for section in missing)),
+        )
+        resume = None
+        for detail in activity.info().heartbeat_details if activity.in_activity() else ():
+            if isinstance(detail, dict) and isinstance(detail.get("renderCallId"), str):  # pyright: ignore[reportUnknownMemberType]
+                resume = str(detail["renderCallId"])  # pyright: ignore[reportUnknownArgumentType]
+
+        async def on_progress(note: RenderProgress, call_id: str) -> None:
+            activity.heartbeat(
+                {
+                    "stage": "render-remote",
+                    "renderCallId": call_id,
+                    "sectionId": note.section_id,
+                    "progress": note.percent,
+                }
+            )
+            await self._assert_render_active(ref, request.revision)
+
+        renderer = ModalRenderer(
+            RealRenderClient(
+                self.ctx.settings.transcode, self.harness_settings.render_progress_dict
+            ),
+            self.ctx.store,
+        )
+        result = await renderer.run(job, on_progress=on_progress, resume=resume)
+        by_section = {output.section_id: output for output in result.outputs}
+        for section in missing:
+            section_hash = hashlib.sha256(section.section_id.encode()).hexdigest()
+            await download_output(
+                self.ctx.store,
+                by_section[section.section_id],
+                workspace / section_hash[:16] / "chapter.mp4",
+            )
 
     async def _render_chapter_revision_locked(  # noqa: C901, PLR0915
         self, request: RenderRevisionRequest, run: RunSnapshot, *, retain_source_cache: bool = False
@@ -656,9 +787,34 @@ class HarnessActivities:
         if expected_fingerprint != evidence.sourceFingerprint:
             raise RuntimeError("source master identity differs from frozen evidence")
 
-        config = ChapterRenderConfig()
+        config = ChapterRenderConfig(
+            video_codec=self.harness_settings.render_encoder,
+            video_preset=(
+                "p5" if self.harness_settings.render_encoder == "h264_nvenc" else "medium"
+            ),
+        )
+        if self.harness_settings.render_backend == "modal":
+            try:
+                await self._render_missing_sections_remotely(
+                    request,
+                    run,
+                    scope,
+                    evidence=evidence,
+                    sections=sections,
+                    timeline=timeline,
+                    config=config,
+                    source_sha=source_sha,
+                    workspace=workspace,
+                )
+            except RenderFunctionAbsent as absent:
+                # The app deploys from main on its own; until it lands, this worker encodes
+                # here with the CPU encoder, as a different media artifact.
+                log.warning("%s; rendering on this worker with libx264 instead", absent)
+                config = ChapterRenderConfig()
 
-        async def one(section: RenderSection) -> tuple[ChapterRender, ChapterChecks]:
+        async def one(  # noqa: PLR0915
+            section: RenderSection,
+        ) -> tuple[ChapterRender, ChapterChecks]:
             async with self._render_semaphore:
                 await self._assert_render_active(ref, request.revision)
                 section_hash = hashlib.sha256(section.section_id.encode()).hexdigest()
@@ -696,7 +852,26 @@ class HarnessActivities:
                     source_id=ref.source_id,
                     identity=media_identity,
                 )
-                if media is None:
+                if media is None and media_path.is_file():
+                    # Rendered on the card and verified by hash on download.
+                    await self._assert_render_active(ref, request.revision)
+                    media = await artifacts.publish_file(
+                        self.ctx.settings.database_url,
+                        scope=scope,
+                        source_id=ref.source_id,
+                        store=self.ctx.store,
+                        identity=media_identity,
+                        path=media_path,
+                        content_type="video/mp4",
+                        suffix=".mp4",
+                        metadata=media_metadata(
+                            section=section,
+                            timeline=timeline,
+                            renderer_version=RENDERER_VERSION,
+                            source_fingerprint=evidence.sourceFingerprint,
+                        ),
+                    )
+                elif media is None:
                     last_cancel_check = 0.0
 
                     async def progress(value: float) -> None:
@@ -1048,21 +1223,7 @@ class HarnessActivities:
 
     @staticmethod
     def _object_identity(metadata: object) -> dict[str, str | None]:
-        if not isinstance(metadata, dict):
-            raise TypeError("object storage returned invalid source metadata")
-        values = cast("dict[object, object]", metadata)
-
-        def text_value(*keys: str) -> str | None:
-            for key in keys:
-                value = values.get(key)
-                if value is not None:
-                    return str(value)
-            return None
-
-        return {
-            "etag": text_value("e_tag", "etag"),
-            "versionId": text_value("version", "version_id", "versionId"),
-        }
+        return object_identity(metadata)
 
     @staticmethod
     def _validate_pinned_object(run: RunSnapshot, observed: dict[str, str | None]) -> None:

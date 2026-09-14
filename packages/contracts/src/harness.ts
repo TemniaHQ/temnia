@@ -579,6 +579,13 @@ export const HarnessConfigSchema = z
       .strict()
       .meta({ id: "HarnessConfigLimits", title: "HarnessConfigLimits" }),
     recordedFixturePath: z.string().min(1).nullable(),
+    render: z
+      .object({
+        backend: z.enum(["local", "modal"]),
+        encoder: z.enum(["libx264", "h264_nvenc"]),
+      })
+      .strict()
+      .meta({ id: "HarnessConfigRender", title: "HarnessConfigRender" }),
     routeSnapshot: z
       .object({
         id: z.string().regex(/^[a-f0-9]{64}$/),

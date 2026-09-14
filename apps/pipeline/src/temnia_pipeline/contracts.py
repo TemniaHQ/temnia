@@ -235,6 +235,24 @@ class HarnessConfigLimits(BaseModel):
     minDispatchIntervalSeconds: Annotated[float, Field(ge=0.0, le=30.0)]
 
 
+class Backend2(StrEnum):
+    local = "local"
+    modal = "modal"
+
+
+class Encoder(StrEnum):
+    libx264 = "libx264"
+    h264_nvenc = "h264_nvenc"
+
+
+class HarnessConfigRender(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    backend: Backend2
+    encoder: Encoder
+
+
 class HarnessConfigRouteSnapshot(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -922,6 +940,7 @@ class HarnessConfig(BaseModel):
     gateway: Gateway
     limits: HarnessConfigLimits
     recordedFixturePath: Annotated[str | None, Field(min_length=1)]
+    render: HarnessConfigRender
     routeSnapshot: HarnessConfigRouteSnapshot
     topicShotDetector: TopicShotDetector
 
