@@ -38,7 +38,9 @@ correction, not the editorial criteria or fresh-execution retry accounting. The 
 four-operation patch passes offline without changing its raw operation labels; its
 editorial adequacy remains unmeasured. Plan: `docs/plans/topic-repair-recovery.md`.
 By the same rule a title-only `replace_candidate` is the equivalent `retitle`, and a title
-changes only under an unsupported-title finding whichever label carries it.
+changes only under an unsupported-title finding whichever label carries it. A purpose-only or
+annotation-only correction is a `replace_candidate` under that axis's finding (prompt `/11`), so
+no grounded correction is unrepresentable; only prose-only changes are refused.
 **2026-09-13 — Topic videos render on the Modal GPU; the worker verifies and publishes.**
 Second part of `docs/plans/media-placement-360-view.md`. `render_sections` in the media app
 renders every missing section of a revision from one download of the master with the

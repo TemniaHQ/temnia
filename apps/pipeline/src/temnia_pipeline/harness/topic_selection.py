@@ -49,7 +49,7 @@ SELECTION_INVENTORY_PROMPT = "topic-opportunity-inventory/1"
 SELECTION_AUTHOR_PROMPT_V3 = "topic-selection-author/6"
 SELECTION_COLD_PROMPT_V3 = "topic-selection-cold/3"
 SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/8"
-SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/10"
+SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/11"
 _OPPORTUNITY_SPANS = (
     "coreSpans",
     "valueEvidenceSpans",
@@ -566,10 +566,13 @@ may cite several findings for the same candidate so both edges can be repaired t
 Choose the operation from the fields that change, not the number of findings. For an extent change
 with unchanged title and purpose, use replace_extent, including when both edges and the context,
 core or completion annotations change. For example, extending an opening and trimming an unrelated
-outro is one replace_extent operation. Use replace_candidate when content and title or purpose
-change together. Each changed title needs an unsupported_title finding; each changed purpose needs
-a weak_viewer_value or unfocused_extent finding. One candidate may appear in only one operation;
-cite all of its required findings there instead of separate extent and retitle operations.
+outro is one replace_extent operation. Use replace_candidate for every other correction: a changed
+purpose, changed context, core, completion or follow-up annotations without an edge move, or
+content and title or purpose changing together. Each changed title needs an unsupported_title
+finding; each changed purpose needs a weak_viewer_value or unfocused_extent finding; each content
+or annotation change needs an extent-related finding. One candidate may appear in only one
+operation; cite all of its required findings there instead of separate extent and retitle
+operations.
 
 If rejectedPatch is supplied, validation refused that entire patch and none of its operations took
 effect. Correct the validationDiagnostics against the unchanged candidates and required findings.
@@ -1286,7 +1289,7 @@ def _validate_replace_candidate_authority(
     findings: list[TopicSelectionFinding],
     previous: dict[str, TopicCandidate],
 ) -> None:
-    """Require separate findings for each axis changed by a combined correction."""
+    """Require a finding for each axis a correction changes; any one axis alone is enough."""
     original = previous[operation.affectedCandidateIds[0]]
     replacement = operation.replacementCandidates[0]
     changed_title = original.title != replacement.title
@@ -1302,10 +1305,8 @@ def _validate_replace_candidate_authority(
     changed_content = original.model_dump(include=content_fields) != replacement.model_dump(
         include=content_fields
     )
-    if not changed_content or not (changed_title or changed_purpose):
-        _refuse(
-            "replace_candidate requires both a content correction and a title or purpose correction"
-        )
+    if not (changed_content or changed_title or changed_purpose):
+        _refuse("replace_candidate changed nothing but prose; correct title, purpose or content")
     kinds = {str(f.kind) for f in findings}
     if changed_title and "unsupported_title" not in kinds:
         _refuse("replace_candidate changed title without an unsupported-title finding")

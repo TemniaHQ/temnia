@@ -12,6 +12,7 @@ import pytest
 
 from temnia_pipeline.contracts import (
     TopicBoundaryIssue,
+    TopicCandidate,
     TopicOpportunity,
     TopicPortfolioReview,
     TopicPortfolioReviewV4,
@@ -715,11 +716,76 @@ def test_extent_only_replace_candidate_keeps_the_whole_patch_and_raw_output() ->
     assert record.model_dump_json() == original_record
 
     annotation_only = patch.model_copy(deep=True)
-    annotation_only.operations[0].replacementCandidates = [
-        first.model_copy(update={"completionSpans": [_span(2)]})
-    ]
-    with pytest.raises(HarnessValidationError, match="requires both a content correction"):
-        apply_selection_patch(EVIDENCE, record, content_hash(record), assessment, annotation_only)
+    annotated = first.model_copy(
+        update={"requiredContextSpans": [_span(1)], "coreSpans": [_span(2)]}
+    )
+    annotation_only.operations[0].replacementCandidates = [annotated]
+    admitted = apply_selection_patch(
+        EVIDENCE, record, content_hash(record), assessment, annotation_only
+    )
+    assert admitted.proposal.candidates[0] == annotated
+
+
+def test_single_axis_replace_candidate_needs_that_axis_finding() -> None:
+    """A purpose-only or annotation-only correction is representable under its own finding."""
+    candidate = _candidate("axis", 0, 3)
+    record = _record(candidate)
+
+    def apply(replacement: TopicCandidate, kind: str) -> TopicProposal:
+        finding = TopicSelectionFinding.model_validate(
+            {
+                "id": f"cold:axis:{kind}",
+                "kind": kind,
+                "severity": "required",
+                "affectedCandidateIds": [candidate.id],
+                "opportunityIds": [f"opportunity-{candidate.id}"],
+                "evidenceSpans": [_span(0, 3)],
+                "reason": "Correct this axis.",
+            }
+        )
+        assessment = _assess(record).model_copy(
+            update={"executionStatus": "needs_review", "findings": [finding]}
+        )
+        patch = TopicSelectionPatchV3.model_validate(
+            {
+                "baseSelectionSha256": content_hash(record),
+                "evidenceSha256": record.evidenceSha256,
+                "rubricSha256": record.rubricSha256,
+                "summary": "Correct one axis.",
+                "operations": [
+                    {
+                        "id": "axis",
+                        "kind": "replace_candidate",
+                        "affectedCandidateIds": [candidate.id],
+                        "findingIds": [finding.id],
+                        "opportunities": [],
+                        "replacementCandidates": [replacement],
+                        "reason": "Apply the cited correction.",
+                    }
+                ],
+            }
+        )
+        return apply_selection_patch(
+            EVIDENCE, record, content_hash(record), assessment, patch
+        ).proposal
+
+    repurposed = candidate.model_copy(
+        update={"purpose": "Show why the discussion matters to a first-time viewer."}
+    )
+    assert apply(repurposed, "weak_viewer_value").candidates == [repurposed]
+    with pytest.raises(HarnessValidationError, match="purpose without a value or focus finding"):
+        apply(repurposed, "unfinished_discussion")
+
+    annotated = candidate.model_copy(
+        update={"requiredContextSpans": [_span(0)], "coreSpans": [_span(1, 3)]}
+    )
+    assert apply(annotated, "unfinished_discussion").candidates == [annotated]
+    with pytest.raises(HarnessValidationError, match="content without an extent-related finding"):
+        apply(annotated, "unsupported_title")
+
+    reworded = candidate.model_copy(update={"reason": "Only the explanation changed."})
+    with pytest.raises(HarnessValidationError, match="changed nothing but prose"):
+        apply(reworded, "unfocused_extent")
 
 
 def test_title_only_replace_candidate_is_the_equivalent_retitle() -> None:
