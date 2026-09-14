@@ -39,6 +39,7 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V3,
     TOPIC_SELECTION_POLICY_V4,
     TOPIC_SELECTION_POLICY_V5,
+    TOPIC_SELECTION_POLICY_V6,
 )
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
@@ -69,6 +70,7 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
+    TopicSelectionWorkflowV6,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
@@ -451,12 +453,15 @@ class Program:
             "prepare_topic_selection_rubric": self.activities.rubric,
             "prepare_topic_inventory_plan_v4": self.activities.prepare_inventory_plan,
             "prepare_topic_author_plan_v5": self.activities.prepare_author_packaging_plan,
+            "prepare_topic_source_review_plan_v6": self.activities.prepare_source_review_plan,
             "prepare_topic_selection_call": self.activities.prepare,
             "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
             "save_topic_inventory_shard_v4": self.activities.save_inventory_shard,
             "assemble_topic_inventory_v4": self.activities.assemble_inventory,
             "save_topic_author_shard_v5": self.activities.save_author_shard,
             "assemble_topic_author_v5": self.activities.assemble_author,
+            "save_topic_source_review_shard_v6": self.activities.save_source_review_shard,
+            "assemble_topic_source_review_v6": self.activities.assemble_source_review,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -759,6 +764,172 @@ async def test_v5_empty_inventory_assembles_without_inventing_an_author_call(
     manifest = cast("TopicAuthorPackagingManifest", run.objects[manifest_refs[0].id])
     assert manifest.generatorFamilies == []
     assert manifest.shardArtifacts == []
+
+
+def _bounded_source_review(payload: dict[str, Any]) -> TopicPortfolioReviewV4:
+    """Return the exact local decisions requested by one connected v6 prompt."""
+    work_item = payload["workItem"]
+    candidates = {item["id"]: item for item in payload["contextCandidatesWithoutAuthorRationale"]}
+    opportunities = {
+        item["id"]: item for item in payload["contextOpportunitiesWithoutAuthorRationale"]
+    }
+    return TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "selection": [
+                {
+                    "candidateId": identifier,
+                    "disposition": "select",
+                    "evidenceSpans": candidates[identifier]["coreSpans"],
+                    "reason": "This is one complete focused discussion.",
+                }
+                for identifier in work_item["candidateIds"]
+            ],
+            "opportunities": [
+                {
+                    "opportunityId": identifier,
+                    "candidateIds": opportunities[identifier]["candidateIds"],
+                    "evidenceSpans": opportunities[identifier]["coreSpans"],
+                    "reason": "The exact selected candidate represents this opportunity.",
+                    "status": "represented",
+                }
+                for identifier in work_item["opportunityIds"]
+            ],
+            "overlaps": [
+                {
+                    **item,
+                    "classification": "unresolved",
+                    "reason": "The fixture preserves uncertainty.",
+                }
+                for item in work_item["overlaps"]
+            ],
+            "handoffs": [
+                {
+                    **item,
+                    "classification": "clean_handoff",
+                    "recommendedLeftLastSentenceId": None,
+                    "recommendedRightFirstSentenceId": None,
+                    "reason": "The exact adjacent extents have clean ownership.",
+                }
+                for item in work_item["handoffs"]
+            ],
+            "summary": f"Complete bounded review of {work_item['workItemId']}.",
+        }
+    )
+
+
+def _v6_inputs() -> tuple[TopicSelectionDraft, TopicSelectionDraft]:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Independent bounded inventory.",
+        ),
+    )
+    candidate = CANDIDATE.model_copy(update={"id": "section-0001:author-0001:candidate:discussion"})
+    packaged_opportunity = TopicOpportunity.model_validate(
+        {
+            **inventory_opportunity.model_dump(mode="json"),
+            "candidateIds": [candidate.id],
+            "disposition": "proposed",
+            "dispositionReason": "The complete discussion has one bounded candidate.",
+        }
+    )
+    author = TopicSelectionDraft(
+        opportunities=[packaged_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[candidate],
+            summary="Complete bounded author package.",
+        ),
+    )
+    return inventory, author
+
+
+async def test_v6_requires_every_source_review_shard_before_assessment_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[_bounded_source_review, _bounded_source_review, _bounded_source_review],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V6,
+        workflow_type=TopicSelectionWorkflowV6,
+    )
+
+    result = await TopicSelectionWorkflowV6().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "cold", "source", "source", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-source-review-plan/1") == 1
+    assert saved_formats.count("topic-source-review-shard/1") == 3
+    assert saved_formats.count("topic-source-review-manifest/1") == 1
+    review_contexts = [
+        context
+        for context in run.prepared_contexts
+        if context.source_review_work_item_id is not None
+    ]
+    assert [context.source_review_work_item_id for context in review_contexts] == [
+        "section-0001:source-local-0001",
+        "section-0001:source-local-0002",
+        "section-0001:source-omission-0001",
+    ]
+    assert all(call.allowed_browse_parent_ids == ("section-0001",) for call in run.source.calls)
+    assert run.patch.calls == []
+
+
+async def test_v6_rejected_review_shard_cannot_authorize_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    invalid = TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "selection": [],
+            "opportunities": [],
+            "overlaps": [],
+            "handoffs": [],
+            "summary": "This deliberately omits an assigned opportunity decision.",
+        }
+    )
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[_bounded_source_review, invalid, _bounded_source_review],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V6,
+        workflow_type=TopicSelectionWorkflowV6,
+    )
+
+    result = await TopicSelectionWorkflowV6().program(run.request)
+
+    assert result.revision == 1
+    assert str(result.status) == "needs_review"
+    assert run.patch.calls == []
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-source-review-shard-rejection/1" in saved_formats
+    assert "topic-source-review-manifest/1" not in saved_formats
+    assert run.final_context is not None
+    assessment = await run.activities.assessment(run.final_context)
+    assert assessment is not None
+    assert assessment.portfolioReview is None
+    assert any("no partial shard finding" in reason for reason in assessment.reasons)
 
 
 async def test_build_index_records_the_exact_verified_cache_hit(

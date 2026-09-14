@@ -13,5 +13,6 @@ export const WORKFLOWS = {
   topicSelection: "TopicSelectionWorkflow",
   topicSelectionV4: "TopicSelectionWorkflowV4",
   topicSelectionV5: "TopicSelectionWorkflowV5",
+  topicSelectionV6: "TopicSelectionWorkflowV6",
   transcribe: "TranscribeWorkflow",
 } as const;

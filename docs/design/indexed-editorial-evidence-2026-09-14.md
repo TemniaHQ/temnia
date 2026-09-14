@@ -6,13 +6,14 @@ index and give author/reviewer models tools to investigate source evidence. Trea
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
 The first end-to-end vertical slice, hierarchy, durable-checkpoint, reviewer-evidence, safe
-cross-run reuse, bounded opportunity-inventory and bounded author-packaging milestones are
+cross-run reuse, bounded opportunity-inventory, bounded author-packaging and bounded independent
+source-review milestones are
 implemented on
 `feat/indexed-editorial-evidence`. They replace
 whole-transcript prompts for the independent inventory, author and source reviewer with one
 immutable source index and bounded, role-specific tools. This is implemented behavior with
 synthetic and local test evidence; it is not a measured editorial improvement or a production
-qualification. Whole-portfolio review and repair still need bounded reconciliation.
+qualification. Repair still needs bounded reconciliation.
 
 ## Why this changes the design
 
@@ -92,11 +93,16 @@ The hierarchy makes every leaf descriptor discoverable, but an inventory shard d
 original sentence unless it uses that sentence in a returned span. Descriptions are deterministic
 source extracts and keywords, rather than model-generated semantic abstracts; relationship links
 are not implemented. The checkpoint prevents active tool results from accumulating on the wire, but
-its final exact-evidence envelope means authoring and portfolio review still need bounded
-reconciliation. V4 assigns each opportunity to the section containing its earliest core sentence,
+its final exact-evidence envelope required authoring and portfolio review to be decomposed. V4
+assigns each opportunity to the section containing its earliest core sentence,
 retains every admitted or rejected shard and assembles a manifest only from the exact complete
 ordered shard set. Its contract is
 [bounded-opportunity-inventory-2026-09-14.md](bounded-opportunity-inventory-2026-09-14.md).
+V5 decomposes author packaging, and V6 decomposes independent source review into local candidate,
+opportunity, leaf-omission and pairwise relationship work. Both require complete ordered manifests;
+V6 withholds repair authority from every partial review. Their contracts are
+[bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md) and
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md).
 Index artifacts now use an evidence- and producer-bound stable
 identity within one organization/source scope. Every run retains a separate use record, and cache
 hits re-read, hash-check and structurally revalidate the accepted artifact before use. The exact
@@ -284,10 +290,10 @@ Sequence the next design around this foundation:
    recovery are implemented and locally tested.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
    Mandatory candidate inspection, measured-media access and source-bound index reuse are
-   implemented. Independent discovery is now one admitted shard per section, and author packaging
-   is one admitted shard per bounded opportunity batch; each has a complete-manifest gate.
-   Source/portfolio review remains to be decomposed and cannot remain one unbounded dump of every
-   opportunity and candidate.
+   implemented. Independent discovery is now one admitted shard per section, author packaging is
+   one admitted shard per bounded opportunity batch, and source review is split across local
+   candidate/opportunity decisions, exact leaf omission scans and pairwise relationship work. Each
+   has a complete-manifest gate, and a partial source review cannot authorize repair.
 4. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
    runs and separate held-out sources. A four-hour recording is a test requirement; it has not
    been verified as available in this session. Repeated/copied transcripts test payload handling,

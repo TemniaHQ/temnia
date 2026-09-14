@@ -176,6 +176,9 @@ discovery is now decomposed into section-owned calls and one complete-manifest g
 [bounded-opportunity-inventory-2026-09-14.md](bounded-opportunity-inventory-2026-09-14.md).
 Author packaging now uses the same checkpoint contract in bounded work-item calls; see
 [bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md).
-Whole-portfolio source review and repair still need bounded reconciliation. Real
+Independent source review now uses one checkpoint chain per bounded candidate, opportunity,
+leaf-omission or relationship work item and admits only a complete manifest; see
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md). Repair still needs
+bounded reconciliation. Real
 44-minute, two-hour and four-hour provider and editorial evaluation
 remains the final gate rather than evidence inferred from fixtures.

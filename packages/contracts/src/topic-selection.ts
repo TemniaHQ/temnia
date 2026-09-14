@@ -571,6 +571,121 @@ export type TopicPortfolioReviewV4 = z.infer<
   typeof TopicPortfolioReviewV4Schema
 >;
 
+/** Exact overlap input assigned to one bounded source-review relationship call. */
+export const TopicSourceReviewOverlapTaskSchema = z
+  .object({
+    candidateIds: z.array(identifier()).length(2),
+    overlapSpan: TopicSentenceSpanSchema,
+  })
+  .strict()
+  .meta({
+    id: "TopicSourceReviewOverlapTask",
+    title: "TopicSourceReviewOverlapTask",
+  });
+export type TopicSourceReviewOverlapTask = z.infer<
+  typeof TopicSourceReviewOverlapTaskSchema
+>;
+
+/** Exact adjacent handoff input assigned to one bounded relationship call. */
+export const TopicSourceReviewHandoffTaskSchema = z
+  .object({
+    candidateIds: z.array(identifier()).length(2),
+    leftContextSpan: TopicSentenceSpanSchema,
+    rightContextSpan: TopicSentenceSpanSchema,
+  })
+  .strict()
+  .meta({
+    id: "TopicSourceReviewHandoffTask",
+    title: "TopicSourceReviewHandoffTask",
+  });
+export type TopicSourceReviewHandoffTask = z.infer<
+  typeof TopicSourceReviewHandoffTaskSchema
+>;
+
+/** One finite local or pairwise unit of independent source review. */
+export const TopicSourceReviewWorkItemSchema = z
+  .object({
+    batchOrdinal: z.int().nonnegative(),
+    candidateIds: z.array(identifier()).max(4),
+    contextOpportunityIds: z.array(identifier()).max(48),
+    discoverMissingOpportunities: z.boolean(),
+    handoffs: z.array(TopicSourceReviewHandoffTaskSchema).max(2),
+    inspectionCandidateIds: z.array(identifier()).max(16),
+    kind: z.enum(["local", "omission", "overlap", "handoff"]),
+    opportunityIds: z.array(identifier()).max(12),
+    ordinal: z.int().nonnegative(),
+    overlaps: z.array(TopicSourceReviewOverlapTaskSchema).max(2),
+    sectionId: identifier(),
+    sourceSpan: TopicSentenceSpanSchema.nullable(),
+    workItemId: identifier(),
+  })
+  .strict()
+  .meta({
+    id: "TopicSourceReviewWorkItem",
+    title: "TopicSourceReviewWorkItem",
+  });
+export type TopicSourceReviewWorkItem = z.infer<
+  typeof TopicSourceReviewWorkItemSchema
+>;
+
+/** Complete immutable plan for bounded local, overlap and handoff review. */
+export const TopicSourceReviewPlanSchema = z
+  .object({
+    format: z.literal("topic-source-review-plan/1"),
+    indexSha256: sha256(),
+    maxCandidatesPerLocalWorkItem: z.literal(4),
+    maxOpportunitiesPerLocalWorkItem: z.literal(12),
+    maxPairsPerRelationshipWorkItem: z.literal(2),
+    selectionSha256: sha256(),
+    workItems: z.array(TopicSourceReviewWorkItemSchema).min(1),
+  })
+  .strict()
+  .meta({ id: "TopicSourceReviewPlan", title: "TopicSourceReviewPlan" });
+export type TopicSourceReviewPlan = z.infer<typeof TopicSourceReviewPlanSchema>;
+
+/** One independently admitted bounded source-review answer and its exact evidence trace. */
+export const TopicSourceReviewShardSchema = z
+  .object({
+    format: z.literal("topic-source-review-shard/1"),
+    indexSha256: sha256(),
+    inspectionArtifact: HarnessArtifactRefSchema.nullable(),
+    planSha256: sha256(),
+    responseArtifact: HarnessArtifactRefSchema,
+    review: TopicPortfolioReviewV4Schema,
+    reviewerFamily: reason(),
+    selectionSha256: sha256(),
+    workItem: TopicSourceReviewWorkItemSchema,
+  })
+  .strict()
+  .meta({ id: "TopicSourceReviewShard", title: "TopicSourceReviewShard" });
+export type TopicSourceReviewShard = z.infer<
+  typeof TopicSourceReviewShardSchema
+>;
+
+/** Whole portfolio review assembled only from every exact admitted review shard. */
+export const TopicSourceReviewManifestSchema = z
+  .object({
+    complete: z.literal(true),
+    format: z.literal("topic-source-review-manifest/1"),
+    indexSha256: sha256(),
+    inspectionArtifacts: z.array(HarnessArtifactRefSchema),
+    planSha256: sha256(),
+    responseArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+    review: TopicPortfolioReviewV4Schema,
+    reviewerFamilies: z.array(reason()).min(1),
+    selectionSha256: sha256(),
+    shardArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+    workItemIds: z.array(identifier()).min(1),
+  })
+  .strict()
+  .meta({
+    id: "TopicSourceReviewManifest",
+    title: "TopicSourceReviewManifest",
+  });
+export type TopicSourceReviewManifest = z.infer<
+  typeof TopicSourceReviewManifestSchema
+>;
+
 /** V3 may replace both semantic boundaries in one accountable operation. */
 export const TopicSelectionPatchOperationV3Schema = z
   .object({

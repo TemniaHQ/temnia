@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceReviewHandoffTask": {
+      "$id": "#/$defs/TopicSourceReviewHandoffTask",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "leftContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "rightContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "leftContextSpan",
+        "rightContextSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReviewHandoffTask"
+    },
+    "TopicSourceReviewOverlapTask": {
+      "$id": "#/$defs/TopicSourceReviewOverlapTask",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "overlapSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "overlapSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReviewOverlapTask"
+    },
+    "TopicSourceReviewWorkItem": {
+      "$id": "#/$defs/TopicSourceReviewWorkItem",
+      "type": "object",
+      "properties": {
+        "batchOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "candidateIds": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "contextOpportunityIds": {
+          "maxItems": 48,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "discoverMissingOpportunities": {
+          "type": "boolean"
+        },
+        "handoffs": {
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceReviewHandoffTask"
+          }
+        },
+        "inspectionCandidateIds": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local",
+            "omission",
+            "overlap",
+            "handoff"
+          ]
+        },
+        "opportunityIds": {
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "overlaps": {
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSourceReviewOverlapTask"
+          }
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceSpan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicSentenceSpan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "batchOrdinal",
+        "candidateIds",
+        "contextOpportunityIds",
+        "discoverMissingOpportunities",
+        "handoffs",
+        "inspectionCandidateIds",
+        "kind",
+        "opportunityIds",
+        "ordinal",
+        "overlaps",
+        "sectionId",
+        "sourceSpan",
+        "workItemId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReviewWorkItem"
+    }
+  },
+  "$id": "TopicSourceReviewWorkItem.json",
+  "$ref": "#/$defs/TopicSourceReviewWorkItem",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

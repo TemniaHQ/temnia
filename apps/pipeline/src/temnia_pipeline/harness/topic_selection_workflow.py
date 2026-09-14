@@ -25,28 +25,35 @@ with workflow.unsafe.imports_passed_through():
         TOPIC_SELECTION_POLICY_V3,
         TOPIC_SELECTION_POLICY_V4,
         TOPIC_SELECTION_POLICY_V5,
+        TOPIC_SELECTION_POLICY_V6,
         EditorialPolicy,
     )
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
         TOPIC_SELECTION_V4_AGENTS,
         TOPIC_SELECTION_V5_AGENTS,
+        TOPIC_SELECTION_V6_AGENTS,
         HarnessModelDeps,
         topic_opportunity_inventory_v3,
         topic_opportunity_inventory_v4,
         topic_opportunity_inventory_v5,
+        topic_opportunity_inventory_v6,
         topic_selection_author_v3,
         topic_selection_author_v4,
         topic_selection_author_v5,
+        topic_selection_author_v6,
         topic_selection_cold_v3,
         topic_selection_cold_v4,
         topic_selection_cold_v5,
+        topic_selection_cold_v6,
         topic_selection_patch_v3,
         topic_selection_patch_v4,
         topic_selection_patch_v5,
+        topic_selection_patch_v6,
         topic_selection_source_v4,
         topic_selection_source_v5,
         topic_selection_source_v6,
+        topic_selection_source_v7,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -92,6 +99,11 @@ with workflow.unsafe.imports_passed_through():
         SourceCheckpointLoadRequest,
         SourceCheckpointLoadResult,
         SourceIndexBuildResult,
+        SourceReviewManifestRequest,
+        SourceReviewManifestResult,
+        SourceReviewPlanResult,
+        SourceReviewShardSaveRequest,
+        SourceReviewShardSaveResult,
         effective_topic_output_tokens,
         selection_call_config,
         selection_call_inputs,
@@ -146,6 +158,8 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         source_tool_role=plan.source_tool_role,
         candidate_selection=plan.candidate_selection,
         media_evidence=plan.media_evidence,
+        allowed_browse_parent_ids=plan.allowed_browse_parent_ids,
+        allowed_candidate_ids=plan.allowed_candidate_ids,
         dispatch_limit=request.config.maxDispatches,
         synthetic_payload=plan.synthetic_payload,
     )
@@ -191,6 +205,7 @@ MAX_SEAT_ROUTES = 4
 COLD_REVIEW_FAN_OUT = 3
 INVENTORY_FAN_OUT = 3
 AUTHOR_FAN_OUT = 3
+SOURCE_REVIEW_FAN_OUT = 3
 PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 
 
@@ -798,7 +813,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             rejection_diagnostics = ()
             pending_assessment = None
             context = patch_context.model_copy(
-                update={"selection": saved.selection, "assessment": None, "rejection": None}
+                update={
+                    "selection": saved.selection,
+                    "assessment": None,
+                    "rejection": None,
+                    "source_review_plan": None,
+                    "source_review_work_item_id": None,
+                }
             )
         if stop_reasons:
             final = await workflow.execute_activity(
@@ -1114,3 +1135,231 @@ class TopicSelectionWorkflowV5(TopicSelectionWorkflowV4):
             draft=assembled.draft,
         )
         return accepted, base.model_copy(update={"author_families": families}), run, None
+
+
+@workflow.defn(name="TopicSelectionWorkflowV6")
+class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
+    """Bound inventory, author packaging and independent source review."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V6_AGENTS
+    policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V6
+    inventory_agent = topic_opportunity_inventory_v6
+    author_agent = topic_selection_author_v6
+    cold_agent = topic_selection_cold_v6
+    source_agent = topic_selection_source_v7
+    patch_agent = topic_selection_patch_v6
+
+    @workflow.run
+    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
+        """Keep v6 history and model activities disjoint from prior programs."""
+        return await super().run(request)
+
+    async def review_selection(  # noqa: C901, PLR0912, PLR0915
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        draft: TopicSelectionDraft,
+        cache: dict[str, tuple[TopicSelectionColdReview, str]],
+    ) -> SelectionAssessmentResult:
+        """Admit cold reviews, then require every bounded source-review shard."""
+        cold_reviews: list[TopicSelectionColdReview] = []
+        cold_candidate_ids: list[str] = []
+        cold_stages: list[str] = []
+        unavailable: list[str] = []
+        reasons: list[str] = []
+        limited = False
+        if context.rubric is None:
+            raise RuntimeError("selection review requires the frozen rubric")
+        rubric_sha = context.rubric.sha256
+        pending = [
+            candidate
+            for candidate in draft.proposal.candidates
+            if selection_cold_key(candidate, rubric_sha) not in cache
+        ]
+        cold_fan_out = asyncio.Semaphore(COLD_REVIEW_FAN_OUT)
+        settled_index = {"verifier_index": context.verifier_index}
+
+        async def review_cold(candidate: Any) -> tuple[TopicSelectionColdReview, str]:  # noqa: ANN401
+            async with cold_fan_out:
+                cold_context = context.model_copy(
+                    update={
+                        "candidate_id": candidate.id,
+                        "verifier_index": settled_index["verifier_index"],
+                    }
+                )
+                result, plan, settled = await self.run_seat(
+                    self.cold_agent, request, cold_context, "verifier"
+                )
+                settled_index["verifier_index"] = max(
+                    settled_index["verifier_index"], settled.verifier_index
+                )
+                return result.output, plan.stage
+
+        cold_outcomes = await asyncio.gather(
+            *(review_cold(candidate) for candidate in pending), return_exceptions=True
+        )
+        context = context.model_copy(update={"verifier_index": settled_index["verifier_index"]})
+        for candidate, outcome in zip(pending, cold_outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, Exception):
+                    raise outcome
+                if invalid_model_output(outcome):
+                    if isinstance(outcome, InvalidSeatOutput):
+                        context = context.model_copy(
+                            update={
+                                "verifier_index": max(
+                                    context.verifier_index, outcome.context.verifier_index
+                                )
+                            }
+                        )
+                    unavailable.append(candidate.id)
+                    reasons.append(
+                        f"Cold review of {candidate.id} did not match its required schema."
+                    )
+                    continue
+                if not execution_limit(outcome):
+                    raise outcome
+                if not limited:
+                    limited = True
+                    reasons.append("Execution capacity prevented the remaining candidate reviews.")
+                continue
+            cache[selection_cold_key(candidate, rubric_sha)] = outcome
+        for candidate in draft.proposal.candidates:
+            cached = cache.get(selection_cold_key(candidate, rubric_sha))
+            if cached is None:
+                continue
+            cold_reviews.append(cached[0])
+            cold_candidate_ids.append(candidate.id)
+            cold_stages.append(cached[1])
+
+        manifest_ref: HarnessArtifactRef | None = None
+        if not limited:
+            prepared = await workflow.execute_activity(
+                "prepare_topic_source_review_plan_v6",
+                context,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+                result_type=SourceReviewPlanResult,
+            )
+            context = context.model_copy(update={"source_review_plan": prepared.artifact})
+            review_fan_out = asyncio.Semaphore(SOURCE_REVIEW_FAN_OUT)
+
+            async def review_one(
+                work_item_id: str,
+            ) -> tuple[SourceReviewShardSaveResult | None, SelectionContext, str | None]:
+                async with review_fan_out:
+                    shard_context = context.model_copy(
+                        update={
+                            "source_review_work_item_id": work_item_id,
+                            "verifier_index": settled_index["verifier_index"],
+                        }
+                    )
+                    try:
+                        result, plan, settled = await self.run_seat(
+                            self.source_agent, request, shard_context, "verifier"
+                        )
+                        shard_context = self.carry_routes(shard_context, settled)
+                        settled_index["verifier_index"] = max(
+                            settled_index["verifier_index"], settled.verifier_index
+                        )
+                        saved = await workflow.execute_activity(
+                            "save_topic_source_review_shard_v6",
+                            SourceReviewShardSaveRequest(
+                                context=shard_context,
+                                review=result.output,
+                                inspection=(
+                                    source_inspection_trace(
+                                        result.all_messages(),
+                                        index_sha256=shard_context.source_index.sha256,
+                                        role="source_reviewer",
+                                        stage=plan.stage,
+                                    )
+                                    if shard_context.source_index is not None
+                                    else None
+                                ),
+                            ),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RETRY,
+                            result_type=SourceReviewShardSaveResult,
+                        )
+                    except Exception as error:
+                        if isinstance(error, InvalidSeatOutput):
+                            shard_context = self.carry_routes(shard_context, error.context)
+                        if invalid_model_output(error):
+                            saved = await workflow.execute_activity(
+                                "save_topic_source_review_shard_v6",
+                                SourceReviewShardSaveRequest(
+                                    context=shard_context,
+                                    schema_error=(
+                                        f"Source review response for {work_item_id} did not match "
+                                        "the portfolio schema."
+                                    ),
+                                ),
+                                start_to_close_timeout=timedelta(minutes=2),
+                                retry_policy=RETRY,
+                                result_type=SourceReviewShardSaveResult,
+                            )
+                            return saved, shard_context, "; ".join(saved.diagnostics)
+                        if execution_limit(error):
+                            return (
+                                None,
+                                shard_context,
+                                f"Execution capacity ended while reviewing {work_item_id}.",
+                            )
+                        raise
+                    if saved.artifact is None:
+                        return saved, shard_context, "; ".join(saved.diagnostics)
+                    return saved, shard_context, None
+
+            outcomes = await asyncio.gather(
+                *(review_one(item.workItemId) for item in prepared.plan.workItems)
+            )
+            context = context.model_copy(
+                update={
+                    "source_review_work_item_id": None,
+                    "verifier_index": max(
+                        (settled.verifier_index for _, settled, _ in outcomes),
+                        default=context.verifier_index,
+                    ),
+                }
+            )
+            shard_refs = tuple(
+                saved.artifact
+                for saved, _, _ in outcomes
+                if saved is not None and saved.artifact is not None
+            )
+            failures = tuple(dict.fromkeys(reason for _, _, reason in outcomes if reason))
+            reasons.extend(failures)
+            if len(shard_refs) == len(prepared.plan.workItems):
+                assembled = await workflow.execute_activity(
+                    "assemble_topic_source_review_v6",
+                    SourceReviewManifestRequest(context=context, shard_artifacts=shard_refs),
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RETRY,
+                    result_type=SourceReviewManifestResult,
+                )
+                manifest_ref = assembled.artifact
+            else:
+                reasons.append(
+                    "Bounded source review is incomplete; no partial shard finding can authorize "
+                    "repair."
+                )
+                limited = any(saved is None for saved, _, _ in outcomes)
+        self.settled_context = context
+        return await workflow.execute_activity(
+            "save_topic_selection_assessment",
+            SelectionReviewRequest(
+                context=context,
+                cold_reviews=tuple(cold_reviews),
+                cold_candidate_ids=tuple(cold_candidate_ids),
+                cold_stages=tuple(cold_stages),
+                unavailable_cold_ids=tuple(unavailable),
+                source_dispatched=False,
+                source_review_manifest=manifest_ref,
+                reasons=tuple(reasons),
+                execution_limited=limited,
+            ),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=SelectionAssessmentResult,
+        )

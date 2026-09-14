@@ -30,6 +30,7 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
+    TopicSelectionWorkflowV6,
 )
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
@@ -170,6 +171,7 @@ async def run_worker(settings: TemporalSettings) -> None:
             TopicSelectionWorkflow,
             TopicSelectionWorkflowV4,
             TopicSelectionWorkflowV5,
+            TopicSelectionWorkflowV6,
             TopicEditorialPatchWorkflow,
         ],
         activities=[

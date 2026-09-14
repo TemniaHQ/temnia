@@ -31,6 +31,9 @@ from temnia_pipeline.contracts import (
     TopicSelectionPatchV3,
     TopicSelectionRecord,
     TopicSourceIndex,
+    TopicSourceReviewManifest,
+    TopicSourceReviewPlan,
+    TopicSourceReviewShard,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
@@ -39,6 +42,7 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V3,
     TOPIC_SELECTION_POLICY_V4,
     TOPIC_SELECTION_POLICY_V5,
+    TOPIC_SELECTION_POLICY_V6,
 )
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
@@ -85,6 +89,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
     SELECTION_SOURCE_PROMPT_V3,
+    SELECTION_SOURCE_SHARD_PROMPT,
     apply_selection_patch,
     assess_selection,
     author_packaging_shard_prompt,
@@ -99,6 +104,7 @@ from temnia_pipeline.harness.topic_selection import (
     selection_prompt,
     selection_semantic_key,
     selection_source_prompt,
+    source_review_shard_prompt,
     validate_opportunity_inventory,
     validate_selection,
     validate_selection_against_inventory,
@@ -129,10 +135,22 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     SourceCheckpointLoadResult,
     SourceIndexBuildResult,
     SourceInspectionTrace,
+    SourceReviewManifestRequest,
+    SourceReviewManifestResult,
+    SourceReviewPlanResult,
+    SourceReviewShardRejection,
+    SourceReviewShardSaveRequest,
+    SourceReviewShardSaveResult,
     TopicSourceIndexUseRecord,
     effective_topic_output_tokens,
     selection_call_config,
     selection_call_inputs,
+)
+from temnia_pipeline.harness.topic_source_review import (
+    admit_source_review_shard,
+    assemble_source_review_manifest,
+    build_source_review_plan,
+    source_review_work_item,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError, validate_evidence
 
@@ -153,6 +171,16 @@ class TopicSelectionActivities:
     def common(context: SelectionContext) -> TopicContext:
         """Use the shared scoped artifact service without v1 editorial admission."""
         return TopicContext(run=context.run, evidence=context.evidence)
+
+    @staticmethod
+    def _require_independent_reviewer(
+        reviewer_family: str, proposer_families: Sequence[str]
+    ) -> None:
+        """Refuse a review shard produced by any family that authored the selection."""
+        if reviewer_family in proposer_families:
+            raise HarnessValidationError(
+                "source review shard reviewer participated in author packaging"
+            )
 
     async def read(self, context: SelectionContext, ref: HarnessArtifactRef) -> object:
         """Read the exact immutable bytes in the run's source scope."""
@@ -244,6 +272,7 @@ class TopicSelectionActivities:
                 TOPIC_SELECTION_POLICY_V3,
                 TOPIC_SELECTION_POLICY_V4,
                 TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
             }
             or run.evidence_artifact_id != context.evidence.id
         ):
@@ -332,7 +361,9 @@ class TopicSelectionActivities:
             validate_opportunity_inventory(evidence, result)
             return result
         if context.source_index is None or context.inventory_plan is None:
-            raise HarnessValidationError("v4 opportunity inventory requires its index and plan")
+            raise HarnessValidationError(
+                "bounded opportunity inventory requires its index and plan"
+            )
         plan = await self.inventory_plan(context)
         await self.require_record(
             context,
@@ -398,7 +429,7 @@ class TopicSelectionActivities:
     async def author_plan(self, context: SelectionContext) -> TopicAuthorPackagingPlan:
         """Load and reproduce the exact deterministic v5 author work plan."""
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V5
+            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or context.author_plan is None
             or context.inventory is None
             or context.inventory_plan is None
@@ -433,6 +464,47 @@ class TopicSelectionActivities:
         )
         if plan != expected or context.author_plan.sha256 != content_hash(plan):
             raise HarnessValidationError("author plan differs from its exact inventory")
+        return plan
+
+    async def source_review_plan(self, context: SelectionContext) -> TopicSourceReviewPlan:
+        """Load and reproduce the exact deterministic v6 review work plan."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V6
+            or context.source_review_plan is None
+            or context.selection is None
+            or context.source_index is None
+            or context.rubric is None
+        ):
+            raise HarnessValidationError("bounded source review requires its exact plan state")
+        await self.require_record(
+            context,
+            context.source_review_plan,
+            format_name="topic-source-review-plan/1",
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+            ),
+        )
+        _, evidence, _, selection = await self.load(
+            context.model_copy(update={"source_review_plan": None})
+        )
+        if selection is None:
+            raise HarnessValidationError("source review plan has no accepted selection")
+        index = await self.source_index(context)
+        plan = TopicSourceReviewPlan.model_validate(
+            await self.read(context, context.source_review_plan)
+        )
+        expected = build_source_review_plan(
+            evidence,
+            index,
+            selection.draft,
+            index_sha256=context.source_index.sha256,
+            selection_sha256=context.selection.sha256,
+        )
+        if plan != expected or context.source_review_plan.sha256 != content_hash(plan):
+            raise HarnessValidationError("source review plan differs from its exact selection")
         return plan
 
     async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
@@ -499,6 +571,7 @@ class TopicSelectionActivities:
         if context.program_version not in {
             TOPIC_SELECTION_POLICY_V4,
             TOPIC_SELECTION_POLICY_V5,
+            TOPIC_SELECTION_POLICY_V6,
         }:
             raise HarnessValidationError("bounded inventory planning requires v4 or v5")
         if context.source_index is None or context.inventory_plan is not None:
@@ -527,7 +600,7 @@ class TopicSelectionActivities:
     ) -> AuthorPackagingPlanResult:
         """Publish every bounded author assignment before dispatching the first one."""
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V5
+            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or context.source_index is None
             or context.inventory_plan is None
             or context.inventory is None
@@ -566,6 +639,46 @@ class TopicSelectionActivities:
             },
         )
         return AuthorPackagingPlanResult(artifact=reference, plan=plan)
+
+    @activity.defn(name="prepare_topic_source_review_plan_v6")
+    async def prepare_source_review_plan(self, context: SelectionContext) -> SourceReviewPlanResult:
+        """Publish every bounded source-review assignment before the first review call."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V6
+            or context.source_index is None
+            or context.selection is None
+            or context.source_review_plan is not None
+            or context.assessment is not None
+        ):
+            raise HarnessValidationError("source review planning requires a fresh v6 selection")
+        _, evidence, rubric, selection = await self.load(context)
+        if rubric is None or selection is None or context.rubric is None:
+            raise HarnessValidationError("source review planning requires selection and rubric")
+        index = await self.source_index(context)
+        plan = build_source_review_plan(
+            evidence,
+            index,
+            selection.draft,
+            index_sha256=context.source_index.sha256,
+            selection_sha256=context.selection.sha256,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=plan.format,
+            content=plan,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "workItemCount": len(plan.workItems),
+            },
+        )
+        return SourceReviewPlanResult(artifact=reference, plan=plan)
 
     @activity.defn(name="load_topic_source_checkpoint")
     async def load_source_checkpoint(
@@ -718,6 +831,8 @@ class TopicSelectionActivities:
         )
         dependencies = [context.evidence, context.rubric]
         source_tool_role = None
+        allowed_browse_parent_ids: tuple[str, ...] = ()
+        allowed_candidate_ids: tuple[str, ...] = ()
         if context.candidate_id is not None:
             candidate = (
                 next(
@@ -737,6 +852,35 @@ class TopicSelectionActivities:
             stage = f"verify:selection:cold:{selection_cold_key(candidate, context.rubric.sha256)}"
             version = SELECTION_COLD_PROMPT_V3
             synthetic = "topic_selection_cold"
+        elif (
+            selection is not None
+            and context.assessment is None
+            and context.program_version == TOPIC_SELECTION_POLICY_V6
+            and context.source_review_plan is not None
+            and context.source_review_work_item_id is not None
+        ):
+            if context.selection is None or context.source_index is None:
+                raise HarnessValidationError("bounded source review requires selection and index")
+            index = await self.source_index(context)
+            review_plan = await self.source_review_plan(context)
+            work_item = source_review_work_item(review_plan, context.source_review_work_item_id)
+            dependencies.extend(
+                (context.source_index, context.selection, context.source_review_plan)
+            )
+            source_tool_role = "source_reviewer"
+            allowed_browse_parent_ids = (work_item.sectionId,)
+            allowed_candidate_ids = tuple(
+                str(getattr(value, "root", value)) for value in work_item.inspectionCandidateIds
+            )
+            prompt = source_review_shard_prompt(
+                selection.draft,
+                rubric,
+                source_index_map(index, index_sha256=context.source_index.sha256),
+                work_item,
+            )
+            stage = f"verify:selection:source:{context.iteration}:{work_item.workItemId}"
+            version = SELECTION_SOURCE_SHARD_PROMPT
+            synthetic = f"topic_selection_source_{work_item.workItemId}"
         elif selection is not None and context.assessment is None:
             if context.selection is None:
                 raise HarnessValidationError("source review requires its exact selection artifact")
@@ -779,7 +923,8 @@ class TopicSelectionActivities:
             if context.rejection is not None:
                 dependencies.append(context.rejection)
         elif (
-            context.program_version in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            context.program_version
+            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             and context.inventory is None
         ):
             if context.inventory_section_id is None or context.inventory_plan is None:
@@ -802,7 +947,7 @@ class TopicSelectionActivities:
             version = SELECTION_INVENTORY_SHARD_PROMPT
             synthetic = f"topic_opportunity_inventory_{section.sectionId}"
         elif (
-            context.program_version == TOPIC_SELECTION_POLICY_V5
+            context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             and context.author_plan is not None
             and context.author_work_item_id is not None
             and context.inventory is not None
@@ -917,6 +1062,7 @@ class TopicSelectionActivities:
                 SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
                 SELECTION_INVENTORY_SHARD_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
+                SELECTION_SOURCE_SHARD_PROMPT: "topic-selection-portfolio/4",
             }.get(version, version),
             author=author,
             verifier=verifier,
@@ -927,6 +1073,8 @@ class TopicSelectionActivities:
                 context.selection if source_tool_role == "source_reviewer" else None
             ),
             media_evidence=(context.evidence if source_tool_role == "source_reviewer" else None),
+            allowed_browse_parent_ids=allowed_browse_parent_ids,
+            allowed_candidate_ids=allowed_candidate_ids,
             synthetic_payload=synthetic_payload,
         )
 
@@ -1037,17 +1185,27 @@ class TopicSelectionActivities:
         browse_parent_ids = None
         if (
             plan.source_tool_role == "inventory"
-            and context.program_version in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            and context.program_version
+            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             and context.inventory_section_id is not None
         ):
             browse_parent_ids = (context.inventory_section_id,)
         elif (
             plan.source_tool_role == "author"
-            and context.program_version == TOPIC_SELECTION_POLICY_V5
+            and context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             and context.author_work_item_id is not None
         ):
             work_item = author_work_item(
                 await self.author_plan(context), context.author_work_item_id
+            )
+            browse_parent_ids = (work_item.sectionId,)
+        elif (
+            plan.source_tool_role == "source_reviewer"
+            and context.program_version == TOPIC_SELECTION_POLICY_V6
+            and context.source_review_work_item_id is not None
+        ):
+            work_item = source_review_work_item(
+                await self.source_review_plan(context), context.source_review_work_item_id
             )
             browse_parent_ids = (work_item.sectionId,)
         validate_source_inspection(
@@ -1068,6 +1226,11 @@ class TopicSelectionActivities:
                 index_sha256=context.source_index.sha256,
                 selection_sha256=context.selection.sha256,
                 evidence_sha256=context.evidence.sha256,
+                expected_candidate_ids=(
+                    plan.allowed_candidate_ids
+                    if context.program_version == TOPIC_SELECTION_POLICY_V6
+                    else None
+                ),
             )
         checkpoint_ref = None
         if inspection.format == "topic-source-inspection/2":
@@ -1181,7 +1344,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1287,7 +1451,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1350,7 +1515,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V5
+            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1458,7 +1623,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V5
+            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1560,6 +1725,174 @@ class TopicSelectionActivities:
             draft=manifest.selection,
         )
 
+    @activity.defn(name="save_topic_source_review_shard_v6")
+    async def save_source_review_shard(
+        self, request: SourceReviewShardSaveRequest
+    ) -> SourceReviewShardSaveResult:
+        """Retain and admit one settled bounded source-review answer."""
+        context = request.context
+        run, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V6
+            or rubric is None
+            or selection is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.selection is None
+            or context.source_review_plan is None
+            or context.source_review_work_item_id is None
+            or context.assessment is not None
+        ):
+            raise HarnessValidationError("source review shard requires one planned v6 work item")
+        plan = await self.source_review_plan(context)
+        work_item = source_review_work_item(plan, context.source_review_work_item_id)
+        call_plan = await self.prepare(context)
+        response = await self.response_ref(context, call_plan, request.review)
+        inspection = None
+        diagnostics: tuple[str, ...] = ()
+        try:
+            if request.schema_error is not None:
+                raise HarnessValidationError(request.schema_error)  # noqa: TRY301
+            if request.review is None:
+                raise HarnessValidationError("source review shard contains no typed review")  # noqa: TRY301
+            inspection = await self.inspection_ref(
+                context,
+                call_plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, work_item, request.review),
+            )
+            author, verifier = editorial_routes(
+                run.route_snapshot,
+                author_index=context.author_index,
+                verifier_index=context.verifier_index,
+            )
+            proposer_families = context.author_families or (author.family,)
+            self._require_independent_reviewer(verifier.family, proposer_families)
+            index = await self.source_index(context)
+            shard = admit_source_review_shard(
+                evidence,
+                index,
+                selection.draft,
+                plan,
+                plan_sha256=context.source_review_plan.sha256,
+                work_item_id=context.source_review_work_item_id,
+                review=request.review,
+                reviewer_family=verifier.family,
+                response_artifact=response,
+                inspection_artifact=inspection,
+            )
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            diagnostics = (str(error),)
+            dependencies = (*call_plan.input_artifacts, response)
+            if inspection is not None:
+                dependencies = (*dependencies, inspection)
+            rejection = SourceReviewShardRejection(
+                response=response,
+                work_item_id=context.source_review_work_item_id,
+                review=request.review,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=dependencies,
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.source_review_plan.sha256,
+                    "workItemId": context.source_review_work_item_id,
+                },
+            )
+            return SourceReviewShardSaveResult(rejection=rejection_ref, diagnostics=diagnostics)
+        dependencies = (*call_plan.input_artifacts, response)
+        if inspection is not None:
+            dependencies = (*dependencies, inspection)
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=shard.format,
+            content=shard,
+            dependencies=dependencies,
+            metadata={
+                "programVersion": context.program_version,
+                "reviewerFamily": shard.reviewerFamily,
+                "planSha256": context.source_review_plan.sha256,
+                "workItemId": context.source_review_work_item_id,
+            },
+        )
+        return SourceReviewShardSaveResult(artifact=reference, shard=shard)
+
+    @activity.defn(name="assemble_topic_source_review_v6")
+    async def assemble_source_review(
+        self, request: SourceReviewManifestRequest
+    ) -> SourceReviewManifestResult:
+        """Publish a portfolio review only from every exact admitted review shard."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V6
+            or rubric is None
+            or selection is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.selection is None
+            or context.source_review_plan is None
+            or context.source_review_work_item_id is not None
+            or context.assessment is not None
+        ):
+            raise HarnessValidationError("source review assembly requires the complete v6 plan")
+        plan = await self.source_review_plan(context)
+        shards: list[TopicSourceReviewShard] = []
+        for reference in request.shard_artifacts:
+            await self.require_record(
+                context,
+                reference,
+                format_name="topic-source-review-shard/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.selection,
+                    context.source_review_plan,
+                ),
+            )
+            shards.append(
+                TopicSourceReviewShard.model_validate(await self.read(context, reference))
+            )
+        manifest = assemble_source_review_manifest(
+            evidence,
+            await self.source_index(context),
+            selection.draft,
+            plan,
+            index_sha256=context.source_index.sha256,
+            selection_sha256=context.selection.sha256,
+            plan_sha256=context.source_review_plan.sha256,
+            shards=shards,
+            shard_artifacts=request.shard_artifacts,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=manifest.format,
+            content=manifest,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+                context.source_review_plan,
+                *request.shard_artifacts,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "planSha256": context.source_review_plan.sha256,
+                "workItemCount": len(manifest.workItemIds),
+            },
+        )
+        return SourceReviewManifestResult(artifact=reference, manifest=manifest)
+
     @activity.defn(name="save_topic_selection")
     async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
         """Apply a known response atomically, retaining refused patches beside prior work."""
@@ -1655,7 +1988,9 @@ class TopicSelectionActivities:
         )
 
     @activity.defn(name="save_topic_selection_assessment")
-    async def save_assessment(self, request: SelectionReviewRequest) -> SelectionAssessmentResult:
+    async def save_assessment(  # noqa: PLR0915
+        self, request: SelectionReviewRequest
+    ) -> SelectionAssessmentResult:
         """Ground each observation and preserve unavailable observations as unknown."""
         context = request.context
         run, evidence, _, record = await self.load(context)
@@ -1695,8 +2030,71 @@ class TopicSelectionActivities:
             response_refs.append(await self.response_ref(cold_context, plan, None))
         source_context = context.model_copy(update={"candidate_id": None, "assessment": None})
         admitted_source_review = request.source_review
+        source_reviewer_families: tuple[str, ...] = ()
+        if request.source_review_manifest is not None:
+            if (
+                context.program_version != TOPIC_SELECTION_POLICY_V6
+                or context.source_review_plan is None
+                or context.source_index is None
+                or request.source_dispatched
+                or request.source_review is not None
+                or request.source_inspection is not None
+            ):
+                raise HarnessValidationError(
+                    "bounded review manifest conflicts with legacy source input"
+                )
+            await self.require_record(
+                context,
+                request.source_review_manifest,
+                format_name="topic-source-review-manifest/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.selection,
+                    context.source_review_plan,
+                ),
+            )
+            manifest = TopicSourceReviewManifest.model_validate(
+                await self.read(context, request.source_review_manifest)
+            )
+            review_plan = await self.source_review_plan(context)
+            source_shards: list[TopicSourceReviewShard] = []
+            for reference in manifest.shardArtifacts:
+                await self.require_record(
+                    context,
+                    reference,
+                    format_name="topic-source-review-shard/1",
+                    dependencies=(
+                        context.evidence,
+                        context.rubric,
+                        context.source_index,
+                        context.selection,
+                        context.source_review_plan,
+                    ),
+                )
+                source_shards.append(
+                    TopicSourceReviewShard.model_validate(await self.read(context, reference))
+                )
+            expected_manifest = assemble_source_review_manifest(
+                evidence,
+                await self.source_index(context),
+                record.draft,
+                review_plan,
+                index_sha256=context.source_index.sha256,
+                selection_sha256=context.selection.sha256,
+                plan_sha256=context.source_review_plan.sha256,
+                shards=source_shards,
+                shard_artifacts=manifest.shardArtifacts,
+            )
+            if expected_manifest != manifest:
+                raise HarnessValidationError("bounded source review differs from its exact shards")
+            admitted_source_review = manifest.review
+            response_refs.extend(manifest.responseArtifacts)
+            inspection_refs.extend(manifest.inspectionArtifacts)
+            source_reviewer_families = tuple(value.root for value in manifest.reviewerFamilies)
         # Even a schema-invalid source answer is retained and bound; it is never a pass.
-        if request.source_dispatched:
+        if request.source_dispatched and request.source_review_manifest is None:
             source_plan = await self.prepare(source_context)
             response_refs.append(
                 await self.response_ref(source_context, source_plan, request.source_review)
@@ -1722,11 +2120,12 @@ class TopicSelectionActivities:
         )
         proposer_families = context.author_families or (
             ("deterministic-empty-packaging",)
-            if context.program_version == TOPIC_SELECTION_POLICY_V5
+            if context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
             and context.author_plan is not None
             else (author.family,)
         )
-        if verifier.family in proposer_families:
+        reviewer_families = source_reviewer_families or (verifier.family,)
+        if set(reviewer_families).intersection(proposer_families):
             raise HarnessValidationError(
                 "selection assessment reviewer participated in author packaging"
             )
@@ -1737,7 +2136,7 @@ class TopicSelectionActivities:
             cold_reviews=admitted_cold,
             source_review=admitted_source_review,
             author_family="+".join(proposer_families),
-            verifier_family=verifier.family,
+            verifier_family="+".join(reviewer_families),
             response_artifacts=tuple(response_refs),
             reasons=reasons,
         )
@@ -1757,6 +2156,12 @@ class TopicSelectionActivities:
                 context.evidence,
                 context.rubric,
                 context.selection,
+                *(
+                    (context.source_review_plan, request.source_review_manifest)
+                    if context.source_review_plan is not None
+                    and request.source_review_manifest is not None
+                    else ()
+                ),
                 *response_refs,
                 *inspection_refs,
             ),
@@ -1765,7 +2170,11 @@ class TopicSelectionActivities:
         return SelectionAssessmentResult(
             artifact=reference,
             assessment=assessment,
-            actionable=any(str(item.severity) == "required" for item in assessment.findings),
+            actionable=(
+                request.source_review_manifest is not None
+                or context.program_version != TOPIC_SELECTION_POLICY_V6
+            )
+            and any(str(item.severity) == "required" for item in assessment.findings),
         )
 
     @activity.defn(name="stop_topic_selection")
@@ -1871,6 +2280,7 @@ class TopicSelectionActivities:
             self.build_index,
             self.prepare_inventory_plan,
             self.prepare_author_packaging_plan,
+            self.prepare_source_review_plan,
             self.load_source_checkpoint,
             self.prepare,
             self.save_inventory,
@@ -1878,6 +2288,8 @@ class TopicSelectionActivities:
             self.assemble_inventory,
             self.save_author_shard,
             self.assemble_author,
+            self.save_source_review_shard,
+            self.assemble_source_review,
             self.save,
             self.save_assessment,
             self.stop,

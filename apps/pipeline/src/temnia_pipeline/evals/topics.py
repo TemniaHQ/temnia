@@ -93,7 +93,12 @@ class TopicProgramManifest(EvaluationModel):
     """Frozen runtime identity captured before dispatch, never inferred from current code."""
 
     format: Literal["temnia-topic-evaluation-program/1"] = "temnia-topic-evaluation-program/1"
-    policy: Literal["standalone-topics/3", "standalone-topics/4", "standalone-topics/5"]
+    policy: Literal[
+        "standalone-topics/3",
+        "standalone-topics/4",
+        "standalone-topics/5",
+        "standalone-topics/6",
+    ]
     implementation_sha256: SHA256
     program_version: Identifier
     stages: Annotated[dict[Identifier, TopicProgramStage], Field(min_length=1)]
@@ -102,7 +107,7 @@ class TopicProgramManifest(EvaluationModel):
     def _complete_roster(self) -> Self:
         expected = {
             "topic_inventory_shard"
-            if self.policy in {"standalone-topics/4", "standalone-topics/5"}
+            if self.policy in {"standalone-topics/4", "standalone-topics/5", "standalone-topics/6"}
             else "topic_inventory": "reviewer",
             "topic_author": "author",
             "topic_cold": "reviewer",
@@ -120,7 +125,12 @@ class TopicConfiguration(EvaluationModel):
     """Unknown deployment details stay null; no vendor is implicitly selected."""
 
     configuration_id: Identifier
-    policy: Literal["standalone-topics/3", "standalone-topics/4", "standalone-topics/5"]
+    policy: Literal[
+        "standalone-topics/3",
+        "standalone-topics/4",
+        "standalone-topics/5",
+        "standalone-topics/6",
+    ]
     source_sha256: SHA256 | None = None
     transcript_sha256: SHA256 | None = None
     rubric_sha256: SHA256 | None = None

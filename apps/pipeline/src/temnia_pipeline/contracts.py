@@ -760,6 +760,65 @@ class TopicSourceReadPage(BaseModel):
     sentences: list[TopicSourceIndexSentence]
 
 
+class CandidateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicSourceReviewHandoffTask(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[CandidateId], Field(max_length=2, min_length=2)]
+    leftContextSpan: TopicSentenceSpan
+    rightContextSpan: TopicSentenceSpan
+
+
+class ReviewerFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class TopicSourceReviewOverlapTask(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[CandidateId], Field(max_length=2, min_length=2)]
+    overlapSpan: TopicSentenceSpan
+
+
+class ContextOpportunityId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class InspectionCandidateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class Kind9(StrEnum):
+    local = "local"
+    omission = "omission"
+    overlap = "overlap"
+    handoff = "handoff"
+
+
+class TopicSourceReviewWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    batchOrdinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    candidateIds: Annotated[list[CandidateId], Field(max_length=4)]
+    contextOpportunityIds: Annotated[list[ContextOpportunityId], Field(max_length=48)]
+    discoverMissingOpportunities: bool
+    handoffs: Annotated[list[TopicSourceReviewHandoffTask], Field(max_length=2)]
+    inspectionCandidateIds: Annotated[list[InspectionCandidateId], Field(max_length=16)]
+    kind: Kind9
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=12)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    overlaps: Annotated[list[TopicSourceReviewOverlapTask], Field(max_length=2)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+    sourceSpan: TopicSentenceSpan | None
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class TopicSourceSearchPage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1502,6 +1561,19 @@ class TopicSourceReview(BaseModel):
     summary: Annotated[str, Field(min_length=1)]
 
 
+class TopicSourceReviewPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-source-review-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxCandidatesPerLocalWorkItem: Literal[4]
+    maxOpportunitiesPerLocalWorkItem: Literal[12]
+    maxPairsPerRelationshipWorkItem: Literal[2]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItems: Annotated[list[TopicSourceReviewWorkItem], Field(min_length=1)]
+
+
 class TopicValueReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1717,6 +1789,38 @@ class TopicSelectionColdReview(BaseModel):
     intelligibleBeginning: TopicCriterion
     titleFaithful: TopicCriterion
     value: TopicValueReview
+
+
+class TopicSourceReviewManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-source-review-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifacts: list[HarnessArtifactRef]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    review: TopicPortfolioReviewV4
+    reviewerFamilies: Annotated[list[ReviewerFamily], Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    workItemIds: Annotated[list[WorkItemId], Field(min_length=1)]
+
+
+class TopicSourceReviewShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-source-review-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifact: HarnessArtifactRef | None
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifact: HarnessArtifactRef
+    review: TopicPortfolioReviewV4
+    reviewerFamily: Annotated[str, Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicSourceReviewWorkItem
 
 
 class TranscriptCorrectionMetadata(BaseModel):

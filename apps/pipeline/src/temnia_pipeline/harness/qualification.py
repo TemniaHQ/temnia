@@ -47,14 +47,18 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V4_STAGES,
     TOPIC_SELECTION_V5_SCHEMAS,
     TOPIC_SELECTION_V5_STAGES,
+    TOPIC_SELECTION_V6_SCHEMAS,
+    TOPIC_SELECTION_V6_STAGES,
     topic_selection_qualification_prompts,
     topic_selection_v4_qualification_prompts,
     topic_selection_v5_qualification_prompts,
+    topic_selection_v6_qualification_prompts,
     topic_source_progress_processor,
     topic_source_qualification_tools,
     validate_topic_selection_qualification_output,
     validate_topic_selection_v4_qualification_output,
     validate_topic_selection_v5_qualification_output,
+    validate_topic_selection_v6_qualification_output,
 )
 from temnia_pipeline.harness.routes import (
     UNPROVEN_ROUTE_PREFIX,
@@ -77,10 +81,17 @@ SHA256_PATTERN = r"^[a-f0-9]{64}$"
 _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
-QualificationSuite = Literal["topic-selection-v3", "topic-selection-v4", "topic-selection-v5"]
+QualificationSuite = Literal[
+    "topic-selection-v3",
+    "topic-selection-v4",
+    "topic-selection-v5",
+    "topic-selection-v6",
+]
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
+    if suite == "topic-selection-v6":
+        return TOPIC_SELECTION_V6_STAGES
     if suite == "topic-selection-v5":
         return TOPIC_SELECTION_V5_STAGES
     if suite == "topic-selection-v4":
@@ -93,6 +104,7 @@ def _schema_version(stage: str, limits: QualificationLimits) -> str:
         "topic-selection-v3": TOPIC_SELECTION_V3_SCHEMAS,
         "topic-selection-v4": TOPIC_SELECTION_V4_SCHEMAS,
         "topic-selection-v5": TOPIC_SELECTION_V5_SCHEMAS,
+        "topic-selection-v6": TOPIC_SELECTION_V6_SCHEMAS,
     }[limits.suite]
     return schemas[stage]
 
@@ -761,11 +773,15 @@ def qualification_prompts(
         return dict(topic_selection_v4_qualification_prompts())
     if suite == "topic-selection-v5":
         return dict(topic_selection_v5_qualification_prompts())
+    if suite == "topic-selection-v6":
+        return dict(topic_selection_v6_qualification_prompts())
     return dict(topic_selection_qualification_prompts())
 
 
 def _validate_grounding(stage: str, output: object, suite: QualificationSuite) -> None:
-    if suite == "topic-selection-v4":
+    if suite == "topic-selection-v6":
+        validate_topic_selection_v6_qualification_output(stage, output)
+    elif suite == "topic-selection-v4":
         validate_topic_selection_v4_qualification_output(stage, output)
     elif suite == "topic-selection-v5":
         validate_topic_selection_v5_qualification_output(stage, output)

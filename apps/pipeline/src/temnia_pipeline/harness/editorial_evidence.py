@@ -345,11 +345,19 @@ def validate_reviewer_inspection(
     index_sha256: str,
     selection_sha256: str,
     evidence_sha256: str,
+    expected_candidate_ids: Sequence[str] | None = None,
 ) -> None:
-    """Replay every reviewer-only tool result and require all candidates to be inspected."""
+    """Replay reviewer-only results and require the whole or explicitly scoped candidate set."""
     calls = [call for call in trace.calls if call.tool_name == "inspect_candidate"]
     offset = 0
-    for identifier in candidate_ids(selection):
+    expected = (
+        tuple(expected_candidate_ids)
+        if expected_candidate_ids is not None
+        else candidate_ids(selection)
+    )
+    if len(expected) != len(set(expected)) or not set(expected) <= set(candidate_ids(selection)):
+        raise ValueError("source reviewer candidate inspection scope is invalid")
+    for identifier in expected:
         cursor = 0
         while True:
             if offset >= len(calls):

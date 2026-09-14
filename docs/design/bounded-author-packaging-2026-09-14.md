@@ -154,3 +154,7 @@ Decompose independent source review into section-owned candidate/opportunity jud
 overlap/handoff reconciliation work. Every candidate must receive one internal-structure review so
 the measured compound-candidate failure is observable. A complete assessment must require every
 planned local and relationship shard before any finding authorizes repair.
+
+Implemented next in `standalone-topics/6`; see
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md). Finding repair is now the
+remaining growing final-answer stage.

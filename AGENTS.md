@@ -67,9 +67,22 @@ on V3. Contract:
 The clean exact-commit gate passed for `d354517` at `2026-09-14T14:43:09.646Z`, including 1,247
 pipeline tests with one intentional skip, both cold production images and all 18 Playwright
 workflow tests.
-Whole-portfolio source review and repair are still unbounded final-answer stages, so their
-decomposition is next. No real provider, latency, recovery or quality result follows, and no new
-model arm or paid run is authorized by this record.
+Independent source review is separately bounded in `standalone-topics/6` /
+`TopicSelectionWorkflowV6`. Code freezes candidate decisions in batches of four, opportunity
+judgments in batches of 12, exact overlap/handoff pairs in batches of two, and one omission scan per
+source-index leaf. An omission scan sees every intersecting candidate and connected opportunity
+under explicit 16/48 context bounds; if the local representation exceeds them, planning refuses
+instead of hiding coverage. Each call can browse only its assigned section and inspect only its
+assigned candidates, while source-wide search and exact reads remain available for dependencies.
+Every candidate therefore receives one explicit internal-structure decision, which makes the
+measured compound-candidate failure observable. Only a complete ordered
+`topic-source-review-manifest/1` gives an assessment repair authority. Partial findings cannot
+authorize changes; settled responses, checkpoints, shards and rejections remain visible. Historical
+programs and the web's V3 default stay unchanged. Contract:
+[bounded-source-review-2026-09-14.md](docs/design/bounded-source-review-2026-09-14.md).
+The exact-commit gate and real route/editorial evaluation remain open. Repair is the next unbounded
+final-answer stage. No real provider, latency, recovery or quality result follows, and no new model
+arm or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

@@ -17,21 +17,38 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V4_SCHEMAS,
     TOPIC_SELECTION_V5_SCHEMAS,
+    TOPIC_SELECTION_V6_SCHEMAS,
     native_schema_sha256,
     topic_selection_qualification_prompts,
     topic_selection_v4_qualification_prompts,
     topic_selection_v5_qualification_prompts,
+    topic_selection_v6_qualification_prompts,
 )
 from temnia_pipeline.modal_build import source_build_id
 
-TopicProgramVersion = Literal["standalone-topics/3", "standalone-topics/4", "standalone-topics/5"]
+TopicProgramVersion = Literal[
+    "standalone-topics/3",
+    "standalone-topics/4",
+    "standalone-topics/5",
+    "standalone-topics/6",
+]
 
 
 def current_program(
     program_version: TopicProgramVersion = "standalone-topics/3",
 ) -> TopicProgramManifest:
     """Freeze actual template functions/native schemas, including unused repair stages."""
-    if program_version == "standalone-topics/5":
+    if program_version == "standalone-topics/6":
+        functions = {
+            "topic_inventory_shard": topic_selection.opportunity_inventory_shard_prompt,
+            "topic_author": topic_selection.author_packaging_shard_prompt,
+            "topic_cold": topic_selection.selection_cold_prompt,
+            "topic_source": topic_selection.source_review_shard_prompt,
+            "topic_patch": topic_selection.selection_patch_prompt_v3,
+        }
+        prompts = topic_selection_v6_qualification_prompts()
+        schemas = TOPIC_SELECTION_V6_SCHEMAS
+    elif program_version == "standalone-topics/5":
         functions = {
             "topic_inventory_shard": topic_selection.opportunity_inventory_shard_prompt,
             "topic_author": topic_selection.author_packaging_shard_prompt,

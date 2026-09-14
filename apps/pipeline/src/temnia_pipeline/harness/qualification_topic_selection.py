@@ -16,6 +16,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.tools import GenerateToolJsonSchema
 
 from temnia_pipeline.contracts import (
+    HarnessArtifactRef,
     Relation,
     TopicAuthorWorkItem,
     TopicCandidate,
@@ -34,9 +35,11 @@ from temnia_pipeline.contracts import (
     TopicSelectionRecord,
     TopicSentenceSpan,
     TopicSourceBrowsePage,
+    TopicSourceIndex,
     TopicSourceIndexSentence,
     TopicSourceNodeHit,
     TopicSourceReadPage,
+    TopicSourceReviewWorkItem,
     TopicSourceSearchPage,
 )
 from temnia_pipeline.harness.artifacts import canonical_json
@@ -56,6 +59,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
     SELECTION_SOURCE_PROMPT_V3,
+    SELECTION_SOURCE_SHARD_PROMPT,
     apply_selection_patch,
     assess_selection,
     author_packaging_shard_prompt,
@@ -67,10 +71,12 @@ from temnia_pipeline.harness.topic_selection import (
     selection_patch_prompt_v3,
     selection_prompt,
     selection_source_prompt,
+    source_review_shard_prompt,
     validate_opportunity_inventory,
     validate_selection,
     validate_selection_against_inventory,
 )
+from temnia_pipeline.harness.topic_source_review import admit_source_review_shard
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,6 +113,8 @@ TOPIC_SELECTION_V4_SCHEMAS = {
 }
 TOPIC_SELECTION_V5_STAGES = TOPIC_SELECTION_V4_STAGES
 TOPIC_SELECTION_V5_SCHEMAS = dict(TOPIC_SELECTION_V4_SCHEMAS)
+TOPIC_SELECTION_V6_STAGES = TOPIC_SELECTION_V5_STAGES
+TOPIC_SELECTION_V6_SCHEMAS = dict(TOPIC_SELECTION_V5_SCHEMAS)
 QUALIFICATION_SOURCE_INDEX = {
     "indexSha256": "0" * 64,
     "rootNodeId": "episode",
@@ -592,6 +600,44 @@ def topic_selection_v5_qualification_prompts() -> dict[str, tuple[str, type[Base
     return prompts
 
 
+def _v6_qualification_work_item() -> TopicSourceReviewWorkItem:
+    """One exact local candidate assignment for the changed source-review request."""
+    return TopicSourceReviewWorkItem.model_validate(
+        {
+            "workItemId": "section-0001:source-local-0001",
+            "ordinal": 0,
+            "sectionId": "section-0001",
+            "batchOrdinal": 0,
+            "kind": "local",
+            "candidateIds": ["garden-care"],
+            "opportunityIds": [],
+            "contextOpportunityIds": ["garden-value"],
+            "inspectionCandidateIds": ["garden-care"],
+            "discoverMissingOpportunities": False,
+            "overlaps": [],
+            "handoffs": [],
+            "sourceSpan": None,
+        }
+    )
+
+
+def topic_selection_v6_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
+    """Render the exact bounded inventory, author and source-review request shapes."""
+    prompts = topic_selection_v5_qualification_prompts()
+    _, record, _ = topic_selection_qualification_case(combined_patch=True)
+    prompts["topic_source"] = (
+        source_review_shard_prompt(
+            record.draft,
+            record.rubric,
+            QUALIFICATION_SOURCE_INDEX,
+            _v6_qualification_work_item(),
+        ),
+        TopicPortfolioReviewV4,
+        SELECTION_SOURCE_SHARD_PROMPT,
+    )
+    return prompts
+
+
 def validate_topic_selection_qualification_output(stage: str, output: object) -> None:
     """Source admission is measured separately from schema transport and publication quality."""
     evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
@@ -682,6 +728,52 @@ def validate_topic_selection_v5_qualification_output(stage: str, output: object)
         work_item_id=plan.workItems[0].workItemId,
         draft=output,
         generator_family="synthetic-author",
+    )
+
+
+def validate_topic_selection_v6_qualification_output(stage: str, output: object) -> None:
+    """Ground the changed source shard and delegate unchanged stage admission to v5."""
+    if stage != "topic_source":
+        validate_topic_selection_v5_qualification_output(stage, output)
+        return
+    if not isinstance(output, TopicPortfolioReviewV4):
+        raise TypeError("topic qualification source output has the wrong type")
+    evidence, record, _ = topic_selection_qualification_case(combined_patch=True)
+    work_item = _v6_qualification_work_item()
+    from temnia_pipeline.contracts import TopicSourceReviewPlan  # noqa: PLC0415
+
+    plan = TopicSourceReviewPlan.model_validate(
+        {
+            "format": "topic-source-review-plan/1",
+            "indexSha256": "0" * 64,
+            "selectionSha256": content_hash(record),
+            "maxCandidatesPerLocalWorkItem": 4,
+            "maxOpportunitiesPerLocalWorkItem": 12,
+            "maxPairsPerRelationshipWorkItem": 2,
+            "workItems": [work_item.model_dump(mode="json")],
+        }
+    )
+    response = HarnessArtifactRef.model_validate(
+        {
+            "id": "00000000-0000-0000-0000-000000000077",
+            "fingerprint": "9" * 64,
+            "sha256": "9" * 64,
+            "kind": "model_response",
+            "sizeBytes": 1,
+            "storageKey": "qualification/source-response.json",
+        }
+    )
+    admit_source_review_shard(
+        evidence,
+        TopicSourceIndex.model_construct(),
+        record.draft,
+        plan,
+        plan_sha256="8" * 64,
+        work_item_id=work_item.workItemId,
+        review=output,
+        reviewer_family="synthetic-reviewer",
+        response_artifact=response,
+        inspection_artifact=None,
     )
 
 

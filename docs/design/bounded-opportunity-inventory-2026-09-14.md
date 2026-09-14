@@ -164,7 +164,10 @@ two-hour and four-hour sources, with source-wide opportunity labels, cold judgme
 ## Next ordered milestone
 
 `standalone-topics/5` now decomposes author packaging and admits a selection only after every exact
-author shard is present. The remaining growing answer is independent whole-portfolio source review.
+author shard is present. `standalone-topics/6` separately decomposes independent source review and
+withholds repair authority until every exact review shard is present; see
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md). Repair is now the
+remaining growing answer.
 Its next design must batch candidate/opportunity judgments and exact overlap/handoff decisions,
 then reconcile them through an immutable complete-plan gate. Internal topic splits must be visible
 inside every candidate; adjacent handoff checks alone do not solve the measured compound-candidate

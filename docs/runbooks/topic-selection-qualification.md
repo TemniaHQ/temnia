@@ -111,6 +111,25 @@ uv run --frozen python scripts/qualify_harness_gateway.py run \
   --max-output-tokens 32768
 ```
 
+For bounded inventory, author packaging and independent source review, use another create-only
+directory with `--suite topic-selection-v6`. Its source stage is one exact local review shard; it
+must browse the assigned section, inspect only every assigned candidate, search, read its deciding
+speech and pass production shard admission. V3 through V5 reports do not qualify this request.
+Contract:
+[bounded-source-review-2026-09-14.md](../design/bounded-source-review-2026-09-14.md).
+
+```sh
+uv run --frozen python scripts/qualify_harness_gateway.py run \
+  --suite topic-selection-v6 \
+  --candidates /private/tmp/topic-v6-preflight/candidates.json \
+  --journal /private/tmp/topic-v6-preflight/journal.json \
+  --receipts /private/tmp/topic-v6-preflight/receipts \
+  --report /private/tmp/topic-v6-preflight/report.json \
+  --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
+  --max-dispatches "$REVIEWED_DISPATCHES" \
+  --max-output-tokens 32768
+```
+
 The candidate catalogue is the metadata-only format (`gatewayModel`, `provider`,
 `family`, capacity, ZDR claim, prices, optional `reasoningEffort`, `transport` and
 `providerAccountingName` for OpenRouter). Journal, receipts and report paths are

@@ -24,12 +24,18 @@ from temnia_pipeline.contracts import (
     TopicSelectionColdReview,
     TopicSelectionDraft,
     TopicSelectionPatchV3,
+    TopicSourceReviewManifest,
+    TopicSourceReviewPlan,
+    TopicSourceReviewShard,
 )
 from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
 
 SelectionProgramVersion = Literal[
-    "standalone-topics/3", "standalone-topics/4", "standalone-topics/5"
+    "standalone-topics/3",
+    "standalone-topics/4",
+    "standalone-topics/5",
+    "standalone-topics/6",
 ]
 SourceToolRole = Literal["inventory", "author", "source_reviewer"]
 SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
@@ -88,6 +94,8 @@ class SelectionContext(BaseModel):
     author_work_item_id: str | None = None
     author_families: tuple[str, ...] = ()
     selection: HarnessArtifactRef | None = None
+    source_review_plan: HarnessArtifactRef | None = None
+    source_review_work_item_id: str | None = None
     assessment: HarnessArtifactRef | None = None
     navigation: HarnessArtifactRef | None = None
     rejection: HarnessArtifactRef | None = None
@@ -136,6 +144,8 @@ class SelectionCallPlan(BaseModel):
     source_tool_role: SourceToolRole | None = None
     candidate_selection: HarnessArtifactRef | None = None
     media_evidence: HarnessArtifactRef | None = None
+    allowed_browse_parent_ids: tuple[str, ...] = ()
+    allowed_candidate_ids: tuple[str, ...] = ()
     synthetic_payload: dict[str, object] | None = None
 
 
@@ -302,6 +312,63 @@ class AuthorPackagingManifestResult(BaseModel):
     draft: TopicSelectionDraft
 
 
+class SourceReviewPlanResult(BaseModel):
+    """Deterministic bounded source-review plan and immutable artifact identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    plan: TopicSourceReviewPlan
+
+
+class SourceReviewShardSaveRequest(BaseModel):
+    """One settled bounded source-review answer and its indexed inspection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    review: TopicPortfolioReviewV4 | None = None
+    schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
+
+
+class SourceReviewShardSaveResult(BaseModel):
+    """One admitted review shard, or an exact retained refusal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    shard: TopicSourceReviewShard | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+class SourceReviewShardRejection(BaseModel):
+    """Settled bounded reviewer output refused before portfolio assembly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-source-review-shard-rejection/1"] = (
+        "topic-source-review-shard-rejection/1"
+    )
+    response: HarnessArtifactRef
+    work_item_id: str
+    review: TopicPortfolioReviewV4 | None = None
+    diagnostics: tuple[str, ...]
+
+
+class SourceReviewManifestRequest(BaseModel):
+    """Exact ordered review shards supplied to the complete-manifest gate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    shard_artifacts: tuple[HarnessArtifactRef, ...]
+
+
+class SourceReviewManifestResult(BaseModel):
+    """Complete assembled source-review manifest and portfolio."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    manifest: TopicSourceReviewManifest
+
+
 class SelectionRejection(BaseModel):
     """Source/schema rejection bound to a known successful provider response."""
 
@@ -326,6 +393,7 @@ class SelectionReviewRequest(BaseModel):
     source_review: TopicPortfolioReviewV4 | None = None
     source_dispatched: bool = True
     source_inspection: SourceInspectionTrace | None = None
+    source_review_manifest: HarnessArtifactRef | None = None
     reasons: tuple[str, ...] = ()
     execution_limited: bool = False
 
@@ -352,6 +420,8 @@ def selection_call_inputs(plan: SelectionCallPlan) -> dict[str, object]:
     """Reproduce the paid operation identity at dispatch and retained admission."""
     return {
         "artifacts": [{"id": str(ref.id), "sha256": ref.sha256} for ref in plan.input_artifacts],
+        "allowedBrowseParentIds": list(plan.allowed_browse_parent_ids),
+        "allowedCandidateIds": list(plan.allowed_candidate_ids),
         "promptSha256": hashlib.sha256(plan.prompt.encode()).hexdigest(),
     }
 

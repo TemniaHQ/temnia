@@ -437,6 +437,21 @@ def _outputs_v5() -> list[dict[str, Any]]:
     return outputs
 
 
+def _outputs_v6() -> list[dict[str, Any]]:
+    """Restrict source output to the exact local candidate work item used by v6."""
+    outputs = _outputs_v5()
+    source = outputs[3]
+    source["candidates"] = []
+    source["selection"] = source["selection"][:1]
+    source["opportunities"] = []
+    source["missingOpportunities"] = []
+    source["findings"] = []
+    source["overlaps"] = []
+    source["handoffs"] = []
+    source["summary"] = "The exact bounded candidate assignment was reviewed."
+    return outputs
+
+
 def _three_candidate_lookup_transport(
     stages_per_candidate: int = 3,
 ) -> tuple[httpx.MockTransport, list[str]]:

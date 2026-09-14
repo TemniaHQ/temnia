@@ -163,12 +163,14 @@ class HarnessModelDeps(BaseModel):
     source_tool_role: SourceToolRole | None = None
     candidate_selection: HarnessArtifactRef | None = None
     media_evidence: HarnessArtifactRef | None = None
+    allowed_browse_parent_ids: tuple[str, ...] = ()
+    allowed_candidate_ids: tuple[str, ...] = ()
     dispatch_limit: Annotated[int, Field(gt=0, le=128)]
     cassette_mode: CassetteMode = CassetteMode.OFF
     synthetic_payload: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def _synthetic_route(self) -> HarnessModelDeps:
+    def _synthetic_route(self) -> HarnessModelDeps:  # noqa: C901
         if self.synthetic_payload is not None:
             if self.synthetic_payload.get("synthetic") is not True:
                 raise ValueError("synthetic payload requires an explicit synthetic=true marker")
@@ -189,6 +191,12 @@ class HarnessModelDeps(BaseModel):
                 raise ValueError("reviewer tool authority must be an immutable model input")
         elif any(item is not None for item in reviewer_refs):
             raise ValueError("candidate and media tools are restricted to source review")
+        if self.source_index is None and (
+            self.allowed_browse_parent_ids or self.allowed_candidate_ids
+        ):
+            raise ValueError("source tool scopes require source-index authority")
+        if self.source_tool_role != "source_reviewer" and self.allowed_candidate_ids:
+            raise ValueError("candidate tool scope is restricted to source review")
         return self
 
 
@@ -422,6 +430,8 @@ async def browse_source(
         limit: Number of regions to return, from 1 through 16.
     """
     index, sha256 = await _indexed_source(ctx.deps)
+    if ctx.deps.allowed_browse_parent_ids and parent_id not in ctx.deps.allowed_browse_parent_ids:
+        raise ModelPersistenceError("source browse exceeds this call's planned section authority")
     return browse_topic_source(
         index, index_sha256=sha256, parent_id=parent_id, cursor=cursor, limit=limit
     )
@@ -494,6 +504,8 @@ async def inspect_candidate(
         cursor: Zero-based region cursor returned by the prior page.
         limit: Number of intersecting regions to return, from 1 through 16.
     """
+    if ctx.deps.allowed_candidate_ids and candidate_id not in ctx.deps.allowed_candidate_ids:
+        raise ModelPersistenceError("candidate inspection exceeds this review work item")
     index, index_sha256 = await _indexed_source(ctx.deps)
     selection, evidence = await _reviewer_inputs(ctx.deps)
     evidence_ref = ctx.deps.media_evidence
@@ -1550,6 +1562,20 @@ topic_selection_source_v6 = _agent(
     reviewer_evidence=True,
 )
 topic_selection_patch_v5 = _agent("topic_selection_patch_v5", TopicSelectionPatchV3)
+topic_opportunity_inventory_v6 = _agent(
+    "topic_opportunity_inventory_v6", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_author_v6 = _agent(
+    "topic_selection_author_v6", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_cold_v6 = _agent("topic_selection_cold_v6", TopicSelectionColdReview)
+topic_selection_source_v7 = _agent(
+    "topic_selection_source_v7",
+    TopicPortfolioReviewV4,
+    indexed_source=True,
+    reviewer_evidence=True,
+)
+topic_selection_patch_v6 = _agent("topic_selection_patch_v6", TopicSelectionPatchV3)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
 TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
@@ -1573,10 +1599,18 @@ TOPIC_SELECTION_V5_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_selection_source_v6,
     topic_selection_patch_v5,
 )
+TOPIC_SELECTION_V6_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
+    topic_opportunity_inventory_v6,
+    topic_selection_author_v6,
+    topic_selection_cold_v6,
+    topic_selection_source_v7,
+    topic_selection_patch_v6,
+)
 HARNESS_AGENTS = (
     *TOPIC_SELECTION_AGENTS,
     *TOPIC_SELECTION_V4_AGENTS,
     *TOPIC_SELECTION_V5_AGENTS,
+    *TOPIC_SELECTION_V6_AGENTS,
 )
 
 
