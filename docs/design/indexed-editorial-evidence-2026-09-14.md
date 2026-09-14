@@ -6,14 +6,14 @@ index and give author/reviewer models tools to investigate source evidence. Trea
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
 The first end-to-end vertical slice, hierarchy, durable-checkpoint, reviewer-evidence, safe
-cross-run reuse, bounded opportunity-inventory, bounded author-packaging and bounded independent
-source-review milestones are
+cross-run reuse, bounded opportunity-inventory, bounded author-packaging, bounded independent
+source-review and bounded atomic-repair milestones are
 implemented on
 `feat/indexed-editorial-evidence`. They replace
 whole-transcript prompts for the independent inventory, author and source reviewer with one
 immutable source index and bounded, role-specific tools. This is implemented behavior with
 synthetic and local test evidence; it is not a measured editorial improvement or a production
-qualification. Repair still needs bounded reconciliation.
+qualification.
 
 ## Why this changes the design
 
@@ -46,8 +46,8 @@ characters, and a section owns at most eight leaves. A single accepted sentence 
 exact reads refuse anything above 64,000 characters.
 
 The model prompt carries only index identity, region/sentence counts, transcript duration and tool
-limits plus episode, section and region counts. It contains no transcript body. Inventory, author
-and source-review agents receive exactly
+limits plus episode, section and region counts. It contains no transcript body. Inventory, author,
+source-review and repair agents receive
 `browse_source`, `search_source` and `read_source`; scope, source and index identity come from model
 dependencies and cannot be supplied by the model. `browse_source` returns at most 16 chronological
 children of one episode or section, `search_source` returns at most 12 BM25/cosine-ranked leaves for a query of at most 512
@@ -58,17 +58,18 @@ V3's three indexed prompts require a cursor-zero browse of every root child foll
 section's leaves, all in source order and through the final page, plus hybrid search and exact reads.
 V4 decomposes the independent inventory into one call per deterministic section. Each call must
 browse exactly its owned leaves, while search and exact reads may cross the edge to recover setup or
-completion. Author and source-review calls retain the full hierarchy rule until their own bounded
-reconciliation milestone.
+completion. V5 packages bounded opportunity batches, V6 gives each candidate/opportunity/omission
+or relationship review an owned work item, and V7 repairs connected finding components. Each stage
+uses the same index without turning work-item edges into topic boundaries.
 Each continuation is now rebuilt from the original prompt plus one bounded
 `topic-agent-checkpoint/1`; earlier assistant and tool messages are removed. The checkpoint retains
 all source access facts and a bounded LRU set of exact sentences. Admission projects its final state
 to a no-prose `topic-source-inspection/2` trace. Code verifies the complete browse chain, at least
 one search, and exact reads of every sentence in every source span claimed by the final typed
-inventory, selection or source review. Every claimed sentence must still be in the final checkpoint,
-so an evicted read cannot authorize a decision. The accepted editorial artifact depends on the exact
-index, final model response, checkpoint and inspection trace. Cold review remains isolated and repair
-keeps its existing bounded, finding-authorized evidence.
+inventory, selection, source review or repair. Every claimed sentence must still be in the final
+checkpoint, so an evicted read cannot authorize a decision. The accepted editorial artifact depends
+on the exact index, final model response, checkpoint and inspection trace. Cold review remains
+isolated.
 
 PydanticAI executes source tools as Temporal activities with one attempt and a two-minute timeout.
 Every model continuation is a separate ledger operation and request hash; a successful tool-call
@@ -100,9 +101,12 @@ ordered shard set. Its contract is
 [bounded-opportunity-inventory-2026-09-14.md](bounded-opportunity-inventory-2026-09-14.md).
 V5 decomposes author packaging, and V6 decomposes independent source review into local candidate,
 opportunity, leaf-omission and pairwise relationship work. Both require complete ordered manifests;
-V6 withholds repair authority from every partial review. Their contracts are
+V6 withholds repair authority from every partial review. V7 decomposes required findings into
+candidate/opportunity connected components, admits each indexed patch separately, proves actual
+writes disjoint and applies the complete aggregate once. Their contracts are
 [bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md) and
-[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md).
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md), followed by
+[bounded-atomic-repair-2026-09-14.md](bounded-atomic-repair-2026-09-14.md).
 Index artifacts now use an evidence- and producer-bound stable
 identity within one organization/source scope. Every run retains a separate use record, and cache
 hits re-read, hash-check and structurally revalidate the accepted artifact before use. The exact
@@ -207,7 +211,9 @@ explicit completion record; it cannot silently review a truncated clip.
 Repair can investigate relevant source outside an earlier narrow context window, while mutation
 authority stays finding-scoped. Reading a passage does not authorize changing another candidate
 or annexing its core. Broader corrections require a grounded finding naming every affected
-candidate/opportunity. Combined repairs still require conflict checks and portfolio review.
+candidate/opportunity. V7 groups shared authority before dispatch, proves the returned component
+writes disjoint, applies one aggregate revision and sends that revision through fresh portfolio
+review.
 
 ## Working context and durable progress
 
@@ -294,12 +300,13 @@ Sequence the next design around this foundation:
    one admitted shard per bounded opportunity batch, and source review is split across local
    candidate/opportunity decisions, exact leaf omission scans and pairwise relationship work. Each
    has a complete-manifest gate, and a partial source review cannot authorize repair.
-4. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
+4. Decompose repair by deterministic finding/candidate/opportunity connected components, retain
+   every indexed shard and apply only one complete, disjoint aggregate revision. This is implemented
+   in V7; oversized coupled components require explicit adjudication.
+5. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
    runs and separate held-out sources. A four-hour recording is a test requirement; it has not
    been verified as available in this session. Repeated/copied transcripts test payload handling,
    not editorial quality at that duration.
-5. Use the observed remaining failures to prioritize repair decomposition and adjudication.
-   Resolve PR #48's shared-authority and accounting issues before either change.
 
 The implemented slices now name the index, checkpoint, inventory plan/shard/manifest,
 candidate/media and inspection artifact

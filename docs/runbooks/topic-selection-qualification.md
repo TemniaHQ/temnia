@@ -130,6 +130,24 @@ uv run --frozen python scripts/qualify_harness_gateway.py run \
   --max-output-tokens 32768
 ```
 
+For bounded repair as well, use a new create-only directory with `--suite topic-selection-v7`.
+Its patch stage is one exact connected finding component. It declares only `browse_source`,
+`search_source` and `read_source`, uses the compact `repair` checkpoint role, and must pass the
+production component validator. V3 through V6 reports do not qualify this request. Contract:
+[bounded-atomic-repair-2026-09-14.md](../design/bounded-atomic-repair-2026-09-14.md).
+
+```sh
+uv run --frozen python scripts/qualify_harness_gateway.py run \
+  --suite topic-selection-v7 \
+  --candidates /private/tmp/topic-v7-preflight/candidates.json \
+  --journal /private/tmp/topic-v7-preflight/journal.json \
+  --receipts /private/tmp/topic-v7-preflight/receipts \
+  --report /private/tmp/topic-v7-preflight/report.json \
+  --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
+  --max-dispatches "$REVIEWED_DISPATCHES" \
+  --max-output-tokens 32768
+```
+
 The candidate catalogue is the metadata-only format (`gatewayModel`, `provider`,
 `family`, capacity, ZDR claim, prices, optional `reasoningEffort`, `transport` and
 `providerAccountingName` for OpenRouter). Journal, receipts and report paths are

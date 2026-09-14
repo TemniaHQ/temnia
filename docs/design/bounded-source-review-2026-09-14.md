@@ -170,10 +170,11 @@ latency, tool behavior, omission recall, compound-candidate detection and human 
 measurement requirements. The next growing final-answer stage is repair: one patch request can
 still receive all required findings and affected candidates at once.
 
-## Next ordered milestone
+## Implemented follow-up
 
-Decompose repair into deterministic connected components of required findings, affected candidates
-and opportunities. Each component needs one bounded patch assignment and exact finding authority.
-Code may apply several components in one atomic revision only after it proves that their read and
-write sets are disjoint; conflicting components need explicit adjudication rather than last-writer
-wins behavior.
+`standalone-topics/7` now decomposes repair into deterministic connected components of required
+findings, affected candidates and opportunities. Each indexed component has exact finding and source
+authority. Code applies the complete set in one atomic revision only after proving the returned
+candidate and opportunity writes are disjoint. Missing, rejected or conflicting components keep the
+prior selection. Contract:
+[bounded-atomic-repair-2026-09-14.md](bounded-atomic-repair-2026-09-14.md).

@@ -20,6 +20,9 @@ from temnia_pipeline.contracts import (
     TopicOpportunityInventoryPlan,
     TopicOpportunityInventoryShard,
     TopicPortfolioReviewV4,
+    TopicRepairManifest,
+    TopicRepairPlan,
+    TopicRepairShard,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -36,8 +39,9 @@ SelectionProgramVersion = Literal[
     "standalone-topics/4",
     "standalone-topics/5",
     "standalone-topics/6",
+    "standalone-topics/7",
 ]
-SourceToolRole = Literal["inventory", "author", "source_reviewer"]
+SourceToolRole = Literal["inventory", "author", "source_reviewer", "repair"]
 SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
 
 
@@ -97,6 +101,8 @@ class SelectionContext(BaseModel):
     source_review_plan: HarnessArtifactRef | None = None
     source_review_work_item_id: str | None = None
     assessment: HarnessArtifactRef | None = None
+    repair_plan: HarnessArtifactRef | None = None
+    repair_work_item_id: str | None = None
     navigation: HarnessArtifactRef | None = None
     rejection: HarnessArtifactRef | None = None
     candidate_id: str | None = None
@@ -367,6 +373,64 @@ class SourceReviewManifestResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     artifact: HarnessArtifactRef
     manifest: TopicSourceReviewManifest
+
+
+class RepairPlanResult(BaseModel):
+    """Deterministic connected-component repair plan and immutable artifact identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    plan: TopicRepairPlan
+
+
+class RepairShardSaveRequest(BaseModel):
+    """One settled component patch and its indexed source inspection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    patch: TopicSelectionPatchV3 | None = None
+    schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
+
+
+class RepairShardSaveResult(BaseModel):
+    """One admitted repair component, or an exact retained refusal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    shard: TopicRepairShard | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+class RepairShardRejection(BaseModel):
+    """Settled component response refused before atomic repair assembly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-repair-shard-rejection/1"] = "topic-repair-shard-rejection/1"
+    response: HarnessArtifactRef
+    work_item_id: str
+    patch: TopicSelectionPatchV3 | None = None
+    diagnostics: tuple[str, ...]
+
+
+class RepairManifestRequest(BaseModel):
+    """Exact ordered component shards supplied to the atomic manifest gate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    shard_artifacts: tuple[HarnessArtifactRef, ...]
+
+
+class RepairManifestResult(BaseModel):
+    """Complete aggregate repair and its new accepted selection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    manifest: TopicRepairManifest
+    selection: HarnessArtifactRef
+    draft: TopicSelectionDraft
+    semantic_key: str
 
 
 class SelectionRejection(BaseModel):

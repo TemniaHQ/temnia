@@ -630,6 +630,34 @@ class TopicRenders(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class AuthorFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class BrowseParentId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class CandidateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class FindingId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicRepairWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    browseParentIds: Annotated[list[BrowseParentId], Field(max_length=8, min_length=1)]
+    candidateIds: Annotated[list[CandidateId], Field(max_length=8)]
+    findingIds: Annotated[list[FindingId], Field(max_length=12, min_length=1)]
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=24)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class ExecutionStatus(StrEnum):
     complete = "complete"
     needs_review = "needs_review"
@@ -758,10 +786,6 @@ class TopicSourceReadPage(BaseModel):
     indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
     nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
     sentences: list[TopicSourceIndexSentence]
-
-
-class CandidateId(RootModel[str]):
-    root: Annotated[str, Field(max_length=256, min_length=1)]
 
 
 class TopicSourceReviewHandoffTask(BaseModel):
@@ -1443,6 +1467,20 @@ class TopicProposal(BaseModel):
     version: Literal[1]
 
 
+class TopicRepairPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-repair-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxCandidatesPerWorkItem: Literal[8]
+    maxFindingsPerWorkItem: Literal[12]
+    maxOpportunitiesPerWorkItem: Literal[24]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItems: Annotated[list[TopicRepairWorkItem], Field(min_length=1)]
+
+
 class TopicSelectionDecision(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1777,6 +1815,40 @@ class TopicPortfolioReviewV4(BaseModel):
     summary: Annotated[str, Field(min_length=1)]
     handoffs: list[TopicCandidateHandoffJudgment]
     overlaps: list[TopicCandidateOverlapJudgment]
+
+
+class TopicRepairManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    aggregatePatch: TopicSelectionPatchV3
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    authorFamilies: Annotated[list[AuthorFamily], Field(min_length=1)]
+    complete: Literal[True]
+    format: Literal["topic-repair-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    workItemIds: Annotated[list[WorkItemId], Field(min_length=1)]
+
+
+class TopicRepairShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    authorFamily: Annotated[str, Field(min_length=1)]
+    format: Literal["topic-repair-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifact: HarnessArtifactRef
+    patch: TopicSelectionPatchV3
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifact: HarnessArtifactRef
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicRepairWorkItem
 
 
 class TopicSelectionColdReview(BaseModel):

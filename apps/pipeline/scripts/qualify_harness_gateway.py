@@ -54,6 +54,7 @@ def parser() -> argparse.ArgumentParser:
             "topic-selection-v4",
             "topic-selection-v5",
             "topic-selection-v6",
+            "topic-selection-v7",
         ),
         default="topic-selection-v3",
     )

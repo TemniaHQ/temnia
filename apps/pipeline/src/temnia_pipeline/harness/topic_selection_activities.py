@@ -25,6 +25,8 @@ from temnia_pipeline.contracts import (
     TopicOpportunityInventoryManifest,
     TopicOpportunityInventoryPlan,
     TopicOpportunityInventoryShard,
+    TopicRepairPlan,
+    TopicRepairShard,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -43,6 +45,7 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V4,
     TOPIC_SELECTION_POLICY_V5,
     TOPIC_SELECTION_POLICY_V6,
+    TOPIC_SELECTION_POLICY_V7,
 )
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
@@ -79,6 +82,14 @@ from temnia_pipeline.harness.topic_inventory import (
     assemble_inventory_manifest,
     build_inventory_plan,
     inventory_section,
+)
+from temnia_pipeline.harness.topic_repair import (
+    REPAIR_COMPONENT_PROMPT_VERSION,
+    admit_repair_shard,
+    assemble_repair_manifest,
+    build_repair_plan,
+    repair_component_prompt,
+    repair_work_item,
 )
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
@@ -123,6 +134,12 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     OpportunityInventoryShardRejection,
     OpportunityInventoryShardSaveRequest,
     OpportunityInventoryShardSaveResult,
+    RepairManifestRequest,
+    RepairManifestResult,
+    RepairPlanResult,
+    RepairShardRejection,
+    RepairShardSaveRequest,
+    RepairShardSaveResult,
     SelectionAssessmentResult,
     SelectionCallPlan,
     SelectionContext,
@@ -273,6 +290,7 @@ class TopicSelectionActivities:
                 TOPIC_SELECTION_POLICY_V4,
                 TOPIC_SELECTION_POLICY_V5,
                 TOPIC_SELECTION_POLICY_V6,
+                TOPIC_SELECTION_POLICY_V7,
             }
             or run.evidence_artifact_id != context.evidence.id
         ):
@@ -429,7 +447,8 @@ class TopicSelectionActivities:
     async def author_plan(self, context: SelectionContext) -> TopicAuthorPackagingPlan:
         """Load and reproduce the exact deterministic v5 author work plan."""
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or context.author_plan is None
             or context.inventory is None
             or context.inventory_plan is None
@@ -469,7 +488,7 @@ class TopicSelectionActivities:
     async def source_review_plan(self, context: SelectionContext) -> TopicSourceReviewPlan:
         """Load and reproduce the exact deterministic v6 review work plan."""
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V6
+            context.program_version not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or context.source_review_plan is None
             or context.selection is None
             or context.source_index is None
@@ -505,6 +524,50 @@ class TopicSelectionActivities:
         )
         if plan != expected or context.source_review_plan.sha256 != content_hash(plan):
             raise HarnessValidationError("source review plan differs from its exact selection")
+        return plan
+
+    async def repair_plan(self, context: SelectionContext) -> TopicRepairPlan:
+        """Load and reproduce the exact deterministic v7 repair component plan."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V7
+            or context.repair_plan is None
+            or context.assessment is None
+            or context.selection is None
+            or context.source_index is None
+            or context.rubric is None
+        ):
+            raise HarnessValidationError("bounded repair requires its exact plan state")
+        await self.require_record(
+            context,
+            context.repair_plan,
+            format_name="topic-repair-plan/1",
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+                context.assessment,
+            ),
+        )
+        _, evidence, _, selection = await self.load(
+            context.model_copy(update={"repair_plan": None})
+        )
+        assessment = await self.assessment(context)
+        if selection is None or assessment is None:
+            raise HarnessValidationError("repair plan has no exact assessed selection")
+        index = await self.source_index(context)
+        plan = TopicRepairPlan.model_validate(await self.read(context, context.repair_plan))
+        expected = build_repair_plan(
+            evidence,
+            index,
+            selection,
+            assessment,
+            index_sha256=context.source_index.sha256,
+            selection_sha256=context.selection.sha256,
+            assessment_sha256=context.assessment.sha256,
+        )
+        if plan != expected or context.repair_plan.sha256 != content_hash(plan):
+            raise HarnessValidationError("repair plan differs from its assessed selection")
         return plan
 
     async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
@@ -572,6 +635,7 @@ class TopicSelectionActivities:
             TOPIC_SELECTION_POLICY_V4,
             TOPIC_SELECTION_POLICY_V5,
             TOPIC_SELECTION_POLICY_V6,
+            TOPIC_SELECTION_POLICY_V7,
         }:
             raise HarnessValidationError("bounded inventory planning requires v4 or v5")
         if context.source_index is None or context.inventory_plan is not None:
@@ -600,7 +664,8 @@ class TopicSelectionActivities:
     ) -> AuthorPackagingPlanResult:
         """Publish every bounded author assignment before dispatching the first one."""
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or context.source_index is None
             or context.inventory_plan is None
             or context.inventory is None
@@ -644,7 +709,7 @@ class TopicSelectionActivities:
     async def prepare_source_review_plan(self, context: SelectionContext) -> SourceReviewPlanResult:
         """Publish every bounded source-review assignment before the first review call."""
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V6
+            context.program_version not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or context.source_index is None
             or context.selection is None
             or context.source_review_plan is not None
@@ -679,6 +744,52 @@ class TopicSelectionActivities:
             },
         )
         return SourceReviewPlanResult(artifact=reference, plan=plan)
+
+    @activity.defn(name="prepare_topic_repair_plan_v7")
+    async def prepare_repair_plan(self, context: SelectionContext) -> RepairPlanResult:
+        """Publish all connected repair components before the first patch call."""
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V7
+            or context.source_index is None
+            or context.selection is None
+            or context.assessment is None
+            or context.repair_plan is not None
+            or context.repair_work_item_id is not None
+        ):
+            raise HarnessValidationError("repair planning requires a fresh v7 assessment")
+        _, evidence, rubric, selection = await self.load(context)
+        assessment = await self.assessment(context)
+        if rubric is None or selection is None or assessment is None or context.rubric is None:
+            raise HarnessValidationError(
+                "repair planning requires selection, assessment and rubric"
+            )
+        plan = build_repair_plan(
+            evidence,
+            await self.source_index(context),
+            selection,
+            assessment,
+            index_sha256=context.source_index.sha256,
+            selection_sha256=context.selection.sha256,
+            assessment_sha256=context.assessment.sha256,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=plan.format,
+            content=plan,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+                context.assessment,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "workItemCount": len(plan.workItems),
+            },
+        )
+        return RepairPlanResult(artifact=reference, plan=plan)
 
     @activity.defn(name="load_topic_source_checkpoint")
     async def load_source_checkpoint(
@@ -855,7 +966,7 @@ class TopicSelectionActivities:
         elif (
             selection is not None
             and context.assessment is None
-            and context.program_version == TOPIC_SELECTION_POLICY_V6
+            and context.program_version in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             and context.source_review_plan is not None
             and context.source_review_work_item_id is not None
         ):
@@ -903,7 +1014,48 @@ class TopicSelectionActivities:
                 else "topic_selection_source"
             )
             dependencies.append(context.selection)
+        elif (
+            selection is not None
+            and context.assessment is not None
+            and context.program_version == TOPIC_SELECTION_POLICY_V7
+            and context.repair_plan is not None
+            and context.repair_work_item_id is not None
+        ):
+            if context.selection is None or context.source_index is None:
+                raise HarnessValidationError("bounded repair requires selection and source index")
+            assessment = await self.assessment(context)
+            if assessment is None:
+                raise HarnessValidationError("bounded repair requires its exact assessment")
+            repair_plan = await self.repair_plan(context)
+            work_item = repair_work_item(repair_plan, context.repair_work_item_id)
+            dependencies.extend(
+                (
+                    context.source_index,
+                    context.selection,
+                    context.assessment,
+                    context.repair_plan,
+                )
+            )
+            source_tool_role = "repair"
+            allowed_browse_parent_ids = tuple(
+                str(getattr(value, "root", value)) for value in work_item.browseParentIds
+            )
+            prompt = repair_component_prompt(
+                selection,
+                assessment,
+                repair_plan,
+                work_item,
+                source_index_map(
+                    await self.source_index(context),
+                    index_sha256=context.source_index.sha256,
+                ),
+            )
+            stage = f"repair:selection:{context.iteration}:{work_item.workItemId}"
+            version = REPAIR_COMPONENT_PROMPT_VERSION
+            synthetic = f"topic_selection_patch_{work_item.workItemId}"
         elif selection is not None:
+            if context.program_version == TOPIC_SELECTION_POLICY_V7:
+                raise HarnessValidationError("v7 repair requires one planned component")
             assessment = await self.assessment(context)
             if assessment is None or context.selection is None or context.assessment is None:
                 raise HarnessValidationError("selection repair requires exact assessed state")
@@ -924,7 +1076,12 @@ class TopicSelectionActivities:
                 dependencies.append(context.rejection)
         elif (
             context.program_version
-            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            in {
+                TOPIC_SELECTION_POLICY_V4,
+                TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
+                TOPIC_SELECTION_POLICY_V7,
+            }
             and context.inventory is None
         ):
             if context.inventory_section_id is None or context.inventory_plan is None:
@@ -947,7 +1104,8 @@ class TopicSelectionActivities:
             version = SELECTION_INVENTORY_SHARD_PROMPT
             synthetic = f"topic_opportunity_inventory_{section.sectionId}"
         elif (
-            context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            context.program_version
+            in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             and context.author_plan is not None
             and context.author_work_item_id is not None
             and context.inventory is not None
@@ -1037,7 +1195,10 @@ class TopicSelectionActivities:
             max_output_tokens=effective_topic_output_tokens(run.config.maxOutputTokens, route),
         )
         synthetic_payload = self.owner._recorded_output(synthetic)
-        if synthetic_payload is not None and version == SELECTION_PATCH_PROMPT_V3:
+        if synthetic_payload is not None and version in {
+            SELECTION_PATCH_PROMPT_V3,
+            REPAIR_COMPONENT_PROMPT_VERSION,
+        }:
             # Fixture operations remain authored test data; only run-local immutable hashes vary.
             patch = TopicSelectionPatchV3.model_validate(synthetic_payload["output"])
             if context.selection is None:
@@ -1186,13 +1347,19 @@ class TopicSelectionActivities:
         if (
             plan.source_tool_role == "inventory"
             and context.program_version
-            in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            in {
+                TOPIC_SELECTION_POLICY_V4,
+                TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
+                TOPIC_SELECTION_POLICY_V7,
+            }
             and context.inventory_section_id is not None
         ):
             browse_parent_ids = (context.inventory_section_id,)
         elif (
             plan.source_tool_role == "author"
-            and context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            and context.program_version
+            in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             and context.author_work_item_id is not None
         ):
             work_item = author_work_item(
@@ -1201,13 +1368,19 @@ class TopicSelectionActivities:
             browse_parent_ids = (work_item.sectionId,)
         elif (
             plan.source_tool_role == "source_reviewer"
-            and context.program_version == TOPIC_SELECTION_POLICY_V6
+            and context.program_version in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             and context.source_review_work_item_id is not None
         ):
             work_item = source_review_work_item(
                 await self.source_review_plan(context), context.source_review_work_item_id
             )
             browse_parent_ids = (work_item.sectionId,)
+        elif (
+            plan.source_tool_role == "repair"
+            and context.program_version == TOPIC_SELECTION_POLICY_V7
+            and context.repair_work_item_id is not None
+        ):
+            browse_parent_ids = plan.allowed_browse_parent_ids
         validate_source_inspection(
             index,
             inspection,
@@ -1228,7 +1401,8 @@ class TopicSelectionActivities:
                 evidence_sha256=context.evidence.sha256,
                 expected_candidate_ids=(
                     plan.allowed_candidate_ids
-                    if context.program_version == TOPIC_SELECTION_POLICY_V6
+                    if context.program_version
+                    in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
                     else None
                 ),
             )
@@ -1345,7 +1519,12 @@ class TopicSelectionActivities:
         _, evidence, rubric, selection = await self.load(context)
         if (
             context.program_version
-            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            not in {
+                TOPIC_SELECTION_POLICY_V4,
+                TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
+                TOPIC_SELECTION_POLICY_V7,
+            }
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1452,7 +1631,12 @@ class TopicSelectionActivities:
         _, evidence, rubric, selection = await self.load(context)
         if (
             context.program_version
-            not in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            not in {
+                TOPIC_SELECTION_POLICY_V4,
+                TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
+                TOPIC_SELECTION_POLICY_V7,
+            }
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1515,7 +1699,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1623,7 +1808,8 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            context.program_version
+            not in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or rubric is None
             or context.rubric is None
             or context.source_index is None
@@ -1733,7 +1919,7 @@ class TopicSelectionActivities:
         context = request.context
         run, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V6
+            context.program_version not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or rubric is None
             or selection is None
             or context.rubric is None
@@ -1832,7 +2018,7 @@ class TopicSelectionActivities:
         context = request.context
         _, evidence, rubric, selection = await self.load(context)
         if (
-            context.program_version != TOPIC_SELECTION_POLICY_V6
+            context.program_version not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             or rubric is None
             or selection is None
             or context.rubric is None
@@ -1892,6 +2078,222 @@ class TopicSelectionActivities:
             },
         )
         return SourceReviewManifestResult(artifact=reference, manifest=manifest)
+
+    @activity.defn(name="save_topic_repair_shard_v7")
+    async def save_repair_shard(self, request: RepairShardSaveRequest) -> RepairShardSaveResult:
+        """Retain and admit one settled connected-component patch."""
+        context = request.context
+        run, evidence, rubric, selection = await self.load(context)
+        assessment = await self.assessment(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V7
+            or rubric is None
+            or selection is None
+            or assessment is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.selection is None
+            or context.assessment is None
+            or context.repair_plan is None
+            or context.repair_work_item_id is None
+        ):
+            raise HarnessValidationError("repair shard requires one planned v7 component")
+        plan = await self.repair_plan(context)
+        work_item = repair_work_item(plan, context.repair_work_item_id)
+        call_plan = await self.prepare(context)
+        response = await self.response_ref(context, call_plan, request.patch)
+        inspection = None
+        diagnostics: tuple[str, ...] = ()
+        try:
+            if request.schema_error is not None:
+                raise HarnessValidationError(request.schema_error)  # noqa: TRY301
+            if request.patch is None:
+                raise HarnessValidationError("repair shard contains no typed patch")  # noqa: TRY301
+            assigned_finding_ids = {
+                str(getattr(value, "root", value)) for value in work_item.findingIds
+            }
+            assigned_findings = tuple(
+                finding for finding in assessment.findings if finding.id in assigned_finding_ids
+            )
+            inspection = await self.inspection_ref(
+                context,
+                call_plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, *assigned_findings, request.patch),
+            )
+            if inspection is None:
+                raise HarnessValidationError(  # noqa: TRY301
+                    "repair shard has no admitted source inspection"
+                )
+            author, _ = editorial_routes(
+                run.route_snapshot,
+                author_index=context.author_index,
+                verifier_index=context.verifier_index,
+            )
+            shard = admit_repair_shard(
+                evidence,
+                selection,
+                assessment,
+                plan,
+                work_item,
+                request.patch,
+                index_sha256=context.source_index.sha256,
+                assessment_sha256=context.assessment.sha256,
+                response_artifact=response,
+                inspection_artifact=inspection,
+                author_family=author.family,
+            )
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            diagnostics = (str(error),)
+            dependencies = (*call_plan.input_artifacts, response)
+            if inspection is not None:
+                dependencies = (*dependencies, inspection)
+            rejection = RepairShardRejection(
+                response=response,
+                work_item_id=context.repair_work_item_id,
+                patch=request.patch,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=dependencies,
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.repair_plan.sha256,
+                    "workItemId": context.repair_work_item_id,
+                },
+            )
+            return RepairShardSaveResult(rejection=rejection_ref, diagnostics=diagnostics)
+        dependencies = (*call_plan.input_artifacts, response, inspection)
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=shard.format,
+            content=shard,
+            dependencies=dependencies,
+            metadata={
+                "programVersion": context.program_version,
+                "authorFamily": shard.authorFamily,
+                "planSha256": context.repair_plan.sha256,
+                "workItemId": context.repair_work_item_id,
+            },
+        )
+        return RepairShardSaveResult(artifact=reference, shard=shard)
+
+    @activity.defn(name="assemble_topic_repair_v7")
+    async def assemble_repair(self, request: RepairManifestRequest) -> RepairManifestResult:
+        """Apply every disjoint component as one all-or-nothing selection revision."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        assessment = await self.assessment(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V7
+            or rubric is None
+            or selection is None
+            or assessment is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.selection is None
+            or context.assessment is None
+            or context.repair_plan is None
+            or context.repair_work_item_id is not None
+        ):
+            raise HarnessValidationError("repair assembly requires the complete v7 component plan")
+        plan = await self.repair_plan(context)
+        shards: list[TopicRepairShard] = []
+        for reference in request.shard_artifacts:
+            await self.require_record(
+                context,
+                reference,
+                format_name="topic-repair-shard/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.selection,
+                    context.assessment,
+                    context.repair_plan,
+                ),
+            )
+            shards.append(TopicRepairShard.model_validate(await self.read(context, reference)))
+        manifest = assemble_repair_manifest(
+            evidence,
+            selection,
+            assessment,
+            plan,
+            shards,
+            request.shard_artifacts,
+        )
+        manifest_ref = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=manifest.format,
+            content=manifest,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+                context.assessment,
+                context.repair_plan,
+                *request.shard_artifacts,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "planSha256": context.repair_plan.sha256,
+                "workItemCount": len(manifest.workItemIds),
+            },
+        )
+        draft = apply_selection_patch(
+            evidence,
+            selection,
+            context.selection.sha256,
+            assessment,
+            manifest.aggregatePatch,
+        )
+        record = TopicSelectionRecord.model_validate(
+            {
+                "draft": draft.model_dump(mode="json"),
+                "evidenceSha256": context.evidence.sha256,
+                "format": "topic-selection/2",
+                "origin": "model",
+                "parentSelectionSha256": context.selection.sha256,
+                "rubric": rubric.model_dump(mode="json"),
+                "rubricSha256": context.rubric.sha256,
+                "runId": str(context.run.run_id),
+            }
+        )
+        selection_ref = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=record.format,
+            content=record,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.selection,
+                context.assessment,
+                context.repair_plan,
+                manifest_ref,
+                *request.shard_artifacts,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamilies": [value.root for value in manifest.authorFamilies],
+            },
+        )
+        return RepairManifestResult(
+            artifact=manifest_ref,
+            manifest=manifest,
+            selection=selection_ref,
+            draft=draft,
+            semantic_key=selection_semantic_key(draft),
+        )
 
     @activity.defn(name="save_topic_selection")
     async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
@@ -2033,7 +2435,8 @@ class TopicSelectionActivities:
         source_reviewer_families: tuple[str, ...] = ()
         if request.source_review_manifest is not None:
             if (
-                context.program_version != TOPIC_SELECTION_POLICY_V6
+                context.program_version
+                not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
                 or context.source_review_plan is None
                 or context.source_index is None
                 or request.source_dispatched
@@ -2120,7 +2523,8 @@ class TopicSelectionActivities:
         )
         proposer_families = context.author_families or (
             ("deterministic-empty-packaging",)
-            if context.program_version in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6}
+            if context.program_version
+            in {TOPIC_SELECTION_POLICY_V5, TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             and context.author_plan is not None
             else (author.family,)
         )
@@ -2172,7 +2576,8 @@ class TopicSelectionActivities:
             assessment=assessment,
             actionable=(
                 request.source_review_manifest is not None
-                or context.program_version != TOPIC_SELECTION_POLICY_V6
+                or context.program_version
+                not in {TOPIC_SELECTION_POLICY_V6, TOPIC_SELECTION_POLICY_V7}
             )
             and any(str(item.severity) == "required" for item in assessment.findings),
         )
@@ -2281,6 +2686,7 @@ class TopicSelectionActivities:
             self.prepare_inventory_plan,
             self.prepare_author_packaging_plan,
             self.prepare_source_review_plan,
+            self.prepare_repair_plan,
             self.load_source_checkpoint,
             self.prepare,
             self.save_inventory,
@@ -2290,6 +2696,8 @@ class TopicSelectionActivities:
             self.assemble_author,
             self.save_source_review_shard,
             self.assemble_source_review,
+            self.save_repair_shard,
+            self.assemble_repair,
             self.save,
             self.save_assessment,
             self.stop,

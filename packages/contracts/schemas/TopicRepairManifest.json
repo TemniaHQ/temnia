@@ -1,0 +1,428 @@
+{
+  "$defs": {
+    "HarnessArtifactKind": {
+      "$id": "#/$defs/HarnessArtifactKind",
+      "type": "string",
+      "enum": [
+        "evidence",
+        "proposal",
+        "model_response",
+        "edit",
+        "render",
+        "checks",
+        "export",
+        "speech_checkpoint",
+        "speech_assignment"
+      ],
+      "title": "HarnessArtifactKind"
+    },
+    "HarnessArtifactRef": {
+      "$id": "#/$defs/HarnessArtifactRef",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/HarnessArtifactKind"
+        },
+        "sha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "sha256",
+        "sizeBytes",
+        "storageKey"
+      ],
+      "additionalProperties": false,
+      "title": "HarnessArtifactRef"
+    },
+    "TopicCandidate": {
+      "$id": "#/$defs/TopicCandidate",
+      "type": "object",
+      "properties": {
+        "completionSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "completionSpans",
+        "coreSpans",
+        "firstSentenceId",
+        "id",
+        "lastSentenceId",
+        "meaningChangingFollowups",
+        "purpose",
+        "reason",
+        "requiredContextSpans",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidate"
+    },
+    "TopicOpportunity": {
+      "$id": "#/$defs/TopicOpportunity",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completionSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "needs_evidence"
+          ]
+        },
+        "dispositionReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "valueEvidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "viewerPurpose": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "completionSpans",
+        "coreSpans",
+        "disposition",
+        "dispositionReason",
+        "id",
+        "meaningChangingFollowups",
+        "requiredContextSpans",
+        "valueEvidenceSpans",
+        "viewerPurpose"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunity"
+    },
+    "TopicRepairManifest": {
+      "$id": "#/$defs/TopicRepairManifest",
+      "type": "object",
+      "properties": {
+        "aggregatePatch": {
+          "$ref": "#/$defs/TopicSelectionPatchV3"
+        },
+        "assessmentSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "authorFamilies": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "complete": {
+          "type": "boolean",
+          "const": true
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-repair-manifest/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inspectionArtifacts": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessArtifactRef"
+          }
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "responseArtifacts": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessArtifactRef"
+          }
+        },
+        "selectionSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "shardArtifacts": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessArtifactRef"
+          }
+        },
+        "workItemIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "required": [
+        "aggregatePatch",
+        "assessmentSha256",
+        "authorFamilies",
+        "complete",
+        "format",
+        "indexSha256",
+        "inspectionArtifacts",
+        "planSha256",
+        "responseArtifacts",
+        "selectionSha256",
+        "shardArtifacts",
+        "workItemIds"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRepairManifest"
+    },
+    "TopicSelectionPatchOperationV3": {
+      "$id": "#/$defs/TopicSelectionPatchOperationV3",
+      "type": "object",
+      "properties": {
+        "affectedCandidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "findingIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "extend_start",
+            "extend_end",
+            "replace_extent",
+            "replace_candidate",
+            "retitle",
+            "merge",
+            "split",
+            "drop",
+            "add_opportunity"
+          ]
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replacementCandidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidate"
+          }
+        }
+      },
+      "required": [
+        "affectedCandidateIds",
+        "findingIds",
+        "id",
+        "kind",
+        "opportunities",
+        "reason",
+        "replacementCandidates"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionPatchOperationV3"
+    },
+    "TopicSelectionPatchV3": {
+      "$id": "#/$defs/TopicSelectionPatchV3",
+      "type": "object",
+      "properties": {
+        "baseSelectionSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSelectionPatchOperationV3"
+          }
+        },
+        "rubricSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "baseSelectionSha256",
+        "evidenceSha256",
+        "operations",
+        "rubricSha256",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionPatchV3"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicRepairManifest.json",
+  "$ref": "#/$defs/TopicRepairManifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

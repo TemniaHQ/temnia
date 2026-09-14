@@ -17,6 +17,7 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
     TopicSelectionWorkflowV6,
+    TopicSelectionWorkflowV7,
 )
 from temnia_pipeline.harness.topic_workflow import TopicRunWorkflow
 
@@ -40,6 +41,7 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
                     TopicSelectionWorkflowV4,
                     TopicSelectionWorkflowV5,
                     TopicSelectionWorkflowV6,
+                    TopicSelectionWorkflowV7,
                     TopicEditorialPatchWorkflow,
                 ],
             },
@@ -73,3 +75,8 @@ def test_combined_worker_registers_each_durable_model_activity_once() -> None:
     assert "agent__topic_selection_cold_v6__model_request" in names
     assert "agent__topic_selection_source_v7__model_request" in names
     assert "agent__topic_selection_patch_v6__model_request" in names
+    assert "agent__topic_opportunity_inventory_v7__model_request" in names
+    assert "agent__topic_selection_author_v7__model_request" in names
+    assert "agent__topic_selection_cold_v7__model_request" in names
+    assert "agent__topic_selection_source_v8__model_request" in names
+    assert "agent__topic_selection_patch_v7__model_request" in names

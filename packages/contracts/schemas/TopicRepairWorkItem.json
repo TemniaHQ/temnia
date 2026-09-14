@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "TopicRepairWorkItem": {
+      "$id": "#/$defs/TopicRepairWorkItem",
+      "type": "object",
+      "properties": {
+        "browseParentIds": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "candidateIds": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "findingIds": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "opportunityIds": {
+          "maxItems": 24,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "browseParentIds",
+        "candidateIds",
+        "findingIds",
+        "opportunityIds",
+        "ordinal",
+        "workItemId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRepairWorkItem"
+    }
+  },
+  "$id": "TopicRepairWorkItem.json",
+  "$ref": "#/$defs/TopicRepairWorkItem",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

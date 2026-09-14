@@ -1576,6 +1576,22 @@ topic_selection_source_v7 = _agent(
     reviewer_evidence=True,
 )
 topic_selection_patch_v6 = _agent("topic_selection_patch_v6", TopicSelectionPatchV3)
+topic_opportunity_inventory_v7 = _agent(
+    "topic_opportunity_inventory_v7", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_author_v7 = _agent(
+    "topic_selection_author_v7", TopicSelectionDraft, indexed_source=True
+)
+topic_selection_cold_v7 = _agent("topic_selection_cold_v7", TopicSelectionColdReview)
+topic_selection_source_v8 = _agent(
+    "topic_selection_source_v8",
+    TopicPortfolioReviewV4,
+    indexed_source=True,
+    reviewer_evidence=True,
+)
+topic_selection_patch_v7 = _agent(
+    "topic_selection_patch_v7", TopicSelectionPatchV3, indexed_source=True
+)
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
 TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
@@ -1606,11 +1622,19 @@ TOPIC_SELECTION_V6_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_selection_source_v7,
     topic_selection_patch_v6,
 )
+TOPIC_SELECTION_V7_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
+    topic_opportunity_inventory_v7,
+    topic_selection_author_v7,
+    topic_selection_cold_v7,
+    topic_selection_source_v8,
+    topic_selection_patch_v7,
+)
 HARNESS_AGENTS = (
     *TOPIC_SELECTION_AGENTS,
     *TOPIC_SELECTION_V4_AGENTS,
     *TOPIC_SELECTION_V5_AGENTS,
     *TOPIC_SELECTION_V6_AGENTS,
+    *TOPIC_SELECTION_V7_AGENTS,
 )
 
 

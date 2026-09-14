@@ -62,6 +62,20 @@ def test_v6_program_manifest_names_the_bounded_source_review_prompt() -> None:
     assert manifest.stages["topic_source"].prompt_version == "topic-selection-source-shard/1"
 
 
+def test_v7_program_manifest_names_the_bounded_repair_prompt() -> None:
+    manifest = current_program("standalone-topics/7")
+
+    assert manifest.policy == "standalone-topics/7"
+    assert set(manifest.stages) == {
+        "topic_inventory_shard",
+        "topic_author",
+        "topic_cold",
+        "topic_source",
+        "topic_patch",
+    }
+    assert manifest.stages["topic_patch"].prompt_version == "topic-selection-patch-component/1"
+
+
 @pytest.mark.parametrize("policy", ["standalone-topics/3"])
 async def test_web_started_topic_run_freezes_its_own_program_manifest(policy: str) -> None:
     """A staging bundle binds the same bytes an experiment bundle binds, at no model cost."""

@@ -683,7 +683,7 @@ precise and complete the required JSON without narrating the tool process.
     )
 
 
-def _repair_source_indices(  # noqa: C901
+def repair_source_indices(  # noqa: C901
     evidence: HarnessEvidence,
     record: TopicSelectionRecord,
     assessment: TopicSelectionAssessment,
@@ -739,7 +739,7 @@ def _repair_source_rows(
     assessment: TopicSelectionAssessment,
 ) -> list[dict[str, object]]:
     """Render the bounded source projection without hiding gaps between authorized windows."""
-    selected = _repair_source_indices(evidence, record, assessment)
+    selected = repair_source_indices(evidence, record, assessment)
     rows = sentence_rows(evidence)
     return [row for index, row in enumerate(rows) if index in selected]
 
@@ -1730,7 +1730,7 @@ def apply_selection_patch(  # noqa: C901, PLR0912, PLR0915
         _validate_operation_shape(evidence, operation, previous)
         allowed_opportunities = _patch_authority(operation, findings, previous, evidence)
         positions = _positions(evidence)
-        authorized = _repair_source_indices(
+        authorized = repair_source_indices(
             evidence, record, assessment, finding_ids=set(operation.findingIds)
         )
         for candidate in operation.replacementCandidates:

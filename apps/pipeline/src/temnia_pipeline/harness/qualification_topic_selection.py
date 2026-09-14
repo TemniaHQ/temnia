@@ -28,6 +28,8 @@ from temnia_pipeline.contracts import (
     TopicOpportunityInventoryPlan,
     TopicPortfolioReviewV4,
     TopicProposal,
+    TopicRepairPlan,
+    TopicRepairWorkItem,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -51,6 +53,11 @@ from temnia_pipeline.harness.topic_author_packaging import (
     build_author_plan,
 )
 from temnia_pipeline.harness.topic_feasible import augment_topic_evidence
+from temnia_pipeline.harness.topic_repair import (
+    REPAIR_COMPONENT_PROMPT_VERSION,
+    admit_repair_shard,
+    repair_component_prompt,
+)
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_AUTHOR_SHARD_PROMPT,
@@ -115,6 +122,11 @@ TOPIC_SELECTION_V5_STAGES = TOPIC_SELECTION_V4_STAGES
 TOPIC_SELECTION_V5_SCHEMAS = dict(TOPIC_SELECTION_V4_SCHEMAS)
 TOPIC_SELECTION_V6_STAGES = TOPIC_SELECTION_V5_STAGES
 TOPIC_SELECTION_V6_SCHEMAS = dict(TOPIC_SELECTION_V5_SCHEMAS)
+TOPIC_SELECTION_V7_STAGES = TOPIC_SELECTION_V6_STAGES
+TOPIC_SELECTION_V7_SCHEMAS = {
+    **TOPIC_SELECTION_V6_SCHEMAS,
+    "topic_patch": REPAIR_COMPONENT_PROMPT_VERSION,
+}
 QUALIFICATION_SOURCE_INDEX = {
     "indexSha256": "0" * 64,
     "rootNodeId": "episode",
@@ -132,14 +144,17 @@ QUALIFICATION_SOURCE_INDEX = {
 
 def topic_source_progress_processor(
     stage: str,
+    suite: str = "topic-selection-v3",
 ) -> Callable[[list[ModelMessage]], list[ModelMessage]] | None:
     """Use the production compaction contract in indexed route pre-flight calls."""
-    roles: dict[str, Literal["inventory", "author", "source_reviewer"]] = {
+    roles: dict[str, Literal["inventory", "author", "source_reviewer", "repair"]] = {
         "topic_inventory": "inventory",
         "topic_inventory_shard": "inventory",
         "topic_author": "author",
         "topic_source": "source_reviewer",
     }
+    if suite == "topic-selection-v7":
+        roles["topic_patch"] = "repair"
     role = roles.get(stage)
     if role is None:
         return None
@@ -288,7 +303,7 @@ async def read_media_evidence(
     )
 
 
-def topic_source_qualification_tools(stage: str) -> list[Any]:
+def topic_source_qualification_tools(stage: str, suite: str = "topic-selection-v3") -> list[Any]:
     """Expose the exact role-specific indexed production tools."""
     if stage in {"topic_inventory", "topic_inventory_shard", "topic_author"}:
         return [browse_source, search_source, read_source]
@@ -300,6 +315,8 @@ def topic_source_qualification_tools(stage: str) -> list[Any]:
             inspect_candidate,
             read_media_evidence,
         ]
+    if stage == "topic_patch" and suite == "topic-selection-v7":
+        return [browse_source, search_source, read_source]
     return []
 
 
@@ -638,6 +655,52 @@ def topic_selection_v6_qualification_prompts() -> dict[str, tuple[str, type[Base
     return prompts
 
 
+def _v7_qualification_repair_plan() -> TopicRepairPlan:
+    """One coupled title/extent component for the changed indexed repair request."""
+    _, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    work_item = TopicRepairWorkItem.model_validate(
+        {
+            "workItemId": "repair-component-0001",
+            "ordinal": 0,
+            "findingIds": [item.id for item in assessment.findings],
+            "candidateIds": ["garden-care"],
+            "opportunityIds": ["garden-value"],
+            "browseParentIds": ["section-0001"],
+        }
+    )
+    return TopicRepairPlan.model_validate(
+        {
+            "format": "topic-repair-plan/1",
+            "indexSha256": "0" * 64,
+            "selectionSha256": content_hash(record),
+            "assessmentSha256": content_hash(assessment),
+            "maxFindingsPerWorkItem": 12,
+            "maxCandidatesPerWorkItem": 8,
+            "maxOpportunitiesPerWorkItem": 24,
+            "workItems": [work_item.model_dump(mode="json")],
+        }
+    )
+
+
+def topic_selection_v7_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
+    """Render v6 requests plus the exact indexed connected-component repair request."""
+    prompts = topic_selection_v6_qualification_prompts()
+    _, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    plan = _v7_qualification_repair_plan()
+    prompts["topic_patch"] = (
+        repair_component_prompt(
+            record,
+            assessment,
+            plan,
+            plan.workItems[0],
+            QUALIFICATION_SOURCE_INDEX,
+        ),
+        TopicSelectionPatchV3,
+        REPAIR_COMPONENT_PROMPT_VERSION,
+    )
+    return prompts
+
+
 def validate_topic_selection_qualification_output(stage: str, output: object) -> None:
     """Source admission is measured separately from schema transport and publication quality."""
     evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
@@ -774,6 +837,47 @@ def validate_topic_selection_v6_qualification_output(stage: str, output: object)
         reviewer_family="synthetic-reviewer",
         response_artifact=response,
         inspection_artifact=None,
+    )
+
+
+def validate_topic_selection_v7_qualification_output(stage: str, output: object) -> None:
+    """Ground the indexed repair component and delegate unchanged v6 stages."""
+    if stage != "topic_patch":
+        validate_topic_selection_v6_qualification_output(stage, output)
+        return
+    if not isinstance(output, TopicSelectionPatchV3):
+        raise TypeError("topic qualification repair output has the wrong type")
+    evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    plan = _v7_qualification_repair_plan()
+    response = HarnessArtifactRef.model_validate(
+        {
+            "id": "00000000-0000-0000-0000-000000000079",
+            "fingerprint": "7" * 64,
+            "sha256": "7" * 64,
+            "kind": "model_response",
+            "sizeBytes": 1,
+            "storageKey": "qualification/repair-response.json",
+        }
+    )
+    inspection = HarnessArtifactRef.model_validate(
+        {
+            **response.model_dump(mode="json"),
+            "id": str(UUID("00000000-0000-0000-0000-000000000080")),
+            "kind": "checks",
+        }
+    )
+    admit_repair_shard(
+        evidence,
+        record,
+        assessment,
+        plan,
+        plan.workItems[0],
+        output,
+        index_sha256="0" * 64,
+        assessment_sha256=content_hash(assessment),
+        response_artifact=response,
+        inspection_artifact=inspection,
+        author_family="synthetic-author",
     )
 
 

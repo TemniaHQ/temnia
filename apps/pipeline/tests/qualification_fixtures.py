@@ -452,6 +452,13 @@ def _outputs_v6() -> list[dict[str, Any]]:
     return outputs
 
 
+def _outputs_v7() -> list[dict[str, Any]]:
+    """Use the connected-component operation namespace required by v7 repair."""
+    outputs = _outputs_v6()
+    outputs[4]["operations"][0]["id"] = "repair-component-0001:operation:garden"
+    return outputs
+
+
 def _three_candidate_lookup_transport(
     stages_per_candidate: int = 3,
 ) -> tuple[httpx.MockTransport, list[str]]:

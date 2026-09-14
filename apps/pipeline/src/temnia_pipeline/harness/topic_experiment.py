@@ -60,6 +60,7 @@ WORKFLOW_TYPES = {
     "standalone-topics/4": "TopicSelectionWorkflowV4",
     "standalone-topics/5": "TopicSelectionWorkflowV5",
     "standalone-topics/6": "TopicSelectionWorkflowV6",
+    "standalone-topics/7": "TopicSelectionWorkflowV7",
 }
 WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/3"]
 MEMO_KEY = "temniaExperimentSha256"
@@ -125,6 +126,7 @@ class ExperimentSpec(EvaluationModel):
         "standalone-topics/4",
         "standalone-topics/5",
         "standalone-topics/6",
+        "standalone-topics/7",
     ] = "standalone-topics/3"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]

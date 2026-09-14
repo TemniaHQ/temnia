@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         TOPIC_SELECTION_POLICY_V4,
         TOPIC_SELECTION_POLICY_V5,
         TOPIC_SELECTION_POLICY_V6,
+        TOPIC_SELECTION_POLICY_V7,
         EditorialPolicy,
     )
     from temnia_pipeline.harness.models import (
@@ -33,27 +34,33 @@ with workflow.unsafe.imports_passed_through():
         TOPIC_SELECTION_V4_AGENTS,
         TOPIC_SELECTION_V5_AGENTS,
         TOPIC_SELECTION_V6_AGENTS,
+        TOPIC_SELECTION_V7_AGENTS,
         HarnessModelDeps,
         topic_opportunity_inventory_v3,
         topic_opportunity_inventory_v4,
         topic_opportunity_inventory_v5,
         topic_opportunity_inventory_v6,
+        topic_opportunity_inventory_v7,
         topic_selection_author_v3,
         topic_selection_author_v4,
         topic_selection_author_v5,
         topic_selection_author_v6,
+        topic_selection_author_v7,
         topic_selection_cold_v3,
         topic_selection_cold_v4,
         topic_selection_cold_v5,
         topic_selection_cold_v6,
+        topic_selection_cold_v7,
         topic_selection_patch_v3,
         topic_selection_patch_v4,
         topic_selection_patch_v5,
         topic_selection_patch_v6,
+        topic_selection_patch_v7,
         topic_selection_source_v4,
         topic_selection_source_v5,
         topic_selection_source_v6,
         topic_selection_source_v7,
+        topic_selection_source_v8,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -89,6 +96,11 @@ with workflow.unsafe.imports_passed_through():
         OpportunityInventorySaveRequest,
         OpportunityInventoryShardSaveRequest,
         OpportunityInventoryShardSaveResult,
+        RepairManifestRequest,
+        RepairManifestResult,
+        RepairPlanResult,
+        RepairShardSaveRequest,
+        RepairShardSaveResult,
         SelectionAssessmentResult,
         SelectionCallPlan,
         SelectionContext,
@@ -186,6 +198,13 @@ def invalid_model_output(error: Exception) -> bool:
     return name == "UnexpectedModelBehavior"
 
 
+def validation_refusal(error: Exception) -> bool:
+    """A deterministic plan or admission refusal is reviewable, not an infrastructure failure."""
+    cause = error.cause if isinstance(error, ActivityError) else error
+    name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+    return name in {"HarnessValidationError", "ValidationError", "ValueError"}
+
+
 def transient_provider_failure(error: Exception) -> bool:
     """A lost stream whose charge settled: a fresh paid attempt is allowed, unknowns are not."""
     cause = error.cause if isinstance(error, ActivityError) else error
@@ -206,6 +225,7 @@ COLD_REVIEW_FAN_OUT = 3
 INVENTORY_FAN_OUT = 3
 AUTHOR_FAN_OUT = 3
 SOURCE_REVIEW_FAN_OUT = 3
+REPAIR_FAN_OUT = 3
 PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 
 
@@ -635,6 +655,55 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             result_type=SelectionAssessmentResult,
         )
 
+    async def repair_selection(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+    ) -> tuple[SelectionSaveResult | None, SelectionContext, str | None, bool]:
+        """Run the historical whole-assessment repair call for programs through v6."""
+        patch_context = context.model_copy(update={"iteration": context.iteration + 1})
+        try:
+            result, patch_plan, settled = await self.run_seat(
+                self.patch_agent, request, patch_context, "author"
+            )
+            patch_context = self.carry_routes(patch_context, settled)
+            if patch_context.program_version in {
+                TOPIC_SELECTION_POLICY_V5,
+                TOPIC_SELECTION_POLICY_V6,
+            }:
+                patch_context = patch_context.model_copy(
+                    update={
+                        "author_families": tuple(
+                            dict.fromkeys(
+                                (*patch_context.author_families, patch_plan.author.family)
+                            )
+                        )
+                    }
+                )
+            save = SelectionSaveRequest(context=patch_context, patch=result.output)
+        except Exception as error:
+            if isinstance(error, InvalidSeatOutput):
+                patch_context = self.carry_routes(patch_context, error.context)
+            if invalid_model_output(error):
+                return (
+                    None,
+                    patch_context,
+                    (
+                        "Repair response was incomplete or invalid; the prior assessed selection "
+                        "is retained for review."
+                    ),
+                    False,
+                )
+            if not execution_limit(error):
+                raise
+            return (
+                None,
+                patch_context,
+                "Execution capacity ended before repair; the prior assessed selection is retained.",
+                True,
+            )
+        return await self.save_selection(save), patch_context, None, False
+
     async def program(self, request: ChapterRunInput) -> ChapterRunOutput:  # noqa: C901, PLR0912, PLR0915
         """Complete a traceable selection cycle before compiling reviewable videos."""
         info = workflow.info()
@@ -707,9 +776,12 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         )
         context = context.model_copy(update={"source_index": source_index.artifact})
         context = await self.prepare_author_context(request, context)
-        if self.policy in {TOPIC_SELECTION_POLICY_V4, TOPIC_SELECTION_POLICY_V5} and (
-            context.inventory is None
-        ):
+        if self.policy in {
+            TOPIC_SELECTION_POLICY_V4,
+            TOPIC_SELECTION_POLICY_V5,
+            TOPIC_SELECTION_POLICY_V6,
+            TOPIC_SELECTION_POLICY_V7,
+        } and (context.inventory is None):
             return await self.finish(
                 request,
                 evidence=evidence.artifact,
@@ -762,41 +834,13 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     )
                 break
             run = await self.claim_repair(run, request)
-            patch_context = context.model_copy(update={"iteration": context.iteration + 1})
-            try:
-                result, patch_plan, settled = await self.run_seat(
-                    self.patch_agent, request, patch_context, "author"
-                )
-                patch_context = self.carry_routes(patch_context, settled)
-                if patch_context.program_version == TOPIC_SELECTION_POLICY_V5:
-                    patch_context = patch_context.model_copy(
-                        update={
-                            "author_families": tuple(
-                                dict.fromkeys(
-                                    (*patch_context.author_families, patch_plan.author.family)
-                                )
-                            )
-                        }
-                    )
-                save = SelectionSaveRequest(context=patch_context, patch=result.output)
-            except Exception as error:
-                if isinstance(error, InvalidSeatOutput):
-                    patch_context = self.carry_routes(patch_context, error.context)
-                if invalid_model_output(error):
-                    stop_reasons.append(
-                        "Repair response was incomplete or invalid; the prior assessed selection "
-                        "is retained for review."
-                    )
-                    break
-                if not execution_limit(error):
-                    raise
-                limited = True
-                stop_reasons.append(
-                    "Execution capacity ended before repair; "
-                    "the prior assessed selection is retained."
-                )
+            saved, patch_context, repair_error, repair_limited = await self.repair_selection(
+                request, context
+            )
+            if saved is None:
+                limited = repair_limited
+                stop_reasons.append(repair_error or "Repair did not produce a complete patch.")
                 break
-            saved = await self.save_selection(save)
             if saved.rejection is not None:
                 rejection_diagnostics = saved.diagnostics
                 context = patch_context.model_copy(update={"rejection": saved.rejection})
@@ -819,6 +863,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     "rejection": None,
                     "source_review_plan": None,
                     "source_review_work_item_id": None,
+                    "repair_plan": None,
+                    "repair_work_item_id": None,
                 }
             )
         if stop_reasons:
@@ -1362,4 +1408,184 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RETRY,
             result_type=SelectionAssessmentResult,
+        )
+
+
+@workflow.defn(name="TopicSelectionWorkflowV7")
+class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
+    """Bound inventory, author, source review and atomic connected-component repair."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V7_AGENTS
+    policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V7
+    inventory_agent = topic_opportunity_inventory_v7
+    author_agent = topic_selection_author_v7
+    cold_agent = topic_selection_cold_v7
+    source_agent = topic_selection_source_v8
+    patch_agent = topic_selection_patch_v7
+
+    @workflow.run
+    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
+        """Keep v7 history and model activities disjoint from prior programs."""
+        return await super().run(request)
+
+    async def repair_selection(  # noqa: C901
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+    ) -> tuple[SelectionSaveResult | None, SelectionContext, str | None, bool]:
+        """Admit every bounded component before one aggregate patch changes the selection."""
+        patch_context = context.model_copy(update={"iteration": context.iteration + 1})
+        try:
+            prepared = await workflow.execute_activity(
+                "prepare_topic_repair_plan_v7",
+                patch_context,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+                result_type=RepairPlanResult,
+            )
+        except Exception as error:
+            if not validation_refusal(error):
+                raise
+            return (
+                None,
+                patch_context,
+                "Repair planning refused the coupled finding graph: " + failure_sentence(error),
+                False,
+            )
+        patch_context = patch_context.model_copy(update={"repair_plan": prepared.artifact})
+        repair_fan_out = asyncio.Semaphore(REPAIR_FAN_OUT)
+        settled_index = {"author_index": patch_context.author_index}
+
+        async def repair_one(
+            work_item_id: str,
+        ) -> tuple[RepairShardSaveResult | None, SelectionContext, str | None, bool]:
+            async with repair_fan_out:
+                shard_context = patch_context.model_copy(
+                    update={
+                        "repair_work_item_id": work_item_id,
+                        "author_index": settled_index["author_index"],
+                    }
+                )
+                try:
+                    result, _, settled = await self.run_seat(
+                        self.patch_agent, request, shard_context, "author"
+                    )
+                    shard_context = self.carry_routes(shard_context, settled)
+                    settled_index["author_index"] = max(
+                        settled_index["author_index"], settled.author_index
+                    )
+                    saved = await workflow.execute_activity(
+                        "save_topic_repair_shard_v7",
+                        RepairShardSaveRequest(
+                            context=shard_context,
+                            patch=result.output,
+                            inspection=(
+                                source_inspection_trace(
+                                    result.all_messages(),
+                                    index_sha256=shard_context.source_index.sha256,
+                                    role="repair",
+                                    stage=f"repair:selection:{shard_context.iteration}:{work_item_id}",
+                                )
+                                if shard_context.source_index is not None
+                                else None
+                            ),
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=RETRY,
+                        result_type=RepairShardSaveResult,
+                    )
+                except Exception as error:
+                    if isinstance(error, InvalidSeatOutput):
+                        shard_context = self.carry_routes(shard_context, error.context)
+                    if invalid_model_output(error):
+                        saved = await workflow.execute_activity(
+                            "save_topic_repair_shard_v7",
+                            RepairShardSaveRequest(
+                                context=shard_context,
+                                schema_error=(
+                                    f"Repair response for {work_item_id} did not match the patch "
+                                    "schema."
+                                ),
+                            ),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RETRY,
+                            result_type=RepairShardSaveResult,
+                        )
+                        return saved, shard_context, "; ".join(saved.diagnostics), False
+                    if execution_limit(error):
+                        return (
+                            None,
+                            shard_context,
+                            f"Execution capacity ended while repairing {work_item_id}.",
+                            True,
+                        )
+                    raise
+                if saved.artifact is None:
+                    return saved, shard_context, "; ".join(saved.diagnostics), False
+                return saved, shard_context, None, False
+
+        outcomes = await asyncio.gather(
+            *(repair_one(item.workItemId) for item in prepared.plan.workItems)
+        )
+        patch_context = patch_context.model_copy(
+            update={
+                "repair_work_item_id": None,
+                "author_index": max(
+                    (settled.author_index for _, settled, _, _ in outcomes),
+                    default=patch_context.author_index,
+                ),
+            }
+        )
+        shard_refs = tuple(
+            saved.artifact
+            for saved, _, _, _ in outcomes
+            if saved is not None and saved.artifact is not None
+        )
+        failures = tuple(dict.fromkeys(reason for _, _, reason, _ in outcomes if reason))
+        if len(shard_refs) != len(prepared.plan.workItems):
+            return (
+                None,
+                patch_context,
+                "Bounded repair is incomplete; no component changed the assessed selection. "
+                + "; ".join(failures),
+                any(limited for _, _, _, limited in outcomes),
+            )
+        try:
+            assembled = await workflow.execute_activity(
+                "assemble_topic_repair_v7",
+                RepairManifestRequest(context=patch_context, shard_artifacts=shard_refs),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+                result_type=RepairManifestResult,
+            )
+        except Exception as error:
+            if not validation_refusal(error):
+                raise
+            return (
+                None,
+                patch_context,
+                "Atomic repair assembly refused every component: " + failure_sentence(error),
+                False,
+            )
+        patch_context = patch_context.model_copy(
+            update={
+                "author_families": tuple(
+                    dict.fromkeys(
+                        (
+                            *patch_context.author_families,
+                            *(value.root for value in assembled.manifest.authorFamilies),
+                        )
+                    )
+                )
+            }
+        )
+        return (
+            SelectionSaveResult(
+                selection=assembled.selection,
+                semantic_key=assembled.semantic_key,
+                draft=assembled.draft,
+            ),
+            patch_context,
+            None,
+            False,
         )

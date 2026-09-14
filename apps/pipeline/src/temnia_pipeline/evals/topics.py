@@ -98,6 +98,7 @@ class TopicProgramManifest(EvaluationModel):
         "standalone-topics/4",
         "standalone-topics/5",
         "standalone-topics/6",
+        "standalone-topics/7",
     ]
     implementation_sha256: SHA256
     program_version: Identifier
@@ -107,7 +108,13 @@ class TopicProgramManifest(EvaluationModel):
     def _complete_roster(self) -> Self:
         expected = {
             "topic_inventory_shard"
-            if self.policy in {"standalone-topics/4", "standalone-topics/5", "standalone-topics/6"}
+            if self.policy
+            in {
+                "standalone-topics/4",
+                "standalone-topics/5",
+                "standalone-topics/6",
+                "standalone-topics/7",
+            }
             else "topic_inventory": "reviewer",
             "topic_author": "author",
             "topic_cold": "reviewer",
@@ -130,6 +137,7 @@ class TopicConfiguration(EvaluationModel):
         "standalone-topics/4",
         "standalone-topics/5",
         "standalone-topics/6",
+        "standalone-topics/7",
     ]
     source_sha256: SHA256 | None = None
     transcript_sha256: SHA256 | None = None

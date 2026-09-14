@@ -13,7 +13,8 @@ Source tools do not solve long-context growth if every model response and tool r
 the next request. A long inspection then sends the same transcript excerpts repeatedly, and a
 known provider failure can make a restarted agent repeat already-settled discovery calls.
 
-The three indexed roles now use PydanticAI `ProcessHistory` to rebuild every model request from:
+The four indexed roles—inventory, author, source reviewer and repair—use PydanticAI
+`ProcessHistory` to rebuild every model request from:
 
 1. the unchanged versioned editorial prompt;
 2. one application-authored `topic-agent-checkpoint/1`; and
@@ -85,10 +86,10 @@ third successful call refuses the loop as no progress. A call with a new cursor 
 is distinct.
 
 These values bound memory and payloads; they are not limits on source duration, video count or video
-duration. The present final-answer contract nevertheless requires every sentence in every returned
-source span to coexist in the final checkpoint. A portfolio whose required exact speech exceeds the
-working envelope must be decomposed before this mechanism can admit it. That bounded portfolio
-reconciliation is still a later milestone, so these constants are not claimed as production-tuned.
+duration. Every final answer still requires every sentence in every returned source span to coexist
+in its final checkpoint. V4 through V7 now decompose inventory, authoring, source review and repair
+before that gate. A single coupled work item that exceeds its explicit envelope refuses instead of
+dropping evidence, so these constants are not claimed as production-tuned.
 
 ## Durable publication and retry
 
@@ -178,7 +179,8 @@ Author packaging now uses the same checkpoint contract in bounded work-item call
 [bounded-author-packaging-2026-09-14.md](bounded-author-packaging-2026-09-14.md).
 Independent source review now uses one checkpoint chain per bounded candidate, opportunity,
 leaf-omission or relationship work item and admits only a complete manifest; see
-[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md). Repair still needs
-bounded reconciliation. Real
+[bounded-source-review-2026-09-14.md](bounded-source-review-2026-09-14.md). Repair now uses one
+checkpoint chain per connected finding component and applies only a complete disjoint aggregate;
+see [bounded-atomic-repair-2026-09-14.md](bounded-atomic-repair-2026-09-14.md). Real
 44-minute, two-hour and four-hour provider and editorial evaluation
 remains the final gate rather than evidence inferred from fixtures.

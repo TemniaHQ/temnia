@@ -728,6 +728,74 @@ export const TopicSelectionPatchV3Schema = z
   .meta({ id: "TopicSelectionPatchV3", title: "TopicSelectionPatchV3" });
 export type TopicSelectionPatchV3 = z.infer<typeof TopicSelectionPatchV3Schema>;
 
+/** One connected set of findings whose candidate/opportunity writes cannot be split safely. */
+export const TopicRepairWorkItemSchema = z
+  .object({
+    browseParentIds: z.array(identifier()).min(1).max(8),
+    candidateIds: z.array(identifier()).max(8),
+    findingIds: z.array(identifier()).min(1).max(12),
+    opportunityIds: z.array(identifier()).max(24),
+    ordinal: z.int().nonnegative(),
+    workItemId: identifier(),
+  })
+  .strict()
+  .meta({ id: "TopicRepairWorkItem", title: "TopicRepairWorkItem" });
+export type TopicRepairWorkItem = z.infer<typeof TopicRepairWorkItemSchema>;
+
+/** Immutable connected-component plan for one atomic repair revision. */
+export const TopicRepairPlanSchema = z
+  .object({
+    assessmentSha256: sha256(),
+    format: z.literal("topic-repair-plan/1"),
+    indexSha256: sha256(),
+    maxCandidatesPerWorkItem: z.literal(8),
+    maxFindingsPerWorkItem: z.literal(12),
+    maxOpportunitiesPerWorkItem: z.literal(24),
+    selectionSha256: sha256(),
+    workItems: z.array(TopicRepairWorkItemSchema).min(1),
+  })
+  .strict()
+  .meta({ id: "TopicRepairPlan", title: "TopicRepairPlan" });
+export type TopicRepairPlan = z.infer<typeof TopicRepairPlanSchema>;
+
+/** One independently admitted component patch and its exact indexed-source trace. */
+export const TopicRepairShardSchema = z
+  .object({
+    assessmentSha256: sha256(),
+    authorFamily: reason(),
+    format: z.literal("topic-repair-shard/1"),
+    indexSha256: sha256(),
+    inspectionArtifact: HarnessArtifactRefSchema,
+    patch: TopicSelectionPatchV3Schema,
+    planSha256: sha256(),
+    responseArtifact: HarnessArtifactRefSchema,
+    selectionSha256: sha256(),
+    workItem: TopicRepairWorkItemSchema,
+  })
+  .strict()
+  .meta({ id: "TopicRepairShard", title: "TopicRepairShard" });
+export type TopicRepairShard = z.infer<typeof TopicRepairShardSchema>;
+
+/** Complete disjoint shard set whose aggregate patch is safe to apply as one revision. */
+export const TopicRepairManifestSchema = z
+  .object({
+    aggregatePatch: TopicSelectionPatchV3Schema,
+    assessmentSha256: sha256(),
+    authorFamilies: z.array(reason()).min(1),
+    complete: z.literal(true),
+    format: z.literal("topic-repair-manifest/1"),
+    indexSha256: sha256(),
+    inspectionArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+    planSha256: sha256(),
+    responseArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+    selectionSha256: sha256(),
+    shardArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+    workItemIds: z.array(identifier()).min(1),
+  })
+  .strict()
+  .meta({ id: "TopicRepairManifest", title: "TopicRepairManifest" });
+export type TopicRepairManifest = z.infer<typeof TopicRepairManifestSchema>;
+
 /** Persisted identity is supplied by code, never trusted from a model's answer. */
 export const TopicSelectionRecordSchema = z
   .object({

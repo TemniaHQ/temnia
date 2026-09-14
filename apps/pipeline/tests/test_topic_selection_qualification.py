@@ -17,6 +17,7 @@ from qualification_fixtures import (
     _outputs_v4,
     _outputs_v5,
     _outputs_v6,
+    _outputs_v7,
     _paths,
     _qualified,
     _request_transport,
@@ -36,7 +37,10 @@ from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V5_STAGES,
     TOPIC_SELECTION_V6_SCHEMAS,
     TOPIC_SELECTION_V6_STAGES,
+    TOPIC_SELECTION_V7_SCHEMAS,
+    TOPIC_SELECTION_V7_STAGES,
 )
+from temnia_pipeline.harness.topic_repair import REPAIR_COMPONENT_PROMPT_VERSION
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_AUTHOR_SHARD_PROMPT,
@@ -170,6 +174,51 @@ async def test_v6_qualification_runs_the_exact_five_stage_suite(tmp_path: Path) 
     assert report["passed"] is True
     assert len(requests) == 5
     assert [call["stage"] for call in report["calls"]] == list(TOPIC_SELECTION_V6_STAGES)
+
+
+def test_v7_qualification_binds_the_indexed_repair_request() -> None:
+    prompts = qualification_prompts("topic-selection-v7")
+
+    assert tuple(prompts) == TOPIC_SELECTION_V7_STAGES
+    assert set(TOPIC_SELECTION_V7_SCHEMAS) == set(TOPIC_SELECTION_V7_STAGES)
+    prompt, output_type, version = prompts["topic_patch"]
+    assert version == REPAIR_COMPONENT_PROMPT_VERSION
+    assert output_type.__name__ == "TopicSelectionPatchV3"
+    assert '"workItemId":"repair-component-0001"' in prompt
+    assert "Use browse_source" in prompt
+
+
+async def test_v7_qualification_runs_the_exact_five_stage_suite(tmp_path: Path) -> None:
+    request_transport, requests = _request_transport(_outputs_v7())
+    lookup_transport, _ = _three_candidate_lookup_transport(stages_per_candidate=5)
+    paths = _paths(tmp_path)
+
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=1),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=QualificationLimits(
+            suite="topic-selection-v7",
+            max_exposure_micros=100_000,
+            max_dispatches=5,
+            max_output_tokens=256,
+            lookup_wait_seconds=0,
+        ),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+
+    assert report["passed"] is True
+    assert len(requests) == 5
+    assert [call["stage"] for call in report["calls"]] == list(TOPIC_SELECTION_V7_STAGES)
+    patch_request = requests[-1]
+    assert {tool["function"]["name"] for tool in patch_request["tools"]} == {
+        "browse_source",
+        "search_source",
+        "read_source",
+    }
 
 
 async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) -> None:

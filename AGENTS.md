@@ -83,8 +83,23 @@ programs and the web's V3 default stay unchanged. Contract:
 The clean exact-commit gate passed for `234cd99` at `2026-09-14T15:29:51.984Z`, including 1,256
 pipeline tests with one intentional skip, both cold production images and all 18 Playwright
 workflow tests. Real route/editorial evaluation remains open. Repair is the next unbounded
-final-answer stage. No real provider, latency, recovery or quality result follows, and no new model
-arm or paid run is authorized by this record.
+final-answer stage identified by the V6 milestone. It is now bounded separately in
+`standalone-topics/7` /
+`TopicSelectionWorkflowV7`. Code groups required findings by shared candidate and opportunity
+authority, refuses a coupled component above 12 findings, eight candidates, 24 opportunities or
+eight source sections, and runs at most three components concurrently. Each component receives the
+three indexed source tools under the `repair` checkpoint role, must cite every assigned finding,
+and owns existing and new candidate IDs through explicit work-item namespaces. A settled result is
+an admitted shard or retained rejection. Only every exact shard in plan order can form
+`topic-repair-manifest/1`; assembly proves actual candidate and opportunity writes disjoint, replays
+the full patch validator and applies one aggregate selection revision. Missing, invalid or
+conflicting components change nothing. A successful revision receives fresh cold and bounded source
+review, and repair families join the reviewer-exclusion set. Historical workflows and the web's V3
+default stay unchanged. Contract:
+[bounded-atomic-repair-2026-09-14.md](docs/design/bounded-atomic-repair-2026-09-14.md).
+The optional V7 pre-flight and local four-hour shape test are implemented; the clean exact-commit
+gate is pending. No real provider, latency, recovery or quality result follows, and no new model arm
+or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

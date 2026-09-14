@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "TopicRepairPlan": {
+      "$id": "#/$defs/TopicRepairPlan",
+      "type": "object",
+      "properties": {
+        "assessmentSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-repair-plan/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "maxCandidatesPerWorkItem": {
+          "type": "number",
+          "const": 8
+        },
+        "maxFindingsPerWorkItem": {
+          "type": "number",
+          "const": 12
+        },
+        "maxOpportunitiesPerWorkItem": {
+          "type": "number",
+          "const": 24
+        },
+        "selectionSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "workItems": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicRepairWorkItem"
+          }
+        }
+      },
+      "required": [
+        "assessmentSha256",
+        "format",
+        "indexSha256",
+        "maxCandidatesPerWorkItem",
+        "maxFindingsPerWorkItem",
+        "maxOpportunitiesPerWorkItem",
+        "selectionSha256",
+        "workItems"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRepairPlan"
+    },
+    "TopicRepairWorkItem": {
+      "$id": "#/$defs/TopicRepairWorkItem",
+      "type": "object",
+      "properties": {
+        "browseParentIds": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "candidateIds": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "findingIds": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "opportunityIds": {
+          "maxItems": 24,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "browseParentIds",
+        "candidateIds",
+        "findingIds",
+        "opportunityIds",
+        "ordinal",
+        "workItemId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicRepairWorkItem"
+    }
+  },
+  "$id": "TopicRepairPlan.json",
+  "$ref": "#/$defs/TopicRepairPlan",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

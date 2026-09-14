@@ -40,6 +40,7 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V4,
     TOPIC_SELECTION_POLICY_V5,
     TOPIC_SELECTION_POLICY_V6,
+    TOPIC_SELECTION_POLICY_V7,
 )
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
@@ -71,6 +72,7 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflowV4,
     TopicSelectionWorkflowV5,
     TopicSelectionWorkflowV6,
+    TopicSelectionWorkflowV7,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
@@ -103,10 +105,6 @@ class _FixtureEncoder:
 
 class UnexpectedModelBehavior(Exception):  # noqa: N818
     """A local double for the retained invalid-output failure name."""
-
-
-async def _inspection_none(*_args: object, **_kwargs: object) -> None:
-    return None
 
 
 def opportunity(*, selected: bool) -> TopicOpportunity:
@@ -231,7 +229,8 @@ class AgentDouble:
             raise output
         if callable(output):
             assert prompt is not None
-            output = output(json.loads(prompt.split("SOURCE DATA\n", 1)[1]))
+            marker = "SOURCE DATA\n" if "SOURCE DATA\n" in prompt else "INPUT:\n"
+            output = output(json.loads(prompt.split(marker, 1)[1]))
         return SimpleNamespace(output=output, all_messages=list)
 
 
@@ -299,7 +298,7 @@ class Program:
         monkeypatch.setattr(
             self.activities,
             "inspection_ref",
-            _inspection_none,
+            self.inspection_ref,
         )
         monkeypatch.setattr(self.activities.topics, "publish", self.publish)
         monkeypatch.setattr(workflow_type, "author_agent", self.author)
@@ -390,6 +389,24 @@ class Program:
             format_name="test-paid-response",
         )
 
+    async def inspection_ref(
+        self,
+        context: SelectionContext,
+        plan: SelectionCallPlan,
+        _inspection: object,
+        response: HarnessArtifactRef,
+        _required_sentence_ids: object,
+    ) -> HarnessArtifactRef | None:
+        if plan.source_tool_role != "repair":
+            return None
+        return await self.publish(
+            TopicContext(run=context.run, evidence=context.evidence),
+            content=make_rubric(plan.stage),
+            kind="checks",
+            format_name="test-source-inspection",
+            dependencies=(response,),
+        )
+
     async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, C901, PLR0911
         if name == "start_chapter_run":
             assert value.editorial_policy == self.policy
@@ -454,6 +471,7 @@ class Program:
             "prepare_topic_inventory_plan_v4": self.activities.prepare_inventory_plan,
             "prepare_topic_author_plan_v5": self.activities.prepare_author_packaging_plan,
             "prepare_topic_source_review_plan_v6": self.activities.prepare_source_review_plan,
+            "prepare_topic_repair_plan_v7": self.activities.prepare_repair_plan,
             "prepare_topic_selection_call": self.activities.prepare,
             "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
             "save_topic_inventory_shard_v4": self.activities.save_inventory_shard,
@@ -462,6 +480,8 @@ class Program:
             "assemble_topic_author_v5": self.activities.assemble_author,
             "save_topic_source_review_shard_v6": self.activities.save_source_review_shard,
             "assemble_topic_source_review_v6": self.activities.assemble_source_review,
+            "save_topic_repair_shard_v7": self.activities.save_repair_shard,
+            "assemble_topic_repair_v7": self.activities.assemble_repair,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -820,6 +840,60 @@ def _bounded_source_review(payload: dict[str, Any]) -> TopicPortfolioReviewV4:
     )
 
 
+def _bounded_source_review_with_title_finding(
+    payload: dict[str, Any],
+) -> TopicPortfolioReviewV4:
+    """Require one title correction in the candidate-owning source shard."""
+    review = _bounded_source_review(payload)
+    work_item = payload["workItem"]
+    if not work_item["candidateIds"]:
+        return review
+    candidate_id = work_item["candidateIds"][0]
+    candidate = next(
+        item
+        for item in payload["contextCandidatesWithoutAuthorRationale"]
+        if item["id"] == candidate_id
+    )
+    finding = {
+        "id": f"{work_item['workItemId']}:finding:title",
+        "kind": "unsupported_title",
+        "severity": "required",
+        "affectedCandidateIds": [candidate_id],
+        "opportunityIds": work_item["contextOpportunityIds"][:1],
+        "evidenceSpans": candidate["coreSpans"],
+        "reason": "The candidate title is broader than the exact source explanation.",
+    }
+    return TopicPortfolioReviewV4.model_validate(
+        {**review.model_dump(mode="json"), "findings": [finding]}
+    )
+
+
+def _bounded_title_repair(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+    """Return one work-item-scoped title correction for the v7 workflow fixture."""
+    work_item = payload["workItem"]
+    candidate = payload["affectedCandidates"][0]
+    candidate["title"] = "A focused source explanation"
+    return TopicSelectionPatchV3.model_validate(
+        {
+            "baseSelectionSha256": payload["baseSelectionSha256"],
+            "evidenceSha256": payload["evidenceSha256"],
+            "rubricSha256": payload["rubricSha256"],
+            "summary": "Narrow the candidate title to the source claim.",
+            "operations": [
+                {
+                    "id": f"{work_item['workItemId']}:operation:title",
+                    "kind": "retitle",
+                    "affectedCandidateIds": work_item["candidateIds"],
+                    "findingIds": work_item["findingIds"],
+                    "opportunities": [],
+                    "replacementCandidates": [candidate],
+                    "reason": "The replacement title matches the exact source explanation.",
+                }
+            ],
+        }
+    )
+
+
 def _v6_inputs() -> tuple[TopicSelectionDraft, TopicSelectionDraft]:
     inventory_opportunity = TopicOpportunity.model_validate(
         {
@@ -930,6 +1004,56 @@ async def test_v6_rejected_review_shard_cannot_authorize_repair(
     assert assessment is not None
     assert assessment.portfolioReview is None
     assert any("no partial shard finding" in reason for reason in assessment.reasons)
+
+
+async def test_v7_assembles_every_repair_component_before_one_selection_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[
+            _bounded_source_review_with_title_finding,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+        ],
+        patches=[_bounded_title_repair],
+        colds=[cold(), cold()],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V7,
+        workflow_type=TopicSelectionWorkflowV7,
+    )
+
+    result = await TopicSelectionWorkflowV7().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == [
+        "inventory",
+        "author",
+        "cold",
+        "source",
+        "source",
+        "source",
+        "patch",
+        "cold",
+        "source",
+        "source",
+        "source",
+    ]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-repair-plan/1") == 1
+    assert saved_formats.count("topic-repair-shard/1") == 1
+    assert saved_formats.count("topic-repair-manifest/1") == 1
+    assert saved_formats.count("topic-selection/2") == 2
+    repair_contexts = [
+        context for context in run.prepared_contexts if context.repair_work_item_id is not None
+    ]
+    assert [context.repair_work_item_id for context in repair_contexts] == ["repair-component-0001"]
+    assert run.patch.calls[0].allowed_browse_parent_ids == ("section-0001",)
 
 
 async def test_build_index_records_the_exact_verified_cache_hit(
