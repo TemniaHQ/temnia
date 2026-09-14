@@ -47,7 +47,11 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--max-exposure-micros", required=True, type=int)
     run.add_argument("--max-dispatches", required=True, type=int)
     run.add_argument("--max-output-tokens", required=True, type=int)
-    run.add_argument("--suite", choices=("topic-selection-v3",), default="topic-selection-v3")
+    run.add_argument(
+        "--suite",
+        choices=("topic-selection-v3", "topic-selection-v4"),
+        default="topic-selection-v3",
+    )
     run.add_argument(
         "--stage",
         action="append",

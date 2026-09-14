@@ -21,15 +21,25 @@ with workflow.unsafe.imports_passed_through():
         TopicSelectionColdReview,
         TopicSelectionDraft,
     )
-    from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3, EditorialPolicy
+    from temnia_pipeline.harness.editorial_policy import (
+        TOPIC_SELECTION_POLICY_V3,
+        TOPIC_SELECTION_POLICY_V4,
+        EditorialPolicy,
+    )
     from temnia_pipeline.harness.models import (
         TOPIC_SELECTION_AGENTS,
+        TOPIC_SELECTION_V4_AGENTS,
         HarnessModelDeps,
         topic_opportunity_inventory_v3,
+        topic_opportunity_inventory_v4,
         topic_selection_author_v3,
+        topic_selection_author_v4,
         topic_selection_cold_v3,
+        topic_selection_cold_v4,
         topic_selection_patch_v3,
+        topic_selection_patch_v4,
         topic_selection_source_v4,
+        topic_selection_source_v5,
     )
     from temnia_pipeline.harness.queues import control_task_queue
     from temnia_pipeline.harness.runtime_types import (
@@ -51,7 +61,12 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.topic_runtime import TopicCompilation
     from temnia_pipeline.harness.topic_selection import selection_cold_key
     from temnia_pipeline.harness.topic_selection_runtime import (
+        OpportunityInventoryManifestRequest,
+        OpportunityInventoryManifestResult,
+        OpportunityInventoryPlanResult,
         OpportunityInventorySaveRequest,
+        OpportunityInventoryShardSaveRequest,
+        OpportunityInventoryShardSaveResult,
         SelectionAssessmentResult,
         SelectionCallPlan,
         SelectionContext,
@@ -74,6 +89,14 @@ Seat = Literal["author", "verifier"]
 
 class SeatRoutesExhausted(RuntimeError):  # noqa: N818 - the name crosses Temporal as a type
     """Every qualified route for one seat failed transiently, each after backoff."""
+
+
+class InvalidSeatOutput(RuntimeError):  # noqa: N818 - workflow-local typed failure state
+    """A settled response was invalid after a route fallback; retain the route position."""
+
+    def __init__(self, error: Exception, context: SelectionContext) -> None:
+        super().__init__(failure_sentence(error))
+        self.context = context
 
 
 def no_eligible_route(error: Exception) -> bool:
@@ -127,6 +150,8 @@ def execution_limit(error: Exception) -> bool:
 
 def invalid_model_output(error: Exception) -> bool:
     """Recognize a retained paid response that failed typed normalization across Temporal."""
+    if isinstance(error, InvalidSeatOutput):
+        return True
     cause = error.cause if isinstance(error, ActivityError) else error
     name = cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
     return name == "UnexpectedModelBehavior"
@@ -149,6 +174,7 @@ MAX_SEAT_ROUTES = 4
 # Cold reviews are independent per candidate; this bounds the workflow's fan-out, and the
 # worker's per-route gate bounds what actually reaches the provider.
 COLD_REVIEW_FAN_OUT = 3
+INVENTORY_FAN_OUT = 3
 PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 
 
@@ -233,6 +259,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             context = self.carry_routes(context, settled)
             inventory = result.output
         except Exception as error:
+            if isinstance(error, InvalidSeatOutput):
+                context = self.carry_routes(context, error.context)
             if invalid_model_output(error):
                 diagnostics = (
                     (
@@ -291,7 +319,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             }
         )
 
-    async def run_seat(
+    async def run_seat(  # noqa: C901
         self,
         agent: Any,  # noqa: ANN401
         request: ChapterRunInput,
@@ -335,6 +363,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                         model_settings=settings,
                     )
                 except Exception as error:
+                    if invalid_model_output(error):
+                        raise InvalidSeatOutput(error, context) from error
                     if not transient_provider_failure(error):
                         raise
                     last_failure = failure_sentence(error)
@@ -425,6 +455,14 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 if not isinstance(outcome, Exception):
                     raise outcome
                 if invalid_model_output(outcome):
+                    if isinstance(outcome, InvalidSeatOutput):
+                        context = context.model_copy(
+                            update={
+                                "verifier_index": max(
+                                    context.verifier_index, outcome.context.verifier_index
+                                )
+                            }
+                        )
                     unavailable.append(candidate.id)
                     reasons.append(
                         f"Cold review of {candidate.id} did not match its required schema."
@@ -466,6 +504,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     else None
                 )
             except Exception as error:
+                if isinstance(error, InvalidSeatOutput):
+                    context = self.carry_routes(context, error.context)
                 if invalid_model_output(error):
                     source_dispatched = True
                     reasons.append(
@@ -550,7 +590,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         context = SelectionContext(
             run=self.ref(request),
             evidence=evidence.artifact,
-            program_version=TOPIC_SELECTION_POLICY_V3,
+            program_version=self.policy,
         )
         rubric = await workflow.execute_activity(
             "prepare_topic_selection_rubric",
@@ -570,6 +610,18 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         )
         context = context.model_copy(update={"source_index": source_index.artifact})
         context = await self.prepare_author_context(request, context)
+        if self.policy == TOPIC_SELECTION_POLICY_V4 and context.inventory is None:
+            return await self.finish(
+                request,
+                evidence=evidence.artifact,
+                edit=None,
+                revision=0,
+                message=(
+                    "Bounded opportunity inventory is incomplete; completed section shards and "
+                    "durable source checkpoints are retained. "
+                    + "; ".join(context.inventory_diagnostics)[:1200]
+                ),
+            )
         accepted: SelectionSaveResult | None = None
         while accepted is None:
             try:
@@ -592,6 +644,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                     ),
                 )
             except Exception as error:
+                if isinstance(error, InvalidSeatOutput):
+                    context = self.carry_routes(context, error.context)
                 if execution_limit(error):
                     return await self.finish(
                         request,
@@ -667,6 +721,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 patch_context = self.carry_routes(patch_context, settled)
                 save = SelectionSaveRequest(context=patch_context, patch=result.output)
             except Exception as error:
+                if isinstance(error, InvalidSeatOutput):
+                    patch_context = self.carry_routes(patch_context, error.context)
                 if invalid_model_output(error):
                     stop_reasons.append(
                         "Repair response was incomplete or invalid; the prior assessed selection "
@@ -745,3 +801,132 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             revision=1,
             reasons=(*compiled.refusals, *stop_reasons),
         )
+
+
+@workflow.defn(name="TopicSelectionWorkflowV4")
+class TopicSelectionWorkflowV4(TopicSelectionWorkflow):
+    """Bound source discovery per section, then reuse the reviewed v3 packaging cycle."""
+
+    __pydantic_ai_agents__ = TOPIC_SELECTION_V4_AGENTS
+    policy: EditorialPolicy = TOPIC_SELECTION_POLICY_V4
+    inventory_agent = topic_opportunity_inventory_v4
+    author_agent = topic_selection_author_v4
+    cold_agent = topic_selection_cold_v4
+    source_agent = topic_selection_source_v5
+    patch_agent = topic_selection_patch_v4
+
+    @workflow.run
+    async def run(self, request: ChapterRunInput) -> ChapterRunOutput:
+        """Keep a distinct Temporal type and agent activity set for v4 history."""
+        return await super().run(request)
+
+    async def prepare_author_context(
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+    ) -> SelectionContext:
+        """Inventory every planned section with bounded fan-out before author packaging."""
+        prepared = await workflow.execute_activity(
+            "prepare_topic_inventory_plan_v4",
+            context,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=OpportunityInventoryPlanResult,
+        )
+        context = context.model_copy(update={"inventory_plan": prepared.artifact})
+        fan_out = asyncio.Semaphore(INVENTORY_FAN_OUT)
+
+        async def inventory_one(
+            section_id: str,
+        ) -> tuple[
+            OpportunityInventoryShardSaveResult | None,
+            SelectionContext,
+            str | None,
+        ]:
+            async with fan_out:
+                shard_context = context.model_copy(update={"inventory_section_id": section_id})
+                try:
+                    result, plan, settled = await self.run_seat(
+                        self.inventory_agent, request, shard_context, "verifier"
+                    )
+                    shard_context = self.carry_routes(shard_context, settled)
+                    saved = await workflow.execute_activity(
+                        "save_topic_inventory_shard_v4",
+                        OpportunityInventoryShardSaveRequest(
+                            context=shard_context,
+                            inventory=result.output,
+                            inspection=(
+                                source_inspection_trace(
+                                    result.all_messages(),
+                                    index_sha256=shard_context.source_index.sha256,
+                                    role="inventory",
+                                    stage=plan.stage,
+                                )
+                                if shard_context.source_index is not None
+                                else None
+                            ),
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=RETRY,
+                        result_type=OpportunityInventoryShardSaveResult,
+                    )
+                except Exception as error:
+                    if isinstance(error, InvalidSeatOutput):
+                        shard_context = self.carry_routes(shard_context, error.context)
+                    if invalid_model_output(error):
+                        saved = await workflow.execute_activity(
+                            "save_topic_inventory_shard_v4",
+                            OpportunityInventoryShardSaveRequest(
+                                context=shard_context,
+                                schema_error=(
+                                    f"Inventory response for {section_id} did not match the "
+                                    "selection schema."
+                                ),
+                            ),
+                            start_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RETRY,
+                            result_type=OpportunityInventoryShardSaveResult,
+                        )
+                        return saved, shard_context, "; ".join(saved.diagnostics)
+                    if execution_limit(error):
+                        return (
+                            None,
+                            shard_context,
+                            f"Execution capacity ended while inventorying {section_id}.",
+                        )
+                    raise
+                if saved.artifact is None:
+                    return saved, shard_context, "; ".join(saved.diagnostics)
+                return saved, shard_context, None
+
+        outcomes = await asyncio.gather(
+            *(inventory_one(section.sectionId) for section in prepared.plan.sections)
+        )
+        settled_verifier = max(
+            (settled.verifier_index for _, settled, _ in outcomes),
+            default=context.verifier_index,
+        )
+        diagnostics = tuple(dict.fromkeys(reason for _, _, reason in outcomes if reason))
+        artifacts = tuple(
+            saved.artifact
+            for saved, _, _ in outcomes
+            if saved is not None and saved.artifact is not None
+        )
+        base = context.model_copy(
+            update={
+                "inventory_attempted": True,
+                "inventory_diagnostics": diagnostics,
+                "inventory_section_id": None,
+                "verifier_index": settled_verifier,
+            }
+        )
+        if len(artifacts) != len(prepared.plan.sections):
+            return base
+        assembled = await workflow.execute_activity(
+            "assemble_topic_inventory_v4",
+            OpportunityInventoryManifestRequest(context=base, shard_artifacts=artifacts),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RETRY,
+            result_type=OpportunityInventoryManifestResult,
+        )
+        return base.model_copy(update={"inventory": assembled.artifact})

@@ -664,13 +664,28 @@ def source_inspection_trace(
 
 
 def validate_source_inspection(  # noqa: PLR0912, PLR0915
-    index: TopicSourceIndex, trace: SourceInspectionTrace
+    index: TopicSourceIndex,
+    trace: SourceInspectionTrace,
+    *,
+    browse_parent_ids: Sequence[str] | None = None,
 ) -> None:
     """Require deterministic hierarchy traversal, hybrid lookup and exact reads."""
     browse_calls = [call for call in trace.calls if call.tool_name == "browse_source"]
     node_by_id = {node.id: node for node in index.nodes}
     root = node_by_id[index.rootNodeId]
-    parents = [root, *(node_by_id[identifier] for identifier in _child_ids(root))]
+    if browse_parent_ids is None:
+        parents = [root, *(node_by_id[identifier] for identifier in _child_ids(root))]
+    else:
+        try:
+            parents = [node_by_id[identifier] for identifier in browse_parent_ids]
+        except KeyError as error:
+            raise HarnessValidationError(
+                "source inspection browse scope names an unknown hierarchy node"
+            ) from error
+        if not parents or any(_node_kind(parent) == "region" for parent in parents):
+            raise HarnessValidationError(
+                "source inspection browse scope requires a nonempty parent list"
+            )
     parent_offset = 0
     cursor = 0
     for call in browse_calls:

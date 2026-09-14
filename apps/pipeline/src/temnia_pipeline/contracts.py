@@ -575,6 +575,10 @@ class Disposition(StrEnum):
     needs_evidence = "needs_evidence"
 
 
+class SectionId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class Status4(StrEnum):
     represented = "represented"
     missing_candidate = "missing_candidate"
@@ -1274,6 +1278,17 @@ class TopicExport(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class TopicInventorySection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    nextSectionId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    ownershipSpan: TopicSentenceSpan
+    previousSectionId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class TopicMediaEvidencePage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1304,6 +1319,15 @@ class TopicOpportunity(BaseModel):
     requiredContextSpans: list[TopicSentenceSpan]
     valueEvidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
     viewerPurpose: Annotated[str, Field(min_length=1)]
+
+
+class TopicOpportunityInventoryPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-opportunity-inventory-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    sections: Annotated[list[TopicInventorySection], Field(min_length=1)]
 
 
 class TopicOpportunityJudgment(BaseModel):
@@ -1569,6 +1593,30 @@ class TopicEditorialPatchInput(BaseModel):
     scope: Scope
     sourceId: UUID
     version: Literal[1]
+
+
+class TopicOpportunityInventoryManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-opportunity-inventory-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventory: TopicSelectionDraft
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    sectionIds: Annotated[list[SectionId], Field(min_length=1)]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+
+
+class TopicOpportunityInventoryShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-opportunity-inventory-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventory: TopicSelectionDraft
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    section: TopicInventorySection
 
 
 class TopicPortfolioReview(BaseModel):

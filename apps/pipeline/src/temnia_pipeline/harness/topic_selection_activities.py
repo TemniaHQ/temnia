@@ -20,6 +20,9 @@ from temnia_pipeline.contracts import (
     TopicCompiledVideo,
     TopicEditorialRubric,
     TopicEditSpec,
+    TopicOpportunityInventoryManifest,
+    TopicOpportunityInventoryPlan,
+    TopicOpportunityInventoryShard,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
     TopicSelectionDraft,
@@ -30,7 +33,10 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import artifacts, ledger, runs
 from temnia_pipeline.harness.cassettes import MODEL_RESPONSE_ADAPTER
 from temnia_pipeline.harness.editorial_evidence import validate_reviewer_inspection
-from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
+from temnia_pipeline.harness.editorial_policy import (
+    TOPIC_SELECTION_POLICY_V3,
+    TOPIC_SELECTION_POLICY_V4,
+)
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunSnapshot
 from temnia_pipeline.harness.source_index import (
@@ -54,11 +60,18 @@ from temnia_pipeline.harness.topic_compiler import (
     validate_topic_edit,
 )
 from temnia_pipeline.harness.topic_editorial import editorial_routes
+from temnia_pipeline.harness.topic_inventory import (
+    admit_inventory_shard,
+    assemble_inventory_manifest,
+    build_inventory_plan,
+    inventory_section,
+)
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
+    SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
@@ -66,6 +79,7 @@ from temnia_pipeline.harness.topic_selection import (
     content_hash,
     make_rubric,
     opportunity_inventory_prompt,
+    opportunity_inventory_shard_prompt,
     selection_candidates_for_render,
     selection_cold_key,
     selection_cold_prompt,
@@ -78,7 +92,13 @@ from temnia_pipeline.harness.topic_selection import (
     validate_selection_against_inventory,
 )
 from temnia_pipeline.harness.topic_selection_runtime import (
+    OpportunityInventoryManifestRequest,
+    OpportunityInventoryManifestResult,
+    OpportunityInventoryPlanResult,
     OpportunityInventorySaveRequest,
+    OpportunityInventoryShardRejection,
+    OpportunityInventoryShardSaveRequest,
+    OpportunityInventoryShardSaveResult,
     SelectionAssessmentResult,
     SelectionCallPlan,
     SelectionContext,
@@ -201,7 +221,7 @@ class TopicSelectionActivities:
         )
         if (
             run.editorial_policy != context.program_version
-            or context.program_version != TOPIC_SELECTION_POLICY_V3
+            or context.program_version not in {TOPIC_SELECTION_POLICY_V3, TOPIC_SELECTION_POLICY_V4}
             or run.evidence_artifact_id != context.evidence.id
         ):
             raise HarnessValidationError(
@@ -277,16 +297,80 @@ class TopicSelectionActivities:
             return None
         if context.rubric is None:
             raise HarnessValidationError("opportunity inventory requires a rubric identity")
+        _, evidence, _, _ = await self.load(context.model_copy(update={"inventory": None}))
+        if context.program_version == TOPIC_SELECTION_POLICY_V3:
+            await self.require_record(
+                context,
+                context.inventory,
+                format_name="topic-opportunity-inventory/1",
+                dependencies=(context.evidence, context.rubric),
+            )
+            result = TopicSelectionDraft.model_validate(await self.read(context, context.inventory))
+            validate_opportunity_inventory(evidence, result)
+            return result
+        if context.source_index is None or context.inventory_plan is None:
+            raise HarnessValidationError("v4 opportunity inventory requires its index and plan")
+        plan = await self.inventory_plan(context)
         await self.require_record(
             context,
             context.inventory,
-            format_name="topic-opportunity-inventory/1",
-            dependencies=(context.evidence, context.rubric),
+            format_name="topic-opportunity-inventory-manifest/1",
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+            ),
         )
-        _, evidence, _, _ = await self.load(context.model_copy(update={"inventory": None}))
-        result = TopicSelectionDraft.model_validate(await self.read(context, context.inventory))
-        validate_opportunity_inventory(evidence, result)
-        return result
+        manifest = TopicOpportunityInventoryManifest.model_validate(
+            await self.read(context, context.inventory)
+        )
+        shards: list[TopicOpportunityInventoryShard] = []
+        for reference in manifest.shardArtifacts:
+            await self.require_record(
+                context,
+                reference,
+                format_name="topic-opportunity-inventory-shard/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.inventory_plan,
+                ),
+            )
+            shards.append(
+                TopicOpportunityInventoryShard.model_validate(await self.read(context, reference))
+            )
+        expected = assemble_inventory_manifest(
+            evidence,
+            plan,
+            index_sha256=context.source_index.sha256,
+            plan_sha256=context.inventory_plan.sha256,
+            shards=shards,
+            shard_artifacts=manifest.shardArtifacts,
+        )
+        if expected != manifest:
+            raise HarnessValidationError("v4 opportunity inventory differs from its exact shards")
+        return manifest.inventory
+
+    async def inventory_plan(self, context: SelectionContext) -> TopicOpportunityInventoryPlan:
+        """Load and reproduce the exact deterministic v4 section work plan."""
+        if context.inventory_plan is None or context.source_index is None:
+            raise HarnessValidationError("bounded inventory requires an index and plan identity")
+        await self.require_record(
+            context,
+            context.inventory_plan,
+            format_name="topic-opportunity-inventory-plan/1",
+            dependencies=(context.evidence, context.source_index),
+        )
+        plan = TopicOpportunityInventoryPlan.model_validate(
+            await self.read(context, context.inventory_plan)
+        )
+        index = await self.source_index(context.model_copy(update={"inventory_plan": None}))
+        expected = build_inventory_plan(index, index_sha256=context.source_index.sha256)
+        if plan != expected or context.inventory_plan.sha256 != content_hash(plan):
+            raise HarnessValidationError("inventory plan differs from its exact source index")
+        return plan
 
     async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
         """Load and prove the exact immutable index derived from accepted evidence."""
@@ -343,6 +427,33 @@ class TopicSelectionActivities:
             use_record=use_ref,
             reused=result.reused,
         )
+
+    @activity.defn(name="prepare_topic_inventory_plan_v4")
+    async def prepare_inventory_plan(
+        self, context: SelectionContext
+    ) -> OpportunityInventoryPlanResult:
+        """Publish the complete ordered section roster before any shard is dispatched."""
+        if context.program_version != TOPIC_SELECTION_POLICY_V4:
+            raise HarnessValidationError("bounded inventory planning requires standalone-topics/4")
+        if context.source_index is None or context.inventory_plan is not None:
+            raise HarnessValidationError(
+                "bounded inventory planning requires one fresh source index"
+            )
+        await self.load(context)
+        index = await self.source_index(context)
+        plan = build_inventory_plan(index, index_sha256=context.source_index.sha256)
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=plan.format,
+            content=plan,
+            dependencies=(context.evidence, context.source_index),
+            metadata={
+                "programVersion": context.program_version,
+                "sectionCount": len(plan.sections),
+            },
+        )
+        return OpportunityInventoryPlanResult(artifact=reference, plan=plan)
 
     @activity.defn(name="load_topic_source_checkpoint")
     async def load_source_checkpoint(
@@ -555,7 +666,31 @@ class TopicSelectionActivities:
             dependencies.extend((context.selection, context.assessment))
             if context.rejection is not None:
                 dependencies.append(context.rejection)
-        elif context.inventory is None and not context.inventory_attempted:
+        elif context.program_version == TOPIC_SELECTION_POLICY_V4 and context.inventory is None:
+            if context.inventory_section_id is None or context.inventory_plan is None:
+                raise HarnessValidationError(
+                    "v4 inventory calls require one planned section identity"
+                )
+            index = await self.source_index(context)
+            plan = await self.inventory_plan(context)
+            section = inventory_section(plan, context.inventory_section_id)
+            if context.source_index is None:
+                raise HarnessValidationError("bounded inventory requires its exact source index")
+            dependencies.extend((context.source_index, context.inventory_plan))
+            source_tool_role = "inventory"
+            prompt = opportunity_inventory_shard_prompt(
+                source_index_map(index, index_sha256=context.source_index.sha256),
+                rubric,
+                section,
+            )
+            stage = f"verify:selection:inventory:{section.sectionId}"
+            version = SELECTION_INVENTORY_SHARD_PROMPT
+            synthetic = f"topic_opportunity_inventory_{section.sectionId}"
+        elif (
+            context.program_version == TOPIC_SELECTION_POLICY_V3
+            and context.inventory is None
+            and not context.inventory_attempted
+        ):
             index = await self.source_index(context)
             if context.source_index is None:
                 raise HarnessValidationError("inventory requires its exact source index")
@@ -632,6 +767,7 @@ class TopicSelectionActivities:
             schema_version={
                 SELECTION_AUTHOR_PROMPT_V3: "topic-selection-draft/2",
                 SELECTION_INVENTORY_PROMPT: "topic-selection-draft/2",
+                SELECTION_INVENTORY_SHARD_PROMPT: "topic-selection-draft/2",
                 SELECTION_SOURCE_PROMPT_V3: "topic-selection-portfolio/4",
             }.get(version, version),
             author=author,
@@ -750,7 +886,15 @@ class TopicSelectionActivities:
         index = await self.source_index(context)
         if inspection.index_sha256 != context.source_index.sha256:
             raise HarnessValidationError("source inspection names a different index")
-        validate_source_inspection(index, inspection)
+        validate_source_inspection(
+            index,
+            inspection,
+            browse_parent_ids=(context.inventory_section_id,)
+            if plan.source_tool_role == "inventory"
+            and context.program_version == TOPIC_SELECTION_POLICY_V4
+            and context.inventory_section_id is not None
+            else None,
+        )
         validate_source_read_ids(index, inspection, required_sentence_ids)
         if plan.source_tool_role == "source_reviewer":
             _, evidence, _, selection = await self.load(context)
@@ -868,6 +1012,175 @@ class TopicSelectionActivities:
             },
         )
         return SelectionSaveResult(selection=reference, draft=request.inventory)
+
+    @activity.defn(name="save_topic_inventory_shard_v4")
+    async def save_inventory_shard(
+        self, request: OpportunityInventoryShardSaveRequest
+    ) -> OpportunityInventoryShardSaveResult:
+        """Admit and retain one section-owned inventory answer without claiming completeness."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V4
+            or rubric is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.inventory_plan is None
+            or context.inventory_section_id is None
+            or context.inventory is not None
+            or selection is not None
+        ):
+            raise HarnessValidationError("inventory shard saving requires one fresh v4 work item")
+        plan = await self.inventory_plan(context)
+        call_plan = await self.prepare(context)
+        if request.schema_error is None and request.inventory is None:
+            raise HarnessValidationError("inventory shard requires a typed output or diagnostic")
+        response = await self.response_ref(context, call_plan, request.inventory)
+        if request.schema_error is not None or request.inventory is None:
+            diagnostics = (request.schema_error or "Inventory shard is unavailable.",)
+            rejection = OpportunityInventoryShardRejection(
+                response=response,
+                section_id=context.inventory_section_id,
+                inventory=request.inventory,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=(*call_plan.input_artifacts, response),
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.inventory_plan.sha256,
+                    "sectionId": context.inventory_section_id,
+                },
+            )
+            return OpportunityInventoryShardSaveResult(
+                rejection=rejection_ref, diagnostics=diagnostics
+            )
+        inspection = None
+        try:
+            inspection = await self.inspection_ref(
+                context,
+                call_plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, request.inventory),
+            )
+            shard = admit_inventory_shard(
+                evidence,
+                plan,
+                plan_sha256=context.inventory_plan.sha256,
+                section_id=context.inventory_section_id,
+                inventory=request.inventory,
+            )
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            diagnostics = (str(error),)
+            dependencies = (*call_plan.input_artifacts, response)
+            if inspection is not None:
+                dependencies = (*dependencies, inspection)
+            rejection = OpportunityInventoryShardRejection(
+                response=response,
+                section_id=context.inventory_section_id,
+                inventory=request.inventory,
+                diagnostics=diagnostics,
+            )
+            rejection_ref = await self.topics.publish(
+                self.common(context),
+                kind="checks",
+                format_name=rejection.format,
+                content=rejection,
+                dependencies=dependencies,
+                metadata={
+                    "programVersion": context.program_version,
+                    "planSha256": context.inventory_plan.sha256,
+                    "sectionId": context.inventory_section_id,
+                },
+            )
+            return OpportunityInventoryShardSaveResult(
+                rejection=rejection_ref, diagnostics=diagnostics
+            )
+        dependencies = (*call_plan.input_artifacts, response)
+        if inspection is not None:
+            dependencies = (*dependencies, inspection)
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=shard.format,
+            content=shard,
+            dependencies=dependencies,
+            metadata={
+                "programVersion": context.program_version,
+                "generatorFamily": call_plan.verifier.family,
+                "planSha256": context.inventory_plan.sha256,
+                "sectionId": context.inventory_section_id,
+            },
+        )
+        return OpportunityInventoryShardSaveResult(artifact=reference, shard=shard)
+
+    @activity.defn(name="assemble_topic_inventory_v4")
+    async def assemble_inventory(
+        self, request: OpportunityInventoryManifestRequest
+    ) -> OpportunityInventoryManifestResult:
+        """Publish a complete inventory only when every exact planned shard is present."""
+        context = request.context
+        _, evidence, rubric, selection = await self.load(context)
+        if (
+            context.program_version != TOPIC_SELECTION_POLICY_V4
+            or rubric is None
+            or context.rubric is None
+            or context.source_index is None
+            or context.inventory_plan is None
+            or context.inventory_section_id is not None
+            or context.inventory is not None
+            or selection is not None
+        ):
+            raise HarnessValidationError("inventory assembly requires the fresh v4 plan state")
+        plan = await self.inventory_plan(context)
+        shards: list[TopicOpportunityInventoryShard] = []
+        for reference in request.shard_artifacts:
+            await self.require_record(
+                context,
+                reference,
+                format_name="topic-opportunity-inventory-shard/1",
+                dependencies=(
+                    context.evidence,
+                    context.rubric,
+                    context.source_index,
+                    context.inventory_plan,
+                ),
+            )
+            shards.append(
+                TopicOpportunityInventoryShard.model_validate(await self.read(context, reference))
+            )
+        manifest = assemble_inventory_manifest(
+            evidence,
+            plan,
+            index_sha256=context.source_index.sha256,
+            plan_sha256=context.inventory_plan.sha256,
+            shards=shards,
+            shard_artifacts=request.shard_artifacts,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="proposal",
+            format_name=manifest.format,
+            content=manifest,
+            dependencies=(
+                context.evidence,
+                context.rubric,
+                context.source_index,
+                context.inventory_plan,
+                *request.shard_artifacts,
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "planSha256": context.inventory_plan.sha256,
+                "sectionCount": len(manifest.sectionIds),
+            },
+        )
+        return OpportunityInventoryManifestResult(artifact=reference, manifest=manifest)
 
     @activity.defn(name="save_topic_selection")
     async def save(self, request: SelectionSaveRequest) -> SelectionSaveResult:
@@ -1168,9 +1481,12 @@ class TopicSelectionActivities:
         return (
             self.rubric,
             self.build_index,
+            self.prepare_inventory_plan,
             self.load_source_checkpoint,
             self.prepare,
             self.save_inventory,
+            self.save_inventory_shard,
+            self.assemble_inventory,
             self.save,
             self.save_assessment,
             self.stop,

@@ -43,10 +43,14 @@ from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noq
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
+    TOPIC_SELECTION_V4_SCHEMAS,
+    TOPIC_SELECTION_V4_STAGES,
     topic_selection_qualification_prompts,
+    topic_selection_v4_qualification_prompts,
     topic_source_progress_processor,
     topic_source_qualification_tools,
     validate_topic_selection_qualification_output,
+    validate_topic_selection_v4_qualification_output,
 )
 from temnia_pipeline.harness.routes import (
     UNPROVEN_ROUTE_PREFIX,
@@ -69,17 +73,20 @@ SHA256_PATTERN = r"^[a-f0-9]{64}$"
 _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
-QualificationSuite = Literal["topic-selection-v3"]
+QualificationSuite = Literal["topic-selection-v3", "topic-selection-v4"]
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
-    _ = suite
-    return TOPIC_SELECTION_V3_STAGES
+    return TOPIC_SELECTION_V4_STAGES if suite == "topic-selection-v4" else TOPIC_SELECTION_V3_STAGES
 
 
 def _schema_version(stage: str, limits: QualificationLimits) -> str:
-    _ = limits
-    return TOPIC_SELECTION_V3_SCHEMAS[stage]
+    schemas = (
+        TOPIC_SELECTION_V4_SCHEMAS
+        if limits.suite == "topic-selection-v4"
+        else TOPIC_SELECTION_V3_SCHEMAS
+    )
+    return schemas[stage]
 
 
 _RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
@@ -742,12 +749,16 @@ def qualification_prompts(
     suite: QualificationSuite = "topic-selection-v3",
 ) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the topic seats."""
-    _ = suite
+    if suite == "topic-selection-v4":
+        return dict(topic_selection_v4_qualification_prompts())
     return dict(topic_selection_qualification_prompts())
 
 
-def _validate_grounding(stage: str, output: object) -> None:
-    validate_topic_selection_qualification_output(stage, output)
+def _validate_grounding(stage: str, output: object, suite: QualificationSuite) -> None:
+    if suite == "topic-selection-v4":
+        validate_topic_selection_v4_qualification_output(stage, output)
+    else:
+        validate_topic_selection_qualification_output(stage, output)
 
 
 def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, Any]:
@@ -1184,7 +1195,7 @@ async def run_qualification(
                             candidate_failed = False
                         else:
                             try:
-                                _validate_grounding(stage, result.output)
+                                _validate_grounding(stage, result.output, limits.suite)
                             except ValueError:
                                 journal.validation(
                                     candidate.id,

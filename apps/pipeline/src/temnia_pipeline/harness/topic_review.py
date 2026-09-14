@@ -214,15 +214,18 @@ class TopicReviewActivities:
             ):
                 raise ReviewRefused("selection portfolio differs from its editorial lineage")
             selections = TopicSelectionActivities(self.owner)
-            if metadata.get("programVersion", "standalone-topics/3") != "standalone-topics/3":
+            program_version = metadata.get("programVersion", "standalone-topics/3")
+            if program_version not in {"standalone-topics/3", "standalone-topics/4"}:
                 raise ReviewRefused("selection portfolio has an unknown programme version")
-            lineage = SelectionContext(
-                run=context.run,
-                evidence=context.evidence,
-                program_version="standalone-topics/3",
-                rubric=rubric,
-                selection=selection,
-                assessment=assessment,
+            lineage = SelectionContext.model_validate(
+                {
+                    "run": context.run,
+                    "evidence": context.evidence,
+                    "program_version": program_version,
+                    "rubric": rubric,
+                    "selection": selection,
+                    "assessment": assessment,
+                }
             )
             await selections.load(lineage)
             await selections.assessment(lineage)

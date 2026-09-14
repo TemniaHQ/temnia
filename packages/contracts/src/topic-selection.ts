@@ -276,6 +276,73 @@ export const TopicSelectionDraftSchema = z
   .meta({ id: "TopicSelectionDraft", title: "TopicSelectionDraft" });
 export type TopicSelectionDraft = z.infer<typeof TopicSelectionDraftSchema>;
 
+/** One deterministic inventory ownership unit derived from a source-index section. */
+export const TopicInventorySectionSchema = z
+  .object({
+    nextSectionId: identifier().nullable(),
+    ordinal: z.int().nonnegative(),
+    ownershipSpan: TopicSentenceSpanSchema,
+    previousSectionId: identifier().nullable(),
+    sectionId: identifier(),
+  })
+  .strict()
+  .meta({ id: "TopicInventorySection", title: "TopicInventorySection" });
+export type TopicInventorySection = z.infer<typeof TopicInventorySectionSchema>;
+
+/** Complete ordered work plan for bounded independent opportunity discovery. */
+export const TopicOpportunityInventoryPlanSchema = z
+  .object({
+    format: z.literal("topic-opportunity-inventory-plan/1"),
+    indexSha256: sha256(),
+    sections: z.array(TopicInventorySectionSchema).min(1),
+  })
+  .strict()
+  .meta({
+    id: "TopicOpportunityInventoryPlan",
+    title: "TopicOpportunityInventoryPlan",
+  });
+export type TopicOpportunityInventoryPlan = z.infer<
+  typeof TopicOpportunityInventoryPlanSchema
+>;
+
+/** One admitted model answer whose opportunity anchors belong to one section. */
+export const TopicOpportunityInventoryShardSchema = z
+  .object({
+    format: z.literal("topic-opportunity-inventory-shard/1"),
+    indexSha256: sha256(),
+    inventory: TopicSelectionDraftSchema,
+    planSha256: sha256(),
+    section: TopicInventorySectionSchema,
+  })
+  .strict()
+  .meta({
+    id: "TopicOpportunityInventoryShard",
+    title: "TopicOpportunityInventoryShard",
+  });
+export type TopicOpportunityInventoryShard = z.infer<
+  typeof TopicOpportunityInventoryShardSchema
+>;
+
+/** Deterministic whole-source inventory assembled only from a complete shard set. */
+export const TopicOpportunityInventoryManifestSchema = z
+  .object({
+    complete: z.literal(true),
+    format: z.literal("topic-opportunity-inventory-manifest/1"),
+    indexSha256: sha256(),
+    inventory: TopicSelectionDraftSchema,
+    planSha256: sha256(),
+    sectionIds: z.array(identifier()).min(1),
+    shardArtifacts: z.array(HarnessArtifactRefSchema).min(1),
+  })
+  .strict()
+  .meta({
+    id: "TopicOpportunityInventoryManifest",
+    title: "TopicOpportunityInventoryManifest",
+  });
+export type TopicOpportunityInventoryManifest = z.infer<
+  typeof TopicOpportunityInventoryManifestSchema
+>;
+
 export const TopicValueReviewSchema = z
   .object({
     deliveredValue: TopicCriterionSchema,

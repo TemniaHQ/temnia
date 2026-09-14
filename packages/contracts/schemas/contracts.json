@@ -2686,6 +2686,50 @@
       "additionalProperties": false,
       "title": "TopicExport"
     },
+    "TopicInventorySection": {
+      "$id": "#/$defs/TopicInventorySection",
+      "type": "object",
+      "properties": {
+        "nextSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ownershipSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "previousSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "nextSectionId",
+        "ordinal",
+        "ownershipSpan",
+        "previousSectionId",
+        "sectionId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicInventorySection"
+    },
     "TopicMediaEvidenceEvent": {
       "$id": "#/$defs/TopicMediaEvidenceEvent",
       "type": "object",
@@ -2979,6 +3023,119 @@
       ],
       "additionalProperties": false,
       "title": "TopicOpportunity"
+    },
+    "TopicOpportunityInventoryManifest": {
+      "$id": "#/$defs/TopicOpportunityInventoryManifest",
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean",
+          "const": true
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-opportunity-inventory-manifest/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventory": {
+          "$ref": "#/$defs/TopicSelectionDraft"
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sectionIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "shardArtifacts": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarnessArtifactRef"
+          }
+        }
+      },
+      "required": [
+        "complete",
+        "format",
+        "indexSha256",
+        "inventory",
+        "planSha256",
+        "sectionIds",
+        "shardArtifacts"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunityInventoryManifest"
+    },
+    "TopicOpportunityInventoryPlan": {
+      "$id": "#/$defs/TopicOpportunityInventoryPlan",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "topic-opportunity-inventory-plan/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicInventorySection"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "indexSha256",
+        "sections"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunityInventoryPlan"
+    },
+    "TopicOpportunityInventoryShard": {
+      "$id": "#/$defs/TopicOpportunityInventoryShard",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "topic-opportunity-inventory-shard/1"
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventory": {
+          "$ref": "#/$defs/TopicSelectionDraft"
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "section": {
+          "$ref": "#/$defs/TopicInventorySection"
+        }
+      },
+      "required": [
+        "format",
+        "indexSha256",
+        "inventory",
+        "planSha256",
+        "section"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunityInventoryShard"
     },
     "TopicOpportunityJudgment": {
       "$id": "#/$defs/TopicOpportunityJudgment",

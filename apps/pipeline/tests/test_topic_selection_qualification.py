@@ -14,6 +14,7 @@ from qualification_fixtures import (
     API_KEY,
     _candidate_file,
     _outputs_v3,
+    _outputs_v4,
     _paths,
     _qualified,
     _request_transport,
@@ -21,18 +22,68 @@ from qualification_fixtures import (
 )
 from temnia_pipeline.harness.qualification import (
     QualificationLimits,
+    qualification_prompts,
     run_qualification,
 )
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
+    TOPIC_SELECTION_V4_SCHEMAS,
+    TOPIC_SELECTION_V4_STAGES,
 )
 from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
+    SELECTION_INVENTORY_SHARD_PROMPT,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_v4_qualification_binds_the_section_shard_request() -> None:
+    prompts = qualification_prompts("topic-selection-v4")
+
+    assert tuple(prompts) == TOPIC_SELECTION_V4_STAGES
+    assert set(TOPIC_SELECTION_V4_SCHEMAS) == set(TOPIC_SELECTION_V4_STAGES)
+    prompt, output_type, version = prompts["topic_inventory_shard"]
+    assert version == SELECTION_INVENTORY_SHARD_PROMPT
+    assert output_type.__name__ == "TopicSelectionDraft"
+    assert '"sectionId":"section-0001"' in prompt
+    assert "Browse targetSection.sectionId" in prompt
+    QualificationLimits(
+        suite="topic-selection-v4",
+        stages=("topic_inventory_shard",),
+        max_exposure_micros=100_000,
+        max_dispatches=1,
+        max_output_tokens=256,
+    )
+
+
+async def test_v4_qualification_runs_the_exact_five_stage_suite(tmp_path: Path) -> None:
+    request_transport, requests = _request_transport(_outputs_v4())
+    lookup_transport, _ = _three_candidate_lookup_transport(stages_per_candidate=5)
+    paths = _paths(tmp_path)
+
+    report = await run_qualification(
+        candidate_path=_candidate_file(tmp_path, count=1),
+        api_key=API_KEY,
+        journal_path=paths["journal_path"],
+        receipts_path=paths["receipts_path"],
+        report_path=paths["report_path"],
+        limits=QualificationLimits(
+            suite="topic-selection-v4",
+            max_exposure_micros=100_000,
+            max_dispatches=5,
+            max_output_tokens=256,
+            lookup_wait_seconds=0,
+        ),
+        request_transport=request_transport,
+        lookup_transport=lookup_transport,
+    )
+
+    assert report["passed"] is True
+    assert len(requests) == 5
+    assert [call["stage"] for call in report["calls"]] == list(TOPIC_SELECTION_V4_STAGES)
 
 
 async def test_v3_qualification_runs_all_five_exact_contracts(tmp_path: Path) -> None:

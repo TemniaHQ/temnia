@@ -43,22 +43,43 @@ class FixtureEncoder:
 
 def _long_evidence(sentence_count: int = 2_400) -> HarnessEvidence:
     base = _case()
-    sentences = [
-        HarnessEvidenceSentence(
-            id=f"long-sentence-{index:04d}",
-            startMs=index * 6_000,
-            endMs=(index + 1) * 6_000,
-            speakers=["speaker-1"],
-            text=(
-                "A rareterm irrigation finding changes the recommendation."
-                if index == 100
-                else f"Source discussion sentence {index}."
-            ),
-            wordIds=[WordId(root=f"long-word-{index:04d}")],
+    words = [
+        base.words[0].model_copy(
+            update={
+                "endMs": (index + 1) * 6_000 - 100,
+                "id": f"long-word-{index:04d}",
+                "lineageIds": [],
+                "startMs": index * 6_000 + 100,
+                "text": (
+                    "A rareterm irrigation finding changes the recommendation."
+                    if index == 100
+                    else f"Source discussion sentence {index}."
+                ),
+                "wordIndex": index,
+            }
         )
         for index in range(sentence_count)
     ]
-    return base.model_copy(update={"sentences": sentences, "durationMs": sentence_count * 6_000})
+    sentences = [
+        HarnessEvidenceSentence(
+            id=f"long-sentence-{index:04d}",
+            startMs=word.startMs,
+            endMs=word.endMs,
+            speakers=["speaker-1"],
+            text=word.text,
+            wordIds=[WordId(root=f"long-word-{index:04d}")],
+        )
+        for index, word in enumerate(words)
+    ]
+    return base.model_copy(
+        update={
+            "boundaries": [],
+            "durationMs": sentence_count * 6_000,
+            "pauses": [],
+            "sentences": sentences,
+            "words": words,
+        }
+    )
 
 
 def _node_ids(index: TopicSourceIndex, kind: str) -> list[str]:
@@ -123,6 +144,81 @@ def test_hybrid_search_and_exact_read_are_bounded_and_paginated() -> None:
     ]
     assert page.nextSentenceId == "long-sentence-0101"
     assert not page.complete
+
+
+def test_section_inventory_inspection_proves_only_its_owned_hierarchy() -> None:
+    evidence = _long_evidence(600)
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256="a" * 64,
+        encoder=FixtureEncoder(),
+        embedding_revision="b" * 40,
+    )
+    index_sha256 = "c" * 64
+    section_id = _node_ids(index, "section")[0]
+    browse = browse_topic_source(index, index_sha256=index_sha256, parent_id=section_id, limit=16)
+    search = search_topic_source(
+        index,
+        index_sha256=index_sha256,
+        query="irrigation",
+        encoder=FixtureEncoder(),
+        limit=3,
+    )
+    read = read_topic_source(
+        index,
+        index_sha256=index_sha256,
+        first_sentence_id=index.sentences[0].id,
+        last_sentence_id=index.sentences[0].id,
+    )
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "browse_source",
+                    {"parent_id": section_id, "cursor": 0, "limit": 16},
+                    tool_call_id="browse",
+                )
+            ],
+            finish_reason="tool_call",
+        ),
+        ModelRequest(parts=[ToolReturnPart("browse_source", browse, tool_call_id="browse")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "search_source",
+                    {"query": "irrigation", "cursor": 0, "limit": 3},
+                    tool_call_id="search",
+                )
+            ],
+            finish_reason="tool_call",
+        ),
+        ModelRequest(parts=[ToolReturnPart("search_source", search, tool_call_id="search")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "read_source",
+                    {
+                        "first_sentence_id": index.sentences[0].id,
+                        "last_sentence_id": index.sentences[0].id,
+                        "limit": 40,
+                    },
+                    tool_call_id="read",
+                )
+            ],
+            finish_reason="tool_call",
+        ),
+        ModelRequest(parts=[ToolReturnPart("read_source", read, tool_call_id="read")]),
+    ]
+    trace = source_inspection_trace(
+        messages,
+        index_sha256=index_sha256,
+        role="inventory",
+        stage=f"verify:selection:inventory:{section_id}",
+    )
+
+    validate_source_inspection(index, trace, browse_parent_ids=(section_id,))
+    with pytest.raises(HarnessValidationError, match="chronological browse cursor"):
+        validate_source_inspection(index, trace)
 
 
 def test_inspection_trace_proves_complete_map_browse_and_exact_read() -> None:

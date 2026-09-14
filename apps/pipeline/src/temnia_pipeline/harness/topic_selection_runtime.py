@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict
 
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
+    TopicOpportunityInventoryManifest,
+    TopicOpportunityInventoryPlan,
+    TopicOpportunityInventoryShard,
     TopicPortfolioReviewV4,
     TopicSelectionAssessment,
     TopicSelectionColdReview,
@@ -22,7 +25,7 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness.routes import RouteEntry
 from temnia_pipeline.harness.runtime_types import RunRef
 
-SelectionProgramVersion = Literal["standalone-topics/3"]
+SelectionProgramVersion = Literal["standalone-topics/3", "standalone-topics/4"]
 SourceToolRole = Literal["inventory", "author", "source_reviewer"]
 SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
 
@@ -71,6 +74,8 @@ class SelectionContext(BaseModel):
     program_version: SelectionProgramVersion = "standalone-topics/3"
     rubric: HarnessArtifactRef | None = None
     source_index: HarnessArtifactRef | None = None
+    inventory_plan: HarnessArtifactRef | None = None
+    inventory_section_id: str | None = None
     inventory: HarnessArtifactRef | None = None
     inventory_attempted: bool = False
     inventory_diagnostics: tuple[str, ...] = ()
@@ -171,6 +176,63 @@ class OpportunityInventorySaveRequest(BaseModel):
     inventory: TopicSelectionDraft | None = None
     schema_error: str | None = None
     inspection: SourceInspectionTrace | None = None
+
+
+class OpportunityInventoryPlanResult(BaseModel):
+    """Deterministic section work plan and its immutable artifact identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    plan: TopicOpportunityInventoryPlan
+
+
+class OpportunityInventoryShardSaveRequest(BaseModel):
+    """One settled section answer and its exact indexed inspection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    inventory: TopicSelectionDraft | None = None
+    schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
+
+
+class OpportunityInventoryShardSaveResult(BaseModel):
+    """One admitted shard, or a retained diagnostic with no false completeness."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    shard: TopicOpportunityInventoryShard | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+class OpportunityInventoryShardRejection(BaseModel):
+    """Settled section response refused by schema, inspection, or ownership admission."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-opportunity-inventory-shard-rejection/1"] = (
+        "topic-opportunity-inventory-shard-rejection/1"
+    )
+    response: HarnessArtifactRef
+    section_id: str
+    inventory: TopicSelectionDraft | None = None
+    diagnostics: tuple[str, ...]
+
+
+class OpportunityInventoryManifestRequest(BaseModel):
+    """Exact ordered shard references from one immutable inventory plan."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    shard_artifacts: tuple[HarnessArtifactRef, ...]
+
+
+class OpportunityInventoryManifestResult(BaseModel):
+    """Complete assembled inventory and its durable manifest identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef
+    manifest: TopicOpportunityInventoryManifest
 
 
 class SelectionRejection(BaseModel):

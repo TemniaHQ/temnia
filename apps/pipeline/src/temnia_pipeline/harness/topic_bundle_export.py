@@ -135,6 +135,7 @@ async def _read_topic_snapshot(database_url: str, *, scope: Scope, run_id: UUID)
             "standalone-topics/1",
             "standalone-topics/2",
             "standalone-topics/3",
+            "standalone-topics/4",
         }:
             raise ValueError("requested run is not a standalone-topic policy")
         source_id = run["source_id"]

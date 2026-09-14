@@ -20,6 +20,7 @@ from temnia_pipeline.contracts import (
     TopicCandidate,
     TopicCandidateInspectionPage,
     TopicCandidateRegionHit,
+    TopicInventorySection,
     TopicMediaEvidencePage,
     TopicOpportunity,
     TopicPortfolioReviewV4,
@@ -45,6 +46,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_COLD_PROMPT_V3,
     SELECTION_INVENTORY_PROMPT,
+    SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
     SELECTION_SOURCE_PROMPT_V3,
     apply_selection_patch,
@@ -52,6 +54,7 @@ from temnia_pipeline.harness.topic_selection import (
     content_hash,
     make_rubric,
     opportunity_inventory_prompt,
+    opportunity_inventory_shard_prompt,
     selection_cold_prompt,
     selection_patch_prompt_v3,
     selection_prompt,
@@ -80,6 +83,20 @@ TOPIC_SELECTION_V3_SCHEMAS = {
     "topic_source": "topic-selection-portfolio/4",
     "topic_patch": SELECTION_PATCH_PROMPT_V3,
 }
+TOPIC_SELECTION_V4_STAGES = (
+    "topic_inventory_shard",
+    "topic_author",
+    "topic_cold",
+    "topic_source",
+    "topic_patch",
+)
+TOPIC_SELECTION_V4_SCHEMAS = {
+    "topic_inventory_shard": "topic-selection-draft/2",
+    "topic_author": "topic-selection-draft/2",
+    "topic_cold": SELECTION_COLD_PROMPT_V3,
+    "topic_source": "topic-selection-portfolio/4",
+    "topic_patch": SELECTION_PATCH_PROMPT_V3,
+}
 QUALIFICATION_SOURCE_INDEX = {
     "indexSha256": "0" * 64,
     "rootNodeId": "episode",
@@ -101,6 +118,7 @@ def topic_source_progress_processor(
     """Use the production compaction contract in indexed route pre-flight calls."""
     roles: dict[str, Literal["inventory", "author", "source_reviewer"]] = {
         "topic_inventory": "inventory",
+        "topic_inventory_shard": "inventory",
         "topic_author": "author",
         "topic_source": "source_reviewer",
     }
@@ -254,7 +272,7 @@ async def read_media_evidence(
 
 def topic_source_qualification_tools(stage: str) -> list[Any]:
     """Expose the exact role-specific indexed production tools."""
-    if stage in {"topic_inventory", "topic_author"}:
+    if stage in {"topic_inventory", "topic_inventory_shard", "topic_author"}:
         return [browse_source, search_source, read_source]
     if stage == "topic_source":
         return [
@@ -269,6 +287,7 @@ def topic_source_qualification_tools(stage: str) -> list[Any]:
 
 STAGE_SEATS = {
     "topic_inventory": "verify",
+    "topic_inventory_shard": "verify",
     "topic_author": "propose",
     "topic_cold": "verify",
     "topic_source": "verify",
@@ -443,6 +462,14 @@ def topic_selection_qualification_inventory() -> TopicSelectionDraft:
     return TopicSelectionDraft.model_validate(payload)
 
 
+def topic_selection_v4_qualification_inventory() -> TopicSelectionDraft:
+    """Bind the qualification source to the production section ownership convention."""
+    payload = topic_selection_qualification_inventory().model_dump(mode="json")
+    for item in payload["opportunities"]:
+        item["id"] = f"section-0001:{item['id']}"
+    return TopicSelectionDraft.model_validate(payload)
+
+
 def topic_selection_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
     """Use the exact production prompts and native output types of the one program."""
     evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
@@ -452,6 +479,51 @@ def topic_selection_qualification_prompts() -> dict[str, tuple[str, type[BaseMod
             opportunity_inventory_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric),
             TopicSelectionDraft,
             SELECTION_INVENTORY_PROMPT,
+        ),
+        "topic_author": (
+            selection_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric, source_inventory=inventory),
+            TopicSelectionDraft,
+            SELECTION_AUTHOR_PROMPT_V3,
+        ),
+        "topic_cold": (
+            selection_cold_prompt(evidence, record.draft.proposal.candidates[0], record.rubric),
+            TopicSelectionColdReview,
+            SELECTION_COLD_PROMPT_V3,
+        ),
+        "topic_source": (
+            selection_source_prompt(
+                evidence, record.draft, record.rubric, QUALIFICATION_SOURCE_INDEX
+            ),
+            TopicPortfolioReviewV4,
+            SELECTION_SOURCE_PROMPT_V3,
+        ),
+        "topic_patch": (
+            selection_patch_prompt_v3(evidence, record, assessment, content_hash(record)),
+            TopicSelectionPatchV3,
+            SELECTION_PATCH_PROMPT_V3,
+        ),
+    }
+
+
+def topic_selection_v4_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
+    """Render the exact bounded-inventory program request shapes."""
+    evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    inventory = topic_selection_v4_qualification_inventory()
+    section = TopicInventorySection(
+        sectionId="section-0001",
+        ordinal=0,
+        ownershipSpan=TopicSentenceSpan(
+            firstSentenceId=evidence.sentences[0].id,
+            lastSentenceId=evidence.sentences[-1].id,
+        ),
+        previousSectionId=None,
+        nextSectionId=None,
+    )
+    return {
+        "topic_inventory_shard": (
+            opportunity_inventory_shard_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric, section),
+            TopicSelectionDraft,
+            SELECTION_INVENTORY_SHARD_PROMPT,
         ),
         "topic_author": (
             selection_prompt(QUALIFICATION_SOURCE_INDEX, record.rubric, source_inventory=inventory),
@@ -510,6 +582,22 @@ def validate_topic_selection_qualification_output(stage: str, output: object) ->
         raise ValueError("topic qualification cold observation is not source-grounded")
     if stage == "topic_source" and judged.portfolioReview is None:
         raise ValueError("topic qualification source observation is not source-grounded")
+
+
+def validate_topic_selection_v4_qualification_output(stage: str, output: object) -> None:
+    """Ground the bounded shard and preserve the existing judgments for all later stages."""
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    if stage == "topic_inventory_shard" and isinstance(output, TopicSelectionDraft):
+        validate_opportunity_inventory(evidence, output)
+        prefix = "section-0001:"
+        if any(not item.id.startswith(prefix) for item in output.opportunities):
+            raise ValueError("topic qualification shard output lacks its ownership prefix")
+        return
+    if stage == "topic_author" and isinstance(output, TopicSelectionDraft):
+        validate_selection(evidence, output)
+        validate_selection_against_inventory(topic_selection_v4_qualification_inventory(), output)
+        return
+    validate_topic_selection_qualification_output(stage, output)
 
 
 def native_schema_sha256(output_type: type[BaseModel]) -> str:

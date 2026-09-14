@@ -12,7 +12,7 @@ The historical v2 admission design is kept in the
 [decisions document](../design/standalone-topic-decisions-2026-09-12.md) §2.
 
 What remains is an optional pre-flight for auditioning a **new route** before spending a
-full-source run on it. It starts the five production stage shapes (inventory, author,
+full-source run on it. V3 starts the five production stage shapes (inventory, author,
 cold review, source review, patch) against a five-sentence synthetic source and records
 settled cost per model round. Inventory and author declare exactly `browse_source`,
 `search_source` and `read_source`. Source review declares those tools plus exactly
@@ -40,6 +40,14 @@ function calling as qualified. The pre-flight does not prove context capacity, l
 behaviour, deadline fit or editorial quality; Astra passed every earlier pre-flight call and
 failed two full-Karma author calls on the deadline.
 
+`--suite topic-selection-v4` replaces the source-wide inventory shape with the exact
+`topic_inventory_shard` request from `standalone-topics/4`. Its prompt carries one deterministic
+target section, requires that section's complete leaf browse and uses the same search/read tools and
+checkpoint compactor. The other four stages remain in the suite because program identity includes
+their program version even where their prompt and schema versions are unchanged. A V3 report does
+not qualify the V4 shard request. Contract:
+[bounded-opportunity-inventory-2026-09-14.md](../design/bounded-opportunity-inventory-2026-09-14.md).
+
 A compact checkpoint is not a provider receipt or permission to replay an unknown request. Each
 continuation still has its own request hash, dispatch, response and cost row. Inspect the logical
 call's `rounds` and require the expected root/section/search/read/final sequence when testing tool
@@ -61,6 +69,20 @@ uv run --frozen python scripts/qualify_harness_gateway.py run \
   --journal /private/tmp/topic-preflight/journal.json \
   --receipts /private/tmp/topic-preflight/receipts \
   --report /private/tmp/topic-preflight/report.json \
+  --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
+  --max-dispatches "$REVIEWED_DISPATCHES" \
+  --max-output-tokens 32768
+```
+
+For the bounded inventory program, use a new create-only directory and change the suite:
+
+```sh
+uv run --frozen python scripts/qualify_harness_gateway.py run \
+  --suite topic-selection-v4 \
+  --candidates /private/tmp/topic-v4-preflight/candidates.json \
+  --journal /private/tmp/topic-v4-preflight/journal.json \
+  --receipts /private/tmp/topic-v4-preflight/receipts \
+  --report /private/tmp/topic-v4-preflight/report.json \
   --max-exposure-micros "$REVIEWED_EXPOSURE_MICROS" \
   --max-dispatches "$REVIEWED_DISPATCHES" \
   --max-output-tokens 32768

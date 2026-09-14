@@ -41,8 +41,20 @@ run in the same organization/source scope can reuse it only after exact referenc
 hash and full structural validation; each run publishes `topic-source-index-use/1` with its observed
 build/reuse result. Contract:
 [source-index-reuse-2026-09-14.md](docs/design/source-index-reuse-2026-09-14.md). Bounded portfolio
-reconciliation remains unimplemented, and no real provider, latency, recovery or quality result
-follows. No new model arm or paid run is authorized by this record.
+reconciliation now starts with a separately versioned bounded opportunity inventory. In
+`standalone-topics/4` / `TopicSelectionWorkflowV4`, code derives one immutable work item per source
+section, assigns an opportunity to the section containing its earliest core sentence, permits exact
+setup/completion reads across the edge, and runs at most three section calls concurrently. Every
+settled call becomes an admitted `topic-opportunity-inventory-shard/1` or an exact rejection. Only
+the complete ordered shard set can produce `topic-opportunity-inventory-manifest/1`; otherwise the
+author is not called and the run ends visibly with its partial shards and checkpoints retained. V3
+history and its whole-source inventory stay unchanged. The V4 experiment and pre-flight paths are
+implemented, but the web keeps starting V3 until the exact V4 request suite is qualified and real
+44-minute/two-hour/four-hour editorial evidence is reviewed. Contract:
+[bounded-opportunity-inventory-2026-09-14.md](docs/design/bounded-opportunity-inventory-2026-09-14.md).
+Author packaging and whole-portfolio source review are still unbounded final-answer stages, so
+their decomposition is next. No real provider, latency, recovery or quality result follows, and no
+new model arm or paid run is authorized by this record.
 
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh

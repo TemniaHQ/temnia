@@ -5,12 +5,13 @@
 index and give author/reviewer models tools to investigate source evidence. Treat this as a
 foundation shared by the editorial roles, rather than W4's late author-only addition.
 
-The first end-to-end vertical slice, hierarchy, durable-checkpoint, reviewer-evidence and safe
-cross-run reuse milestones are implemented on `feat/indexed-editorial-evidence`. They replace
+The first end-to-end vertical slice, hierarchy, durable-checkpoint, reviewer-evidence, safe
+cross-run reuse and bounded opportunity-inventory milestones are implemented on
+`feat/indexed-editorial-evidence`. They replace
 whole-transcript prompts for the independent inventory, author and source reviewer with one
 immutable source index and bounded, role-specific tools. This is implemented behavior with
 synthetic and local test evidence; it is not a measured editorial improvement or a production
-qualification. Bounded portfolio reconciliation described below remains subsequent work.
+qualification. Author packaging and whole-portfolio review still need bounded reconciliation.
 
 ## Why this changes the design
 
@@ -51,8 +52,12 @@ children of one episode or section, `search_source` returns at most 12 BM25/cosi
 characters, and `read_source` returns at most 80 exact sentences and 64,000 characters with an
 explicit continuation sentence.
 
-The three indexed prompts require a cursor-zero browse of every root child followed by every
+V3's three indexed prompts require a cursor-zero browse of every root child followed by every
 section's leaves, all in source order and through the final page, plus hybrid search and exact reads.
+V4 decomposes the independent inventory into one call per deterministic section. Each call must
+browse exactly its owned leaves, while search and exact reads may cross the edge to recover setup or
+completion. Author and source-review calls retain the full hierarchy rule until their own bounded
+reconciliation milestone.
 Each continuation is now rebuilt from the original prompt plus one bounded
 `topic-agent-checkpoint/1`; earlier assistant and tool messages are removed. The checkpoint retains
 all source access facts and a bounded LRU set of exact sentences. Admission projects its final state
@@ -82,12 +87,16 @@ regions are reachable through bounded pagination, a rare lexical phrase is retri
 scaling in the local fixture. It does not prove opportunity recall, editorial judgment, production
 latency, provider tool behavior or useful four-hour video selection.
 
-The hierarchy makes every leaf descriptor discoverable, but the inventory does not read every
+The hierarchy makes every leaf descriptor discoverable, but an inventory shard does not read every
 original sentence unless it uses that sentence in a returned span. Descriptions are deterministic
 source extracts and keywords, rather than model-generated semantic abstracts; relationship links
 are not implemented. The checkpoint prevents active tool results from accumulating on the wire, but
-its final exact-evidence envelope means a large portfolio still needs bounded reconciliation rather
-than one unbounded final answer. Index artifacts now use an evidence- and producer-bound stable
+its final exact-evidence envelope means authoring and portfolio review still need bounded
+reconciliation. V4 assigns each opportunity to the section containing its earliest core sentence,
+retains every admitted or rejected shard and assembles a manifest only from the exact complete
+ordered shard set. Its contract is
+[bounded-opportunity-inventory-2026-09-14.md](bounded-opportunity-inventory-2026-09-14.md).
+Index artifacts now use an evidence- and producer-bound stable
 identity within one organization/source scope. Every run retains a separate use record, and cache
 hits re-read, hash-check and structurally revalidate the accepted artifact before use. The exact
 contracts and invariants are recorded in
@@ -274,8 +283,9 @@ Sequence the next design around this foundation:
    recovery are implemented and locally tested.
 3. Move independent discovery, authoring and source/portfolio review onto the shared mechanism.
    Mandatory candidate inspection, measured-media access and source-bound index reuse are
-   implemented. Bounded opportunity/portfolio reconciliation remains; it cannot be one unbounded
-   dump of every candidate.
+   implemented. Independent discovery is now one admitted shard per section with a complete-manifest
+   gate. Author packaging and source/portfolio review remain to be decomposed; neither can be one
+   unbounded dump of every opportunity or candidate.
 4. Compare on real full recordings around 44 minutes, two hours and four hours, with repeated
    runs and separate held-out sources. A four-hour recording is a test requirement; it has not
    been verified as available in this session. Repeated/copied transcripts test payload handling,
@@ -283,7 +293,8 @@ Sequence the next design around this foundation:
 5. Use the observed remaining failures to prioritize repair decomposition and adjudication.
    Resolve PR #48's shared-authority and accounting issues before either change.
 
-The implemented slices now name the index, checkpoint, candidate/media and inspection artifact
+The implemented slices now name the index, checkpoint, inventory plan/shard/manifest,
+candidate/media and inspection artifact
 contracts, scoped tool arguments and results, model continuation/final-response behavior,
 known-failure recovery and route validation. Real long-source provider and editorial recovery remain
 open. PydanticAI's support did

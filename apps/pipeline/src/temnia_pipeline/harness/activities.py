@@ -42,10 +42,7 @@ from temnia_pipeline.contracts import (
     TranscriptV1,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
-from temnia_pipeline.harness.editorial_policy import (
-    TOPIC_SELECTION_POLICY_V3,
-    is_topic_policy,
-)
+from temnia_pipeline.harness.editorial_policy import is_topic_policy
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.rendering import (
     RenderSection,
@@ -487,7 +484,7 @@ class HarnessActivities:
                 ),
             },
         )
-        if run.editorial_policy == TOPIC_SELECTION_POLICY_V3:
+        if is_topic_policy(run.editorial_policy):
             evidence = augment_topic_evidence(evidence)
         fingerprint = artifacts.fingerprint_for(
             kind="evidence",

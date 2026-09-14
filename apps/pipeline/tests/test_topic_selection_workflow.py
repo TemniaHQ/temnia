@@ -34,7 +34,10 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness import topic_selection_activities as activities_module
 from temnia_pipeline.harness import topic_selection_workflow as module
-from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
+from temnia_pipeline.harness.editorial_policy import (
+    TOPIC_SELECTION_POLICY_V3,
+    TOPIC_SELECTION_POLICY_V4,
+)
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
 from temnia_pipeline.harness.routes import select_route
@@ -62,6 +65,7 @@ from temnia_pipeline.harness.topic_selection_runtime import (
 )
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
+    TopicSelectionWorkflowV4,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
@@ -299,6 +303,8 @@ class Program:
         monkeypatch.setattr(workflow_type, "patch_agent", self.patch)
         if workflow_type is TopicSelectionWorkflow:
             monkeypatch.setattr(module, "topic_opportunity_inventory_v3", self.inventory)
+        else:
+            monkeypatch.setattr(workflow_type, "inventory_agent", self.inventory)
         monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
         monkeypatch.setattr(
             module.workflow,
@@ -440,8 +446,11 @@ class Program:
             return SourceCheckpointLoadResult(checkpoint=checkpoint.model_dump(mode="json"))
         operations: dict[str, Callable[..., Any]] = {
             "prepare_topic_selection_rubric": self.activities.rubric,
+            "prepare_topic_inventory_plan_v4": self.activities.prepare_inventory_plan,
             "prepare_topic_selection_call": self.activities.prepare,
             "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
+            "save_topic_inventory_shard_v4": self.activities.save_inventory_shard,
+            "assemble_topic_inventory_v4": self.activities.assemble_inventory,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -524,6 +533,65 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
     assert use_record.source_id == run.run.source_id
     assert use_record.evidence == EVIDENCE_REF
     assert use_record.reused is False
+
+
+async def test_v4_assembles_every_planned_inventory_shard_before_authoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=True)],
+        patches=[],
+        inventory=draft(selected=False),
+        policy=TOPIC_SELECTION_POLICY_V4,
+        workflow_type=TopicSelectionWorkflowV4,
+    )
+
+    result = await TopicSelectionWorkflowV4().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "cold", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-opportunity-inventory-plan/1") == 1
+    assert saved_formats.count("topic-opportunity-inventory-shard/1") == 1
+    assert saved_formats.count("topic-opportunity-inventory-manifest/1") == 1
+    inventory_contexts = [
+        context for context in run.prepared_contexts if context.inventory_section_id is not None
+    ]
+    assert [context.inventory_section_id for context in inventory_contexts] == ["section-0001"]
+    assert run.author.calls[0].program_version == TOPIC_SELECTION_POLICY_V4
+
+
+async def test_v4_refuses_partial_inventory_before_authoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid_shard = TopicSelectionDraft(
+        opportunities=[opportunity(selected=False)],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[],
+        patches=[],
+        inventory=invalid_shard,
+        policy=TOPIC_SELECTION_POLICY_V4,
+        workflow_type=TopicSelectionWorkflowV4,
+    )
+
+    result = await TopicSelectionWorkflowV4().program(run.request)
+
+    assert result.revision is None
+    assert str(result.status) == "needs_review"
+    assert run.call_order == ["inventory"]
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-opportunity-inventory-shard-rejection/1" in saved_formats
+    assert "topic-opportunity-inventory-manifest/1" not in saved_formats
 
 
 async def test_build_index_records_the_exact_verified_cache_hit(

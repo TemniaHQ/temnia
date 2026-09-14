@@ -29,6 +29,7 @@ from temnia_pipeline.harness.qualification_fixture import synthetic_qualificatio
 from temnia_pipeline.harness.qualification_topic_selection import (
     topic_selection_qualification_case,
     topic_selection_qualification_inventory,
+    topic_selection_v4_qualification_inventory,
 )
 from temnia_pipeline.harness.source_index import build_topic_source_index
 from temnia_pipeline.harness.topic_selection import candidate_handoff_rows, content_hash
@@ -408,6 +409,15 @@ def _outputs_v3() -> list[dict[str, Any]]:
         for row in candidate_handoff_rows(evidence, record.draft)
     ]
     return [topic_selection_qualification_inventory().model_dump(mode="json"), *outputs]
+
+
+def _outputs_v4() -> list[dict[str, Any]]:
+    """Match the bounded shard ownership ID while retaining later independent fixtures."""
+    outputs = _outputs_v3()
+    author = outputs[1]
+    for item in author["opportunities"]:
+        item["id"] = f"section-0001:{item['id']}"
+    return [topic_selection_v4_qualification_inventory().model_dump(mode="json"), *outputs[1:]]
 
 
 def _three_candidate_lookup_transport(

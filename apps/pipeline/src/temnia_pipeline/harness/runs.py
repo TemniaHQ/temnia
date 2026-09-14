@@ -204,7 +204,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         # Every topic run freezes its own prompt-template and native-schema bytes.
         from temnia_pipeline.harness.topic_program import current_program  # noqa: PLC0415
 
-        program_value = current_program()
+        program_value = current_program(start.editorial_policy)
     # The operator-only manifest is not part of the cross-language run request.
     from temnia_pipeline.evals.topics import (  # noqa: PLC0415
         TopicProgramManifest,
