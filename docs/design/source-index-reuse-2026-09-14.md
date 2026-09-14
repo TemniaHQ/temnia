@@ -100,3 +100,11 @@ These checks establish identity, authorization, integrity and retry behavior. Th
 cache-hit rate, index build time under concurrent load, multilingual retrieval, provider tool use or
 editorial quality. Those remain part of the real 44-minute, two-hour and four-hour evaluation after
 bounded portfolio reconciliation is implemented.
+
+The first exact-commit attempt found two formatter changes in new tests. After formatting, two full
+attempts passed the complete unit, database, lint, type, build and cold-image phases, then exposed an
+unrelated timing race in the upload-resume browser test: successful adoption could finish after the
+two-second grace before the transient waiting label was observed. The test now refreshes the seeded
+upload's liveness immediately before the adopting browser begins, so it still proves both the visible
+grace countdown and reuse of the stored first part. This record does not treat either interrupted gate
+as acceptance evidence; an exact clean-commit pass remains required.
