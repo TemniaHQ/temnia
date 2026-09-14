@@ -181,9 +181,7 @@ async def test_corrupt_reusable_index_fails_closed_without_loading_encoder() -> 
             evidence=evidence,
             encoder_loader=load,
         )
-        await storage.upload_bytes(
-            store, accepted.artifact.storage_key, b"{}", "application/json"
-        )
+        await storage.upload_bytes(store, accepted.artifact.storage_key, b"{}", "application/json")
         with pytest.raises(artifacts.ArtifactIntegrityError):
             await build_or_reuse_topic_source_index(
                 url,

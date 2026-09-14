@@ -517,9 +517,7 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
         for call in (*run.author.calls, *run.source.calls)
     )
     assert run.author.calls[0].route.family != run.source.calls[0].route.family
-    use_refs = [
-        ref for format_name, ref in run.saved if format_name == "topic-source-index-use/1"
-    ]
+    use_refs = [ref for format_name, ref in run.saved if format_name == "topic-source-index-use/1"]
     assert len(use_refs) == 1
     use_record = cast("TopicSourceIndexUseRecord", run.objects[use_refs[0].id])
     assert use_record.run_id == run.run.id
