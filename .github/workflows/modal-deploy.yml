@@ -1,0 +1,58 @@
+name: Modal media app deploy
+
+# The Modal media app (ladder, transcribe, render_sections, version, smoke) deploys from
+# main like everything else: Dokploy watches main for the web and pipeline images, this
+# workflow watches main for the app. Nothing ships by hand. A deploy is followed by the
+# release smoke on the real GPU, so a green run here means the card answered.
+#
+# One-time setup, not a per-change step: the repository secrets MODAL_TOKEN_ID and
+# MODAL_TOKEN_SECRET hold the temnia-pipeline-staging token (staging.md §2c).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/pipeline/src/temnia_pipeline/**"
+      - "apps/pipeline/pyproject.toml"
+      - "apps/pipeline/uv.lock"
+      - "apps/pipeline/Dockerfile"
+      - ".github/workflows/modal-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modal-deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: staging
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      MODAL_ENVIRONMENT: staging
+    defaults:
+      run:
+        working-directory: apps/pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse to run without the deploy token
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::error::MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are not set as repository secrets (staging.md §2c)."
+            exit 1
+          fi
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.7"
+          enable-cache: true
+      - name: Install the pipeline project
+        run: uv sync --frozen --no-dev
+      - name: Deploy the media app to the staging environment
+        run: uv run --frozen modal deploy --env staging -m temnia_pipeline.modal_app
+      - name: Smoke the deployed app on the GPU
+        run: uv run --frozen python -m temnia_pipeline.modal_smoke --app temnia-media --environment staging

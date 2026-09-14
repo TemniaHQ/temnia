@@ -31,6 +31,7 @@ with workflow.unsafe.imports_passed_through():
         TranscribeInput,
         TranscribeOutput,
     )
+    from temnia_pipeline.harness.source_sensors import SourceSensorsResult
     from temnia_pipeline.transcription import TranscribeRecord
     from temnia_pipeline.transcription.checkpointed import (
         CheckpointedTranscription,
@@ -137,6 +138,14 @@ class IngestWorkflow:
                 "derive_source",
                 args=[request, probed],
                 result_type=list[ArtifactRecord],
+                start_to_close_timeout=timedelta(hours=2),
+                heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=INGEST_RETRY,
+            )
+            await workflow.execute_activity(
+                "measure_source_sensors",
+                args=[request, probed],
+                result_type=SourceSensorsResult,
                 start_to_close_timeout=timedelta(hours=2),
                 heartbeat_timeout=timedelta(minutes=5),
                 retry_policy=INGEST_RETRY,

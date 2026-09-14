@@ -238,18 +238,33 @@ def _binary_hash(ffmpeg: str) -> str:
         return hashlib.file_digest(executable, "sha256").hexdigest()
 
 
-async def build_source_shot_evidence(
+def shot_identity_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """The binding that identifies a shot record: the source, the clock, the detector.
+
+    The detector binary's hash is provenance, not identity: the same master measured by
+    the same detector on a later ffmpeg build is the same evidence, and a deploy must not
+    send every source back through a full decode.
+    """
+    identity = dict(binding)
+    identity["detector"] = {
+        key: value for key, value in binding["detector"].items() if key != "binarySha256"
+    }
+    return identity
+
+
+async def _shot_evidence(  # noqa: C901, PLR0912
     database_url: str,
     *,
     scope: Scope,
     source_id: UUID,
     store: S3Store,
-    source_path: Path,
+    source_path: Path | None,
     source_object: Mapping[str, Any],
     timeline: MediaTimelineFacts,
     ffmpeg: str,
     detector: ShotDetector = "scdet",
-) -> SourceShotEvidence:
+    measure: bool = True,
+) -> SourceShotEvidence | None:
     """Reuse or measure one explicit detector under the caller's verified source lease.
 
     Existing unbound HLS grids are intentionally not relabeled as master
@@ -278,13 +293,16 @@ async def build_source_shot_evidence(
         # evidence names a transcript revision. Checks permit this sensor identity.
         kind="checks",
         fingerprint=artifacts.fingerprint_for(
-            kind=FORMAT, inputs=binding, config={"format": FORMAT}
+            kind=FORMAT, inputs=shot_identity_binding(binding), config={"format": FORMAT}
         ),
     )
     accepted = await artifacts.find_artifact(
         database_url, scope=scope, source_id=source_id, identity=identity
     )
+    if accepted is None and (not measure or source_path is None):
+        return None
     if accepted is None:
+        assert source_path is not None  # noqa: S101 - narrowed by the guard above
         observations: list[_NativeShot] = []
         if not timeline.has_video or timeline.video_stream_index is None:
             unavailable = "source_has_no_video"
@@ -351,6 +369,11 @@ async def build_source_shot_evidence(
         content = await artifacts.read_artifact_json(
             database_url, scope=scope, source_id=source_id, store=store, artifact_id=accepted.id
         )
+        # The stored record names the detector build that measured it; project with that.
+        stored = _SourceShots.model_validate(content, strict=True)
+        if shot_identity_binding(stored.binding) != shot_identity_binding(binding):
+            raise IdentityConflict("shot evidence does not name the selected source and detector")
+        binding = stored.binding
     shots = shots_from_source_record(content, binding=binding, duration=timeline.duration)
     saved = _SourceShots.model_validate(content, strict=True)
     return SourceShotEvidence(
@@ -367,4 +390,64 @@ async def build_source_shot_evidence(
             "observationCount": len(saved.observations),
             "selectedCount": len(shots),
         },
+    )
+
+
+async def build_source_shot_evidence(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    store: S3Store,
+    source_path: Path,
+    source_object: Mapping[str, Any],
+    timeline: MediaTimelineFacts,
+    ffmpeg: str,
+    detector: ShotDetector = "scdet",
+) -> SourceShotEvidence:
+    """Reuse or measure one explicit detector under the caller's verified source lease.
+
+    Existing unbound HLS grids are intentionally not relabeled as master
+    observations. Known failures are cached as unavailable; cancellation and
+    artifact integrity failures propagate. Unknown is never a no-shots claim.
+    """
+    record = await _shot_evidence(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        source_path=source_path,
+        source_object=source_object,
+        timeline=timeline,
+        ffmpeg=ffmpeg,
+        detector=detector,
+    )
+    if record is None:  # pragma: no cover - measuring always yields a record
+        raise RuntimeError("shot evidence measurement returned no record")
+    return record
+
+
+async def find_source_shot_evidence(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    store: S3Store,
+    source_object: Mapping[str, Any],
+    timeline: MediaTimelineFacts,
+    ffmpeg: str,
+    detector: ShotDetector = "scdet",
+) -> SourceShotEvidence | None:
+    """The record ingest measured for this master, or None; never decodes anything."""
+    return await _shot_evidence(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        source_path=None,
+        source_object=source_object,
+        timeline=timeline,
+        ffmpeg=ffmpeg,
+        detector=detector,
+        measure=False,
     )

@@ -117,6 +117,10 @@ class QuietEvidenceActivities(HarnessActivities):
             self.cleaned.set()
 
 
+async def no_timeline_record(*_args: object, **_kwargs: object) -> None:
+    return None
+
+
 def harness_settings(routes: RouteSnapshot) -> HarnessSettings:
     return HarnessSettings.from_env(
         {
@@ -228,6 +232,8 @@ async def test_cancelled_evidence_drains_partial_cleanup(
     monkeypatch.setattr(activities_module.runs, "get_run", get_run)
     monkeypatch.setattr(activities_module.obs, "head_async", head)
     monkeypatch.setattr(activities_module.obs, "get_async", download)
+    # This test is about the download; the download-free path stays out of the way.
+    monkeypatch.setattr(activities_module, "find_source_timeline", no_timeline_record)
     monkeypatch.setattr(activities_module.shutil, "disk_usage", disk_usage)
     queue = f"harness-evidence-cancel-{uuid.uuid4()}"
     async with (
@@ -285,6 +291,8 @@ async def test_source_stream_quiet_timeout_removes_partial_file(
         return Download()
 
     monkeypatch.setattr(activities_module.obs, "get_async", download)
+    # This test is about the download; the download-free path stays out of the way.
+    monkeypatch.setattr(activities_module, "find_source_timeline", no_timeline_record)
     monkeypatch.setattr(activities_module, "SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS", 0.01)
 
     def disk_usage(_path: object) -> SimpleNamespace:
