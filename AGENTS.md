@@ -2,6 +2,22 @@
 
 ## Decisions
 
+**2026-09-14 — Indexed harness review found functional blockers beyond the green gate.**
+Rajesh requested the entire implementation review and all production stop conditions. The
+[review](docs/design/indexed-harness-production-review-2026-09-14.md) examines `2140fbd` and records
+seven actionable findings. Compaction drops browse/search/candidate descriptions and media values
+before the next model turn; candidate source-review admission accepted an 80-sentence candidate
+after one exact sentence read; the final 320-sentence retention ceiling makes larger cited unions
+impossible; the committed 64-dispatch setting cannot cover the four-hour fixture's 75 omission
+calls; reviewer selection excludes only the current author rather than all contributing families;
+review planning refusals lose their actionable reason; and an implicit SDK limit ends an agent
+invocation at 50 model requests. The earlier gate establishes tested mechanics, not production
+readiness. In particular, the earlier claim of an explicit internal-structure decision is only a
+general selection decision plus prompt language, without a typed decomposition or mandatory internal
+read coverage. The record includes the full refusal/termination matrix and distinguishes retained
+checkpoints, editorial continuation, review renders and human acceptance. No application fix or
+live/provider evaluation was performed in this review.
+
 **2026-09-14 — Indexed source evidence and tools are a foundation for the editorial roles.**
 Rajesh's direction after reviewing PR #48: repeatedly supplying a whole transcript to an author
 or source reviewer, with intermittent success on 44-minute Karma, is not a demonstrated solution
