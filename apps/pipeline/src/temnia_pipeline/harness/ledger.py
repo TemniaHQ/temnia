@@ -156,7 +156,7 @@ class AttemptReservationRequest:
     route: JsonObject
     request_hash: str
     estimated_cost_micros: int
-    dispatch_limit: int
+    dispatch_limit: int | None
 
 
 def _canonical_hash(value: object) -> str:
@@ -453,12 +453,12 @@ async def reserve_attempt(  # noqa: C901, PLR0912, PLR0913
     route: JsonObject,
     request_hash: str,
     estimated_cost_micros: int,
-    dispatch_limit: int,
+    dispatch_limit: int | None,
 ) -> Attempt:
     """Reserve worst-case exposure before any physical provider dispatch."""
     if estimated_cost_micros < 0:
         raise ValueError("estimated cost must be nonnegative")
-    if dispatch_limit <= 0:
+    if dispatch_limit is not None and dispatch_limit <= 0:
         raise ValueError("dispatch limit must be positive")
     async with db.scoped(database_url, scope) as conn:
         await _lock_source(conn, source_id)
@@ -527,7 +527,7 @@ async def reserve_attempt(  # noqa: C901, PLR0912, PLR0913
             raise IdentityConflict(f"run in terminal state {run['status']} cannot dispatch")
         if run["status"] == "outcome_unknown":
             raise OutcomeUnknown("run has unresolved provider exposure")
-        if int(run["dispatch_count"]) >= dispatch_limit:
+        if dispatch_limit is not None and int(run["dispatch_count"]) >= dispatch_limit:
             raise DispatchLimitExceeded("run dispatch ceiling reached")
         exposure = int(run["spent_micros"]) + int(run["reserved_micros"])
         if exposure + estimated_cost_micros > int(run["budget_micros"]):
@@ -612,7 +612,7 @@ async def reserve_attempt_batch(  # noqa: C901, PLR0912, PLR0915
     for request in requests:
         if request.estimated_cost_micros < 0:
             raise ValueError("estimated cost must be nonnegative")
-        if request.dispatch_limit <= 0:
+        if request.dispatch_limit is not None and request.dispatch_limit <= 0:
             raise ValueError("dispatch limit must be positive")
         route_value = dict(request.route)
         try:
@@ -768,7 +768,8 @@ async def reserve_attempt_batch(  # noqa: C901, PLR0912, PLR0915
                 + len(missing)
             )
             if any(
-                projected_dispatches > request_by_operation[operation_id].dispatch_limit
+                (limit := request_by_operation[operation_id].dispatch_limit) is not None
+                and projected_dispatches > limit
                 for operation_id in admission_ids
             ):
                 raise DispatchLimitExceeded(
@@ -946,7 +947,7 @@ async def mark_dispatched(  # noqa: PLR0913
     operation_id: UUID,
     attempt_id: UUID,
     owner_token: str,
-    dispatch_limit: int,
+    dispatch_limit: int | None,
 ) -> bool:
     """Win the one physical dispatch by CAS; commit before making the call."""
     async with db.scoped(database_url, scope) as conn:
@@ -974,7 +975,7 @@ async def mark_dispatched(  # noqa: PLR0913
                 raise IdentityConflict(
                     f"run in state {run['status']} cannot dispatch a reserved attempt"
                 )
-            if int(run["dispatch_count"]) >= dispatch_limit:
+            if dispatch_limit is not None and int(run["dispatch_count"]) >= dispatch_limit:
                 raise DispatchLimitExceeded("run dispatch ceiling reached")
             exposure = int(run["spent_micros"]) + int(run["reserved_micros"])
             if exposure > int(run["budget_micros"]):

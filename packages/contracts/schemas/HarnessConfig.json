@@ -77,9 +77,12 @@
           "maximum": 512
         },
         "maxDispatches": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
-          "maximum": 128
+          "maximum": 9007199254740991
         },
         "maxInFlightPerRoute": {
           "default": 2,

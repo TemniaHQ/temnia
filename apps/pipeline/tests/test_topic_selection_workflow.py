@@ -479,6 +479,7 @@ class Program:
             "save_topic_author_shard_v5": self.activities.save_author_shard,
             "assemble_topic_author_v5": self.activities.assemble_author,
             "save_topic_source_review_shard_v6": self.activities.save_source_review_shard,
+            "save_topic_cold_review_v7": self.activities.save_cold_review,
             "assemble_topic_source_review_v6": self.activities.assemble_source_review,
             "save_topic_repair_shard_v7": self.activities.save_repair_shard,
             "assemble_topic_repair_v7": self.activities.assemble_repair,
@@ -615,11 +616,13 @@ async def test_v4_refuses_partial_inventory_before_authoring(
         workflow_type=TopicSelectionWorkflowV4,
     )
 
+    run.inventory.outputs.extend([invalid_shard, invalid_shard])
     result = await TopicSelectionWorkflowV4().program(run.request)
 
     assert result.revision is None
     assert str(result.status) == "needs_review"
-    assert run.call_order == ["inventory"]
+    assert run.call_order == ["inventory"] * 3
+    assert "RECOVERY:" in run.inventory.prompts[-1]
     saved_formats = [name for name, _ in run.saved]
     assert "topic-opportunity-inventory-shard-rejection/1" in saved_formats
     assert "topic-opportunity-inventory-manifest/1" not in saved_formats
@@ -750,11 +753,13 @@ async def test_v5_refuses_partial_author_packaging_before_review(
         workflow_type=TopicSelectionWorkflowV5,
     )
 
+    run.author.outputs.extend([invalid_author, invalid_author])
     result = await TopicSelectionWorkflowV5().program(run.request)
 
     assert result.revision is None
     assert str(result.status) == "needs_review"
-    assert run.call_order == ["inventory", "author"]
+    assert run.call_order == ["inventory", "author", "author", "author"]
+    assert "RECOVERY:" in run.author.prompts[-1]
     saved_formats = [name for name, _ in run.saved]
     assert "topic-author-packaging-shard-rejection/1" in saved_formats
     assert "topic-author-packaging-manifest/1" not in saved_formats
@@ -984,7 +989,7 @@ async def test_v6_rejected_review_shard_cannot_authorize_repair(
     run = Program(
         monkeypatch,
         initial=author,
-        sources=[_bounded_source_review, invalid, _bounded_source_review],
+        sources=[_bounded_source_review, invalid, invalid, invalid, _bounded_source_review],
         patches=[],
         inventory=inventory,
         policy=TOPIC_SELECTION_POLICY_V6,
@@ -1022,7 +1027,10 @@ async def test_v7_assembles_every_repair_component_before_one_selection_change(
             _bounded_source_review,
         ],
         patches=[_bounded_title_repair],
-        colds=[cold(), cold()],
+        colds=[
+            cold().model_copy(update={"candidateId": author.proposal.candidates[0].id}),
+            cold().model_copy(update={"candidateId": author.proposal.candidates[0].id}),
+        ],
         inventory=inventory,
         policy=TOPIC_SELECTION_POLICY_V7,
         workflow_type=TopicSelectionWorkflowV7,

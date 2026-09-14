@@ -2,6 +2,19 @@
 
 ## Decisions
 
+**2026-09-14 — Reliability recovery must preserve bounded prompts.** Rajesh authorized changing
+technical limits and retry behavior so long recordings receive an attempt rather than an arbitrary
+size refusal. The [recovery record](docs/design/indexed-harness-recovery-2026-09-14.md) distinguishes
+cumulative exact-speech delivery from prompt retention. Checkpoint `/2` preserves bounded tool
+observations and notes; inspection `/3` accepts delivered speech after eviction. Bounded work items
+receive three diagnostic correction attempts, tool errors receive SDK corrections, and dispatched
+siblings settle before error propagation. V7 cold review now pages only selected speech through a
+restricted read tool. Global dispatch count is optional; source-count refusal is removed, while
+budget, unknown-expense and source authority remain. This is implementation progress, not unlimited
+scale or publication acceptance. The web's V3 path, oversized work-unit subdivision, workflow-history
+continuation and real long-source measurement remain open. Do not equate complete evidence access
+with complete comprehension, or replace Temporal/PydanticAI to hide application-level failures.
+
 **2026-09-14 — Indexed harness review found functional blockers beyond the green gate.**
 Rajesh requested the entire implementation review and all production stop conditions. The
 [review](docs/design/indexed-harness-production-review-2026-09-14.md) examines `2140fbd` and records

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -19,7 +20,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from pydantic_ai import Agent, ModelResponse, NativeOutput, RunContext
+from pydantic_ai import Agent, ModelResponse, ModelRetry, NativeOutput, RunContext
 from pydantic_ai.capabilities import ProcessHistory, ResolveModelId
 from pydantic_ai.durable_exec import DurableOperationBackend
 
@@ -165,7 +166,8 @@ class HarnessModelDeps(BaseModel):
     media_evidence: HarnessArtifactRef | None = None
     allowed_browse_parent_ids: tuple[str, ...] = ()
     allowed_candidate_ids: tuple[str, ...] = ()
-    dispatch_limit: Annotated[int, Field(gt=0, le=128)]
+    allowed_sentence_ids: tuple[str, str] | None = None
+    dispatch_limit: Annotated[int, Field(gt=0)] | None
     cassette_mode: CassetteMode = CassetteMode.OFF
     synthetic_payload: dict[str, Any] | None = None
 
@@ -197,6 +199,8 @@ class HarnessModelDeps(BaseModel):
             raise ValueError("source tool scopes require source-index authority")
         if self.source_tool_role != "source_reviewer" and self.allowed_candidate_ids:
             raise ValueError("candidate tool scope is restricted to source review")
+        if (self.source_tool_role == "cold_reviewer") != (self.allowed_sentence_ids is not None):
+            raise ValueError("cold source access requires its exact selected sentence bounds")
         return self
 
 
@@ -415,6 +419,22 @@ async def _reviewer_inputs(
     return selection, evidence
 
 
+def recoverable_source_tool[**P, R](
+    function: Callable[P, Awaitable[R]],
+) -> Callable[P, Awaitable[R]]:
+    """Let the model correct ordinary argument mistakes without replaying a paid request."""
+
+    @functools.wraps(function)
+    async def call(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return await function(*args, **kwargs)
+        except ValueError as error:
+            raise ModelRetry(str(error)) from error
+
+    return call
+
+
+@recoverable_source_tool
 async def browse_source(
     ctx: RunContext[HarnessModelDeps],
     parent_id: str = "episode",
@@ -437,6 +457,7 @@ async def browse_source(
     )
 
 
+@recoverable_source_tool
 async def search_source(
     ctx: RunContext[HarnessModelDeps], query: str, cursor: int = 0, limit: int = 6
 ) -> TopicSourceSearchPage:
@@ -463,6 +484,7 @@ async def search_source(
     )
 
 
+@recoverable_source_tool
 async def read_source(
     ctx: RunContext[HarnessModelDeps],
     first_sentence_id: str,
@@ -480,6 +502,18 @@ async def read_source(
         limit: Maximum sentences to return, from 1 through 80.
     """
     index, sha256 = await _indexed_source(ctx.deps)
+    if ctx.deps.allowed_sentence_ids is not None:
+        positions = {sentence.id: offset for offset, sentence in enumerate(index.sentences)}
+        allowed_first, allowed_last = ctx.deps.allowed_sentence_ids
+        if not (
+            first_sentence_id in positions
+            and last_sentence_id in positions
+            and positions[allowed_first]
+            <= positions[first_sentence_id]
+            <= positions[last_sentence_id]
+            <= positions[allowed_last]
+        ):
+            raise ModelRetry("Cold review can read only the selected candidate's speech.")
     return read_topic_source(
         index,
         index_sha256=sha256,
@@ -490,6 +524,7 @@ async def read_source(
     )
 
 
+@recoverable_source_tool
 async def inspect_candidate(
     ctx: RunContext[HarnessModelDeps],
     candidate_id: str,
@@ -532,6 +567,7 @@ async def inspect_candidate(
     )
 
 
+@recoverable_source_tool
 async def read_media_evidence(
     ctx: RunContext[HarnessModelDeps],
     first_sentence_id: str,
@@ -1487,10 +1523,13 @@ def _agent(
     *,
     indexed_source: bool = False,
     reviewer_evidence: bool = False,
+    cold_evidence: bool = False,
 ) -> Agent[HarnessModelDeps, Any]:
     if reviewer_evidence and not indexed_source:
         raise ValueError("reviewer evidence tools require indexed source tools")
     tools: list[Any] = [browse_source, search_source, read_source] if indexed_source else []
+    if cold_evidence:
+        tools = [read_source]
     if reviewer_evidence:
         tools.extend((inspect_candidate, read_media_evidence))
     return Agent(
@@ -1499,7 +1538,7 @@ def _agent(
         output_type=NativeOutput(output_type, strict=True),
         deps_type=HarnessModelDeps,
         name=name,
-        retries=0,
+        retries={"tools": 3, "output": 3},
         tools=tools,
         capabilities=[
             *([ProcessHistory(compact_source_history)] if indexed_source else []),
@@ -1582,7 +1621,9 @@ topic_opportunity_inventory_v7 = _agent(
 topic_selection_author_v7 = _agent(
     "topic_selection_author_v7", TopicSelectionDraft, indexed_source=True
 )
-topic_selection_cold_v7 = _agent("topic_selection_cold_v7", TopicSelectionColdReview)
+topic_selection_cold_v7 = _agent(
+    "topic_selection_cold_v7", TopicSelectionColdReview, indexed_source=True, cold_evidence=True
+)
 topic_selection_source_v8 = _agent(
     "topic_selection_source_v8",
     TopicPortfolioReviewV4,

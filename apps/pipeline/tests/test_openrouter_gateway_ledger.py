@@ -340,7 +340,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
                     await conn.execute(
                         """SELECT metadata FROM harness_artifact
                             WHERE source_id=%s AND kind='checks'
-                              AND metadata->>'format'='topic-agent-checkpoint/1'
+                              AND metadata->>'format'='topic-agent-checkpoint/2'
                               AND metadata->>'stage'='proposal:selection:0'""",
                         (source_id,),
                     )

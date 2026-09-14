@@ -36,7 +36,6 @@ from temnia_pipeline.harness.source_progress import (
     compact_source_messages,
     messages_from_checkpoint,
 )
-from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_source_index import FixtureEncoder, _long_evidence
 
 INDEX_SHA = "c" * 64
@@ -150,17 +149,17 @@ def test_continuations_rebuild_from_checkpoint_and_recent_exact_excerpts() -> No
     assert checkpoint.evicted_sentence_count == 80
     assert len(json.dumps(checkpoint.model_dump(mode="json"))) < MAX_CHECKPOINT_BYTES
     prompt = json.dumps(list(messages), default=str)
-    assert evidence.sentences[0].text not in prompt
+    assert index.sentences[0].id not in {s.id for s in checkpoint.retained_sentences}
     assert evidence.sentences[-1].text in prompt
 
     trace = source_inspection_trace(messages, index_sha256=INDEX_SHA, role="author", stage=STAGE)
     validate_source_inspection(index, trace)
     validate_source_read_ids(index, trace, {index.sentences[-1].id})
-    with pytest.raises(HarnessValidationError, match="did not read cited"):
-        validate_source_read_ids(index, trace, {index.sentences[0].id})
+    validate_source_read_ids(index, trace, {index.sentences[0].id})
+    assert len(trace.observed_sentence_ids) == 400
 
 
-def test_checkpoint_refuses_a_third_identical_tool_result() -> None:
+def test_checkpoint_recovers_repeats_before_refusing_sustained_no_progress() -> None:
     evidence = _long_evidence(8)
     index = build_topic_source_index(
         evidence,
@@ -176,7 +175,7 @@ def test_checkpoint_refuses_a_third_identical_tool_result() -> None:
         limit=3,
     )
     messages = _compact([ModelRequest(parts=[UserPromptPart("Inspect the source.")])])
-    for index_number in range(2):
+    for index_number in range(6):
         messages = _tool_turn(
             messages,
             name="search_source",
@@ -199,7 +198,7 @@ def test_checkpoint_refuses_a_third_identical_tool_result() -> None:
             ModelRequest(parts=[ToolReturnPart("search_source", search, tool_call_id="search-2")]),
         ]
     )
-    with pytest.raises(SourceProgressLimitExceeded, match="repeated the same tool call"):
+    with pytest.raises(SourceProgressLimitExceeded, match="no new progress"):
         _compact(messages)
 
 
@@ -316,3 +315,53 @@ async def test_pydantic_agent_sends_only_rebuilt_checkpoint_requests() -> None:
     assert resumed.output == "complete"
     resumed_checkpoint = checkpoint_from_messages(observed[-1])
     assert resumed_checkpoint == final_checkpoint
+
+
+def test_cold_inspection_pages_speech_without_episode_browse_or_search() -> None:
+    evidence = _long_evidence(400)
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256="a" * 64,
+        encoder=FixtureEncoder(),
+        embedding_revision="b" * 40,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart("Review selected speech.")])]
+    for offset in range(0, 400, 80):
+        arguments = {
+            "first_sentence_id": index.sentences[0].id,
+            "last_sentence_id": index.sentences[-1].id,
+            "cursor_sentence_id": index.sentences[offset].id,
+            "limit": 80,
+        }
+        page = read_topic_source(
+            index,
+            index_sha256=INDEX_SHA,
+            first_sentence_id=index.sentences[0].id,
+            last_sentence_id=index.sentences[-1].id,
+            cursor_sentence_id=index.sentences[offset].id,
+            limit=80,
+        )
+        messages.extend(
+            [
+                ModelResponse(
+                    parts=[ToolCallPart("read_source", arguments, tool_call_id=str(offset))]
+                ),
+                ModelRequest(parts=[ToolReturnPart("read_source", page, tool_call_id=str(offset))]),
+            ]
+        )
+        messages = compact_source_messages(
+            messages,
+            index_sha256=INDEX_SHA,
+            role="cold_reviewer",
+            stage="verify:cold",
+        )
+    trace = source_inspection_trace(
+        messages,
+        index_sha256=INDEX_SHA,
+        role="cold_reviewer",
+        stage="verify:cold",
+    )
+    validate_source_inspection(index, trace)
+    validate_source_read_ids(index, trace, {sentence.id for sentence in index.sentences})
+    assert len(trace.retained_sentence_ids) == 320
+    assert len(trace.observed_sentence_ids) == 400

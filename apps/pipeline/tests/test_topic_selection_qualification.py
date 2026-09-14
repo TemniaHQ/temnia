@@ -357,5 +357,5 @@ async def test_v3_qualification_accounts_for_tool_and_final_model_rounds(tmp_pat
     checkpoint_prompt = requests[1]["messages"][-1]
     assert checkpoint_prompt["role"] == "user"
     assert "Temnia indexed-source progress checkpoint" in checkpoint_prompt["content"]
-    assert '"format":"topic-agent-checkpoint/1"' in checkpoint_prompt["content"]
+    assert '"format":"topic-agent-checkpoint/2"' in checkpoint_prompt["content"]
     assert '"tool_name":"browse_source"' in checkpoint_prompt["content"]

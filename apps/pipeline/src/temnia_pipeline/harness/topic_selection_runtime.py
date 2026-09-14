@@ -41,8 +41,10 @@ SelectionProgramVersion = Literal[
     "standalone-topics/6",
     "standalone-topics/7",
 ]
-SourceToolRole = Literal["inventory", "author", "source_reviewer", "repair"]
-SourceInspectionFormat = Literal["topic-source-inspection/1", "topic-source-inspection/2"]
+SourceToolRole = Literal["inventory", "author", "source_reviewer", "cold_reviewer", "repair"]
+SourceInspectionFormat = Literal[
+    "topic-source-inspection/1", "topic-source-inspection/2", "topic-source-inspection/3"
+]
 
 
 class SourceInspectionCall(BaseModel):
@@ -78,6 +80,7 @@ class SourceInspectionTrace(BaseModel):
     calls: tuple[SourceInspectionCall, ...] = ()
     retained_sentence_ids: tuple[str, ...] = ()
     evicted_sentence_count: int = 0
+    observed_sentence_ids: tuple[str, ...] = ()
 
 
 class SelectionContext(BaseModel):
@@ -111,6 +114,8 @@ class SelectionContext(BaseModel):
     # keeps failing transiently, sticky for the rest of the run.
     author_index: int = 0
     verifier_index: int = 0
+    request_attempt: int = 0
+    recovery_feedback: tuple[str, ...] = ()
 
 
 class TopicSourceIndexUseRecord(BaseModel):
@@ -152,6 +157,7 @@ class SelectionCallPlan(BaseModel):
     media_evidence: HarnessArtifactRef | None = None
     allowed_browse_parent_ids: tuple[str, ...] = ()
     allowed_candidate_ids: tuple[str, ...] = ()
+    allowed_sentence_ids: tuple[str, str] | None = None
     synthetic_payload: dict[str, object] | None = None
 
 
@@ -318,6 +324,39 @@ class AuthorPackagingManifestResult(BaseModel):
     draft: TopicSelectionDraft
 
 
+class ColdReviewSaveRequest(BaseModel):
+    """One isolated cold answer and the speech delivered to its reviewer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context: SelectionContext
+    review: TopicSelectionColdReview | None = None
+    schema_error: str | None = None
+    inspection: SourceInspectionTrace | None = None
+
+
+class ColdReviewSaveResult(BaseModel):
+    """An admitted cold judgment or a retained diagnostic for correction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact: HarnessArtifactRef | None = None
+    rejection: HarnessArtifactRef | None = None
+    review: TopicSelectionColdReview | None = None
+    inspection: SourceInspectionTrace | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
+class ColdReviewRecord(BaseModel):
+    """Exact cold observation and its admission outcome."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["topic-cold-observation/1"] = "topic-cold-observation/1"
+    candidate_id: str
+    response: HarnessArtifactRef
+    inspection: HarnessArtifactRef | None = None
+    review: TopicSelectionColdReview | None = None
+    diagnostics: tuple[str, ...] = ()
+
+
 class SourceReviewPlanResult(BaseModel):
     """Deterministic bounded source-review plan and immutable artifact identity."""
 
@@ -453,6 +492,8 @@ class SelectionReviewRequest(BaseModel):
     cold_reviews: tuple[TopicSelectionColdReview, ...] = ()
     cold_candidate_ids: tuple[str, ...] = ()
     cold_stages: tuple[str, ...] = ()
+    cold_contexts: tuple[SelectionContext, ...] = ()
+    cold_inspections: tuple[SourceInspectionTrace | None, ...] = ()
     unavailable_cold_ids: tuple[str, ...] = ()
     source_review: TopicPortfolioReviewV4 | None = None
     source_dispatched: bool = True

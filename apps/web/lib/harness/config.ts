@@ -11,7 +11,7 @@ const HarnessEnvironmentSchema = z.object({
   HARNESS_BACKEND: z.enum(["recorded", "gateway"]).optional(),
   HARNESS_ENABLED: z.enum(["0", "1"]).default("0"),
   HARNESS_EVIDENCE_WINDOW_SENTENCES: z.coerce.number().int().default(80),
-  HARNESS_MAX_DISPATCHES: z.coerce.number().int().default(32),
+  HARNESS_MAX_DISPATCHES: z.coerce.number().int().positive().optional(),
   HARNESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().default(8192),
   HARNESS_MAX_RENDER_CONCURRENCY: z.coerce.number().int().default(2),
   HARNESS_MAX_REPAIRS: z.coerce.number().int().default(3),
@@ -142,7 +142,7 @@ export function harnessSettings(
     parsed.data.HARNESS_BACKEND,
     {
       evidenceWindowSentences: parsed.data.HARNESS_EVIDENCE_WINDOW_SENTENCES,
-      maxDispatches: parsed.data.HARNESS_MAX_DISPATCHES,
+      maxDispatches: parsed.data.HARNESS_MAX_DISPATCHES ?? null,
       maxOutputTokens: parsed.data.HARNESS_MAX_OUTPUT_TOKENS,
       maxRenderConcurrency: parsed.data.HARNESS_MAX_RENDER_CONCURRENCY,
       maxRepairs: parsed.data.HARNESS_MAX_REPAIRS,

@@ -291,7 +291,9 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
         "HARNESS_ROUTE_SNAPSHOT_ID": config.routeSnapshotId,
         "HARNESS_ROUTE_SNAPSHOT_PATH": arm.snapshot_file.path,
         "HARNESS_MAX_RUN_BUDGET_MICROS": str(spec.worker_max_run_budget_micros),
-        "HARNESS_MAX_DISPATCHES": str(config.maxDispatches),
+        "HARNESS_MAX_DISPATCHES": str(config.maxDispatches)
+        if config.maxDispatches is not None
+        else "",
         "HARNESS_MAX_REPAIRS": str(config.maxRepairs),
         "HARNESS_MAX_OUTPUT_TOKENS": str(config.maxOutputTokens),
         "HARNESS_EVIDENCE_WINDOW_SENTENCES": str(config.evidenceWindowSentences),

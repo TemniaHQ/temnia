@@ -6,7 +6,7 @@
   "gateway": "openrouter",
   "limits": {
     "evidenceWindowSentences": 80,
-    "maxDispatches": 64,
+    "maxDispatches": null,
     "maxInFlightPerRoute": 2,
     "maxOutputTokens": 65536,
     "maxRenderConcurrency": 2,

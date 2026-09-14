@@ -285,3 +285,72 @@ def test_reviewer_tool_results_survive_checkpoint_compaction() -> None:
         selection_sha256="d" * 64,
         evidence_sha256="a" * 64,
     )
+
+
+def test_cold_prompt_contains_only_rubric_title_and_selected_range() -> None:
+    from temnia_pipeline.harness.topic_selection import selection_cold_prompt  # noqa: PLC0415
+
+    evidence, _, selection = _candidate_case()
+    candidate = selection.draft.proposal.candidates[0]
+    prompt = selection_cold_prompt(evidence, candidate, selection.rubric, indexed=True)
+    assert "clipSentences" not in prompt
+    assert "selectedSpeech" in prompt
+    assert candidate.firstSentenceId in prompt
+    assert candidate.lastSentenceId in prompt
+    assert evidence.sentences[50].text not in prompt
+    assert "read_source" in prompt
+
+
+def test_compaction_delivers_candidate_descriptors_and_measured_media_values() -> None:
+    evidence, index, selection = _candidate_case()
+    candidate = inspect_topic_candidate(
+        index,
+        selection,
+        index_sha256="c" * 64,
+        selection_sha256="d" * 64,
+        candidate_id="garden-care",
+        limit=2,
+    )
+    media = read_topic_media_evidence(
+        evidence,
+        evidence_sha256="a" * 64,
+        first_sentence_id=index.sentences[0].id,
+        last_sentence_id=index.sentences[-1].id,
+    )
+    messages = [
+        ModelRequest(parts=[UserPromptPart("Inspect the candidate and its measured evidence.")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "inspect_candidate", {"candidate_id": "garden-care"}, tool_call_id="c"
+                ),
+                ToolCallPart(
+                    "read_media_evidence",
+                    {
+                        "first_sentence_id": index.sentences[0].id,
+                        "last_sentence_id": index.sentences[-1].id,
+                    },
+                    tool_call_id="m",
+                ),
+            ],
+            finish_reason="tool_call",
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart("inspect_candidate", candidate, tool_call_id="c"),
+                ToolReturnPart("read_media_evidence", media, tool_call_id="m"),
+            ]
+        ),
+    ]
+    compacted = compact_source_messages(
+        messages,
+        index_sha256="c" * 64,
+        role="source_reviewer",
+        stage="verify:test",
+    )
+    from temnia_pipeline.harness.source_progress import checkpoint_from_messages  # noqa: PLC0415
+
+    checkpoint = checkpoint_from_messages(compacted)
+    assert checkpoint is not None
+    assert checkpoint.observations[0]["result"] == candidate.model_dump(mode="json")
+    assert checkpoint.observations[1]["result"] == media.model_dump(mode="json")

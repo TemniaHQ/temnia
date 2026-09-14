@@ -37,8 +37,6 @@ if TYPE_CHECKING:
 
     from temnia_pipeline.substrate.model import Layers
 
-MAX_EVIDENCE_WORDS = 250_000
-MAX_EVIDENCE_SENTENCES = 10_000
 LOW_CONFIDENCE = 0.5
 
 
@@ -80,18 +78,6 @@ def _validate_json(value: object, name: str) -> None:
 
 
 def _verify_layers(transcript: TranscriptV1, layers: Layers) -> None:
-    if len(transcript.words) > MAX_EVIDENCE_WORDS:
-        msg = (
-            f"evidence has {len(transcript.words)} words; maximum is "
-            f"{MAX_EVIDENCE_WORDS}; build a hierarchy instead of truncating"
-        )
-        raise ValueError(msg)
-    if len(layers.sentences) > MAX_EVIDENCE_SENTENCES:
-        msg = (
-            f"evidence has {len(layers.sentences)} sentences; maximum is "
-            f"{MAX_EVIDENCE_SENTENCES}; build a hierarchy instead of truncating"
-        )
-        raise ValueError(msg)
     if len(layers.words) != len(transcript.words):
         raise ValueError("layers were built from a different word count")
     for index, (layer_word, word) in enumerate(zip(layers.words, transcript.words, strict=True)):

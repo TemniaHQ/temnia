@@ -96,6 +96,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_AUTHOR_SHARD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
+    SELECTION_COLD_PROMPT_V4,
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
@@ -127,6 +128,9 @@ from temnia_pipeline.harness.topic_selection_runtime import (
     AuthorPackagingShardRejection,
     AuthorPackagingShardSaveRequest,
     AuthorPackagingShardSaveResult,
+    ColdReviewRecord,
+    ColdReviewSaveRequest,
+    ColdReviewSaveResult,
     OpportunityInventoryManifestRequest,
     OpportunityInventoryManifestResult,
     OpportunityInventoryPlanResult,
@@ -939,11 +943,13 @@ class TopicSelectionActivities:
             run.route_snapshot,
             author_index=context.author_index,
             verifier_index=context.verifier_index,
+            author_families=context.author_families,
         )
         dependencies = [context.evidence, context.rubric]
         source_tool_role = None
         allowed_browse_parent_ids: tuple[str, ...] = ()
         allowed_candidate_ids: tuple[str, ...] = ()
+        allowed_sentence_ids: tuple[str, str] | None = None
         if context.candidate_id is not None:
             candidate = (
                 next(
@@ -959,9 +965,16 @@ class TopicSelectionActivities:
             )
             if candidate is None:
                 raise HarnessValidationError("cold review candidate is absent from the selection")
-            prompt = selection_cold_prompt(evidence, candidate, rubric)
+            indexed_cold = context.program_version == TOPIC_SELECTION_POLICY_V7
+            prompt = selection_cold_prompt(evidence, candidate, rubric, indexed=indexed_cold)
+            if indexed_cold:
+                if context.source_index is None or context.selection is None:
+                    raise HarnessValidationError("indexed cold review requires its index and clip")
+                source_tool_role = "cold_reviewer"
+                allowed_sentence_ids = (candidate.firstSentenceId, candidate.lastSentenceId)
+                dependencies.extend((context.source_index, context.selection))
             stage = f"verify:selection:cold:{selection_cold_key(candidate, context.rubric.sha256)}"
-            version = SELECTION_COLD_PROMPT_V3
+            version = SELECTION_COLD_PROMPT_V4 if indexed_cold else SELECTION_COLD_PROMPT_V3
             synthetic = "topic_selection_cold"
         elif (
             selection is not None
@@ -1188,6 +1201,16 @@ class TopicSelectionActivities:
             stage = f"proposal:selection:{context.iteration}"
             version = SELECTION_AUTHOR_PROMPT_V3
             synthetic = "topic_selection_author_v3"
+        if context.request_attempt:
+            stage += f":retry-{context.request_attempt}"
+            prompt = (
+                "RECOVERY: A previous settled answer was not admitted. Correct these "
+                "specific problems, investigate missing speech with the source tools, and return "
+                "the complete typed answer. Do not repeat an unsupported answer.\n"
+                + "\n".join(context.recovery_feedback)[:8000]
+                + "\n\n"
+                + prompt
+            )
         route = verifier if stage.startswith("verify:") else author
         estimate_cost(
             route,
@@ -1236,6 +1259,7 @@ class TopicSelectionActivities:
             media_evidence=(context.evidence if source_tool_role == "source_reviewer" else None),
             allowed_browse_parent_ids=allowed_browse_parent_ids,
             allowed_candidate_ids=allowed_candidate_ids,
+            allowed_sentence_ids=allowed_sentence_ids,
             synthetic_payload=synthetic_payload,
         )
 
@@ -1258,7 +1282,8 @@ class TopicSelectionActivities:
                 JOIN harness_attempt t ON t.operation_id=o.id
                   AND t.result_artifact_id=a.id AND t.state='succeeded'
                 WHERE o.run_id=%s AND o.source_id=%s AND o.stage=%s
-                  AND o.kind='model' AND o.status='succeeded'""",
+                  AND o.kind='model' AND o.status='succeeded'
+                ORDER BY a.created_at DESC, a.id DESC""",
                     (run.id, run.source_id, plan.stage),
                 )
             ).fetchall()
@@ -1315,9 +1340,9 @@ class TopicSelectionActivities:
                 continue
             if parsed == output:
                 matches.append(reference)
-        if len(matches) != 1:
+        if not matches:
             raise HarnessValidationError(
-                "selection call has no unique final response matching its typed output"
+                "selection call has no final response matching its typed output"
             )
         return matches[0]
 
@@ -1387,6 +1412,12 @@ class TopicSelectionActivities:
             browse_parent_ids=browse_parent_ids,
         )
         validate_source_read_ids(index, inspection, required_sentence_ids)
+        if plan.source_tool_role == "cold_reviewer":
+            delivered = {
+                identifier for call in inspection.calls for identifier in call.sentence_ids
+            }
+            if not delivered <= required_sentence_ids:
+                raise HarnessValidationError("cold review inspected speech outside its candidate")
         if plan.source_tool_role == "source_reviewer":
             _, evidence, _, selection = await self.load(context)
             if selection is None or context.selection is None:
@@ -1407,7 +1438,7 @@ class TopicSelectionActivities:
                 ),
             )
         checkpoint_ref = None
-        if inspection.format == "topic-source-inspection/2":
+        if inspection.format in {"topic-source-inspection/2", "topic-source-inspection/3"}:
             response_record = await artifacts._artifact_for_read(
                 self.owner.ctx.settings.database_url,
                 scope=self.topics.scope(self.common(context)),
@@ -1911,6 +1942,85 @@ class TopicSelectionActivities:
             draft=manifest.selection,
         )
 
+    @activity.defn(name="save_topic_cold_review_v7")
+    async def save_cold_review(self, request: ColdReviewSaveRequest) -> ColdReviewSaveResult:
+        """Give missing reads and invalid cold judgments an accountable correction path."""
+        context = request.context
+        _, evidence, _, selection = await self.load(context)
+        if selection is None or context.candidate_id is None or context.selection is None:
+            raise HarnessValidationError("cold review requires one exact selected candidate")
+        candidate = next(
+            (
+                item
+                for item in selection.draft.proposal.candidates
+                if item.id == context.candidate_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise HarnessValidationError("cold review candidate is absent")
+        plan = await self.prepare(context)
+        response = await self.response_ref(context, plan, request.review)
+        inspection_ref = None
+        diagnostics: tuple[str, ...] = ()
+        try:
+            if request.schema_error is not None:
+                raise HarnessValidationError(request.schema_error)  # noqa: TRY301
+            if request.review is None or request.review.candidateId != candidate.id:
+                raise HarnessValidationError("cold review names the wrong candidate")  # noqa: TRY301
+            self._require_independent_reviewer(plan.verifier.family, context.author_families)
+            inspection_ref = await self.inspection_ref(
+                context,
+                plan,
+                request.inspection,
+                response,
+                self._required_sentence_ids(evidence, candidate),
+            )
+            # The shared assessor validates cited spans and cold dimensions before retention.
+            assessed = assess_selection(
+                evidence,
+                selection,
+                context.selection.sha256,
+                cold_reviews=[request.review],
+                source_review=None,
+                author_family=plan.author.family,
+                verifier_family=plan.verifier.family,
+            )
+            if len(assessed.coldReviews) != 1:
+                raise HarnessValidationError("cold review contains unsupported judgments")  # noqa: TRY301
+        except (HarnessValidationError, ValidationError, ValueError) as error:
+            diagnostics = (str(error),)
+        record = ColdReviewRecord(
+            candidate_id=candidate.id,
+            response=response,
+            inspection=inspection_ref,
+            review=request.review,
+            diagnostics=diagnostics,
+        )
+        reference = await self.topics.publish(
+            self.common(context),
+            kind="checks",
+            format_name=record.format,
+            content=record,
+            dependencies=(
+                *plan.input_artifacts,
+                response,
+                *((inspection_ref,) if inspection_ref is not None else ()),
+            ),
+            metadata={
+                "programVersion": context.program_version,
+                "candidateId": candidate.id,
+                "stage": plan.stage,
+            },
+        )
+        return ColdReviewSaveResult(
+            artifact=reference if not diagnostics else None,
+            rejection=reference if diagnostics else None,
+            review=request.review if not diagnostics else None,
+            inspection=request.inspection,
+            diagnostics=diagnostics,
+        )
+
     @activity.defn(name="save_topic_source_review_shard_v6")
     async def save_source_review_shard(
         self, request: SourceReviewShardSaveRequest
@@ -1946,12 +2056,22 @@ class TopicSelectionActivities:
                 call_plan,
                 request.inspection,
                 response,
-                self._required_sentence_ids(evidence, work_item, request.review),
+                self._required_sentence_ids(
+                    evidence,
+                    work_item,
+                    request.review,
+                    *(
+                        candidate
+                        for candidate in selection.draft.proposal.candidates
+                        if candidate.id in {str(value.root) for value in work_item.candidateIds}
+                    ),
+                ),
             )
             author, verifier = editorial_routes(
                 run.route_snapshot,
                 author_index=context.author_index,
                 verifier_index=context.verifier_index,
+                author_families=context.author_families,
             )
             proposer_families = context.author_families or (author.family,)
             self._require_independent_reviewer(verifier.family, proposer_families)
@@ -2130,6 +2250,7 @@ class TopicSelectionActivities:
                 run.route_snapshot,
                 author_index=context.author_index,
                 verifier_index=context.verifier_index,
+                author_families=context.author_families,
             )
             shard = admit_repair_shard(
                 evidence,
@@ -2408,16 +2529,47 @@ class TopicSelectionActivities:
         inspection_refs: list[HarnessArtifactRef] = []
         admitted_cold: list[TopicSelectionColdReview] = []
         reasons = list(request.reasons)
-        for cold, candidate_id, stage in zip(
-            request.cold_reviews, request.cold_candidate_ids, request.cold_stages, strict=True
+        if request.cold_contexts and len(request.cold_contexts) != len(request.cold_reviews):
+            raise HarnessValidationError("cold observations and contexts differ")
+        if request.cold_inspections and len(request.cold_inspections) != len(request.cold_reviews):
+            raise HarnessValidationError("cold observations and inspections differ")
+        for offset, (cold, candidate_id, stage) in enumerate(
+            zip(request.cold_reviews, request.cold_candidate_ids, request.cold_stages, strict=True)
         ):
-            cold_context = context.model_copy(
-                update={"candidate_id": candidate_id, "assessment": None}
+            cold_context = (
+                request.cold_contexts[offset]
+                if request.cold_contexts
+                else context.model_copy(update={"candidate_id": candidate_id, "assessment": None})
             )
+            if (
+                cold_context.run != context.run
+                or cold_context.selection != context.selection
+                or cold_context.evidence != context.evidence
+                or cold_context.rubric != context.rubric
+                or cold_context.candidate_id != candidate_id
+                or cold_context.author_families != context.author_families
+            ):
+                raise HarnessValidationError(
+                    "cold observation belongs to different source authority"
+                )
             plan = await self.prepare(cold_context)
             if stage != plan.stage:
                 raise HarnessValidationError("cached cold review differs from this clip or rubric")
-            response_refs.append(await self.response_ref(cold_context, plan, cold))
+            response = await self.response_ref(cold_context, plan, cold)
+            response_refs.append(response)
+            if plan.source_tool_role == "cold_reviewer":
+                candidate = next(
+                    item for item in record.draft.proposal.candidates if item.id == candidate_id
+                )
+                inspection = await self.inspection_ref(
+                    cold_context,
+                    plan,
+                    request.cold_inspections[offset] if request.cold_inspections else None,
+                    response,
+                    self._required_sentence_ids(evidence, candidate),
+                )
+                if inspection is not None:
+                    inspection_refs.append(inspection)
             if cold.candidateId == candidate_id:
                 admitted_cold.append(cold)
             else:
@@ -2520,6 +2672,7 @@ class TopicSelectionActivities:
             run.route_snapshot,
             author_index=context.author_index,
             verifier_index=context.verifier_index,
+            author_families=context.author_families,
         )
         proposer_families = context.author_families or (
             ("deterministic-empty-packaging",)
@@ -2695,6 +2848,7 @@ class TopicSelectionActivities:
             self.save_author_shard,
             self.assemble_author,
             self.save_source_review_shard,
+            self.save_cold_review,
             self.assemble_source_review,
             self.save_repair_shard,
             self.assemble_repair,

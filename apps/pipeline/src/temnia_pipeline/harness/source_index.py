@@ -673,7 +673,11 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
     browse_calls = [call for call in trace.calls if call.tool_name == "browse_source"]
     node_by_id = {node.id: node for node in index.nodes}
     root = node_by_id[index.rootNodeId]
-    if browse_parent_ids is None:
+    if trace.role == "cold_reviewer":
+        if any(call.tool_name != "read_source" for call in trace.calls):
+            raise HarnessValidationError("cold inspection used outside-source tools")
+        parents = []
+    elif browse_parent_ids is None:
         parents = [root, *(node_by_id[identifier] for identifier in _child_ids(root))]
     else:
         try:
@@ -717,7 +721,9 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
             cursor = 0
         else:
             cursor = end
-    if parent_offset != len(parents) or not browse_calls or not browse_calls[-1].complete:
+    if trace.role != "cold_reviewer" and (
+        parent_offset != len(parents) or not browse_calls or not browse_calls[-1].complete
+    ):
         raise HarnessValidationError(
             "source inspection did not browse every hierarchy node through the final page"
         )
@@ -731,7 +737,7 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
     }
     if not read_ids or not read_ids <= known_sentences:
         raise HarnessValidationError("source inspection did not retain any exact indexed speech")
-    if trace.format == "topic-source-inspection/2":
+    if trace.format in {"topic-source-inspection/2", "topic-source-inspection/3"}:
         retained = set(trace.retained_sentence_ids)
         if (
             trace.checkpoint_sha256 is None
@@ -741,8 +747,13 @@ def validate_source_inspection(  # noqa: PLR0912, PLR0915
             or not retained <= read_ids
         ):
             raise HarnessValidationError("source inspection has an invalid compact checkpoint")
+        if trace.format == "topic-source-inspection/3" and (
+            len(set(trace.observed_sentence_ids)) != len(trace.observed_sentence_ids)
+            or not retained <= set(trace.observed_sentence_ids) <= read_ids
+        ):
+            raise HarnessValidationError("source inspection has invalid delivered speech coverage")
     searches = [call for call in trace.calls if call.tool_name == "search_source"]
-    if not searches:
+    if not searches and trace.role != "cold_reviewer":
         raise HarnessValidationError("source inspection did not use hybrid retrieval")
     for call in searches:
         query = call.arguments.get("query")
@@ -810,18 +821,22 @@ def validate_source_read_ids(
     if not required_sentence_ids <= known:
         raise HarnessValidationError("editorial answer cites a sentence outside the source index")
     read = (
-        set(trace.retained_sentence_ids)
-        if trace.format == "topic-source-inspection/2"
-        else {
-            identifier
-            for call in trace.calls
-            if call.tool_name == "read_source"
-            for identifier in call.sentence_ids
-        }
+        set(trace.observed_sentence_ids)
+        if trace.format == "topic-source-inspection/3"
+        else (
+            set(trace.retained_sentence_ids)
+            if trace.format == "topic-source-inspection/2"
+            else {
+                identifier
+                for call in trace.calls
+                if call.tool_name == "read_source"
+                for identifier in call.sentence_ids
+            }
+        )
     )
     missing = required_sentence_ids - read
     if missing:
         sample = ", ".join(sorted(missing)[:8])
         raise HarnessValidationError(
-            f"source inspection did not read cited boundary sentences: {sample}"
+            f"source inspection did not deliver required speech to the reviewer: {sample}"
         )

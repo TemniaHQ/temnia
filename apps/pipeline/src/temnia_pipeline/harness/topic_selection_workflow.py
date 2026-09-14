@@ -14,6 +14,8 @@ from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
+    from pydantic_ai.usage import UsageLimits
+
     from temnia_pipeline.contracts import (
         ChapterRunInput,
         ChapterRunOutput,
@@ -90,6 +92,8 @@ with workflow.unsafe.imports_passed_through():
         AuthorPackagingPlanResult,
         AuthorPackagingShardSaveRequest,
         AuthorPackagingShardSaveResult,
+        ColdReviewSaveRequest,
+        ColdReviewSaveResult,
         OpportunityInventoryManifestRequest,
         OpportunityInventoryManifestResult,
         OpportunityInventoryPlanResult,
@@ -111,6 +115,7 @@ with workflow.unsafe.imports_passed_through():
         SourceCheckpointLoadRequest,
         SourceCheckpointLoadResult,
         SourceIndexBuildResult,
+        SourceInspectionTrace,
         SourceReviewManifestRequest,
         SourceReviewManifestResult,
         SourceReviewPlanResult,
@@ -124,6 +129,9 @@ with workflow.unsafe.imports_passed_through():
 
 
 Seat = Literal["author", "verifier"]
+type ColdObservation = tuple[
+    TopicSelectionColdReview, str, SelectionContext, SourceInspectionTrace | None
+]
 
 
 class SeatRoutesExhausted(RuntimeError):  # noqa: N818 - the name crosses Temporal as a type
@@ -172,6 +180,7 @@ def selection_model_deps(request: ChapterRunInput, plan: SelectionCallPlan) -> H
         media_evidence=plan.media_evidence,
         allowed_browse_parent_ids=plan.allowed_browse_parent_ids,
         allowed_candidate_ids=plan.allowed_candidate_ids,
+        allowed_sentence_ids=plan.allowed_sentence_ids,
         dispatch_limit=request.config.maxDispatches,
         synthetic_payload=plan.synthetic_payload,
     )
@@ -186,6 +195,7 @@ def execution_limit(error: Exception) -> bool:
         "DispatchLimitExceeded",
         "ContextWindowExceeded",
         "SourceProgressLimitExceeded",
+        "UsageLimitExceeded",
     }
 
 
@@ -372,7 +382,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
 
     async def run_seat(  # noqa: C901
         self,
-        agent: Any,  # noqa: ANN401
+        agent: Any,  # noqa: ANN401  # noqa: ANN401
         request: ChapterRunInput,
         context: SelectionContext,
         seat: Seat,
@@ -412,6 +422,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                         message_history=history,
                         deps=deps,
                         model_settings=settings,
+                        usage_limits=UsageLimits(request_limit=256),
                     )
                 except Exception as error:
                     if invalid_model_output(error):
@@ -453,6 +464,100 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 "verifier_index": updated.verifier_index,
             }
         )
+
+    async def recover_shard(  # noqa: PLR0913
+        self,
+        request: ChapterRunInput,
+        context: SelectionContext,
+        *,
+        agent: Any,  # noqa: ANN401
+        seat: Seat,
+        activity_name: str,
+        request_type: Any,  # noqa: ANN401
+        result_type: Any,  # noqa: ANN401
+        output_field: str,
+    ) -> tuple[Any, SelectionContext, str | None, bool]:
+        """Give a settled invalid work item three distinct, accountable correction attempts.
+
+        Every rejection is retained by the stage's normal save activity. A retry gets its own
+        stage/request identity and the exact diagnostic. Unknown paid outcomes propagate without
+        retry; no recovery path can bypass the ledger's exposure or budget fence.
+        """
+        feedback: tuple[str, ...] = ()
+        saved = None
+        limited = False
+        current = context
+        for attempt in range(3):
+            current = context.model_copy(
+                update={
+                    "request_attempt": attempt,
+                    "recovery_feedback": feedback,
+                }
+            )
+            try:
+                result, plan, settled = await self.run_seat(agent, request, current, seat)
+                current = self.carry_routes(current, settled)
+                inspection = (
+                    source_inspection_trace(
+                        result.all_messages(),
+                        index_sha256=current.source_index.sha256,
+                        role=plan.source_tool_role,
+                        stage=plan.stage,
+                    )
+                    if current.source_index is not None and plan.source_tool_role is not None
+                    else None
+                )
+                payload = request_type(
+                    **{
+                        "context": current,
+                        output_field: result.output,
+                        "inspection": inspection,
+                    }
+                )
+            except Exception as error:
+                if isinstance(error, InvalidSeatOutput):
+                    current = self.carry_routes(current, error.context)
+                context = self.carry_routes(context, current)
+                if invalid_model_output(error):
+                    payload = request_type(context=current, schema_error=failure_sentence(error))
+                elif execution_limit(error):
+                    cause = error.cause if isinstance(error, ActivityError) else error
+                    name = (
+                        cause.type if isinstance(cause, ApplicationError) else type(cause).__name__
+                    )
+                    feedback = (failure_sentence(error),)
+                    limited = True
+                    if name in {"BudgetExceeded", "DispatchLimitExceeded"}:
+                        return None, current, feedback[0], True
+                    continue
+                else:
+                    raise
+            saved = await workflow.execute_activity(
+                activity_name,
+                payload,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RETRY,
+                result_type=result_type,
+            )
+            context = self.carry_routes(context, current)
+            if saved.artifact is not None:
+                return saved, current, None, False
+            feedback = tuple(saved.diagnostics)
+        return (
+            saved,
+            current,
+            "Three correction attempts were exhausted: " + "; ".join(feedback),
+            limited,
+        )
+
+    @staticmethod
+    async def settle_shards(tasks: Any) -> list[Any]:  # noqa: ANN401
+        """Drain dispatched siblings before propagating a fatal/unknown result."""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return results
 
     async def author_selection(
         self,
@@ -525,12 +630,14 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         request: ChapterRunInput,
         context: SelectionContext,
         draft: TopicSelectionDraft,
-        cache: dict[str, tuple[TopicSelectionColdReview, str]],
+        cache: dict[str, ColdObservation],
     ) -> SelectionAssessmentResult:
         """Review local value and the original source, including an empty author selection."""
         cold_reviews: list[TopicSelectionColdReview] = []
         cold_candidate_ids: list[str] = []
         cold_stages: list[str] = []
+        cold_contexts: list[SelectionContext] = []
+        cold_inspections: list[SourceInspectionTrace | None] = []
         unavailable: list[str] = []
         reasons: list[str] = []
         limited = False
@@ -547,7 +654,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
 
         async def review_one(
             candidate: Any,  # noqa: ANN401
-        ) -> tuple[TopicSelectionColdReview, str]:
+        ) -> ColdObservation:
             async with fan_out:
                 cold_context = context.model_copy(
                     update={
@@ -561,7 +668,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 settled_index["verifier_index"] = max(
                     settled_index["verifier_index"], settled.verifier_index
                 )
-                return result.output, plan.stage
+                return result.output, plan.stage, settled, None
 
         outcomes = await asyncio.gather(
             *(review_one(candidate) for candidate in pending), return_exceptions=True
@@ -599,6 +706,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             cold_reviews.append(cached[0])
             cold_candidate_ids.append(candidate.id)
             cold_stages.append(cached[1])
+            cold_contexts.append(cached[2])
+            cold_inspections.append(cached[3])
         source_review = None
         source_inspection = None
         source_dispatched = False
@@ -643,6 +752,8 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
                 cold_reviews=tuple(cold_reviews),
                 cold_candidate_ids=tuple(cold_candidate_ids),
                 cold_stages=tuple(cold_stages),
+                cold_contexts=tuple(cold_contexts),
+                cold_inspections=tuple(cold_inspections),
                 unavailable_cold_ids=tuple(unavailable),
                 source_review=source_review,
                 source_dispatched=source_dispatched,
@@ -807,7 +918,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
         draft = accepted.draft
         context = context.model_copy(update={"selection": accepted.selection, "rejection": None})
         seen = {accepted.semantic_key}
-        cache: dict[str, tuple[TopicSelectionColdReview, str]] = {}
+        cache: dict[str, ColdObservation] = {}
         final: SelectionAssessmentResult
         pending_assessment: SelectionAssessmentResult | None = None
         stop_reasons: list[str] = []
@@ -856,6 +967,7 @@ class TopicSelectionWorkflow(TopicRunWorkflow):
             draft = saved.draft
             rejection_diagnostics = ()
             pending_assessment = None
+            cache.clear()
             context = patch_context.model_copy(
                 update={
                     "selection": saved.selection,
@@ -947,71 +1059,22 @@ class TopicSelectionWorkflowV4(TopicSelectionWorkflow):
         context = context.model_copy(update={"inventory_plan": prepared.artifact})
         fan_out = asyncio.Semaphore(INVENTORY_FAN_OUT)
 
-        async def inventory_one(
-            section_id: str,
-        ) -> tuple[
-            OpportunityInventoryShardSaveResult | None,
-            SelectionContext,
-            str | None,
-        ]:
+        async def inventory_one(section_id: str) -> tuple[Any, SelectionContext, str | None]:
             async with fan_out:
-                shard_context = context.model_copy(update={"inventory_section_id": section_id})
-                try:
-                    result, plan, settled = await self.run_seat(
-                        self.inventory_agent, request, shard_context, "verifier"
-                    )
-                    shard_context = self.carry_routes(shard_context, settled)
-                    saved = await workflow.execute_activity(
-                        "save_topic_inventory_shard_v4",
-                        OpportunityInventoryShardSaveRequest(
-                            context=shard_context,
-                            inventory=result.output,
-                            inspection=(
-                                source_inspection_trace(
-                                    result.all_messages(),
-                                    index_sha256=shard_context.source_index.sha256,
-                                    role="inventory",
-                                    stage=plan.stage,
-                                )
-                                if shard_context.source_index is not None
-                                else None
-                            ),
-                        ),
-                        start_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=RETRY,
-                        result_type=OpportunityInventoryShardSaveResult,
-                    )
-                except Exception as error:
-                    if isinstance(error, InvalidSeatOutput):
-                        shard_context = self.carry_routes(shard_context, error.context)
-                    if invalid_model_output(error):
-                        saved = await workflow.execute_activity(
-                            "save_topic_inventory_shard_v4",
-                            OpportunityInventoryShardSaveRequest(
-                                context=shard_context,
-                                schema_error=(
-                                    f"Inventory response for {section_id} did not match the "
-                                    "selection schema."
-                                ),
-                            ),
-                            start_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RETRY,
-                            result_type=OpportunityInventoryShardSaveResult,
-                        )
-                        return saved, shard_context, "; ".join(saved.diagnostics)
-                    if execution_limit(error):
-                        return (
-                            None,
-                            shard_context,
-                            f"Execution capacity ended while inventorying {section_id}.",
-                        )
-                    raise
-                if saved.artifact is None:
-                    return saved, shard_context, "; ".join(saved.diagnostics)
-                return saved, shard_context, None
+                saved, settled, reason, _ = await self.recover_shard(
+                    request,
+                    context.model_copy(update={"inventory_section_id": section_id}),
+                    agent=self.inventory_agent,
+                    seat="verifier",
+                    activity_name="save_topic_inventory_shard_v4",
+                    request_type=OpportunityInventoryShardSaveRequest,
+                    result_type=OpportunityInventoryShardSaveResult,
+                    output_field="inventory",
+                )
+                return saved, settled, reason
 
-        outcomes = await asyncio.gather(
-            *(inventory_one(section.sectionId) for section in prepared.plan.sections)
+        outcomes = await self.settle_shards(
+            inventory_one(section.sectionId) for section in prepared.plan.sections
         )
         settled_verifier = max(
             (settled.verifier_index for _, settled, _ in outcomes),
@@ -1077,71 +1140,22 @@ class TopicSelectionWorkflowV5(TopicSelectionWorkflowV4):
         context = context.model_copy(update={"author_plan": prepared.artifact})
         fan_out = asyncio.Semaphore(AUTHOR_FAN_OUT)
 
-        async def author_one(
-            work_item_id: str,
-        ) -> tuple[
-            AuthorPackagingShardSaveResult | None,
-            SelectionContext,
-            str | None,
-        ]:
+        async def author_one(work_item_id: str) -> tuple[Any, SelectionContext, str | None]:
             async with fan_out:
-                shard_context = context.model_copy(update={"author_work_item_id": work_item_id})
-                try:
-                    result, plan, settled = await self.run_seat(
-                        self.author_agent, request, shard_context, "author"
-                    )
-                    shard_context = self.carry_routes(shard_context, settled)
-                    saved = await workflow.execute_activity(
-                        "save_topic_author_shard_v5",
-                        AuthorPackagingShardSaveRequest(
-                            context=shard_context,
-                            draft=result.output,
-                            inspection=(
-                                source_inspection_trace(
-                                    result.all_messages(),
-                                    index_sha256=shard_context.source_index.sha256,
-                                    role="author",
-                                    stage=plan.stage,
-                                )
-                                if shard_context.source_index is not None
-                                else None
-                            ),
-                        ),
-                        start_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=RETRY,
-                        result_type=AuthorPackagingShardSaveResult,
-                    )
-                except Exception as error:
-                    if isinstance(error, InvalidSeatOutput):
-                        shard_context = self.carry_routes(shard_context, error.context)
-                    if invalid_model_output(error):
-                        saved = await workflow.execute_activity(
-                            "save_topic_author_shard_v5",
-                            AuthorPackagingShardSaveRequest(
-                                context=shard_context,
-                                schema_error=(
-                                    f"Author response for {work_item_id} did not match the "
-                                    "selection schema."
-                                ),
-                            ),
-                            start_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RETRY,
-                            result_type=AuthorPackagingShardSaveResult,
-                        )
-                        return saved, shard_context, "; ".join(saved.diagnostics)
-                    if execution_limit(error):
-                        return (
-                            None,
-                            shard_context,
-                            f"Execution capacity ended while packaging {work_item_id}.",
-                        )
-                    raise
-                if saved.artifact is None:
-                    return saved, shard_context, "; ".join(saved.diagnostics)
-                return saved, shard_context, None
+                saved, settled, reason, _ = await self.recover_shard(
+                    request,
+                    context.model_copy(update={"author_work_item_id": work_item_id}),
+                    agent=self.author_agent,
+                    seat="author",
+                    activity_name="save_topic_author_shard_v5",
+                    request_type=AuthorPackagingShardSaveRequest,
+                    result_type=AuthorPackagingShardSaveResult,
+                    output_field="draft",
+                )
+                return saved, settled, reason
 
-        outcomes = await asyncio.gather(
-            *(author_one(item.workItemId) for item in prepared.plan.workItems)
+        outcomes = await self.settle_shards(
+            author_one(item.workItemId) for item in prepared.plan.workItems
         )
         settled_author = max(
             (settled.author_index for _, settled, _ in outcomes),
@@ -1205,12 +1219,14 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
         request: ChapterRunInput,
         context: SelectionContext,
         draft: TopicSelectionDraft,
-        cache: dict[str, tuple[TopicSelectionColdReview, str]],
+        cache: dict[str, ColdObservation],
     ) -> SelectionAssessmentResult:
         """Admit cold reviews, then require every bounded source-review shard."""
         cold_reviews: list[TopicSelectionColdReview] = []
         cold_candidate_ids: list[str] = []
         cold_stages: list[str] = []
+        cold_contexts: list[SelectionContext] = []
+        cold_inspections: list[SourceInspectionTrace | None] = []
         unavailable: list[str] = []
         reasons: list[str] = []
         limited = False
@@ -1225,7 +1241,7 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
         cold_fan_out = asyncio.Semaphore(COLD_REVIEW_FAN_OUT)
         settled_index = {"verifier_index": context.verifier_index}
 
-        async def review_cold(candidate: Any) -> tuple[TopicSelectionColdReview, str]:  # noqa: ANN401
+        async def review_cold(candidate: Any) -> ColdObservation:  # noqa: ANN401
             async with cold_fan_out:
                 cold_context = context.model_copy(
                     update={
@@ -1233,13 +1249,37 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
                         "verifier_index": settled_index["verifier_index"],
                     }
                 )
+                if context.program_version == TOPIC_SELECTION_POLICY_V7:
+                    saved, settled, reason, _ = await self.recover_shard(
+                        request,
+                        cold_context,
+                        agent=self.cold_agent,
+                        seat="verifier",
+                        activity_name="save_topic_cold_review_v7",
+                        request_type=ColdReviewSaveRequest,
+                        result_type=ColdReviewSaveResult,
+                        output_field="review",
+                    )
+                    settled_index["verifier_index"] = max(
+                        settled_index["verifier_index"], settled.verifier_index
+                    )
+                    if saved is None or saved.review is None or saved.artifact is None:
+                        raise ApplicationError(
+                            reason or "Cold judgment could not be completed after correction.",
+                            type="SourceProgressLimitExceeded",
+                            non_retryable=True,
+                        )
+                    stage = f"verify:selection:cold:{selection_cold_key(candidate, rubric_sha)}"
+                    if settled.request_attempt:
+                        stage += f":retry-{settled.request_attempt}"
+                    return saved.review, stage, settled, saved.inspection
                 result, plan, settled = await self.run_seat(
                     self.cold_agent, request, cold_context, "verifier"
                 )
                 settled_index["verifier_index"] = max(
                     settled_index["verifier_index"], settled.verifier_index
                 )
-                return result.output, plan.stage
+                return result.output, plan.stage, settled, None
 
         cold_outcomes = await asyncio.gather(
             *(review_cold(candidate) for candidate in pending), return_exceptions=True
@@ -1277,6 +1317,8 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
             cold_reviews.append(cached[0])
             cold_candidate_ids.append(candidate.id)
             cold_stages.append(cached[1])
+            cold_contexts.append(cached[2])
+            cold_inspections.append(cached[3])
 
         manifest_ref: HarnessArtifactRef | None = None
         if not limited:
@@ -1290,75 +1332,30 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
             context = context.model_copy(update={"source_review_plan": prepared.artifact})
             review_fan_out = asyncio.Semaphore(SOURCE_REVIEW_FAN_OUT)
 
-            async def review_one(
-                work_item_id: str,
-            ) -> tuple[SourceReviewShardSaveResult | None, SelectionContext, str | None]:
+            async def review_one(work_item_id: str) -> tuple[Any, SelectionContext, str | None]:
                 async with review_fan_out:
-                    shard_context = context.model_copy(
-                        update={
-                            "source_review_work_item_id": work_item_id,
-                            "verifier_index": settled_index["verifier_index"],
-                        }
+                    saved, settled, reason, _ = await self.recover_shard(
+                        request,
+                        context.model_copy(
+                            update={
+                                "source_review_work_item_id": work_item_id,
+                                "verifier_index": settled_index["verifier_index"],
+                            }
+                        ),
+                        agent=self.source_agent,
+                        seat="verifier",
+                        activity_name="save_topic_source_review_shard_v6",
+                        request_type=SourceReviewShardSaveRequest,
+                        result_type=SourceReviewShardSaveResult,
+                        output_field="review",
                     )
-                    try:
-                        result, plan, settled = await self.run_seat(
-                            self.source_agent, request, shard_context, "verifier"
-                        )
-                        shard_context = self.carry_routes(shard_context, settled)
-                        settled_index["verifier_index"] = max(
-                            settled_index["verifier_index"], settled.verifier_index
-                        )
-                        saved = await workflow.execute_activity(
-                            "save_topic_source_review_shard_v6",
-                            SourceReviewShardSaveRequest(
-                                context=shard_context,
-                                review=result.output,
-                                inspection=(
-                                    source_inspection_trace(
-                                        result.all_messages(),
-                                        index_sha256=shard_context.source_index.sha256,
-                                        role="source_reviewer",
-                                        stage=plan.stage,
-                                    )
-                                    if shard_context.source_index is not None
-                                    else None
-                                ),
-                            ),
-                            start_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RETRY,
-                            result_type=SourceReviewShardSaveResult,
-                        )
-                    except Exception as error:
-                        if isinstance(error, InvalidSeatOutput):
-                            shard_context = self.carry_routes(shard_context, error.context)
-                        if invalid_model_output(error):
-                            saved = await workflow.execute_activity(
-                                "save_topic_source_review_shard_v6",
-                                SourceReviewShardSaveRequest(
-                                    context=shard_context,
-                                    schema_error=(
-                                        f"Source review response for {work_item_id} did not match "
-                                        "the portfolio schema."
-                                    ),
-                                ),
-                                start_to_close_timeout=timedelta(minutes=2),
-                                retry_policy=RETRY,
-                                result_type=SourceReviewShardSaveResult,
-                            )
-                            return saved, shard_context, "; ".join(saved.diagnostics)
-                        if execution_limit(error):
-                            return (
-                                None,
-                                shard_context,
-                                f"Execution capacity ended while reviewing {work_item_id}.",
-                            )
-                        raise
-                    if saved.artifact is None:
-                        return saved, shard_context, "; ".join(saved.diagnostics)
-                    return saved, shard_context, None
+                    settled_index["verifier_index"] = max(
+                        settled_index["verifier_index"], settled.verifier_index
+                    )
+                    return saved, settled, reason
 
-            outcomes = await asyncio.gather(
-                *(review_one(item.workItemId) for item in prepared.plan.workItems)
+            outcomes = await self.settle_shards(
+                review_one(item.workItemId) for item in prepared.plan.workItems
             )
             context = context.model_copy(
                 update={
@@ -1399,6 +1396,8 @@ class TopicSelectionWorkflowV6(TopicSelectionWorkflowV5):
                 cold_reviews=tuple(cold_reviews),
                 cold_candidate_ids=tuple(cold_candidate_ids),
                 cold_stages=tuple(cold_stages),
+                cold_contexts=tuple(cold_contexts),
+                cold_inspections=tuple(cold_inspections),
                 unavailable_cold_ids=tuple(unavailable),
                 source_dispatched=False,
                 source_review_manifest=manifest_ref,
@@ -1428,7 +1427,7 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
         """Keep v7 history and model activities disjoint from prior programs."""
         return await super().run(request)
 
-    async def repair_selection(  # noqa: C901
+    async def repair_selection(
         self,
         request: ChapterRunInput,
         context: SelectionContext,
@@ -1456,76 +1455,30 @@ class TopicSelectionWorkflowV7(TopicSelectionWorkflowV6):
         repair_fan_out = asyncio.Semaphore(REPAIR_FAN_OUT)
         settled_index = {"author_index": patch_context.author_index}
 
-        async def repair_one(
-            work_item_id: str,
-        ) -> tuple[RepairShardSaveResult | None, SelectionContext, str | None, bool]:
+        async def repair_one(work_item_id: str) -> tuple[Any, SelectionContext, str | None, bool]:
             async with repair_fan_out:
-                shard_context = patch_context.model_copy(
-                    update={
-                        "repair_work_item_id": work_item_id,
-                        "author_index": settled_index["author_index"],
-                    }
+                outcome = await self.recover_shard(
+                    request,
+                    patch_context.model_copy(
+                        update={
+                            "repair_work_item_id": work_item_id,
+                            "author_index": settled_index["author_index"],
+                        }
+                    ),
+                    agent=self.patch_agent,
+                    seat="author",
+                    activity_name="save_topic_repair_shard_v7",
+                    request_type=RepairShardSaveRequest,
+                    result_type=RepairShardSaveResult,
+                    output_field="patch",
                 )
-                try:
-                    result, _, settled = await self.run_seat(
-                        self.patch_agent, request, shard_context, "author"
-                    )
-                    shard_context = self.carry_routes(shard_context, settled)
-                    settled_index["author_index"] = max(
-                        settled_index["author_index"], settled.author_index
-                    )
-                    saved = await workflow.execute_activity(
-                        "save_topic_repair_shard_v7",
-                        RepairShardSaveRequest(
-                            context=shard_context,
-                            patch=result.output,
-                            inspection=(
-                                source_inspection_trace(
-                                    result.all_messages(),
-                                    index_sha256=shard_context.source_index.sha256,
-                                    role="repair",
-                                    stage=f"repair:selection:{shard_context.iteration}:{work_item_id}",
-                                )
-                                if shard_context.source_index is not None
-                                else None
-                            ),
-                        ),
-                        start_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=RETRY,
-                        result_type=RepairShardSaveResult,
-                    )
-                except Exception as error:
-                    if isinstance(error, InvalidSeatOutput):
-                        shard_context = self.carry_routes(shard_context, error.context)
-                    if invalid_model_output(error):
-                        saved = await workflow.execute_activity(
-                            "save_topic_repair_shard_v7",
-                            RepairShardSaveRequest(
-                                context=shard_context,
-                                schema_error=(
-                                    f"Repair response for {work_item_id} did not match the patch "
-                                    "schema."
-                                ),
-                            ),
-                            start_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RETRY,
-                            result_type=RepairShardSaveResult,
-                        )
-                        return saved, shard_context, "; ".join(saved.diagnostics), False
-                    if execution_limit(error):
-                        return (
-                            None,
-                            shard_context,
-                            f"Execution capacity ended while repairing {work_item_id}.",
-                            True,
-                        )
-                    raise
-                if saved.artifact is None:
-                    return saved, shard_context, "; ".join(saved.diagnostics), False
-                return saved, shard_context, None, False
+                settled_index["author_index"] = max(
+                    settled_index["author_index"], outcome[1].author_index
+                )
+                return outcome
 
-        outcomes = await asyncio.gather(
-            *(repair_one(item.workItemId) for item in prepared.plan.workItems)
+        outcomes = await self.settle_shards(
+            repair_one(item.workItemId) for item in prepared.plan.workItems
         )
         patch_context = patch_context.model_copy(
             update={

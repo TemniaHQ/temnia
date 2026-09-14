@@ -62,6 +62,7 @@ from temnia_pipeline.harness.topic_selection import (
     SELECTION_AUTHOR_PROMPT_V3,
     SELECTION_AUTHOR_SHARD_PROMPT,
     SELECTION_COLD_PROMPT_V3,
+    SELECTION_COLD_PROMPT_V4,
     SELECTION_INVENTORY_PROMPT,
     SELECTION_INVENTORY_SHARD_PROMPT,
     SELECTION_PATCH_PROMPT_V3,
@@ -125,6 +126,7 @@ TOPIC_SELECTION_V6_SCHEMAS = dict(TOPIC_SELECTION_V5_SCHEMAS)
 TOPIC_SELECTION_V7_STAGES = TOPIC_SELECTION_V6_STAGES
 TOPIC_SELECTION_V7_SCHEMAS = {
     **TOPIC_SELECTION_V6_SCHEMAS,
+    "topic_cold": SELECTION_COLD_PROMPT_V4,
     "topic_patch": REPAIR_COMPONENT_PROMPT_VERSION,
 }
 QUALIFICATION_SOURCE_INDEX = {
@@ -147,7 +149,9 @@ def topic_source_progress_processor(
     suite: str = "topic-selection-v3",
 ) -> Callable[[list[ModelMessage]], list[ModelMessage]] | None:
     """Use the production compaction contract in indexed route pre-flight calls."""
-    roles: dict[str, Literal["inventory", "author", "source_reviewer", "repair"]] = {
+    roles: dict[
+        str, Literal["inventory", "author", "source_reviewer", "repair", "cold_reviewer"]
+    ] = {
         "topic_inventory": "inventory",
         "topic_inventory_shard": "inventory",
         "topic_author": "author",
@@ -155,6 +159,7 @@ def topic_source_progress_processor(
     }
     if suite == "topic-selection-v7":
         roles["topic_patch"] = "repair"
+        roles["topic_cold"] = "cold_reviewer"
     role = roles.get(stage)
     if role is None:
         return None
@@ -315,6 +320,8 @@ def topic_source_qualification_tools(stage: str, suite: str = "topic-selection-v
             inspect_candidate,
             read_media_evidence,
         ]
+    if stage == "topic_cold" and suite == "topic-selection-v7":
+        return [read_source]
     if stage == "topic_patch" and suite == "topic-selection-v7":
         return [browse_source, search_source, read_source]
     return []
@@ -685,7 +692,14 @@ def _v7_qualification_repair_plan() -> TopicRepairPlan:
 def topic_selection_v7_qualification_prompts() -> dict[str, tuple[str, type[BaseModel], str]]:
     """Render v6 requests plus the exact indexed connected-component repair request."""
     prompts = topic_selection_v6_qualification_prompts()
-    _, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    evidence, record, assessment = topic_selection_qualification_case(combined_patch=True)
+    prompts["topic_cold"] = (
+        selection_cold_prompt(
+            evidence, record.draft.proposal.candidates[0], record.rubric, indexed=True
+        ),
+        TopicSelectionColdReview,
+        SELECTION_COLD_PROMPT_V4,
+    )
     plan = _v7_qualification_repair_plan()
     prompts["topic_patch"] = (
         repair_component_prompt(

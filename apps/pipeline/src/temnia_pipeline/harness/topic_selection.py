@@ -53,6 +53,7 @@ SELECTION_INVENTORY_SHARD_PROMPT = "topic-opportunity-inventory-shard/1"
 SELECTION_AUTHOR_PROMPT_V3 = "topic-selection-author/8"
 SELECTION_AUTHOR_SHARD_PROMPT = "topic-selection-author-shard/1"
 SELECTION_COLD_PROMPT_V3 = "topic-selection-cold/3"
+SELECTION_COLD_PROMPT_V4 = "topic-selection-cold/4"
 SELECTION_SOURCE_PROMPT_V3 = "topic-selection-source/11"
 SELECTION_SOURCE_SHARD_PROMPT = "topic-selection-source-shard/1"
 SELECTION_PATCH_PROMPT_V3 = "topic-selection-patch/11"
@@ -435,11 +436,24 @@ def candidate_handoff_rows(
 
 
 def selection_cold_prompt(
-    evidence: HarnessEvidence, candidate: TopicCandidate, rubric: TopicEditorialRubric
+    evidence: HarnessEvidence,
+    candidate: TopicCandidate,
+    rubric: TopicEditorialRubric,
+    *,
+    indexed: bool = False,
 ) -> str:
     """Only audience, selected speech and title enter the cold judgment."""
+    paging = (
+        "Read the complete selected speech using read_source in bounded pages. "
+        "Follow nextSentenceId until complete. Earlier speech may leave the active prompt; "
+        "reread exact ranges when needed. Working notes are hypotheses, not source evidence. "
+        "Only the supplied sentence interval is accessible. Do not browse the episode.\n"
+        if indexed
+        else ""
+    )
     return _prompt(
-        """Encounter this video independently. Use the supplied audience rubric,
+        paging
+        + """Encounter this video independently. Use the supplied audience rubric,
 including explicit refinements, but assume no knowledge of this source episode.
 First reconstruct the purpose and takeaway from selected speech. Assess intelligibleBeginning,
 coherentTopic, completeDiscussion and titleFaithful independently. A title cannot supply absent
@@ -462,10 +476,21 @@ videos.
             "rubric": rubric.model_dump(mode="json"),
             "candidateId": candidate.id,
             "title": candidate.title,
-            "clipSentences": [
-                {key: row[key] for key in ("id", "speakers", "text")}
-                for row in sentence_rows(evidence, candidate)
-            ],
+            **(
+                {
+                    "selectedSpeech": {
+                        "firstSentenceId": candidate.firstSentenceId,
+                        "lastSentenceId": candidate.lastSentenceId,
+                    }
+                }
+                if indexed
+                else {
+                    "clipSentences": [
+                        {key: row[key] for key in ("id", "speakers", "text")}
+                        for row in sentence_rows(evidence, candidate)
+                    ]
+                }
+            ),
         },
     )
 
