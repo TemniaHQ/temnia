@@ -21,10 +21,10 @@ from obstore import head_async
 from pydantic import BaseModel, ConfigDict, Field
 
 from temnia_pipeline.harness import artifacts
-from temnia_pipeline.harness.rendering import timeline_from_identity, timeline_identity
 from temnia_pipeline.harness.shot_evidence import build_source_shot_evidence
 from temnia_pipeline.harness.speech_evidence import ensure_source_speech
 from temnia_pipeline.media.chapters import MediaTimelineFacts, inspect_timeline
+from temnia_pipeline.media.timeline_identity import timeline_from_identity, timeline_identity
 
 if TYPE_CHECKING:
     from pathlib import Path

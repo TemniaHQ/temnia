@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from temnia_pipeline.contracts import HarnessEvidenceShot
 from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness.ledger import IdentityConflict
-from temnia_pipeline.harness.rendering import timeline_identity
 from temnia_pipeline.harness.validators import rounded_milliseconds
 from temnia_pipeline.media.pyscene_shots import (
     ADAPTIVE_THRESHOLD,
@@ -37,6 +36,7 @@ from temnia_pipeline.media.source_shots import (
     SCALE_HEIGHT,
     detect_source_shots,
 )
+from temnia_pipeline.media.timeline_identity import timeline_identity
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

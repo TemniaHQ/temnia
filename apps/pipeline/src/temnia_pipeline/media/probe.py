@@ -19,12 +19,11 @@ import av
 from av.error import FFmpegError
 
 from temnia_pipeline.contracts import ProbeResult
-from temnia_pipeline.media.facts import VideoFacts
+from temnia_pipeline.media.facts import COVER_ART_CODECS, VideoFacts
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-COVER_ART_CODECS = frozenset({"mjpeg", "png", "bmp", "gif"})
 
 __all__ = ["COVER_ART_CODECS", "InvalidMediaError", "VideoFacts", "probe"]
 

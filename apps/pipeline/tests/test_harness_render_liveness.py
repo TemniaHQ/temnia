@@ -41,7 +41,7 @@ from temnia_pipeline.contracts import (
 from temnia_pipeline.harness import activities as activities_module
 from temnia_pipeline.harness.activities import HarnessActivities
 from temnia_pipeline.harness.artifacts import HarnessArtifact
-from temnia_pipeline.harness.rendering import CaptionDocument, RenderSection, timeline_identity
+from temnia_pipeline.harness.rendering import CaptionDocument, RenderSection
 from temnia_pipeline.harness.routes import RouteSnapshot
 from temnia_pipeline.harness.runtime_types import (
     RenderRevisionRequest,
@@ -51,6 +51,7 @@ from temnia_pipeline.harness.runtime_types import (
 )
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.media.chapters import MediaTimelineFacts
+from temnia_pipeline.media.timeline_identity import timeline_identity
 from temnia_pipeline.speech import liveness
 
 if TYPE_CHECKING:

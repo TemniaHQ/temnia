@@ -13,7 +13,6 @@ import pytest
 from obstore.store import MemoryStore
 
 from temnia_pipeline.harness import artifacts, shot_evidence, source_sensors, speech_evidence
-from temnia_pipeline.harness.rendering import timeline_identity
 from temnia_pipeline.harness.shot_evidence import find_source_shot_evidence
 from temnia_pipeline.harness.source_sensors import (
     find_source_timeline,
@@ -23,6 +22,7 @@ from temnia_pipeline.harness.source_sensors import (
 from temnia_pipeline.harness.speech_evidence import ensure_source_speech
 from temnia_pipeline.media.chapters import inspect_timeline
 from temnia_pipeline.media.ffmpeg import run_ffmpeg
+from temnia_pipeline.media.timeline_identity import timeline_identity
 from temnia_pipeline.speech.silero import (
     SILERO_DETECTOR,
     SILERO_REVISION,

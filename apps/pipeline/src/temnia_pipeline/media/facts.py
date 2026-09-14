@@ -15,6 +15,9 @@ from dataclasses import dataclass
 # for the type checker fails there (AGENTS.md, Python pipeline).
 from fractions import Fraction  # noqa: TC003
 
+# Still images muxed as a video stream (cover art) are not a picture track.
+COVER_ART_CODECS = frozenset({"mjpeg", "png", "bmp", "gif"})
+
 
 @dataclass(frozen=True, slots=True)
 class VideoFacts:

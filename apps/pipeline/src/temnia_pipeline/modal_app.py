@@ -529,6 +529,15 @@ async def _transcribe(  # noqa: PLR0913
 
 
 RENDER_TIMEOUT_SECONDS = 2 * 60 * 60
+# Everything `render_sections` imports from this package at call time. The release smoke
+# imports the same names on the card, so an image missing a dependency they need is a
+# failed deploy, never a failed run; `tests/test_modal_render_imports.py` keeps the two
+# lists equal and proves each module loads without the worker's own dependencies.
+RENDER_MODULES = (
+    "temnia_pipeline.media.chapters",
+    "temnia_pipeline.media.timeline_identity",
+    "temnia_pipeline.render_contracts",
+)
 RENDER_CPUS = 8
 RENDER_MEMORY_MB = 16384
 RENDER_CONCURRENCY = 2
@@ -564,13 +573,13 @@ async def render_sections(job: dict[str, Any]) -> dict[str, Any]:
     differs. Each output is hashed here and verified again by the worker after download,
     so a truncated upload can never become a published video.
     """
-    from temnia_pipeline.harness.rendering import timeline_identity  # noqa: PLC0415
     from temnia_pipeline.media.chapters import (  # noqa: PLC0415
         ChapterRenderConfig,
         inspect_timeline,
         render_chapter,
     )
-    from temnia_pipeline.render_remote import (  # noqa: PLC0415
+    from temnia_pipeline.media.timeline_identity import timeline_identity  # noqa: PLC0415
+    from temnia_pipeline.render_contracts import (  # noqa: PLC0415
         RenderJob,
         RenderOutput,
         RenderResult,
@@ -646,6 +655,42 @@ async def render_sections(job: dict[str, Any]) -> dict[str, Any]:
         ).model_dump(mode="json")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+@app.function(gpu=GPU, timeout=PROBE_TIMEOUT_SECONDS)  # pyright: ignore[reportUnknownMemberType]
+def render_probe() -> dict[str, Any]:
+    """Prove the deployed render path can start: its imports resolve and NVENC encodes here.
+
+    One second of a synthetic source through `h264_nvenc` on the card. The release smoke
+    calls this before any run does.
+    """
+    for name in RENDER_MODULES:
+        import_module(name)
+    command = [
+        "/usr/local/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=320x240:rate=25",
+        "-c:v",
+        "h264_nvenc",
+        "-preset",
+        "p5",
+        "-f",
+        "null",
+        "-",
+    ]
+    completed = subprocess.run(  # noqa: S603 - a constant command on the container's own ffmpeg
+        command, capture_output=True, text=True, check=False, timeout=120
+    )
+    if completed.returncode != 0:
+        msg = f"h264_nvenc cannot encode on this container: {completed.stderr.strip()[-500:]}"
+        raise RuntimeError(msg)
+    return {"build": BUILD_ID, "encoder": "h264_nvenc", "nvenc": True}
 
 
 @app.function()  # pyright: ignore[reportUnknownMemberType]
