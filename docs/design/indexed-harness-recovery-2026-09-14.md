@@ -1,6 +1,7 @@
 # Indexed harness recovery and bounded review — 2026-09-14
 
-Status: implementation and verification in progress. This is not a production acceptance record.
+Status: implemented and locally verified; rollout and long-source evaluation remain open.
+This is not a production acceptance record.
 It follows the [implementation review](indexed-harness-production-review-2026-09-14.md).
 
 ## User direction
@@ -112,3 +113,12 @@ removed default dispatch cap, and the existing-run lookup treated changed server
 user intent. Updated the expectations and corrected that idempotency defect. Pipeline focused
 validation reached 100 passing tests; contract validation reached 34. The gate was rerun after
 these corrections rather than reporting the failed run as a pass.
+
+
+The clean exact-commit gate passed for `fb674222781c06ab49824b461260083be88db540` at
+`2026-09-14T18:15:07.219Z`: 1,272 pipeline tests passed with one skip; 202 web tests, 34 contract
+checks and 41 database tests passed; both production images built; all 18 Playwright workflow tests
+passed. Lint, strict types and generated-contract drift checks passed. The browser topic test is the
+current V3 product workflow, not evidence of a V7 production-image tool loop. V7 recovery/cold paging
+has focused local tests, not a live provider or human editorial acceptance result. Documentation
+recording this result follows the tested code commit and does not change executable behavior.

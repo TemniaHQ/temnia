@@ -14,6 +14,9 @@ budget, unknown-expense and source authority remain. This is implementation prog
 scale or publication acceptance. The web's V3 path, oversized work-unit subdivision, workflow-history
 continuation and real long-source measurement remain open. Do not equate complete evidence access
 with complete comprehension, or replace Temporal/PydanticAI to hide application-level failures.
+The clean exact-commit gate passed for `fb67422` at `2026-09-14T18:15:07.219Z`: 1,272 pipeline tests
+with one skip, both production images and all 18 browser workflows. Browser topic execution is
+still V3; this result does not establish a live V7 tool loop or long-source editorial acceptance.
 
 **2026-09-14 — Indexed harness review found functional blockers beyond the green gate.**
 Rajesh requested the entire implementation review and all production stop conditions. The
