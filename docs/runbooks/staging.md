@@ -219,7 +219,10 @@ decided belongs to an organization, and never an organization id.
    Concurrent versions require explicit Temporal version/queue routing and source ownership, which
    this release does not add. Do not abandon an unknown paid call merely to complete the rollout.
 
-5a. **Deploy**, using the same checkout as the matching pipeline image:
+5a. **Deploy.** Automatic: `.github/workflows/modal-deploy.yml` deploys the app from every push
+   to `main` that touches the pipeline package, then runs the smoke below. The repository
+   secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` carry the token from step 2 (set once).
+   By hand, only for a laptop experiment, the same command is:
 
    ```bash
    uv run modal deploy --env staging -m temnia_pipeline.modal_app

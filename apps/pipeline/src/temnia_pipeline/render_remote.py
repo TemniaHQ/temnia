@@ -155,8 +155,20 @@ class RealRenderClient:
         self.progress_dict = progress_dict
 
     async def spawn(self, job: RenderJob) -> str:
-        """Spawn rather than call: a call id survives a worker restart."""
-        call = await _function(self.settings).spawn.aio(job.model_dump(mode="json"))
+        """Spawn rather than call: a call id survives a worker restart.
+
+        A deployment without the function is not a failure of this run: the caller renders
+        on the CPU and says so, and the next Modal deploy from main closes the gap.
+        """
+        from modal.exception import NotFoundError  # noqa: PLC0415
+
+        try:
+            call = await _function(self.settings).spawn.aio(job.model_dump(mode="json"))
+        except NotFoundError as error:
+            raise RenderFunctionAbsent(
+                f"{self.settings.modal_app}/{RENDER_FUNCTION} is not deployed in "
+                f"{self.settings.modal_environment or 'the default environment'}"
+            ) from error
         return str(call.object_id)
 
     async def status(self, call_id: str) -> Done | Failed | Running | Unknown | Unreachable:  # noqa: PLR0911
@@ -201,6 +213,10 @@ class RealRenderClient:
         if payload is None:
             return None
         return RenderProgress.model_validate(payload)
+
+
+class RenderFunctionAbsent(RuntimeError):  # noqa: N818 - a state, read by name
+    """The media app in this environment does not carry `render_sections` (yet)."""
 
 
 def render_failure(message: str) -> ApplicationError:

@@ -182,3 +182,33 @@ def test_local_rendering_refuses_the_gpu_encoder() -> None:
     assert settings.render_encoder == "h264_nvenc"
     with pytest.raises(ValueError, match="must be local or modal"):
         HarnessSettings.from_env({"HARNESS_RENDER_BACKEND": "gpu"})
+
+
+async def test_an_undeployed_render_function_is_reported_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modal.exception import NotFoundError  # noqa: PLC0415
+
+    from temnia_pipeline import render_remote  # noqa: PLC0415
+    from temnia_pipeline.render_remote import (  # noqa: PLC0415
+        RealRenderClient,
+        RenderFunctionAbsent,
+    )
+    from temnia_pipeline.settings import TranscodeSettings  # noqa: PLC0415
+
+    class Absent:
+        class spawn:  # noqa: N801 - mirrors the SDK's attribute
+            @staticmethod
+            async def aio(_payload: object) -> object:
+                message = "no such function"
+                raise NotFoundError(message)
+
+    def absent(_settings: object) -> Absent:
+        return Absent()
+
+    monkeypatch.setattr(render_remote, "_function", absent)
+    settings = TranscodeSettings(
+        backend="modal", modal_app="temnia-media", modal_environment="staging", progress_dict="p"
+    )
+    with pytest.raises(RenderFunctionAbsent, match="temnia-media/render_sections is not deployed"):
+        await RealRenderClient(settings, "render-notes").spawn(_job())

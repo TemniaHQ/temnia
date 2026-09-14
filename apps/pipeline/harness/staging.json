@@ -16,8 +16,8 @@
   },
   "recordedFixturePath": null,
   "render": {
-    "backend": "local",
-    "encoder": "libx264"
+    "backend": "modal",
+    "encoder": "h264_nvenc"
   },
   "routeSnapshot": {
     "id": "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",

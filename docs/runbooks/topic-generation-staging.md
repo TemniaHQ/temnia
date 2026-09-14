@@ -80,19 +80,18 @@ payload-scaled deadline. Record the run IDs, cost and durations in the day log.
 
 ## Rendering on the GPU
 
-The media app on Modal carries `render_sections`; the deployment file decides whether the
-worker uses it. Once, from a checkout with Modal credentials:
+The media app on Modal carries `render_sections` and deploys from `main` through the
+`modal-deploy` GitHub Actions workflow (deploy, then the GPU smoke), the same way Dokploy
+deploys the two images. The deployment file already says `render: modal / h264_nvenc`.
+Until the app deploy has landed, a worker that finds the function absent renders that
+revision on its own CPU with libx264 and logs why; the next run after the deploy uses the
+card. GPU and CPU renders are different media artifacts, so nothing is reused across the
+encoders. A run's GPU render shows `render-remote` in the activity heartbeat with the Modal
+call id; a worker restart reattaches to that call rather than rendering twice.
 
-```bash
-cd apps/pipeline && uv run modal deploy --env staging -m temnia_pipeline.modal_app
-```
-
-then in `apps/pipeline/harness/staging.json` set `render` to
-`{"backend": "modal", "encoder": "h264_nvenc"}` and merge. The worker refuses to boot with
-`h264_nvenc` on the local backend, so the order is app first, file second. A run's renders
-then show `render-remote` in the activity heartbeat with the Modal call id; a worker restart
-reattaches to that call rather than rendering twice. GPU and CPU renders are different media
-artifacts, so switching back never reuses a file from the other encoder.
+One-time, not per change: the repository secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`
+hold the `temnia-pipeline-staging` token (staging.md §2c). Without them the workflow stops
+at its first step and says so.
 
 ## Changing the roster or a limit
 

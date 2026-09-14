@@ -2,6 +2,19 @@
 
 ## Decisions
 
+**2026-09-14 — Every deployable deploys from a push to `main`; nothing ships by hand.** Rajesh,
+handed a `modal deploy` command in a runbook: "deployments should be automatic when code
+merges to main until and unless a manual deployment is required." Dokploy already deployed
+the two images from main; the Modal media app was the exception, and
+`.github/workflows/modal-deploy.yml` removes it (deploy on push to main touching the pipeline
+package, then the GPU smoke, environment `staging`). Two rules follow. A PR that adds a
+deployable adds its automation in the same PR. Configuration that depends on a deploy must
+degrade gracefully until the deploy lands: the deployment file now says `render: modal /
+h264_nvenc`, and a worker that finds `render_sections` absent renders that revision on its
+own CPU with libx264 and logs why, instead of a runbook asking for ordering by hand. The only
+acceptable manual step is a one-time secret or account action, named once with the reason it
+cannot be automated: here, the `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` repository secrets.
+
 **2026-09-13 — Topic videos render on the Modal GPU; the worker verifies and publishes.**
 Second part of `docs/plans/media-placement-360-view.md`. `render_sections` in the media app
 renders every missing section of a revision from one download of the master with the

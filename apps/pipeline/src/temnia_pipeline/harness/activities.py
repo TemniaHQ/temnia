@@ -11,6 +11,7 @@ import fcntl
 import functools
 import hashlib
 import json
+import logging
 import shutil
 import time
 from dataclasses import asdict
@@ -114,6 +115,7 @@ from temnia_pipeline.media.chapters import (
 from temnia_pipeline.render_remote import (
     ModalRenderer,
     RealRenderClient,
+    RenderFunctionAbsent,
     RenderJob,
     RenderProgress,
     RenderSectionJob,
@@ -121,6 +123,8 @@ from temnia_pipeline.render_remote import (
 )
 from temnia_pipeline.speech.liveness import run_with_activity_heartbeat
 from temnia_pipeline.substrate.factory import make_segmenter
+
+log = logging.getLogger("temnia.harness.activities")
 
 CANCELLATION_POLL_SECONDS = 5
 SOURCE_DOWNLOAD_QUIET_TIMEOUT_SECONDS = 3 * 60
@@ -790,17 +794,23 @@ class HarnessActivities:
             ),
         )
         if self.harness_settings.render_backend == "modal":
-            await self._render_missing_sections_remotely(
-                request,
-                run,
-                scope,
-                evidence=evidence,
-                sections=sections,
-                timeline=timeline,
-                config=config,
-                source_sha=source_sha,
-                workspace=workspace,
-            )
+            try:
+                await self._render_missing_sections_remotely(
+                    request,
+                    run,
+                    scope,
+                    evidence=evidence,
+                    sections=sections,
+                    timeline=timeline,
+                    config=config,
+                    source_sha=source_sha,
+                    workspace=workspace,
+                )
+            except RenderFunctionAbsent as absent:
+                # The app deploys from main on its own; until it lands, this worker encodes
+                # here with the CPU encoder, as a different media artifact.
+                log.warning("%s; rendering on this worker with libx264 instead", absent)
+                config = ChapterRenderConfig()
 
         async def one(  # noqa: PLR0915
             section: RenderSection,
