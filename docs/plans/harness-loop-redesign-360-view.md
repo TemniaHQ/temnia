@@ -37,7 +37,7 @@ compound-candidate problem recorded on 2026-09-12 (it gets easier after W4, it i
 Each workstream is one PR with its own gate, its own decision entry and one staging run on Karma
 compared with run `f7396b5e` as the baseline. Order: W0 (small), W1, W2, W3, W4, W5.
 
-### W0. One description per operation and finding (half a day)
+### W0. One description per operation and finding (one day)
 
 **Design.** `.describe()` on every operation kind and finding kind in
 `packages/contracts/src/topic-selection.ts`; the generated `contracts.py` carries them as field
@@ -45,6 +45,10 @@ docs. `selection_patch_prompt_v3` renders its operation section from those descr
 of prose. A unit test enumerates every `_refuse(...)` message in `topic_selection.py` and asserts
 the prompt states the rule it enforces (a table of message to required phrase, so a new refusal
 without a prompt rule fails the test).
+
+**Also in W0** (from the prompt review): instructions and data split with one shared contract,
+the `userInstructions` field-name fix, wrapped-line cleanup, `endMs` dropped from author and
+source payloads, local ids for the cold clip.
 
 **Edges.** Descriptions are data, so the prompt version bumps when they change; the test pins
 the mapping, not wording. **Tests.** The enumeration test; the existing prompt-content tests move
@@ -78,7 +82,11 @@ recommendation is admissible only inside the candidate's authorized window and n
 another candidate's core; otherwise it degrades to a finding without a recommendation.
 
 The inventory prompt gains the same clause: required context includes the asker's stated premise
-when the answer addresses it. The cold rubric gains: an opening on a dependent connective fails
+when the answer addresses it. The prompt review adds to W1: `dependencies[]` and
+`conversationalForms` on candidates, `acceptanceCondition` and `omittedSpans` on findings, a
+`changed_attribution` finding kind, title support in the source review, the pack's probes as
+criterion descriptions, and two or three held-out examples per role
+([prompt-review-2026-09-14.md](../design/prompt-review-2026-09-14.md) §5). The cold rubric gains: an opening on a dependent connective fails
 intelligibleBeginning unless the sentence is self-contained.
 
 **Edges.** A premise that belongs to the previous candidate's core is a handoff, not a missing
@@ -193,7 +201,7 @@ without one withholds.
 
 | Step | Days | Staging run | Decision entry |
 | --- | --- | --- | --- |
-| W0 descriptions and the prompt-rule test | 0.5 | no | yes |
+| W0 descriptions, composition split, the prompt-rule test | 1 | no | yes |
 | W1 edges against the source | 1 | yes | yes |
 | W2 calibration export and scorer | 1 | scores W1's run | yes |
 | W3 repair per group | 2 | yes | yes |
