@@ -306,8 +306,7 @@ def test_opportunity_judgment_cannot_name_an_uninspected_candidate() -> None:
     opportunity_item = next(
         item
         for item in plan.workItems
-        if item.opportunityIds
-        and len(item.inspectionCandidateIds) < len(draft.proposal.candidates)
+        if item.opportunityIds and len(item.inspectionCandidateIds) < len(draft.proposal.candidates)
     )
     review_data = _review(draft, opportunity_item).model_dump(mode="json")
     permitted = {identifier.root for identifier in opportunity_item.inspectionCandidateIds}

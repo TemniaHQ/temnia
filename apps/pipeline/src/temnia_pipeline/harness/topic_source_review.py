@@ -178,8 +178,7 @@ def _omission_context(
     candidate_ids = [
         candidate.id
         for candidate in draft.proposal.candidates
-        if candidate.id in direct_candidates
-        or candidate.id in linked_candidates
+        if candidate.id in direct_candidates or candidate.id in linked_candidates
     ]
     return candidate_ids, opportunity_ids
 
