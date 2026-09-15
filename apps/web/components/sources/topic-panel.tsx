@@ -11,6 +11,8 @@ import {
 import { TopicEditor } from "@/components/sources/topic-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -104,6 +106,13 @@ export function TopicPanel({
   const [accepted, setAccepted] = useState<TopicRevisionView | null>(null);
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [allowanceDollars, setAllowanceDollars] = useState(
+    availability.available
+      ? (availability.settings.defaultRunBudgetMicros / 1_000_000).toFixed(2)
+      : "20.00"
+  );
+  const [authorRoute, setAuthorRoute] = useState("");
+  const [verifierRoute, setVerifierRoute] = useState("");
   const startKey = `topic-pending-start:${sourceId}`;
   const reviewKey = `topic-pending-review:${sourceId}`;
   const selection = useRef(selectedRunId);
@@ -264,19 +273,33 @@ export function TopicPanel({
     }
   }
 
+  /** The exact request the button sends: brief, allowance and seat preferences as typed. */
+  function newStartRequest(): TopicStartIntent {
+    const typed = brief.trim();
+    const allowance = Math.round(Number(allowanceDollars) * 1_000_000);
+    const routes = {
+      ...(authorRoute ? { author: authorRoute } : {}),
+      ...(verifierRoute ? { verifier: verifierRoute } : {}),
+    };
+    return {
+      ...(typed ? { brief: typed } : {}),
+      ...(Number.isFinite(allowance) && allowance > 0
+        ? { budgetMicros: allowance }
+        : {}),
+      requestKey: crypto.randomUUID(),
+      ...(Object.keys(routes).length ? { routes } : {}),
+      runId: crypto.randomUUID(),
+      sourceId,
+    };
+  }
+
   async function start(intent = pendingStart) {
     if (busy || (!intent && blocked)) {
       return;
     }
     // An empty box carries no brief at all, so the worker's single default is
     // what the run freezes; the stored intent is exactly what was sent.
-    const typed = brief.trim();
-    const request = intent ?? {
-      ...(typed ? { brief: typed } : {}),
-      requestKey: crypto.randomUUID(),
-      runId: crypto.randomUUID(),
-      sourceId,
-    };
+    const request = intent ?? newStartRequest();
     remember(startKey, request);
     setPendingStart(request);
     selection.current = request.runId;
@@ -307,10 +330,11 @@ export function TopicPanel({
   }
 
   async function review(
-    action: "accept" | "reject" | "cancel",
+    action: "accept" | "reject" | "cancel" | "raise_budget",
     sectionId: string | null,
     reason: string,
-    existing?: TopicReviewIntent
+    existing?: TopicReviewIntent,
+    budgetMicros: number | null = null
   ) {
     if (busy || (!existing && (blocked || !view.run))) {
       return;
@@ -319,7 +343,7 @@ export function TopicPanel({
       action,
       baseRevision: view.run?.currentRevision ?? 0,
       boundaryId: null,
-      budgetMicros: null,
+      budgetMicros,
       mutationKey: crypto.randomUUID(),
       otherSectionId: null,
       reason,
@@ -427,6 +451,86 @@ export function TopicPanel({
               value={brief}
             />
           </details>
+          {!!availability.available && (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <Label htmlFor={`topic-allowance-${sourceId}`}>
+                  Allowance (USD)
+                </Label>
+                <Input
+                  aria-label="Run allowance in dollars"
+                  disabled={blocked}
+                  id={`topic-allowance-${sourceId}`}
+                  inputMode="decimal"
+                  max={availability.settings.maxRunBudgetMicros / 1_000_000}
+                  min={0.01}
+                  onChange={(event) => setAllowanceDollars(event.target.value)}
+                  step="0.01"
+                  type="number"
+                  value={allowanceDollars}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Up to $
+                  {(
+                    availability.settings.maxRunBudgetMicros / 1_000_000
+                  ).toFixed(2)}
+                  . The run stops when it is spent; raise it to resume.
+                </p>
+              </div>
+              {availability.settings.routes.propose.length > 0 && (
+                <div className="space-y-1">
+                  <Label htmlFor={`topic-author-${sourceId}`}>
+                    Author model
+                  </Label>
+                  <NativeSelect
+                    aria-label="Author model"
+                    className="max-w-full"
+                    disabled={blocked}
+                    id={`topic-author-${sourceId}`}
+                    onChange={(event) => setAuthorRoute(event.target.value)}
+                    value={authorRoute}
+                  >
+                    <NativeSelectOption value="">
+                      Server default
+                    </NativeSelectOption>
+                    {availability.settings.routes.propose.map((route) => (
+                      <NativeSelectOption key={route.id} value={route.id}>
+                        {route.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+              )}
+              {availability.settings.routes.verify.length > 0 && (
+                <div className="space-y-1">
+                  <Label htmlFor={`topic-reviewer-${sourceId}`}>
+                    Reviewer model
+                  </Label>
+                  <NativeSelect
+                    aria-label="Reviewer model"
+                    className="max-w-full"
+                    disabled={blocked}
+                    id={`topic-reviewer-${sourceId}`}
+                    onChange={(event) => setVerifierRoute(event.target.value)}
+                    value={verifierRoute}
+                  >
+                    <NativeSelectOption value="">
+                      Server default
+                    </NativeSelectOption>
+                    {availability.settings.routes.verify.map((route) => (
+                      <NativeSelectOption key={route.id} value={route.id}>
+                        {route.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <p className="text-muted-foreground text-xs">
+                    The reviewer must be a different model family from the
+                    author.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           {!availability.available && (
             <p className="text-muted-foreground text-sm">
               {availability.message}
@@ -458,7 +562,11 @@ export function TopicPanel({
                 ? start(pendingStart)
                 : pendingReview &&
                   review(
-                    pendingReview.action as "accept" | "reject" | "cancel",
+                    pendingReview.action as
+                      | "accept"
+                      | "reject"
+                      | "cancel"
+                      | "raise_budget",
                     pendingReview.sectionId,
                     pendingReview.reason,
                     pendingReview
@@ -492,7 +600,25 @@ export function TopicPanel({
           {message}
         </p>
       )}
-      <TopicRunStatus onRetry={retry} retryBlocked={blocked} run={view.run} />
+      <TopicRunStatus
+        maxAllowanceMicros={
+          availability.available
+            ? availability.settings.maxRunBudgetMicros
+            : null
+        }
+        onRaise={(micros) =>
+          review(
+            "raise_budget",
+            null,
+            "Raise the run allowance.",
+            undefined,
+            micros
+          )
+        }
+        onRetry={retry}
+        retryBlocked={blocked}
+        run={view.run}
+      />
       {!!artifactError && (
         <p className="text-destructive text-sm" role="alert">
           {artifactError}
@@ -779,14 +905,25 @@ function TopicVideoCard({
 }
 
 function TopicRunStatus({
+  maxAllowanceMicros,
+  onRaise,
   onRetry,
   retryBlocked,
   run,
 }: {
+  maxAllowanceMicros: number | null;
+  onRaise: (micros: number) => void;
   onRetry: () => void;
   retryBlocked: boolean;
   run: ChapterView["run"];
 }) {
+  const [raiseDollars, setRaiseDollars] = useState("");
+  const raiseMicros = Math.round(Number(raiseDollars) * 1_000_000);
+  const canRaise =
+    !!run &&
+    Number.isFinite(raiseMicros) &&
+    raiseMicros > run.budgetMicros &&
+    (maxAllowanceMicros === null || raiseMicros <= maxAllowanceMicros);
   return (
     <>
       {!!run && (
@@ -800,8 +937,48 @@ function TopicRunStatus({
           <p className="text-muted-foreground">
             {run.dispatchCount} model calls · $
             {(run.spentMicros / 1_000_000).toFixed(4)} spent · $
-            {(run.reservedMicros / 1_000_000).toFixed(4)} pending exposure
+            {(run.reservedMicros / 1_000_000).toFixed(4)} pending exposure · $
+            {(run.budgetMicros / 1_000_000).toFixed(2)} allowance
           </p>
+          {!!run.projection && (
+            <p className="text-muted-foreground" data-testid="topic-projection">
+              {run.projection.sentence}
+            </p>
+          )}
+          {!!(run.routes.author || run.routes.verifier) && (
+            <p className="text-muted-foreground text-xs">
+              Models: author {run.routes.author ?? "server default"} · reviewer{" "}
+              {run.routes.verifier ?? "server default"}
+            </p>
+          )}
+          {["budget_paused", "running", "pending"].includes(run.status) && (
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <Label htmlFor={`topic-raise-${run.id}`}>
+                  New allowance (USD)
+                </Label>
+                <Input
+                  aria-label="New run allowance in dollars"
+                  className="w-32"
+                  id={`topic-raise-${run.id}`}
+                  inputMode="decimal"
+                  min={0.01}
+                  onChange={(event) => setRaiseDollars(event.target.value)}
+                  step="0.01"
+                  type="number"
+                  value={raiseDollars}
+                />
+              </div>
+              <Button
+                disabled={retryBlocked || !canRaise}
+                onClick={() => onRaise(raiseMicros)}
+                size="sm"
+                variant="outline"
+              >
+                Raise allowance
+              </Button>
+            </div>
+          )}
           {!!run.synthetic && (
             <p>Recorded test run; no live editorial judgment.</p>
           )}

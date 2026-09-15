@@ -28,14 +28,19 @@ import { getTemporalClient } from "@/lib/temporal/client";
 
 const TopicReviewSchema = ChapterReviewInputSchema.refine(
   (command) =>
-    ["accept", "reject", "cancel"].includes(command.action) &&
+    ["accept", "reject", "cancel", "raise_budget"].includes(command.action) &&
     command.boundaryId === null &&
     command.otherSectionId === null &&
-    command.budgetMicros === null &&
+    (command.action === "raise_budget"
+      ? command.budgetMicros !== null && command.sectionId === null
+      : command.budgetMicros === null) &&
     command.targetRevision === null &&
     command.targetTimeMs === null &&
     (command.action !== "cancel" || command.sectionId === null),
-  { error: "Only topic acceptance, rejection and cancellation are supported." }
+  {
+    error:
+      "Only topic acceptance, rejection, cancellation and raising the allowance are supported.",
+  }
 );
 
 const INTENT_MEMO_KEY = "temniaIntentSha256";
@@ -81,10 +86,10 @@ function topicGeneration(input: unknown) {
     intent: {
       editorialPolicy: TOPIC_POLICY,
       input,
-      workflow: WORKFLOWS.topicSelection,
+      workflow: WORKFLOWS.topicSelectionV8,
     },
     prefix: "topic-selection",
-    workflow: WORKFLOWS.topicSelection,
+    workflow: WORKFLOWS.topicSelectionV8,
   };
 }
 
@@ -99,6 +104,33 @@ function topicBrief(instructions: {
 }): string | undefined {
   const trimmed = instructions.brief?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+/**
+ * The allowance a run freezes: the request's own figure when given, else the server
+ * default, never above the server maximum. A user cannot exceed the worker's cap.
+ */
+function topicAllowance(
+  requested: number | undefined,
+  settings: { defaultRunBudgetMicros: number; maxRunBudgetMicros: number }
+): number {
+  const wanted = requested ?? settings.defaultRunBudgetMicros;
+  return Math.max(1, Math.min(settings.maxRunBudgetMicros, wanted));
+}
+
+/** Seat preferences travel only when set; an empty object is the same request as none. */
+function topicRoutes(instructions: {
+  routes?:
+    | { author?: string | undefined; verifier?: string | undefined }
+    | undefined;
+}): { author?: string; verifier?: string } | undefined {
+  const author = instructions.routes?.author;
+  const verifier = instructions.routes?.verifier;
+  const routes = {
+    ...(author ? { author } : {}),
+    ...(verifier ? { verifier } : {}),
+  };
+  return Object.keys(routes).length ? routes : undefined;
 }
 
 function intentSha256(value: unknown): string {
@@ -194,7 +226,11 @@ export async function startTopicRun(
   if (!availability.available) {
     return { message: availability.message, ok: false };
   }
-  const budgetMicros = availability.settings.maxRunBudgetMicros;
+  const budgetMicros = topicAllowance(
+    parsed.data.budgetMicros,
+    availability.settings
+  );
+  const routes = topicRoutes(parsed.data);
   const prepared = await scoped(async (tx, scope) => {
     const [existing] = await tx
       .select()
@@ -258,6 +294,7 @@ export async function startTopicRun(
         budgetMicros,
         config: availability.settings.config,
         requestKey: parsed.data.requestKey,
+        ...(routes === undefined ? {} : { routes }),
         runId: parsed.data.runId,
         scope,
         sourceId: parsed.data.sourceId,
@@ -326,6 +363,25 @@ export async function startTopicRun(
   };
 }
 
+/** The seat preferences the worker froze on the run row, if any. */
+function frozenRoutes(
+  routeSnapshot: Record<string, unknown>
+): { author?: string; verifier?: string } | undefined {
+  const raw = routeSnapshot.routePreferences;
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const value = raw as { author?: unknown; verifier?: unknown };
+  return topicRoutes({
+    routes: {
+      ...(typeof value.author === "string" ? { author: value.author } : {}),
+      ...(typeof value.verifier === "string"
+        ? { verifier: value.verifier }
+        : {}),
+    },
+  });
+}
+
 const RetrySchema = z.object({ runId: z.uuid(), sourceId: z.uuid() });
 const RESUMABLE_STATUSES = new Set(["failed", "budget_paused"]);
 
@@ -373,6 +429,9 @@ export async function retryTopicRun(
         ),
         config: run.config,
         requestKey: run.requestKey,
+        ...(frozenRoutes(run.routeSnapshot) === undefined
+          ? {}
+          : { routes: frozenRoutes(run.routeSnapshot) }),
         runId: run.id,
         scope,
         sourceId: run.sourceId,
@@ -684,7 +743,11 @@ export async function getPendingTopicWorkflowStatus(
     if (!availability.available) {
       return { message: availability.message, state: "unknown" };
     }
-    const budgetMicros = availability.settings.maxRunBudgetMicros;
+    const budgetMicros = topicAllowance(
+      intent.budgetMicros,
+      availability.settings
+    );
+    const routes = topicRoutes(intent);
     const ownedScope = await scoped(async (tx, scope) => {
       const [row] = await tx
         .select({ id: source.id })
@@ -702,6 +765,7 @@ export async function getPendingTopicWorkflowStatus(
       budgetMicros,
       config: availability.settings.config,
       requestKey: intent.requestKey,
+      ...(routes === undefined ? {} : { routes }),
       runId: intent.runId,
       scope: ownedScope,
       sourceId: intent.sourceId,

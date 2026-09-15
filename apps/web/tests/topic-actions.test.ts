@@ -111,10 +111,11 @@ describe("topic workflow admission and pending identity", () => {
       runId: RUN,
     });
     const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicSelection);
+    expect(name).toBe(WORKFLOWS.topicSelectionV8);
     expect(options.workflowId).toBe(`topic-selection/${RUN}`);
     expect(options.args[0]).toMatchObject({
-      budgetMicros: 50_000_000,
+      // The default allowance, not the server maximum; the panel may raise it up to the cap.
+      budgetMicros: 20_000_000,
       scope,
     });
     expect(options.args[0]).not.toHaveProperty("brief");
@@ -259,7 +260,7 @@ describe("retained generations and human corrections", () => {
       ok: true,
       pending: true,
     });
-    expect(TOPIC_POLICY).toBe("standalone-topics/3");
+    expect(TOPIC_POLICY).toBe("standalone-topics/8");
   });
 
   it("uses the separate human mutation workflow and persists the complete command", async () => {
@@ -320,7 +321,7 @@ describe("retrying a stopped run", () => {
       retryTopicRun({ runId: RUN, sourceId: SOURCE })
     ).resolves.toEqual({ ok: true, runId: RUN });
     const [name, options] = mocks.start.mock.calls[0] ?? [];
-    expect(name).toBe(WORKFLOWS.topicSelection);
+    expect(name).toBe(WORKFLOWS.topicSelectionV8);
     expect(options.workflowId).toMatch(
       new RegExp(`^topic-selection/${RUN}/retry-`)
     );
