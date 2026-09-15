@@ -132,7 +132,7 @@ def test_enabled_snapshot_requires_every_workflow_seat(tmp_path: Path) -> None:
     value = snapshot(seats=False)
     path = tmp_path / "routes.json"
     write_snapshot(path, value)
-    with pytest.raises(RuntimeError, match="propose, summary, verify"):
+    with pytest.raises(RuntimeError, match="propose, verify"):
         HarnessSettings.from_env(env(path, value, "recorded")).validate_boot()
 
 

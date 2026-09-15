@@ -70,7 +70,11 @@ from temnia_pipeline.harness.topic_author_packaging import (
     build_author_plan,
     inventory_for_work_item,
 )
-from temnia_pipeline.harness.topic_editorial import editorial_routes
+from temnia_pipeline.harness.topic_editorial import (
+    INVENTORY_SEAT,
+    editorial_routes,
+    inventory_route,
+)
 from temnia_pipeline.harness.topic_inventory import (
     admit_inventory_shard,
     build_inventory_plan,
@@ -205,6 +209,7 @@ class DecisionResult(BaseModel):
     family: str | None = None
     author_index: int = 0
     verifier_index: int = 0
+    inventory_index: int = 0
     reused: bool = False
 
 
@@ -466,17 +471,35 @@ class TopicDecisionActivities:
             raise HarnessValidationError("this decision requires the current assessment")
         return assessment
 
+    @staticmethod
+    def _keyless_vendors(run: RunSnapshot) -> frozenset[str]:
+        """Vendors of the run's snapshot this worker holds no key for; skipped in every pool."""
+        runtime = current_runtime()
+        if runtime is None or runtime.vendor_keys is None:
+            return frozenset()
+        return frozenset(runtime.vendor_keys.missing(run.route_snapshot.vendors()))
+
     def _routes(
         self, run: RunSnapshot, context: SelectionContext, *, shift: int, seat: str
-    ) -> tuple[RouteEntry, RouteEntry]:
+    ) -> tuple[RouteEntry, RouteEntry, RouteEntry]:
+        """The author, the reviewer and the inventory route at this decision's fallback shift."""
         snapshot = runs.apply_route_preferences(run.route_snapshot, run.route_preferences)
-        return editorial_routes(
+        keyless = self._keyless_vendors(run)
+        author, verifier = editorial_routes(
             snapshot,
             author_index=context.author_index + (shift if seat == "author" else 0),
             verifier_index=context.verifier_index + (shift if seat == "verifier" else 0),
             author_families=context.author_families,
             reserve_reviewer=True,
+            excluded_vendors=keyless,
         )
+        inventory = inventory_route(
+            snapshot,
+            inventory_index=context.inventory_index + (shift if seat == "inventory" else 0),
+            verifier=verifier,
+            excluded_vendors=keyless,
+        )
+        return author, verifier, inventory
 
     async def _existing_record(
         self, context: SelectionContext, base_stage: str
@@ -579,7 +602,7 @@ class TopicDecisionActivities:
                 "sectionCount": len(plan.sections),
             },
         )
-        author, verifier = self._routes(run, context, shift=0, seat="verifier")
+        author, verifier, inventory = self._routes(run, context, shift=0, seat="verifier")
         projection = project_run(
             index,
             rubric,
@@ -589,6 +612,7 @@ class TopicDecisionActivities:
             verifier_route=verifier,
             budget_micros=run.budget_micros,
             max_repairs=run.config.maxRepairs,
+            inventory_route=inventory,
         )
         sentence = projection_sentence(projection)
         projection_ref = await self.topics.publish(
@@ -609,6 +633,7 @@ class TopicDecisionActivities:
                 "sentence": sentence,
                 "authorRouteId": author.id,
                 "verifierRouteId": verifier.id,
+                "inventoryRouteId": inventory.id,
             },
         )
         return PlanResultV8(
@@ -738,6 +763,7 @@ class TopicDecisionActivities:
         index: TopicSourceIndex | None,
         author: RouteEntry,
         verifier: RouteEntry,
+        inventory: RouteEntry,
         attempt: int,
         feedback: tuple[str, ...],
     ) -> _Prepared:
@@ -872,7 +898,9 @@ class TopicDecisionActivities:
             program_version="standalone-topics/8",
             schema_version=SCHEMA_VERSIONS[kind],
             author=author,
-            verifier=verifier,
+            # Inventory calls are `verify:` stages, so the plan's verifier is the route they run
+            # on: the inventory seat's route when the snapshot names one.
+            verifier=inventory if kind == "inventory" else verifier,
             input_artifacts=_distinct(inputs),
             source_index=index_ref if tools else None,
             source_tool_role=cast("Any", role) if tools else None,
@@ -1091,7 +1119,14 @@ class TopicDecisionActivities:
         index = (
             await self.selection.source_index(context) if context.source_index is not None else None
         )
-        seat = "author" if kind in {"author", "repair"} else "verifier"
+        if kind == "inventory":
+            # A snapshot without an inventory seat inventories on the reviewer's route and
+            # shares its fallback position, exactly as before the seat existed.
+            seat = "inventory" if INVENTORY_SEAT in run.route_snapshot.seats else "verifier"
+        elif kind in {"author", "repair"}:
+            seat = "author"
+        else:
+            seat = "verifier"
         pulse = (
             asyncio.create_task(self._pulse(f"{kind}:{request.item_id}"))
             if activity.in_activity()
@@ -1109,7 +1144,7 @@ class TopicDecisionActivities:
             boost = 1
             while True:
                 try:
-                    author, verifier = self._routes(run, context, shift=shift, seat=seat)
+                    author, verifier, inventory = self._routes(run, context, shift=shift, seat=seat)
                 except NoEligibleRoute as error:
                     if shift == 0:
                         raise ApplicationError(
@@ -1127,7 +1162,7 @@ class TopicDecisionActivities:
                         type="DecisionRoutesExhausted",
                         non_retryable=True,
                     ) from error
-                route = verifier if seat == "verifier" else author
+                route = {"verifier": verifier, "inventory": inventory}.get(seat, author)
                 try:
                     prepared = await self._prepare(
                         request,
@@ -1137,6 +1172,7 @@ class TopicDecisionActivities:
                         index=index,
                         author=author,
                         verifier=verifier,
+                        inventory=inventory,
                         attempt=attempt,
                         feedback=feedback,
                     )
@@ -1163,6 +1199,7 @@ class TopicDecisionActivities:
                             family=route.family,
                             author_index=context.author_index,
                             verifier_index=context.verifier_index,
+                            inventory_index=context.inventory_index,
                             reused=True,
                         )
                 deps = self._build_deps(context, run, prepared.plan, kind)
@@ -1353,6 +1390,7 @@ class TopicDecisionActivities:
                     family=route.family,
                     author_index=context.author_index + (shift if seat == "author" else 0),
                     verifier_index=context.verifier_index + (shift if seat == "verifier" else 0),
+                    inventory_index=context.inventory_index + (shift if seat == "inventory" else 0),
                 )
         finally:
             if pulse is not None:
@@ -1411,6 +1449,7 @@ class TopicDecisionActivities:
             family=family,
             author_index=context.author_index + (shift if seat == "author" else 0),
             verifier_index=context.verifier_index + (shift if seat == "verifier" else 0),
+            inventory_index=context.inventory_index + (shift if seat == "inventory" else 0),
         )
 
     # ------------------------------------------------------------------ assembly

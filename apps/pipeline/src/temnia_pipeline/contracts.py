@@ -222,6 +222,7 @@ class HarnessBoundaryCandidate(BaseModel):
 class Gateway(StrEnum):
     vercel = "vercel"
     openrouter = "openrouter"
+    direct = "direct"
 
 
 class TopicShotDetector(StrEnum):

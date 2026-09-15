@@ -239,7 +239,12 @@ class HarnessActivities:
 
     def _gateway_config(self) -> GatewayConfig | None:
         api_key = self.harness_settings.gateway_api_key
-        if api_key is None or self.harness_settings.backend != "gateway":
+        if (
+            api_key is None
+            or self.harness_settings.backend != "gateway"
+            or self.harness_settings.gateway == "direct"
+        ):
+            # The direct vendor path has no receipts to reconcile; the sweeps stay idle.
             return None
         return GatewayConfig(api_key=api_key, gateway=self.harness_settings.gateway)
 

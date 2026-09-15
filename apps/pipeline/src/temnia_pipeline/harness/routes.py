@@ -13,7 +13,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from temnia_pipeline.harness.gateway_policy import (  # noqa: TC001
+from temnia_pipeline.harness.gateway_policy import (
     GatewayName,
     GatewayTransportPolicy,
 )
@@ -23,8 +23,14 @@ AdmissionVersion = Literal["admission/1", "admission/2"]
 MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024
 TOKENS_PER_PRICE_UNIT = 1_000_000
 PROTOCOL_OVERHEAD_BYTES = 8192
-MIN_PRODUCTION_FAMILIES = 3
+# Two families per production pool: the reviewer must come from outside the author's family
+# (enforced at selection), and one fallback family per seat is what a vendor outage needs.
+# The 2026-09-07 rule of three families and an open-weight candidate per pool was reversed
+# for the primary tier on 2026-09-15 (frontier models first; AGENTS.md).
+MIN_PRODUCTION_FAMILIES = 2
 UNPROVEN_ROUTE_PREFIX = "qualification-unproven:"
+
+VendorName = Literal["anthropic", "openai", "google"]
 
 # Admission arithmetic. `admission/1` counted one serialized byte as one token, which
 # admitted Karma's 90 KB prompt as ~100k tokens against ~25k real ones and refused any
@@ -80,23 +86,39 @@ class RoutePrices(BaseModel):
     request_surcharge: Annotated[int, Field(ge=0)] = 0
 
 
+class VendorAccountTerms(BaseModel):
+    """The vendor account's data terms, recorded once per route rather than probed per endpoint."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    zero_data_retention: bool
+    recorded_at: date
+    reference: Annotated[str, Field(min_length=1, max_length=512)]
+
+
 class RouteEntry(BaseModel):
-    """One qualified provider endpoint for one exact gateway model alias."""
+    """One provider endpoint for one exact model id: a direct vendor, or a legacy gateway alias."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     id: Annotated[str, Field(min_length=1, max_length=128)]
+    # For a vendor route this is the vendor's own model id; the field keeps its historical
+    # name until the deletion step renames the snapshot schema.
     gateway_model: Annotated[str, Field(min_length=1, max_length=256)]
     family: Annotated[str, Field(min_length=1, max_length=128)]
     provider: Annotated[str, Field(min_length=1, max_length=128)]
     open_weight: bool
     context_tokens: Annotated[int, Field(gt=0)]
     max_output_tokens: Annotated[int, Field(gt=0)]
-    eligibility: RouteEligibility
+    eligibility: RouteEligibility | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     prices: RoutePrices
     reasoning_effort: ReasoningEffort | None = None
     service_tier: ServiceTier | None = None
     cache_enabled: bool = False
+    vendor: VendorName | None = Field(default=None, exclude_if=lambda value: value is None)
+    account: VendorAccountTerms | None = Field(default=None, exclude_if=lambda value: value is None)
     transport: GatewayTransportPolicy | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -109,6 +131,12 @@ class RouteEntry(BaseModel):
 
     @model_validator(mode="after")
     def _qualified_options(self) -> Self:
+        if self.vendor is not None:
+            return self._vendor_options()
+        if self.account is not None:
+            raise ValueError("account terms belong to a direct vendor route")
+        if self.eligibility is None:
+            raise ValueError("a gateway route requires its qualification evidence")
         if self.transport is not None and self.transport.gateway == "openrouter":
             if self.provider_accounting_name is None:
                 raise ValueError(
@@ -132,6 +160,29 @@ class RouteEntry(BaseModel):
             raise ValueError("every harness route must be qualified for ZDR and strict JSON schema")
         if self.cache_enabled and not self.eligibility.cache_qualified:
             raise ValueError("caching may be enabled only by an explicit qualified probe")
+        if self.max_output_tokens > self.context_tokens:
+            raise ValueError("max output exceeds the route context window")
+        return self
+
+    def _vendor_options(self) -> Self:
+        """A direct vendor route: the vendor's SDK is the transport and the account is the terms."""
+        if self.provider != self.vendor:
+            raise ValueError("a direct vendor route's provider is the vendor itself")
+        if (
+            self.transport is not None
+            or self.provider_accounting_name is not None
+            or self.accounting_model is not None
+        ):
+            raise ValueError("a direct vendor route carries no gateway transport or accounting")
+        if self.eligibility is not None:
+            raise ValueError("a direct vendor route records account terms, not a gateway probe")
+        if self.account is None:
+            raise ValueError("a direct vendor route requires its account terms")
+        # The account's retention terms are recorded, not enforced here: a vendor grants zero
+        # data retention per account on request, and the worker's boot log names every route
+        # still waiting for it. Sources are the operator's own recordings until Temnia is live.
+        if self.id.casefold() == "default":
+            raise ValueError("a route may not be named default")
         if self.max_output_tokens > self.context_tokens:
             raise ValueError("max output exceeds the route context window")
         return self
@@ -164,6 +215,8 @@ class RouteSnapshot(BaseModel):
             raise ValueError("unproven qualification routes cannot enter a route snapshot")
         if len(by_id) != len(self.routes):
             raise ValueError("route IDs must be unique")
+        if len({route.vendor is not None for route in self.routes}) > 1:
+            raise ValueError("one snapshot uses either direct vendor routes or gateway routes")
         aliases: dict[str, tuple[str, bool]] = {}
         for route in self.routes:
             identity = route.family, route.open_weight
@@ -177,11 +230,11 @@ class RouteSnapshot(BaseModel):
             if missing:
                 raise ValueError("seat pool names an absent route")
             candidates = [by_id[route_id] for route_id in pool.route_ids]
-            if not self.synthetic:
-                if len({route.family for route in candidates}) < MIN_PRODUCTION_FAMILIES:
-                    raise ValueError("production seat pools require at least three model families")
-                if not any(route.open_weight for route in candidates):
-                    raise ValueError("production seat pools require an open-weight candidate")
+            if (
+                not self.synthetic
+                and len({route.family for route in candidates}) < MIN_PRODUCTION_FAMILIES
+            ):
+                raise ValueError("production seat pools require at least two model families")
         if self.snapshot_id != self.computed_id():
             raise ValueError("route snapshot ID does not match its immutable content")
         return self
@@ -201,6 +254,15 @@ class RouteSnapshot(BaseModel):
                 return route
         raise NoEligibleRoute(f"route {route_id!r} is absent from snapshot {self.snapshot_id}")
 
+    @property
+    def direct(self) -> bool:
+        """Whether every route calls its vendor directly (no gateway on the path)."""
+        return all(route.vendor is not None for route in self.routes)
+
+    def vendors(self) -> frozenset[VendorName]:
+        """The vendors this snapshot's routes call; empty for a gateway snapshot."""
+        return frozenset(route.vendor for route in self.routes if route.vendor is not None)
+
 
 class CostEstimate(BaseModel):
     """Conservative reservation inputs derived only from a qualified route."""
@@ -218,8 +280,13 @@ def load_route_snapshot(path: Path) -> RouteSnapshot:
     return RouteSnapshot.model_validate_json(path.read_bytes(), strict=True)
 
 
-def snapshot_gateway(snapshot: RouteSnapshot) -> GatewayName:
-    """Resolve the one process gateway required by this immutable worker snapshot."""
+ProviderPath = GatewayName | Literal["direct"]
+
+
+def snapshot_gateway(snapshot: RouteSnapshot) -> ProviderPath:
+    """Resolve the one provider path required by this immutable worker snapshot."""
+    if snapshot.direct:
+        return "direct"
     gateways = {
         route.transport.gateway if route.transport is not None else "vercel"
         for route in snapshot.routes
@@ -235,19 +302,51 @@ def select_route(
     *,
     candidate_index: int = 0,
     excluded_families: frozenset[str] = frozenset(),
+    excluded_vendors: frozenset[str] = frozenset(),
 ) -> RouteEntry:
-    """Select by frozen order after applying explicit family exclusions."""
+    """Select by frozen order after applying explicit family and vendor exclusions.
+
+    A vendor is excluded when the worker holds no key for it; the refusal names the variable
+    an operator has to set, so a missing secret is a sentence on the run, not a boot failure
+    of the worker that also serves ingest and transcription.
+    """
     pool = snapshot.seats.get(seat)
     if pool is None:
         raise NoEligibleRoute(f"seat {seat!r} is absent from the route snapshot")
     candidates: list[RouteEntry] = []
+    keyless: list[RouteEntry] = []
     for route_id in pool.route_ids:
         route = snapshot.route(route_id)
-        if route.family not in excluded_families:
-            candidates.append(route)
+        if route.family in excluded_families:
+            continue
+        if route.vendor is not None and route.vendor in excluded_vendors:
+            keyless.append(route)
+            continue
+        candidates.append(route)
     if candidate_index < 0 or candidate_index >= len(candidates):
+        if keyless and candidate_index >= len(candidates):
+            missing = ", ".join(sorted({vendor_key_variable(r.vendor) for r in keyless}))
+            raise NoEligibleRoute(
+                f"seat {seat!r} has no eligible candidate at index {candidate_index}; "
+                f"{len(keyless)} route(s) are skipped because {missing} is not set on the "
+                "pipeline service"
+            )
         raise NoEligibleRoute(f"seat {seat!r} has no eligible candidate at index {candidate_index}")
     return candidates[candidate_index]
+
+
+VENDOR_KEY_VARIABLES: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GEMINI_API_KEY",
+}
+
+
+def vendor_key_variable(vendor: str | None) -> str:
+    """The environment variable that carries one vendor's API key."""
+    if vendor is None or vendor not in VENDOR_KEY_VARIABLES:
+        raise ValueError(f"unknown vendor {vendor!r}")
+    return VENDOR_KEY_VARIABLES[vendor]
 
 
 def select_verifier_route(
@@ -272,11 +371,15 @@ def estimate_cost(
     payload_bytes: int,
     protocol_overhead_bytes: int = PROTOCOL_OVERHEAD_BYTES,
     max_output_tokens: int | None = None,
+    expected_output_tokens: int | None = None,
 ) -> CostEstimate:
-    """Reserve a conservative maximum without a token-count service call.
+    """Reserve a bound without a token-count service call.
 
     Input tokens follow `ADMISSION_VERSION`: the serialized payload divided by the
     declared bytes-per-token floor, rounded up, plus the protocol overhead allowance.
+    The context check always uses the full output cap; the amount uses
+    `expected_output_tokens` when given (a vendor route settles from usage, so it
+    reserves the typical answer rather than the whole allowance) and the cap otherwise.
     """
     if payload_bytes < 0 or protocol_overhead_bytes < 0:
         raise ValueError("payload and protocol overhead must be nonnegative")
@@ -297,13 +400,18 @@ def estimate_cost(
             f"(about {input_tokens} estimated input tokens) plus {output_tokens} output tokens "
             f"exceed its {route.context_tokens}-token context window."
         )
-    numerator = input_tokens * route.prices.input + output_tokens * route.prices.output
+    reserved_output = output_tokens
+    if expected_output_tokens is not None:
+        if expected_output_tokens <= 0 or expected_output_tokens > output_tokens:
+            raise ValueError("expected output must be positive and within the output cap")
+        reserved_output = expected_output_tokens
+    numerator = input_tokens * route.prices.input + reserved_output * route.prices.output
     amount = (
         numerator + TOKENS_PER_PRICE_UNIT - 1
     ) // TOKENS_PER_PRICE_UNIT + route.prices.request_surcharge
     return CostEstimate(
         payload_bytes=payload_bytes,
         input_tokens=input_tokens,
-        output_tokens=output_tokens,
+        output_tokens=reserved_output,
         amount_micros=amount,
     )

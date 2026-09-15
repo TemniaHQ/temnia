@@ -1565,6 +1565,97 @@ async def release_undispatched(  # noqa: PLR0913
         return True
 
 
+async def abandon_attempt(  # noqa: PLR0913
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    run_id: UUID,
+    operation_id: UUID,
+    attempt_id: UUID,
+    error_code: str,
+    error_message: str,
+) -> Attempt:
+    """Settle a dead execution's in-flight attempt at its estimate so a fresh one can dispatch.
+
+    A vendor route settles from usage in the response, so an attempt whose execution died
+    after dispatch and left no durable response has no charge to look up: the estimate is
+    held as spent, the attempt is a known failure, and the caller reserves again. Ownership
+    is not required: the owner is the execution that died. Only a dispatching or running
+    attempt with no result artifact can be abandoned; anything else is left alone.
+    """
+    async with db.scoped(database_url, scope) as conn:
+        await _lock_source(conn, source_id)
+        run = await (
+            await conn.execute(
+                "SELECT id FROM harness_run WHERE id = %s AND source_id = %s FOR UPDATE",
+                (run_id, source_id),
+            )
+        ).fetchone()
+        if run is None:
+            raise IdentityConflict("run is absent from the source scope")
+        operation = await _lock_operation(conn, source_id, operation_id)
+        attempt = await (
+            await conn.execute(
+                "SELECT * FROM harness_attempt WHERE id = %s AND source_id = %s FOR UPDATE",
+                (attempt_id, source_id),
+            )
+        ).fetchone()
+        if attempt is None:
+            raise IdentityConflict("attempt is absent from the source scope")
+        if operation["run_id"] != run_id or attempt["operation_id"] != operation_id:
+            raise IdentityConflict("run, operation, and attempt identities do not agree")
+        if attempt["state"] not in {"dispatching", "running"}:
+            raise LostOwnership("only an in-flight attempt can be abandoned")
+        if attempt["result_artifact_id"] is not None:
+            raise IdentityConflict("an attempt with a durable response is completed, not abandoned")
+        reservation = await (
+            await conn.execute(
+                "SELECT * FROM harness_reservation WHERE attempt_id = %s FOR UPDATE", (attempt_id,)
+            )
+        ).fetchone()
+        if reservation is None:
+            raise IdentityConflict("attempt has no budget reservation")
+        estimate = int(attempt["estimated_cost_micros"])
+        usage = {"settlement": "estimate", "reason": "abandoned-after-dispatch"}
+        row = await (
+            await conn.execute(
+                """
+                UPDATE harness_attempt
+                   SET state = 'failed_known', actual_cost_micros = %s, cost_status = 'estimated',
+                       usage = %s::jsonb, error_code = %s, error_message = %s,
+                       finished_at = now(), heartbeat_at = now()
+                 WHERE id = %s
+                 RETURNING *
+                """,
+                (
+                    estimate,
+                    json.dumps(usage, allow_nan=False),
+                    sanitize_failure(error_code),
+                    sanitize_failure(error_message),
+                    attempt_id,
+                ),
+            )
+        ).fetchone()
+        await conn.execute(
+            "UPDATE harness_operation SET status = 'failed', updated_at = now() WHERE id = %s",
+            (operation["id"],),
+        )
+        await _settle_cost(
+            conn,
+            scope=scope,
+            source_id=source_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            reservation=reservation,
+            actual_cost_micros=estimate,
+            usage=usage,
+        )
+        if row is None:
+            raise RuntimeError("attempt abandonment did not return a row")
+        return _attempt(row)
+
+
 async def reconcile_cost(  # noqa: PLR0913
     database_url: str,
     *,

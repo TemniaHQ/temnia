@@ -89,7 +89,7 @@ describe("topic server configuration", () => {
           maxDispatches: null,
           maxOutputTokens: 65_536,
           routeSnapshotId:
-            "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",
+            "0a40fd581f1f966cfb05842d171192331b224a8eda59fd264f64d2246e7262b2",
         },
         defaultRunBudgetMicros: 20_000_000,
         maxRunBudgetMicros: 100_000_000,
@@ -98,11 +98,13 @@ describe("topic server configuration", () => {
     });
     if (result.available) {
       expect(result.settings.routes.propose.map((route) => route.id)).toEqual([
-        "openrouter-kimi-k3-fireworks-v2-high",
-        "openrouter-deepseek-v4-pro-fireworks-v2-high",
-        "openrouter-gemini-3.8-flash-vertex-global-v2-medium",
+        "anthropic-claude-opus-5-high",
+        "openai-gpt-5.6-sol-high",
       ]);
-      expect(result.settings.routes.verify[0]?.family).toBe("google");
+      expect(result.settings.routes.verify[0]?.family).toBe("openai");
+      expect(result.settings.routes.propose[0]?.label).toBe(
+        "claude-opus-5 via anthropic"
+      );
     }
   });
 

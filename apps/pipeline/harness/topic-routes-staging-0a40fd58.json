@@ -1,0 +1,155 @@
+{
+  "routes": [
+    {
+      "account": {
+        "recorded_at": "2026-09-15",
+        "reference": "Anthropic API: zero data retention is granted per organisation on request; not yet requested for this account (platform.claude.com/docs/en/api/rate-limits, pricing page 2026-09-15)",
+        "zero_data_retention": false
+      },
+      "cache_enabled": true,
+      "context_tokens": 1000000,
+      "family": "anthropic",
+      "gateway_model": "claude-opus-5",
+      "id": "anthropic-claude-opus-5-high",
+      "max_output_tokens": 128000,
+      "open_weight": false,
+      "prices": {
+        "cache_read": 500000,
+        "cache_write": 6250000,
+        "input": 5000000,
+        "output": 25000000,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "anthropic",
+      "reasoning_effort": "high",
+      "service_tier": null,
+      "vendor": "anthropic"
+    },
+    {
+      "account": {
+        "recorded_at": "2026-09-15",
+        "reference": "OpenAI API: zero data retention is granted per organisation on request; not yet requested for this account (developers.openai.com model pages 2026-09-15)",
+        "zero_data_retention": false
+      },
+      "cache_enabled": false,
+      "context_tokens": 1050000,
+      "family": "openai",
+      "gateway_model": "gpt-5.6-sol",
+      "id": "openai-gpt-5.6-sol-high",
+      "max_output_tokens": 128000,
+      "open_weight": false,
+      "prices": {
+        "cache_read": 400000,
+        "cache_write": null,
+        "input": 4000000,
+        "output": 20000000,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "openai",
+      "reasoning_effort": "high",
+      "service_tier": null,
+      "vendor": "openai"
+    },
+    {
+      "account": {
+        "recorded_at": "2026-09-15",
+        "reference": "OpenAI API: zero data retention is granted per organisation on request; not yet requested for this account (developers.openai.com model pages 2026-09-15)",
+        "zero_data_retention": false
+      },
+      "cache_enabled": false,
+      "context_tokens": 1050000,
+      "family": "openai",
+      "gateway_model": "gpt-5.6-terra",
+      "id": "openai-gpt-5.6-terra-high",
+      "max_output_tokens": 128000,
+      "open_weight": false,
+      "prices": {
+        "cache_read": 200000,
+        "cache_write": null,
+        "input": 2000000,
+        "output": 12000000,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "openai",
+      "reasoning_effort": "high",
+      "service_tier": null,
+      "vendor": "openai"
+    },
+    {
+      "account": {
+        "recorded_at": "2026-09-15",
+        "reference": "Gemini API paid tier: prompts are not used to improve products; retention is the vendor's abuse-monitoring window (ai.google.dev/gemini-api/docs/pricing 2026-09-15)",
+        "zero_data_retention": false
+      },
+      "cache_enabled": false,
+      "context_tokens": 1048576,
+      "family": "google",
+      "gateway_model": "gemini-3.8-flash",
+      "id": "google-gemini-3.8-flash-medium",
+      "max_output_tokens": 65536,
+      "open_weight": false,
+      "prices": {
+        "cache_read": 75000,
+        "cache_write": null,
+        "input": 750000,
+        "output": 3750000,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "google",
+      "reasoning_effort": "medium",
+      "service_tier": null,
+      "vendor": "google"
+    },
+    {
+      "account": {
+        "recorded_at": "2026-09-15",
+        "reference": "Anthropic API: zero data retention is granted per organisation on request; not yet requested for this account (platform.claude.com/docs/en/api/rate-limits, pricing page 2026-09-15)",
+        "zero_data_retention": false
+      },
+      "cache_enabled": true,
+      "context_tokens": 1000000,
+      "family": "anthropic",
+      "gateway_model": "claude-sonnet-5",
+      "id": "anthropic-claude-sonnet-5-medium",
+      "max_output_tokens": 128000,
+      "open_weight": false,
+      "prices": {
+        "cache_read": 200000,
+        "cache_write": 2500000,
+        "input": 2000000,
+        "output": 10000000,
+        "request_surcharge": 0,
+        "unit": "micros_per_million_tokens"
+      },
+      "provider": "anthropic",
+      "reasoning_effort": "medium",
+      "service_tier": null,
+      "vendor": "anthropic"
+    }
+  ],
+  "seats": {
+    "inventory": {
+      "route_ids": [
+        "anthropic-claude-sonnet-5-medium",
+        "google-gemini-3.8-flash-medium"
+      ]
+    },
+    "propose": {
+      "route_ids": ["anthropic-claude-opus-5-high", "openai-gpt-5.6-sol-high"]
+    },
+    "verify": {
+      "route_ids": [
+        "openai-gpt-5.6-terra-high",
+        "google-gemini-3.8-flash-medium"
+      ]
+    }
+  },
+  "signature": null,
+  "snapshot_id": "0a40fd581f1f966cfb05842d171192331b224a8eda59fd264f64d2246e7262b2",
+  "synthetic": false,
+  "version": 1
+}

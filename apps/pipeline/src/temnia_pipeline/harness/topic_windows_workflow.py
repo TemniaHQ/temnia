@@ -136,6 +136,9 @@ class TopicSelectionWorkflowV8(TopicRunWorkflow):
                 "verifier_index": max(
                     (item.verifier_index for item in results), default=context.verifier_index
                 ),
+                "inventory_index": max(
+                    (item.inventory_index for item in results), default=context.inventory_index
+                ),
             }
         )
         return results, carried

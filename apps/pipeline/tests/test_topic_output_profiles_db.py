@@ -67,10 +67,17 @@ async def test_native_profiles_reserve_actual_settings_and_reuse_settled_respons
     by_model = {route.gateway_model: route for route in routes.routes}
 
     def observe_estimate(
-        route: RouteEntry, *, payload_bytes: int, max_output_tokens: int | None = None
+        route: RouteEntry,
+        *,
+        payload_bytes: int,
+        max_output_tokens: int | None = None,
+        expected_output_tokens: int | None = None,
     ) -> CostEstimate:
         estimate = estimate_cost(
-            route, payload_bytes=payload_bytes, max_output_tokens=max_output_tokens
+            route,
+            payload_bytes=payload_bytes,
+            max_output_tokens=max_output_tokens,
+            expected_output_tokens=expected_output_tokens,
         )
         estimates.append((route.id, estimate))
         return estimate

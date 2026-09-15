@@ -136,6 +136,7 @@ class SelectionContext(BaseModel):
     # keeps failing transiently, sticky for the rest of the run.
     author_index: int = 0
     verifier_index: int = 0
+    inventory_index: int = 0
     request_attempt: int = 0
     recovery_feedback: tuple[str, ...] = ()
     resume_indexed: bool = False

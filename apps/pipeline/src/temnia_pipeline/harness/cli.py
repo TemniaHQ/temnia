@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -14,7 +16,8 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import httpx
-from pydantic import ValidationError
+from pydantic import ConfigDict, ValidationError
+from pydantic_ai.usage import RequestUsage
 
 from temnia_pipeline import db, storage
 from temnia_pipeline.harness.artifacts import ArtifactError, canonical_json
@@ -202,7 +205,93 @@ def _parser() -> argparse.ArgumentParser:
     reconcile = commands.add_parser("reconcile-cost", help="look up unknown gateway charges")
     reconcile.add_argument("--run-id", required=True, type=UUID)
     reconcile.add_argument("--apply", action="store_true")
+
+    vendors = commands.add_parser("vendors", help="direct vendor route operations")
+    vendor_commands = vendors.add_subparsers(dest="vendor_command", required=True)
+    probe = vendor_commands.add_parser(
+        "probe",
+        help=(
+            "send one strict-schema request per route of a direct snapshot with the process "
+            "keys; prints the model, usage, settled micros and rate-limit headers"
+        ),
+    )
+    probe.add_argument("snapshot", type=Path)
+    probe.add_argument("--route", action="append", default=None, help="only these route ids")
     return parser
+
+
+USAGE_FIELDS = frozenset(
+    {"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"}
+)
+
+
+async def probe_vendors(
+    snapshot_path: Path, *, route_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    """One tiny paid request per route: proves the key, the model id, usage and the headers."""
+    from pydantic import BaseModel  # noqa: PLC0415
+    from pydantic_ai import Agent, NativeOutput  # noqa: PLC0415
+
+    from temnia_pipeline.harness.vendors import (  # noqa: PLC0415
+        VendorKeys,
+        build_vendor_model,
+        observe_rate_limits,
+        settle_usage,
+    )
+
+    class Probe(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        ok: bool
+        vendor: str
+
+    snapshot = load_route_snapshot(snapshot_path)
+    if not snapshot.direct:
+        raise ValueError("vendor probe needs a direct vendor snapshot")
+    keys = VendorKeys.from_env()
+    results: list[dict[str, Any]] = []
+    for route in snapshot.routes:
+        if route_ids and route.id not in route_ids:
+            continue
+        entry: dict[str, Any] = {"routeId": route.id, "model": route.gateway_model}
+        try:
+            model = build_vendor_model(route, keys)
+            agent: Agent[None, Probe] = Agent(
+                model, output_type=NativeOutput(Probe, strict=True), retries=1
+            )
+            with observe_rate_limits() as readings:
+                async with model:
+                    result = await agent.run(
+                        "Answer with ok=true and vendor set to the company that trained you.",
+                        model_settings={"max_tokens": 4096},
+                    )
+            response = result.all_messages()[-1]
+            counted = {
+                name: int(value)
+                for name, value in dataclasses.asdict(result.usage).items()
+                if name in USAGE_FIELDS and isinstance(value, int)
+            }
+            settled = settle_usage(
+                route,
+                RequestUsage(
+                    input_tokens=counted.get("input_tokens", 0),
+                    output_tokens=counted.get("output_tokens", 0),
+                    cache_read_tokens=counted.get("cache_read_tokens", 0),
+                    cache_write_tokens=counted.get("cache_write_tokens", 0),
+                ),
+            )
+            entry.update(
+                {
+                    "ok": result.output.ok,
+                    "answeredModel": getattr(response, "model_name", None),
+                    "usage": counted,
+                    "settledMicros": settled.amount_micros if settled is not None else None,
+                    "rateLimits": [reading.model_dump(mode="json") for reading in readings],
+                }
+            )
+        except Exception as error:  # noqa: BLE001 - a probe reports, it does not stop
+            entry.update({"ok": False, "error": f"{type(error).__name__}: {error}"})
+        results.append(entry)
+    return results
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -232,6 +321,10 @@ async def _run(args: argparse.Namespace) -> int:
             raise ValueError("synthetic route snapshot requires --allow-synthetic")
         print(f"valid route snapshot {snapshot.snapshot_id}")  # noqa: T201
         return 0
+    if args.command == "vendors":
+        results = await probe_vendors(args.snapshot, route_ids=args.route)
+        print(json.dumps({"results": results}, indent=2, default=str))  # noqa: T201
+        return 0 if all(item.get("ok") for item in results) else 1
     if args.command == "reconcile-cost":
         database_url = os.environ.get("PIPELINE_DATABASE_URL")
         api_key = os.environ.get("AI_GATEWAY_API_KEY")

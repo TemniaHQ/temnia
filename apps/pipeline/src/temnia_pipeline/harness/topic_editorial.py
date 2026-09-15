@@ -51,29 +51,38 @@ def _refuse(message: str) -> Never:
     raise HarnessValidationError(message)
 
 
-def editorial_routes(
+def editorial_routes(  # noqa: PLR0913
     snapshot: RouteSnapshot,
     *,
     author_index: int = 0,
     verifier_index: int = 0,
     author_families: tuple[str, ...] = (),
     reserve_reviewer: bool = False,
+    excluded_vendors: frozenset[str] = frozenset(),
 ) -> tuple[RouteEntry, RouteEntry]:
     """Choose the author by pool order, then a reviewer from another family by pool order.
 
     The indices are a run's fallback position: a seat whose route keeps failing
     transiently moves to the next qualified route in its pool. The reviewer's pool is
-    filtered by the author's family first, so independence holds at every position.
+    filtered by the author's family first, so independence holds at every position. A
+    vendor the worker holds no key for is skipped in every pool.
     """
     reserved: frozenset[str] = frozenset()
     if reserve_reviewer:
-        first_author = select_route(snapshot, "propose")
+        first_author = select_route(snapshot, "propose", excluded_vendors=excluded_vendors)
         first_reviewer = select_route(
-            snapshot, "verify", excluded_families=frozenset({first_author.family})
+            snapshot,
+            "verify",
+            excluded_families=frozenset({first_author.family}),
+            excluded_vendors=excluded_vendors,
         )
         reserved = frozenset({first_reviewer.family})
     author = select_route(
-        snapshot, "propose", candidate_index=author_index, excluded_families=reserved
+        snapshot,
+        "propose",
+        candidate_index=author_index,
+        excluded_families=reserved,
+        excluded_vendors=excluded_vendors,
     )
     try:
         verifier = select_route(
@@ -81,11 +90,38 @@ def editorial_routes(
             "verify",
             candidate_index=verifier_index,
             excluded_families=frozenset({author.family, *author_families}),
+            excluded_vendors=excluded_vendors,
         )
     except NoEligibleRoute as error:
         message = "standalone planning requires a reserved independent reviewer"
         raise NoEligibleRoute(message) from error
     return author, verifier
+
+
+INVENTORY_SEAT = "inventory"
+
+
+def inventory_route(
+    snapshot: RouteSnapshot,
+    *,
+    inventory_index: int = 0,
+    verifier: RouteEntry,
+    excluded_vendors: frozenset[str] = frozenset(),
+) -> RouteEntry:
+    """The route that inventories sections: the `inventory` seat, or the reviewer without one.
+
+    Inventory is a coverage decision, not a judgment, so no family is excluded from its own
+    pool; a snapshot without the seat keeps the historical behaviour of inventorying with the
+    reviewer's route, so the synthetic fixtures and the legacy programs are unchanged.
+    """
+    if INVENTORY_SEAT not in snapshot.seats:
+        return verifier
+    return select_route(
+        snapshot,
+        INVENTORY_SEAT,
+        candidate_index=inventory_index,
+        excluded_vendors=excluded_vendors,
+    )
 
 
 def _candidate_positions(

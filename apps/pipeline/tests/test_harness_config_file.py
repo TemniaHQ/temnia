@@ -13,7 +13,13 @@ from temnia_pipeline.harness.settings import RECORDED_TOPIC_OUTPUTS, HarnessSett
 from test_harness_settings import snapshot, write_snapshot
 
 HARNESS_DIR = Path(__file__).resolve().parents[1] / "harness"
-PLACEHOLDER_SECRETS = {"OPENROUTER_API_KEY": "placeholder", "AI_GATEWAY_API_KEY": "placeholder"}
+PLACEHOLDER_SECRETS = {
+    "OPENROUTER_API_KEY": "placeholder",
+    "AI_GATEWAY_API_KEY": "placeholder",
+    "ANTHROPIC_API_KEY": "placeholder-anthropic",
+    "OPENAI_API_KEY": "placeholder-openai",
+    "GEMINI_API_KEY": "placeholder-gemini",
+}
 
 
 def _committed_configurations() -> list[Path]:
@@ -38,7 +44,14 @@ def test_every_committed_deployment_configuration_boots() -> None:
         assert loaded.snapshot_id == settings.route_snapshot_id
         assert not loaded.synthetic
         assert settings.allowed_config().routeSnapshotId == loaded.snapshot_id
-        assert settings.gateway_api_key == "placeholder"
+        if settings.gateway == "direct":
+            # Every vendor the snapshot calls has its key variable read from the environment.
+            assert settings.gateway_api_key is None
+            assert loaded.direct
+            assert not settings.vendor_keys.missing(loaded.vendors())
+            assert "inventory" in loaded.seats
+        else:
+            assert settings.gateway_api_key == "placeholder"
 
 
 def _write_config(directory: Path, **overrides: object) -> Path:

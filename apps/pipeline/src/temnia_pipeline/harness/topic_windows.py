@@ -1313,12 +1313,14 @@ def project_run(
     verifier_route: RouteEntry,
     budget_micros: int,
     max_repairs: int,
+    inventory_route: RouteEntry | None = None,
 ) -> RunProjection:
     """Project calls and cost from the actual inventory prompts and per-section estimates.
 
     Inventory prompts are rendered exactly. The other stages scale with sections, regions and an
     expected candidate count; they are estimates and are labelled so in the panel.
     """
+    inventory_route = inventory_route if inventory_route is not None else verifier_route
     section_nodes = sections(index)
     region_nodes = regions(index)
     inventory_characters = 0
@@ -1334,10 +1336,10 @@ def project_run(
             kind="inventory",
             calls=section_count,
             promptCharacters=inventory_characters,
-            routeId=verifier_route.id,
+            routeId=inventory_route.id,
             costMicros=sum(
                 _cost_micros(
-                    verifier_route,
+                    inventory_route,
                     prompt_characters=len(
                         inventory_window_prompt(index, rubric, section, index_sha256=index_sha256)[
                             0
