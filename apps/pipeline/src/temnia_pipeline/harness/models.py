@@ -363,6 +363,11 @@ def _configured_runtime() -> ModelRuntime:
     return _runtime
 
 
+def current_runtime() -> ModelRuntime | None:
+    """The worker's process-only resources, or None outside a configured worker."""
+    return _runtime
+
+
 async def _indexed_source(deps: HarnessModelDeps) -> tuple[TopicSourceIndex, str]:
     """Load the exact scoped index made available to this one editorial call."""
     reference = deps.source_index

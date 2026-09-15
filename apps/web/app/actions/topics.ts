@@ -442,7 +442,7 @@ export async function retryTopicRun(
       return {
         error:
           run.status === "outcome_unknown"
-            ? "This run still has an unconfirmed provider charge; it is reconciled automatically and becomes retryable once the receipt arrives."
+            ? "This run is waiting for the gateway receipt of an unconfirmed provider charge. The worker settles it on its own; the run then resumes or becomes retryable."
             : "Only a failed, budget-paused or pending run can be retried.",
       } as const;
     }

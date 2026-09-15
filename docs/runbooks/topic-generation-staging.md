@@ -99,7 +99,8 @@ on the box.
 
 1. Merge the PR. Dokploy builds and deploys both images from `main` (each application's
    Deployments tab shows the merge SHA green). Do not deploy while a topic run is active;
-   a model call in flight becomes `outcome_unknown`.
+   a model call in flight becomes `outcome_unknown` (the reaper settles it within fifteen minutes
+   of the receipt; then **Retry this run**).
 2. Read the `pipeline` boot log: one line
    `harness enabled from /app/harness/staging.json: backend gateway, gateway openrouter, route snapshot 0df7f78d…`,
    then the Temporal pollers on `temnia-pipeline` and `temnia-pipeline-control`.
@@ -170,7 +171,7 @@ tokens count against it.
 | `needs_review`, message names coverage gaps | one or more bounded decisions produced no admitted answer after a correction; the rest of the run continued | review; the gap's retained answers and diagnostics are on the run's artifacts |
 | `failed`, "No route is eligible for one editorial seat …" | the chosen author and reviewer are the same family, or the snapshot has no independent reviewer | choose different models, new run |
 | `failed`, "Every eligible … route failed transiently for … across 2 rounds of the pool" | throttling or dropped streams on every eligible route through a 20/40/80/160 s ladder per route, a five-minute pool pause, and the ladder again | wait, then **Retry this run**; admitted decisions are reused, only the unfinished ones are paid again |
-| `outcome_unknown` | a provider call ended without a confirmed outcome and the gateway receipt is still pending | wait; the run becomes `failed` and retryable once the receipt settles; never replay by hand |
+| `outcome_unknown` | a provider call ended without a confirmed outcome and the gateway receipt is still pending | nothing: the decision asks the gateway for the receipt on a 30 s to 5 min ladder for 17.5 minutes and resumes on its own; a reported charge is settled, a generation the gateway has no record of ten minutes later is released at zero; if the run's execution has already ended, the reaper settles it every 15 minutes and leaves it `failed` with "was reconciled from the gateway receipt" for **Retry this run** |
 | `failed`, "Every qualified … route failed transiently for the … call (…); last: …" | every route in that seat's pool was throttled or down, each retried after a pause | wait, then **Retry this run**; the retained work is reused |
 | `failed`, "… HTTP 402 … insufficient credits or … spending limit" | the gateway account or key | top up or raise the limit, then **Retry this run** |
 | `failed`, "… was reconciled from the gateway receipt. Retry this run …" | a call ended without a confirmed outcome and its receipt has since settled | **Retry this run** |

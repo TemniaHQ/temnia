@@ -31,6 +31,7 @@ with workflow.unsafe.imports_passed_through():
         TranscribeInput,
         TranscribeOutput,
     )
+    from temnia_pipeline.harness.runtime_types import ReaperSweepResult, ReconcileSweepResult
     from temnia_pipeline.harness.source_sensors import SourceSensorsResult
     from temnia_pipeline.transcription import TranscribeRecord
     from temnia_pipeline.transcription.checkpointed import (
@@ -79,18 +80,34 @@ class HelloWorkflow:
         )
 
 
+# A sweep that keeps failing is tried again on the next tick, not forever inside this one.
+SWEEP_RETRY = RetryPolicy(maximum_attempts=3)
+
+
 @workflow.defn(name="ReaperWorkflow")
 class ReaperWorkflow:
-    """One sweep per schedule tick (reaper.py holds the activity)."""
+    """One sweep per schedule tick: abandoned uploads (reaper.py) and fenced runs (harness)."""
 
     @workflow.run
-    async def run(self) -> int:
-        """Run the sweep activity."""
-        return await workflow.execute_activity(
-            "reap_abandoned_uploads",
-            result_type=int,
-            start_to_close_timeout=timedelta(minutes=10),
-        )
+    async def run(self) -> ReaperSweepResult:
+        """Run both sweeps; one failing never stops the other."""
+        uploads = 0
+        reconciliation = ReconcileSweepResult()
+        with contextlib.suppress(Exception):
+            uploads = await workflow.execute_activity(
+                "reap_abandoned_uploads",
+                result_type=int,
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=SWEEP_RETRY,
+            )
+        with contextlib.suppress(Exception):
+            reconciliation = await workflow.execute_activity(
+                "reconcile_unknown_runs",
+                result_type=ReconcileSweepResult,
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=SWEEP_RETRY,
+            )
+        return ReaperSweepResult(uploads=uploads, reconciliation=reconciliation)
 
 
 @workflow.defn(name="IngestWorkflow")

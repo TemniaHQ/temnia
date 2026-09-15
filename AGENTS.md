@@ -35,6 +35,19 @@ minute. Rule from it: a throttled route pauses every caller in the worker for it
 decision climbs a 20/40/80/160 s ladder per route and one five-minute pool pause before a typed
 stop, output allowances are 16k/32k/8k/16k/32k and doubled at high reasoning effort, and a cut-off
 answer is retried with the allowance doubled rather than treated as a schema error.
+The retried run then stopped on `outcome_unknown`: a Gemini stream dropped after announcing its
+generation id, the model's twenty-second receipt wait found nothing, the one reconciliation at
+workflow failure skipped the attempt (the CLI reconciles only terminal attempts), and nothing
+asked again. Rule from it: an unconfirmed outcome is settled from the gateway receipt without a
+person. The decision activity asks the gateway on a 30/60/120/240/300/300 s ladder and continues
+on its route once the ledger's owned recovery (`fail_attempt(..., reconcile_unknown=True)`, in
+`receipts.py`) has settled the attempt; a reported charge settles at that charge, a generation the
+gateway has no record of ten minutes after the stream ended settles at zero with the 404 retained
+as the receipt (the gateway bills only generations it recorded), a recorded receipt without a cost
+keeps the fence. The reaper (`ReaperWorkflow`, every 15 minutes) settles fenced `standalone-topics/8`
+runs whose Temporal execution has ended and parks them `failed` with the reconciled message for
+Retry; a run whose execution is alive is left to it. Historical programs' fences are never touched by
+the sweep: they are part of the audition record and a human settles them with the CLI.
 
 **2026-09-15 — Codex's indexed batch is stopped; the topics pipeline goes to production through
 bounded windows and one activity per decision.** Rajesh stopped Codex after Fable's review of

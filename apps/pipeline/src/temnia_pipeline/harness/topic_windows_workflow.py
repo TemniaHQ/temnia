@@ -40,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
         WorkflowIdentity,
     )
     from temnia_pipeline.harness.topic_decisions import (
+        RECEIPT_WAIT_SECONDS,
         AssembleRequestV8,
         AssessmentRequestV8,
         AuthorAssemblyV8,
@@ -68,14 +69,22 @@ with workflow.unsafe.imports_passed_through():
 DECISION_FAN_OUT = 3
 # One model round is allowed ten minutes on the slowest qualified transport, plus admission.
 ROUND_SECONDS = 600
-MAX_DECISION_SECONDS = 45 * 60
+# The receipt wait after an unconfirmed outcome sits inside the activity, so the deadline
+# carries it; the ceiling leaves room for one such wait plus the transient ladder.
+RECEIPT_WAIT_TOTAL_SECONDS = int(sum(RECEIPT_WAIT_SECONDS))
+MAX_DECISION_SECONDS = 75 * 60
 DECISION_HEARTBEAT = timedelta(seconds=90)
 SHORT = timedelta(minutes=2)
 
 
 def decision_timeout(kind: DecisionKind) -> timedelta:
     """A decision's activity deadline follows its round allowance, never a fixed ceiling."""
-    return timedelta(seconds=min(MAX_DECISION_SECONDS, MAX_ROUNDS[kind] * ROUND_SECONDS + 120))
+    return timedelta(
+        seconds=min(
+            MAX_DECISION_SECONDS,
+            MAX_ROUNDS[kind] * ROUND_SECONDS + 120 + RECEIPT_WAIT_TOTAL_SECONDS,
+        )
+    )
 
 
 @workflow.defn(name="TopicSelectionWorkflowV8")

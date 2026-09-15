@@ -19,6 +19,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 
+import httpx
 import obstore as obs
 from temporalio import activity
 
@@ -41,9 +42,10 @@ from temnia_pipeline.contracts import (
     Status,
     TranscriptV1,
 )
-from temnia_pipeline.harness import artifacts, ledger, runs
-from temnia_pipeline.harness.editorial_policy import is_topic_policy
+from temnia_pipeline.harness import artifacts, ledger, receipts, runs
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8, is_topic_policy
 from temnia_pipeline.harness.evidence import build_evidence
+from temnia_pipeline.harness.gateway import GatewayConfig
 from temnia_pipeline.harness.rendering import (
     RenderSection,
     build_render_descriptor,
@@ -70,7 +72,9 @@ from temnia_pipeline.harness.runtime_types import (
     CommitReviewMutationResult,
     EvidenceResult,
     MarkRunFailedRequest,
+    ReconcileRunRequest,
     ReconcileRunResult,
+    ReconcileSweepResult,
     RenderRevisionRequest,
     RenderRevisionResult,
     ResumeRunAssets,
@@ -109,6 +113,7 @@ from temnia_pipeline.media.chapters import (
     render_chapter,
 )
 from temnia_pipeline.media.timeline_identity import timeline_from_identity, timeline_identity
+from temnia_pipeline.reaper import SERVICE_USER, list_organizations
 from temnia_pipeline.render_contracts import RenderJob, RenderProgress, RenderSectionJob
 from temnia_pipeline.render_remote import (
     ModalRenderer,
@@ -131,9 +136,10 @@ MAX_HIERARCHY_LEVEL = 8
 HARNESS_WORKSPACE_TTL_SECONDS = 24 * 60 * 60
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Sequence
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
     from temnia_pipeline.harness.routes import RouteSnapshot
+    from temnia_pipeline.harness.runtime_types import WorkflowIdentity
     from temnia_pipeline.harness.settings import HarnessSettings
     from temnia_pipeline.ingest import Context
 
@@ -150,10 +156,15 @@ class HarnessActivities:
         ctx: Context,
         harness_settings: HarnessSettings,
         snapshot: RouteSnapshot | None,
+        *,
+        execution_open: Callable[[WorkflowIdentity], Awaitable[bool]] | None = None,
     ) -> None:
         self.ctx = ctx
         self.harness_settings = harness_settings
         self.snapshot = snapshot
+        # Answers whether a Temporal execution is still running; the worker binds its client.
+        # Without it the reaper leaves fenced runs alone rather than guessing.
+        self.execution_open = execution_open
         self._render_semaphore = asyncio.Semaphore(harness_settings.max_render_concurrency)
         self._source_expiry_tasks: dict[str, asyncio.Task[None]] = {}
         if isinstance(getattr(ctx.settings, "work_root", None), Path):
@@ -226,29 +237,103 @@ class HarnessActivities:
         self._require_enabled()
         return await runs.mark_run_failed(self.ctx.settings.database_url, request=request)
 
-    @activity.defn(name="reconcile_chapter_run_costs")
-    async def reconcile_chapter_run_costs(self, run: RunRef) -> ReconcileRunResult:
-        """Settle unknown charges from gateway receipts, then lift the run's fence if clear."""
-        self._require_enabled()
+    def _gateway_config(self) -> GatewayConfig | None:
         api_key = self.harness_settings.gateway_api_key
         if api_key is None or self.harness_settings.backend != "gateway":
+            return None
+        return GatewayConfig(api_key=api_key, gateway=self.harness_settings.gateway)
+
+    @activity.defn(name="reconcile_chapter_run_costs")
+    async def reconcile_chapter_run_costs(self, request: ReconcileRunRequest) -> ReconcileRunResult:
+        """Settle the ending execution's unknown outcomes from receipts; park the run if clear."""
+        self._require_enabled()
+        config = self._gateway_config()
+        if config is None:
             return ReconcileRunResult()
         from temnia_pipeline.harness.cli import reconcile_run_costs  # noqa: PLC0415
 
+        run = request.run
+        scope = Scope(organizationId=run.scope_organization_id, userId=run.scope_user_id)
+        url = self.ctx.settings.database_url
         results = await reconcile_run_costs(
-            self.ctx.settings.database_url,
-            run_id=run.run_id,
-            api_key=api_key,
-            apply=True,
-            gateway=self.harness_settings.gateway,
+            url, run_id=run.run_id, api_key=config.api_key, apply=True, gateway=config.gateway
         )
-        resolved = await runs.settle_reconciled_run(
-            self.ctx.settings.database_url, run=run, message=RECONCILED_RUN_MESSAGE
+        async with httpx.AsyncClient() as client:
+            report = await receipts.recover_unknown_attempts(
+                url, scope=scope, run_id=run.run_id, config=config, client=client
+            )
+        resolved = await runs.park_reconciled_run(
+            url, run=run, workflow=request.workflow, message=RECONCILED_RUN_MESSAGE
         )
         return ReconcileRunResult(
-            looked_up=len(results),
-            settled=sum(1 for item in results if item.get("applied") is True),
+            looked_up=len(results) + report.looked_up,
+            settled=sum(1 for item in results if item.get("applied") is True) + report.settled,
+            released=report.released,
+            pending=report.remaining,
             resolved=resolved,
+        )
+
+    @activity.defn(name="reconcile_unknown_runs")
+    async def reconcile_unknown_runs(self) -> ReconcileSweepResult:
+        """Every reaper tick: settle fenced runs whose execution has ended, from receipts.
+
+        A run whose execution is still running is left to that execution, which waits
+        for its own receipts. Historical programs are not touched: their fences are
+        part of the audition record and a human settles them with the CLI.
+        """
+        if not self.harness_settings.enabled or self.snapshot is None:
+            return ReconcileSweepResult()
+        config = self._gateway_config()
+        if config is None or self.execution_open is None:
+            return ReconcileSweepResult()
+        url = self.ctx.settings.database_url
+        counted = 0
+        skipped = settled = released = parked = pending = 0
+        async with httpx.AsyncClient() as client:
+            for organization_id in await list_organizations(url):
+                scope = Scope(organizationId=organization_id, userId=SERVICE_USER)
+                fenced = await receipts.fenced_runs(
+                    url, scope=scope, policy=TOPIC_SELECTION_POLICY_V8
+                )
+                for run in fenced:
+                    counted += 1
+                    if run.workflow is not None and await self.execution_open(run.workflow):
+                        skipped += 1
+                        continue
+                    report = await receipts.recover_unknown_attempts(
+                        url, scope=scope, run_id=run.run_id, config=config, client=client
+                    )
+                    ref = RunRef(
+                        scope_organization_id=organization_id,
+                        scope_user_id=SERVICE_USER,
+                        source_id=run.source_id,
+                        run_id=run.run_id,
+                    )
+                    if await runs.park_reconciled_run(
+                        url, run=ref, workflow=run.workflow, message=RECONCILED_RUN_MESSAGE
+                    ):
+                        parked += 1
+                    settled += report.settled
+                    released += report.released
+                    pending += report.remaining
+        if counted:
+            log.info(
+                "reconciled fenced runs: %d seen, %d live, %d settled, %d released, %d parked,"
+                " %d pending",
+                counted,
+                skipped,
+                settled,
+                released,
+                parked,
+                pending,
+            )
+        return ReconcileSweepResult(
+            runs=counted,
+            skipped_live=skipped,
+            settled=settled,
+            released=released,
+            parked=parked,
+            pending=pending,
         )
 
     @activity.defn(name="apply_chapter_review")
@@ -1569,6 +1654,7 @@ class HarnessActivities:
             self.build_chapter_evidence,
             self.render_chapter_revision,
             self.cleanup_chapter_source_cache,
+            self.reconcile_unknown_runs,
         )
 
     def control_activities(self) -> Sequence[Callable[..., object]]:

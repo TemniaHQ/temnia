@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from obstore.store import MemoryStore
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from temporalio.exceptions import ApplicationError
@@ -31,10 +31,11 @@ from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
 )
-from temnia_pipeline.harness import artifacts, models, runs, topic_decisions
+from temnia_pipeline.harness import artifacts, gateway, models, receipts, runs, topic_decisions
 from temnia_pipeline.harness.activities import HarnessActivities
 from temnia_pipeline.harness.cassettes import CassetteStore
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8
+from temnia_pipeline.harness.gateway import CostObservation, GatewayConfig
 from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy
 from temnia_pipeline.harness.models import ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
@@ -606,6 +607,132 @@ async def test_a_conclusive_provider_rejection_moves_to_the_next_route_once(
         assert result.artifact is not None
         assert result.family == fallback.family
         assert calls == [rejecting.id, fallback.id]
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def _dropped_stream_run(
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, recover_after: int
+) -> tuple[TopicDecisionActivities, SelectionContext, uuid.UUID, uuid.UUID, list[str]]:
+    """A verifier whose first stream drops after announcing its generation id."""
+    author = _route("ou-author", "family-author")
+    verifier = _route("ou-verifier", "family-verifier")
+    routes = snapshot(
+        (author, verifier),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(verifier.id,)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    good = _draft("section-0001:fixture", evidence.sentences[0].id, evidence.sentences[1].id)
+    calls: list[str] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = messages, info
+            calls.append(route.id)
+            if len(calls) == 1:
+                await gateway.notify_observed_generation("gen-dropped-1")
+                raise ModelAPIError(model_name=route.gateway_model, message="stream ended")
+            return ModelResponse(
+                parts=[TextPart(json.dumps(good))], model_name="fixture", provider_name="fixture"
+            )
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    lookups: list[str] = []
+
+    async def receipt(*_args: object, **kwargs: object) -> CostObservation:
+        handle = str(kwargs["generation_id"])
+        lookups.append(handle)
+        if len(lookups) < recover_after:
+            return CostObservation(
+                status="pending",
+                actual_cost_micros=None,
+                components={"generationId": handle, "totalCost": None},
+            )
+        return CostObservation(
+            status="reported", actual_cost_micros=5, components={"generationId": handle}
+        )
+
+    async def still_pending(*_args: object, **_kwargs: object) -> CostObservation:
+        return CostObservation(status="pending", actual_cost_micros=None, components={})
+
+    # The model's own 20 s receipt wait finds nothing; the decision's ladder does.
+    monkeypatch.setattr(models, "observe_generation_cost", still_pending)
+    monkeypatch.setattr(receipts, "lookup_generation", receipt)
+    monkeypatch.setattr(topic_decisions, "RECEIPT_WAIT_SECONDS", (0.0,) * 6)
+    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", (0.0, 0.0, 0.0, 0.0))
+    decisions, context, source_id, run_id = await _v8_run(url, tmp_path, routes, factory)
+    runtime = models.current_runtime()
+    assert runtime is not None
+    models.configure_model_runtime(replace(runtime, gateway=GatewayConfig(api_key="test-key")))
+    return decisions, context, source_id, run_id, calls
+
+
+async def test_a_dropped_stream_waits_for_its_receipt_then_continues_on_the_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = pipeline_url()
+    try:
+        decisions, context, source_id, run_id, calls = await _dropped_stream_run(
+            url, tmp_path, monkeypatch, recover_after=2
+        )
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.gap is None
+        assert result.artifact is not None
+        assert result.verifier_index == 0
+        assert calls == ["ou-verifier", "ou-verifier"]
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.status.value == "running"
+        # The dropped stream's reservation became its settled charge.
+        assert row.spent_micros >= 5
+        async with db.scoped(url, SEEDED) as conn:
+            attempts = await (
+                await conn.execute(
+                    "SELECT state, cost_status, actual_cost_micros, error_code"
+                    " FROM harness_attempt WHERE run_id = %s ORDER BY created_at",
+                    (run_id,),
+                )
+            ).fetchall()
+        settled = [dict(item) for item in attempts if item["error_code"] is not None]
+        assert settled == [
+            {
+                "state": "failed_known",
+                "cost_status": "reported",
+                "actual_cost_micros": 5,
+                "error_code": "provider-stream-failure",
+            }
+        ]
+        assert attempts[-1]["state"] == "succeeded"
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def test_a_receipt_that_never_settles_is_a_typed_stop_after_the_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = pipeline_url()
+    try:
+        decisions, context, source_id, run_id, calls = await _dropped_stream_run(
+            url, tmp_path, monkeypatch, recover_after=100
+        )
+        with pytest.raises(ApplicationError) as raised:
+            await decisions.run_decision(
+                DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+            )
+        assert raised.value.type == "OutcomeUnknown"
+        assert "did not settle" in raised.value.message
+        assert calls == ["ou-verifier"]
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.status.value == "outcome_unknown"
+        assert row.reserved_micros > 0
     finally:
         models.clear_model_runtime()
         await db.close_pool()

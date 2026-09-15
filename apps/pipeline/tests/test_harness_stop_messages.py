@@ -163,10 +163,11 @@ def test_unclassified_activity_failure_names_its_error_type() -> None:
     )
 
 
-def test_the_unknown_outcome_sentence_says_what_is_retained_and_what_is_not_retried() -> None:
+def test_the_unknown_outcome_sentence_says_what_is_retained_and_what_happens_next() -> None:
     assert OUTCOME_UNKNOWN_RUN_MESSAGE == (
-        "A provider call ended without a confirmed outcome. Its reservation is retained "
-        "until reconciliation; nothing is retried automatically."
+        "A provider call ended without a confirmed outcome. Its reservation is retained while "
+        "the gateway receipt is awaited; the run resumes on its own once the charge is settled, "
+        "and a finished run becomes retryable."
     )
 
 
