@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import TYPE_CHECKING
 
 from temnia_pipeline.contracts import (
@@ -30,6 +32,8 @@ from temnia_pipeline.harness.topic_selection import (
     repair_source_indices,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
+
+log = logging.getLogger("temnia.harness.repair")
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -444,6 +448,82 @@ def _validate_patch_scope(
     )
 
 
+EDIT_KINDS = frozenset(
+    {"extend_start", "extend_end", "replace_extent", "replace_candidate", "retitle"}
+)
+_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def _slug(value: str) -> str:
+    return _SLUG.sub("-", value.lower()).strip("-") or "operation"
+
+
+def normalise_repair_patch(
+    record: TopicSelectionRecord,
+    work_item: TopicRepairWorkItem,
+    patch: TopicSelectionPatchV3,
+) -> tuple[TopicSelectionPatchV3, tuple[str, ...]]:
+    """Rewrite the two identifier shapes that carry no editorial content, and say what changed.
+
+    An operation id without the work-item prefix and an edit that returns its replacement under
+    a fresh id are the two shapes the first frontier-seat runs were rejected on. Neither changes
+    what the patch does: the operation id is a namespace and the edit's replacement is, by the
+    admission's own rule, the same candidate. Rewriting them costs nothing; refusing them cost a
+    paid correction round per component. Everything editorial (extent, findings, authority)
+    is still validated on the normalised patch.
+    """
+    prefix = f"{work_item.workItemId}:operation:"
+    existing = {candidate.id for candidate in record.draft.proposal.candidates}
+    notes: list[str] = []
+    seen: set[str] = set()
+    operations: list[TopicSelectionPatchOperationV3] = []
+    for operation in patch.operations:
+        update: dict[str, object] = {}
+        identifier = operation.id
+        if not identifier.startswith(prefix):
+            tail = identifier.rsplit(":", 1)[-1] if ":" in identifier else identifier
+            identifier = prefix + _slug(tail)
+            while identifier in seen:
+                identifier += "-again"
+            notes.append(f"operation id {operation.id!r} rewritten to {identifier!r}")
+            update["id"] = identifier
+        seen.add(identifier)
+        affected = [_root(value) for value in operation.affectedCandidateIds]
+        replacements = list(operation.replacementCandidates)
+        if (
+            _kind(operation.kind) in EDIT_KINDS
+            and len(affected) == 1
+            and len(replacements) == 1
+            and replacements[0].id != affected[0]
+            and replacements[0].id not in existing
+        ):
+            stale = replacements[0].id
+            update["replacementCandidates"] = [
+                replacements[0].model_copy(update={"id": affected[0]})
+            ]
+            update["opportunities"] = [
+                item.model_copy(
+                    update={
+                        "candidateIds": [
+                            affected[0] if _root(value) == stale else value
+                            for value in item.candidateIds
+                        ]
+                    }
+                )
+                if any(_root(value) == stale for value in item.candidateIds)
+                else item
+                for item in operation.opportunities
+            ]
+            notes.append(
+                f"{_kind(operation.kind)} replacement id {stale!r} rewritten to the edited "
+                f"candidate {affected[0]!r}"
+            )
+        operations.append(operation.model_copy(update=update) if update else operation)
+    if not notes:
+        return patch, ()
+    return patch.model_copy(update={"operations": operations}), tuple(notes)
+
+
 def admit_repair_shard(
     evidence: HarnessEvidence,
     record: TopicSelectionRecord,
@@ -468,6 +548,9 @@ def admit_repair_shard(
         or repair_work_item(plan, work_item.workItemId) != work_item
     ):
         raise HarnessValidationError("repair shard inputs differ from their immutable plan")
+    patch, notes = normalise_repair_patch(record, work_item, patch)
+    if notes:
+        log.info("repair %s: %s", work_item.workItemId, "; ".join(notes))
     _validate_patch_scope(evidence, record, assessment, plan, work_item, patch)
     return TopicRepairShard.model_validate(
         {

@@ -35,6 +35,7 @@ from temnia_pipeline.harness.topic_repair import (
     admit_repair_shard,
     assemble_repair_manifest,
     build_repair_plan,
+    normalise_repair_patch,
     repair_component_prompt,
 )
 from temnia_pipeline.harness.topic_selection import content_hash, make_rubric
@@ -450,3 +451,105 @@ def test_manifest_rejects_candidate_write_conflicts_in_a_tampered_plan() -> None
             shards,
             refs,
         )
+
+
+def test_cosmetic_identifier_shapes_are_normalised_rather_than_rejected() -> None:
+    """The two shapes the frontier-seat runs were rejected on carry no editorial content."""
+    evidence, _, record, assessment, plan = _index_case()
+    item = plan.workItems[0]
+    well_formed = _garden_patch(record, item)
+    operation = well_formed.operations[0]
+    fresh_id = f"{item.workItemId}:candidate:garden-care-complete"
+    misshapen = well_formed.model_copy(
+        update={
+            "operations": [
+                operation.model_copy(
+                    update={
+                        "id": f"{item.workItemId}:op:garden",
+                        "replacementCandidates": [
+                            operation.replacementCandidates[0].model_copy(update={"id": fresh_id})
+                        ],
+                    }
+                )
+            ]
+        }
+    )
+    normalised, notes = normalise_repair_patch(record, item, misshapen)
+    assert len(notes) == 2
+    assert normalised.operations[0].id == f"{item.workItemId}:operation:garden"
+    assert normalised.operations[0].replacementCandidates[0].id == operation.affectedCandidateIds[0]
+    shard = admit_repair_shard(
+        evidence,
+        record,
+        assessment,
+        plan,
+        item,
+        misshapen,
+        index_sha256="c" * 64,
+        assessment_sha256=content_hash(assessment),
+        response_artifact=_reference(misshapen, "misshapen-response", "model_response"),
+        inspection_artifact=_reference(misshapen, "misshapen-inspection"),
+        author_family="synthetic-author",
+    )
+    assert shard.patch == normalised
+    # Assembly re-admits the shard's own patch; normalisation is idempotent so it agrees.
+    again = admit_repair_shard(
+        evidence,
+        record,
+        assessment,
+        plan,
+        item,
+        shard.patch,
+        index_sha256="c" * 64,
+        assessment_sha256=content_hash(assessment),
+        response_artifact=shard.responseArtifact,
+        inspection_artifact=shard.inspectionArtifact,
+        author_family="synthetic-author",
+    )
+    assert again == shard
+    untouched, no_notes = normalise_repair_patch(record, item, well_formed)
+    assert no_notes == ()
+    assert untouched is well_formed
+
+
+def test_an_edit_keeping_an_existing_but_different_candidate_id_is_not_rewritten() -> None:
+    """Only a fresh id is cosmetic; naming another existing candidate is an editorial error."""
+    evidence, _, record, assessment, plan = _index_case()
+    item = plan.workItems[0]
+    patch = _garden_patch(record, item)
+    other = "some-other-existing-candidate"
+    record = record.model_copy(
+        update={
+            "draft": record.draft.model_copy(
+                update={
+                    "proposal": record.draft.proposal.model_copy(
+                        update={
+                            "candidates": [
+                                *record.draft.proposal.candidates,
+                                record.draft.proposal.candidates[0].model_copy(
+                                    update={"id": other}
+                                ),
+                            ]
+                        }
+                    )
+                }
+            )
+        }
+    )
+    operation = patch.operations[0]
+    wrong = patch.model_copy(
+        update={
+            "operations": [
+                operation.model_copy(
+                    update={
+                        "replacementCandidates": [
+                            operation.replacementCandidates[0].model_copy(update={"id": other})
+                        ]
+                    }
+                )
+            ]
+        }
+    )
+    _, notes = normalise_repair_patch(record, item, wrong)
+    assert notes == ()
+    _ = evidence, assessment
