@@ -71,6 +71,11 @@
       "$id": "#/$defs/HarnessConfigLimits",
       "type": "object",
       "properties": {
+        "defaultRunBudgetMicros": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
         "evidenceWindowSentences": {
           "type": "integer",
           "minimum": 1,

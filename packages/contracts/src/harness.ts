@@ -567,6 +567,8 @@ export const HarnessConfigSchema = z
     gateway: z.enum(["vercel", "openrouter"]),
     limits: z
       .object({
+        // The allowance the web offers by default; a user may raise it up to the maximum.
+        defaultRunBudgetMicros: z.int().positive().optional(),
         evidenceWindowSentences: z.int().min(1).max(512),
         maxDispatches: z.int().min(1).nullable(),
         maxInFlightPerRoute: z.int().min(1).max(8).default(2),
@@ -602,6 +604,21 @@ export const HarnessConfigSchema = z
   .meta({ id: "HarnessConfig", title: "HarnessConfig" });
 export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
 
+export const ChapterRunRoutePreferencesSchema = z
+  .object({
+    author: z.string().min(1).max(256).optional(),
+    verifier: z.string().min(1).max(256).optional(),
+  })
+  .strict()
+  .meta({
+    id: "ChapterRunRoutePreferences",
+    title: "ChapterRunRoutePreferences",
+  });
+
+export type ChapterRunRoutePreferences = z.infer<
+  typeof ChapterRunRoutePreferencesSchema
+>;
+
 export const ChapterRunInputSchema = z
   .object({
     // Absent means the worker applies the lane's single default brief and
@@ -610,6 +627,10 @@ export const ChapterRunInputSchema = z
     budgetMicros: safePositiveInteger(),
     config: ChapterRunConfigSchema,
     requestKey: z.uuid(),
+    // Optional seat preferences: a route ID from the frozen snapshot's pool for that seat
+    // becomes the first choice; the pool's other routes remain the fallbacks. Absent means
+    // the snapshot's own order. The worker freezes the choice on the run row.
+    routes: ChapterRunRoutePreferencesSchema.optional(),
     runId: z.uuid(),
     scope: ScopeSchema,
     sourceId: z.uuid(),

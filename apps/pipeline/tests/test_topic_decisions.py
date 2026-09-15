@@ -1,0 +1,396 @@
+"""One decision activity end to end: plan, project, dispatch through the ledger, admit, reuse."""
+
+# pyright: reportPrivateUsage=false
+
+from __future__ import annotations
+
+import json
+import uuid
+from dataclasses import replace
+from datetime import date
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
+
+import pytest
+from obstore.store import MemoryStore
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from qualification_fixtures import (
+    _FixtureEncoder,  # pyright: ignore[reportPrivateUsage]
+    _published_reviewer_refs,  # pyright: ignore[reportPrivateUsage]
+)
+from temnia_pipeline import db
+from temnia_pipeline.contracts import (
+    ChapterRunInput,
+    ChapterRunRoutePreferences,
+    HarnessArtifactKind,
+    HarnessArtifactRef,
+    HarnessEvidence,
+)
+from temnia_pipeline.harness import artifacts, models, runs
+from temnia_pipeline.harness.activities import HarnessActivities
+from temnia_pipeline.harness.cassettes import CassetteStore
+from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8
+from temnia_pipeline.harness.models import ModelRuntime
+from temnia_pipeline.harness.qualification_topic_selection import (
+    topic_selection_qualification_case,
+)
+from temnia_pipeline.harness.routes import (
+    RouteEligibility,
+    RouteEntry,
+    RoutePrices,
+    SeatRoutePool,
+)
+from temnia_pipeline.harness.runtime_types import RunRef, StartRunRequest, WorkflowIdentity
+from temnia_pipeline.harness.source_index import build_topic_source_index
+from temnia_pipeline.harness.source_index_artifacts import (
+    DEFAULT_EMBEDDING_REVISION,
+    source_index_artifact_identity,
+    source_index_artifact_metadata,
+)
+from temnia_pipeline.harness.topic_decisions import (
+    AssembleRequestV8,
+    DecisionRecordV8,
+    DecisionRequest,
+    TopicDecisionActivities,
+)
+from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+from temnia_pipeline.harness.topic_selection_runtime import SelectionContext
+from test_harness_model_transport import snapshot
+from test_harness_runs import SEEDED, pipeline_url, ready_source, settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from obstore.store import S3Store
+
+
+def _route(identifier: str, family: str) -> RouteEntry:
+    return RouteEntry(
+        id=identifier,
+        gateway_model=f"{family}/model",
+        family=family,
+        provider="fixture-provider",
+        open_weight=True,
+        context_tokens=200_000,
+        max_output_tokens=16_384,
+        eligibility=RouteEligibility(
+            zero_data_retention=True,
+            strict_json_schema=True,
+            probe_artifact_sha256="a" * 64,
+            probed_at=date(2026, 9, 11),
+        ),
+        prices=RoutePrices(input=1_000_000, output=2_000_000),
+    )
+
+
+async def _reusable_index(
+    url: str, *, source_id: uuid.UUID, store: S3Store, evidence_ref: HarnessArtifactRef
+) -> HarnessArtifactRef:
+    """Publish the index exactly as the worker would, so the reuse loader accepts it."""
+    evidence = HarnessEvidence.model_validate(
+        await artifacts.read_artifact_json(
+            url, scope=SEEDED, source_id=source_id, store=store, artifact_id=evidence_ref.id
+        )
+    )
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256=evidence_ref.sha256,
+        encoder=_FixtureEncoder(),
+        embedding_revision=DEFAULT_EMBEDDING_REVISION,
+    )
+    accepted = await artifacts.publish_json(
+        url,
+        scope=SEEDED,
+        source_id=source_id,
+        store=store,
+        identity=source_index_artifact_identity(evidence_ref, evidence),
+        content=index.model_dump(mode="json"),
+        metadata=source_index_artifact_metadata(evidence_ref, evidence),
+        dependency_ids=(evidence_ref.id,),
+    )
+    return HarnessArtifactRef(
+        id=accepted.id,
+        kind=HarnessArtifactKind.checks,
+        fingerprint=accepted.fingerprint,
+        sha256=accepted.sha256,
+        sizeBytes=accepted.size_bytes,
+        storageKey=accepted.storage_key,
+    )
+
+
+def _draft(opportunity_id: str, first: str, last: str) -> dict[str, Any]:
+    span = {"firstSentenceId": first, "lastSentenceId": last}
+    return {
+        "proposal": {"version": 1, "summary": "Fixture inventory.", "candidates": []},
+        "opportunities": [
+            {
+                "id": opportunity_id,
+                "viewerPurpose": "Explain the fixture discussion.",
+                "coreSpans": [span],
+                "completionSpans": [],
+                "requiredContextSpans": [],
+                "meaningChangingFollowups": [],
+                "valueEvidenceSpans": [span],
+                "candidateIds": [],
+                "disposition": "needs_evidence",
+                "dispositionReason": "Fixture inventory leaves packaging unresolved.",
+            }
+        ],
+    }
+
+
+async def test_inventory_decision_projects_dispatches_admits_and_reuses(  # noqa: PLR0915
+    tmp_path: Path,
+) -> None:
+    url = pipeline_url()
+    author = _route("fixture-author", "family-author")
+    verifier = _route("fixture-verifier", "family-verifier")
+    spare = _route("fixture-spare", "family-spare")
+    routes = snapshot(
+        (author, verifier, spare),
+        {
+            "propose": SeatRoutePool(route_ids=(spare.id, author.id)),
+            "verify": SeatRoutePool(route_ids=(spare.id, verifier.id)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    configuration = replace(settings(routes), backend="gateway", max_run_budget_micros=50_000_000)
+    source_id = await ready_source(url)
+    run_id = uuid.uuid4()
+    request = ChapterRunInput(
+        brief="Fixture brief.",
+        budgetMicros=5_000_000,
+        config=configuration.allowed_config(),
+        requestKey=uuid.uuid4(),
+        runId=run_id,
+        scope=SEEDED,
+        sourceId=source_id,
+        # The user picked the second route of each pool; the worker freezes that order.
+        routes=ChapterRunRoutePreferences(author=author.id, verifier=verifier.id),
+    )
+    start = StartRunRequest(
+        request=request,
+        editorial_policy=TOPIC_SELECTION_POLICY_V8,
+        workflow=WorkflowIdentity(workflow_id="decision-test", workflow_run_id="run-1"),
+    )
+    started = await runs.start_or_refetch_run(
+        url, start=start, settings=configuration, route_snapshot=routes
+    )
+    assert started.run.route_preferences == {"author": author.id, "verifier": verifier.id}
+    store = cast("S3Store", MemoryStore())
+    evidence_ref, _, _ = await _published_reviewer_refs(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, store=store
+    )
+    index_ref = await _reusable_index(
+        url, source_id=source_id, store=store, evidence_ref=evidence_ref
+    )
+    await runs.attach_evidence(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, artifact_id=evidence_ref.id
+    )
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    first = evidence.sentences[0].id
+    last = evidence.sentences[1].id
+    answers: list[dict[str, Any]] = [_draft("section-0001:fixture", first, last)]
+    served: list[str] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _ = info
+        prompt = messages[0].parts[0]
+        served.append(getattr(prompt, "content", ""))
+        return ModelResponse(
+            parts=[TextPart(json.dumps(answers[min(len(served), len(answers)) - 1]))],
+            model_name="fixture/model",
+            provider_name="fixture",
+        )
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    ctx = SimpleNamespace(settings=SimpleNamespace(database_url=url), store=store)
+    owner = HarnessActivities(cast("Any", ctx), configuration, routes)
+    selection = TopicSelectionActivities(owner)
+    decisions = TopicDecisionActivities(owner)
+    run_ref = RunRef(
+        scope_organization_id=SEEDED.organizationId,
+        scope_user_id=SEEDED.userId,
+        source_id=source_id,
+        run_id=run_id,
+    )
+    context = SelectionContext(
+        run=run_ref, evidence=evidence_ref, program_version=TOPIC_SELECTION_POLICY_V8
+    )
+    rubric = await selection.rubric(context)
+    context = context.model_copy(update={"rubric": rubric, "source_index": index_ref})
+    models.configure_model_runtime(
+        ModelRuntime(
+            database_url=url,
+            store=store,
+            cassette_store=CassetteStore(tmp_path),
+            model_factory=factory,
+            allow_outside_activity=True,
+        )
+    )
+    try:
+        planned = await decisions.prepare_plan(context)
+        assert planned.section_ids == ("section-0001",)
+        assert planned.projected_calls > 0
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.projection is not None
+        assert row.projection["authorRouteId"] == author.id
+        assert row.projection["verifierRouteId"] == verifier.id
+        assert "Projected about" in str(row.projection["sentence"])
+        context = context.model_copy(update={"inventory_plan": planned.inventory_plan})
+
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.gap is None
+        assert result.artifact is not None
+        assert result.family == verifier.family
+        assert "section-0001" in served[0]
+        assert "Fixture brief." in served[0]
+        record = DecisionRecordV8.model_validate(await selection.read(context, result.artifact))
+        assert record.kind == "inventory"
+        assert record.shard is not None
+        assert record.output["opportunities"][0]["id"] == "section-0001:fixture"
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.dispatch_count == 1
+
+        # The same decision under a new execution reuses the admitted record without a call.
+        again = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert again.reused is True
+        assert again.artifact == result.artifact
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.dispatch_count == 1
+
+        assembled = await decisions.assemble_inventory(
+            AssembleRequestV8(context=context, results=(result,))
+        )
+        assert assembled.gaps == ()
+        assert assembled.opportunity_count == 1
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def test_ungrounded_answer_is_corrected_once_then_becomes_a_gap(tmp_path: Path) -> None:
+    url = pipeline_url()
+    author = _route("fixture-author-2", "family-author")
+    verifier = _route("fixture-verifier-2", "family-verifier")
+    routes = snapshot(
+        (author, verifier),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(verifier.id,)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    configuration = replace(settings(routes), backend="gateway", max_run_budget_micros=50_000_000)
+    source_id = await ready_source(url)
+    run_id = uuid.uuid4()
+    request = ChapterRunInput(
+        brief="Fixture brief.",
+        budgetMicros=5_000_000,
+        config=configuration.allowed_config(),
+        requestKey=uuid.uuid4(),
+        runId=run_id,
+        scope=SEEDED,
+        sourceId=source_id,
+    )
+    start = StartRunRequest(
+        request=request,
+        editorial_policy=TOPIC_SELECTION_POLICY_V8,
+        workflow=WorkflowIdentity(workflow_id="decision-test-2", workflow_run_id="run-1"),
+    )
+    await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
+    store = cast("S3Store", MemoryStore())
+    evidence_ref, _, _ = await _published_reviewer_refs(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, store=store
+    )
+    index_ref = await _reusable_index(
+        url, source_id=source_id, store=store, evidence_ref=evidence_ref
+    )
+    await runs.attach_evidence(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, artifact_id=evidence_ref.id
+    )
+    prompts: list[str] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _ = info
+        prompts.append(str(getattr(messages[0].parts[0], "content", "")))
+        # Cites a sentence that does not exist, twice; the diagnostic must reach the retry.
+        return ModelResponse(
+            parts=[TextPart(json.dumps(_draft("section-0001:ghost", "s999990", "s999991")))],
+            model_name="fixture/model",
+            provider_name="fixture",
+        )
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    ctx = SimpleNamespace(settings=SimpleNamespace(database_url=url), store=store)
+    owner = HarnessActivities(cast("Any", ctx), configuration, routes)
+    selection = TopicSelectionActivities(owner)
+    decisions = TopicDecisionActivities(owner)
+    run_ref = RunRef(
+        scope_organization_id=SEEDED.organizationId,
+        scope_user_id=SEEDED.userId,
+        source_id=source_id,
+        run_id=run_id,
+    )
+    context = SelectionContext(
+        run=run_ref, evidence=evidence_ref, program_version=TOPIC_SELECTION_POLICY_V8
+    )
+    rubric = await selection.rubric(context)
+    context = context.model_copy(update={"rubric": rubric, "source_index": index_ref})
+    models.configure_model_runtime(
+        ModelRuntime(
+            database_url=url,
+            store=store,
+            cassette_store=CassetteStore(tmp_path),
+            model_factory=factory,
+            allow_outside_activity=True,
+        )
+    )
+    try:
+        planned = await decisions.prepare_plan(context)
+        context = context.model_copy(update={"inventory_plan": planned.inventory_plan})
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.artifact is None
+        assert result.gap is not None
+        assert "do not exist" in result.gap.reason
+        assert len(result.gap.retainedArtifacts) == 2
+        assert len(prompts) == 2
+        assert prompts[1].startswith("RECOVERY:")
+        assert "do not exist" in prompts[1]
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.dispatch_count == 2
+        assert row.status.value == "running"
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+@pytest.mark.parametrize("seat", ["author", "verifier"])
+def test_route_preferences_must_name_a_pool_member(seat: str) -> None:
+    author = _route("pref-author", "family-author")
+    verifier = _route("pref-verifier", "family-verifier")
+    routes = snapshot(
+        (author, verifier),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(verifier.id,)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    with pytest.raises(runs.IdentityConflict, match="not in the frozen snapshot"):
+        runs.route_preferences(routes, ChapterRunRoutePreferences(**{seat: "missing-route"}))
+    ordered = runs.apply_route_preferences(routes, {"author": author.id, "verifier": verifier.id})
+    assert ordered.seats["propose"].route_ids[0] == author.id
+    assert ordered.seats["verify"].route_ids[0] == verifier.id

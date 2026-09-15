@@ -41,8 +41,11 @@ SelectionProgramVersion = Literal[
     "standalone-topics/5",
     "standalone-topics/6",
     "standalone-topics/7",
+    "standalone-topics/8",
 ]
-SourceToolRole = Literal["inventory", "author", "source_reviewer", "cold_reviewer", "repair"]
+SourceToolRole = Literal[
+    "inventory", "author", "source_reviewer", "cold_reviewer", "repair", "reviewer"
+]
 SourceInspectionFormat = Literal[
     "topic-source-inspection/1",
     "topic-source-inspection/2",

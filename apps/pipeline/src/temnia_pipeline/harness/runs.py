@@ -15,6 +15,7 @@ from temnia_pipeline.contracts import (
     ChapterReviewInput,
     ChapterReviewOutput,
     ChapterRunConfig,
+    ChapterRunRoutePreferences,
     HarnessArtifactKind,
     HarnessArtifactRef,
     HarnessRunStatus,
@@ -127,6 +128,11 @@ def _snapshot(row: Mapping[str, Any]) -> RunSnapshot:
         accepted_revision=row["accepted_revision"],
         evidence_artifact_id=row["evidence_artifact_id"],
         error_message=row["error_message"],
+        route_preferences={
+            str(key): str(value)
+            for key, value in dict(route_snapshot.get("routePreferences") or {}).items()
+        },
+        projection=route_snapshot.get("projection"),
         source=source,
         transcript=transcript,
         route_snapshot=frozen_routes,
@@ -225,6 +231,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         raise IdentityConflict("requested run config differs from worker allowed config")
     if route_snapshot.snapshot_id != request.config.routeSnapshotId:
         raise IdentityConflict("requested route snapshot differs from loaded immutable snapshot")
+    preferences = route_preferences(route_snapshot, request.routes)
     async with db.scoped(database_url, request.scope) as conn:
         fenced = await (
             await conn.execute(
@@ -281,6 +288,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                 brief,
                 request.budgetMicros,
                 config_value,
+                preferences,
             )
             actual = (
                 existing["id"],
@@ -289,6 +297,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
                 str(existing["brief"]),
                 int(pinned.get("initialBudgetMicros", existing["budget_micros"])),
                 existing["config"],
+                dict(pinned.get("routePreferences") or {}),
             )
             if actual != expected:
                 raise IdentityConflict("request key was reused with different immutable run intent")
@@ -365,6 +374,7 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
             "pinnedTranscript": transcript.model_dump(mode="json"),
             "snapshot": route_snapshot.model_dump(mode="json"),
         }
+        route_value["routePreferences"] = preferences
         route_value["evaluationProgram"] = evaluation_program
         route_value["evaluationProgramSha256"] = evaluation_program_sha
         route_value["editorialPolicy"] = start.editorial_policy
@@ -398,6 +408,69 @@ async def start_or_refetch_run(  # noqa: PLR0912, PLR0915
         if row is None:
             raise IdentityConflict("request-keyed run disappeared during acquisition")
         return StartRunResult(run=_snapshot(row), created=created)
+
+
+def route_preferences(
+    snapshot: RouteSnapshot, requested: ChapterRunRoutePreferences | None
+) -> dict[str, str]:
+    """Freeze seat preferences only when each names a route inside that seat's pool."""
+    preferences: dict[str, str] = {}
+    if requested is None:
+        return preferences
+    for seat, key in (("propose", "author"), ("verify", "verifier")):
+        route_id = getattr(requested, key)
+        if route_id is None:
+            continue
+        pool = snapshot.seats.get(seat)
+        if pool is None or route_id not in pool.route_ids:
+            message = (
+                f"requested {key} route {route_id!r} is not in the frozen snapshot's {seat} pool"
+            )
+            raise IdentityConflict(message)
+        preferences[key] = route_id
+    return preferences
+
+
+def apply_route_preferences(
+    snapshot: RouteSnapshot, preferences: Mapping[str, str]
+) -> RouteSnapshot:
+    """Put each preferred route first in its seat pool; the rest keep their frozen order."""
+    if not preferences:
+        return snapshot
+    seats = dict(snapshot.seats)
+    for seat, key in (("propose", "author"), ("verify", "verifier")):
+        route_id = preferences.get(key)
+        pool = seats.get(seat)
+        if route_id is None or pool is None or route_id not in pool.route_ids:
+            continue
+        ordered = (route_id, *(item for item in pool.route_ids if item != route_id))
+        seats[seat] = pool.model_copy(update={"route_ids": ordered})
+    return snapshot.model_copy(update={"seats": seats})
+
+
+async def record_run_projection(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    run_id: UUID,
+    projection: Mapping[str, Any],
+) -> None:
+    """Attach the pre-spend work projection to the run row for the panel and the ledger."""
+    async with db.scoped(database_url, scope) as conn:
+        await conn.execute(
+            """
+            UPDATE harness_run
+               SET route_snapshot = jsonb_set(route_snapshot, '{projection}', %s::jsonb),
+                   updated_at = now()
+             WHERE id = %s AND source_id = %s
+            """,
+            (
+                json.dumps(dict(projection), separators=(",", ":"), sort_keys=True),
+                run_id,
+                source_id,
+            ),
+        )
 
 
 async def get_run(database_url: str, *, scope: Scope, source_id: UUID, run_id: UUID) -> RunSnapshot:

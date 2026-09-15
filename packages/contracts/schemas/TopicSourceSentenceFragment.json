@@ -4,6 +4,11 @@
       "$id": "#/$defs/TopicSourceSentenceFragment",
       "type": "object",
       "properties": {
+        "endCharacter": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
         "id": {
           "type": "string",
           "minLength": 1,
@@ -19,27 +24,22 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
-        "endCharacter": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
+        "text": {
+          "type": "string"
         },
         "totalCharacters": {
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
-        },
-        "text": {
-          "type": "string"
         }
       },
       "required": [
+        "endCharacter",
         "id",
         "sentenceId",
         "startCharacter",
-        "endCharacter",
-        "totalCharacters",
-        "text"
+        "text",
+        "totalCharacters"
       ],
       "additionalProperties": false,
       "title": "TopicSourceSentenceFragment"

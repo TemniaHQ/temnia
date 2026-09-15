@@ -11,7 +11,8 @@
     "maxOutputTokens": 65536,
     "maxRenderConcurrency": 2,
     "maxRepairs": 3,
-    "maxRunBudgetMicros": 20000000,
+    "maxRunBudgetMicros": 100000000,
+    "defaultRunBudgetMicros": 20000000,
     "minDispatchIntervalSeconds": 1
   },
   "recordedFixturePath": null,

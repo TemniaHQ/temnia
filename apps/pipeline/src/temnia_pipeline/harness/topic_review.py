@@ -221,6 +221,7 @@ class TopicReviewActivities:
                 "standalone-topics/5",
                 "standalone-topics/6",
                 "standalone-topics/7",
+                "standalone-topics/8",
             }:
                 raise ReviewRefused("selection portfolio has an unknown programme version")
             lineage = SelectionContext.model_validate(

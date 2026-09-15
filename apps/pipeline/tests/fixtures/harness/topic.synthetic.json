@@ -4,7 +4,8 @@
   "grounding": {
     "evidenceFixture": "../substrate/speech-40s.transcript.json",
     "note": "Editorial choices are deterministic test data grounded in the speech-40s transcript; they are not a measured quality claim.",
-    "topicSelectionNote": "standalone-topics/3 executes all five native schemas: an empty inventory, an empty author selection, an independent source discovery with its required omission finding, one grounded repair that packages the discovered discussion, then a cold review and a source review of the recovered treatment."
+    "topicSelectionNote": "standalone-topics/3 executes all five native schemas: an empty inventory, an empty author selection, an independent source discovery with its required omission finding, one grounded repair that packages the discovered discussion, then a cold review and a source review of the recovered treatment.",
+    "windowNote": "standalone-topics/8 executes one inline-window decision per planned item: one section inventory, one author work item, one cold review and three bounded review items (candidate batch, opportunity batch, omission scan); no repair is needed, so the run compiles one video."
   },
   "outputs": {
     "topic_opportunity_inventory": {
@@ -594,6 +595,265 @@
       "synthetic": true,
       "output": {
         "summary": "Synthetic V3 source selection exercises strict publication mechanics without claiming editorial quality.",
+        "candidates": [],
+        "opportunities": [],
+        "selection": [],
+        "missingOpportunities": [],
+        "findings": [],
+        "overlaps": [],
+        "handoffs": []
+      }
+    },
+    "topic_v8_inventory_section-0001": {
+      "synthetic": true,
+      "output": {
+        "proposal": {
+          "version": 1,
+          "summary": "Synthetic window inventory lists the aligned-timestamp discussion; packaging follows.",
+          "candidates": []
+        },
+        "opportunities": [
+          {
+            "id": "section-0001:timestamp-value",
+            "viewerPurpose": "Explain why aligned words make editing searchable.",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "meaningChangingFollowups": [],
+            "valueEvidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "candidateIds": [],
+            "disposition": "needs_evidence",
+            "dispositionReason": "Synthetic inventory records the aligned-timestamp discussion for packaging."
+          }
+        ]
+      }
+    },
+    "topic_v8_author_section-0001:author-0001": {
+      "synthetic": true,
+      "output": {
+        "proposal": {
+          "version": 1,
+          "summary": "Synthetic window author packages the inventoried discussion as one treatment.",
+          "candidates": [
+            {
+              "id": "section-0001:author-0001:candidate:timestamp-search",
+              "title": "Timestamps turn editing into search",
+              "purpose": "Explain why aligned words make editing searchable.",
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008",
+              "coreSpans": [
+                {
+                  "firstSentenceId": "s000005",
+                  "lastSentenceId": "s000008"
+                }
+              ],
+              "requiredContextSpans": [],
+              "completionSpans": [
+                {
+                  "firstSentenceId": "s000008",
+                  "lastSentenceId": "s000008"
+                }
+              ],
+              "meaningChangingFollowups": [],
+              "reason": "Explicit deterministic fixture, not an editorial quality measurement."
+            }
+          ]
+        },
+        "opportunities": [
+          {
+            "id": "section-0001:timestamp-value",
+            "viewerPurpose": "Explain why aligned words make editing searchable.",
+            "coreSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "completionSpans": [
+              {
+                "firstSentenceId": "s000008",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "requiredContextSpans": [],
+            "meaningChangingFollowups": [],
+            "valueEvidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "candidateIds": [
+              "section-0001:author-0001:candidate:timestamp-search"
+            ],
+            "disposition": "proposed",
+            "dispositionReason": "Synthetic packaging gives the inventoried discussion one treatment."
+          }
+        ]
+      }
+    },
+    "topic_v8_cold_section-0001:author-0001:candidate:timestamp-search": {
+      "synthetic": true,
+      "output": {
+        "candidateId": "section-0001:author-0001:candidate:timestamp-search",
+        "intelligibleBeginning": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "coherentTopic": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "completeDiscussion": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "titleFaithful": {
+          "status": "unknown",
+          "reason": "Synthetic fixture does not establish real editorial quality.",
+          "evidenceSpans": [
+            {
+              "firstSentenceId": "s000005",
+              "lastSentenceId": "s000008"
+            }
+          ]
+        },
+        "value": {
+          "reconstructedPurpose": "Explain how aligned words make editing searchable.",
+          "reconstructedTakeaway": "Word timestamps connect transcript search to editing decisions.",
+          "viewerReasonToWatch": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "deliveredValue": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "openingEffectiveness": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          },
+          "focusedDevelopment": {
+            "status": "unknown",
+            "reason": "Synthetic fixture does not establish real editorial quality.",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "topic_v8_review_section-0001:source-local-0001_0": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic local candidate review selects the one structurally complete treatment.",
+        "candidates": [],
+        "opportunities": [],
+        "selection": [
+          {
+            "candidateId": "section-0001:author-0001:candidate:timestamp-search",
+            "disposition": "select",
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "reason": "The deterministic fixture selects one structurally complete treatment for workflow testing."
+          }
+        ],
+        "missingOpportunities": [],
+        "findings": [],
+        "overlaps": [],
+        "handoffs": []
+      }
+    },
+    "topic_v8_review_section-0001:source-local-0002_0": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic local opportunity review finds the inventory opportunity represented.",
+        "candidates": [],
+        "opportunities": [
+          {
+            "opportunityId": "section-0001:timestamp-value",
+            "candidateIds": [
+              "section-0001:author-0001:candidate:timestamp-search"
+            ],
+            "evidenceSpans": [
+              {
+                "firstSentenceId": "s000005",
+                "lastSentenceId": "s000008"
+              }
+            ],
+            "status": "represented",
+            "reason": "The synthetic treatment contains the inventory opportunity's core evidence."
+          }
+        ],
+        "selection": [],
+        "missingOpportunities": [],
+        "findings": [],
+        "overlaps": [],
+        "handoffs": []
+      }
+    },
+    "topic_v8_review_section-0001:source-omission-0001_0": {
+      "synthetic": true,
+      "output": {
+        "summary": "Synthetic omission scan finds no worthwhile discussion absent from coverage.",
         "candidates": [],
         "opportunities": [],
         "selection": [],

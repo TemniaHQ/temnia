@@ -99,6 +99,7 @@ class TopicProgramManifest(EvaluationModel):
         "standalone-topics/5",
         "standalone-topics/6",
         "standalone-topics/7",
+        "standalone-topics/8",
     ]
     implementation_sha256: SHA256
     program_version: Identifier
@@ -114,6 +115,7 @@ class TopicProgramManifest(EvaluationModel):
                 "standalone-topics/5",
                 "standalone-topics/6",
                 "standalone-topics/7",
+                "standalone-topics/8",
             }
             else "topic_inventory": "reviewer",
             "topic_author": "author",
@@ -138,6 +140,7 @@ class TopicConfiguration(EvaluationModel):
         "standalone-topics/5",
         "standalone-topics/6",
         "standalone-topics/7",
+        "standalone-topics/8",
     ]
     source_sha256: SHA256 | None = None
     transcript_sha256: SHA256 | None = None

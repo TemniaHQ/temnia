@@ -144,6 +144,14 @@ class ChapterRunConfig(BaseModel):
     routeSnapshotId: Annotated[str, Field(max_length=256, min_length=1)]
 
 
+class ChapterRunRoutePreferences(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    author: Annotated[str | None, Field(max_length=256, min_length=1)] = None
+    verifier: Annotated[str | None, Field(max_length=256, min_length=1)] = None
+
+
 class ReviewState(StrEnum):
     proposed = "proposed"
     accepted = "accepted"
@@ -224,6 +232,9 @@ class TopicShotDetector(StrEnum):
 class HarnessConfigLimits(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
+    )
+    defaultRunBudgetMicros: Annotated[int | None, Field(gt=0, le=9007199254740991)] = (
+        None
     )
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
     maxDispatches: Annotated[int | None, Field(ge=1, le=9007199254740991)]
@@ -848,12 +859,12 @@ class TopicSourceSentenceFragment(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    endCharacter: Annotated[int, Field(gt=0, le=9007199254740991)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
     sentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     startCharacter: Annotated[int, Field(ge=0, le=9007199254740991)]
-    endCharacter: Annotated[int, Field(gt=0, le=9007199254740991)]
-    totalCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
     text: str
+    totalCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
 
 
 class TranscribeInput(BaseModel):
@@ -1181,6 +1192,7 @@ class ChapterRunInput(BaseModel):
     budgetMicros: Annotated[int, Field(ge=1, le=9007199254740991)]
     config: ChapterRunConfig
     requestKey: UUID
+    routes: ChapterRunRoutePreferences | None = None
     runId: UUID
     scope: Scope
     sourceId: UUID
@@ -1598,11 +1610,11 @@ class TopicSourceReadPage(BaseModel):
         extra="forbid",
     )
     complete: bool
+    fragments: list[TopicSourceSentenceFragment]
     indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCharacterOffset: Annotated[int | None, Field(ge=0, le=9007199254740991)]
     nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
     sentences: list[TopicSourceIndexSentence]
-    fragments: list[TopicSourceSentenceFragment]
-    nextCharacterOffset: Annotated[int | None, Field(ge=0, le=9007199254740991)]
 
 
 class TopicSourceReview(BaseModel):

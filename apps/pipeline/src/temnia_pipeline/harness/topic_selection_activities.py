@@ -52,6 +52,7 @@ from temnia_pipeline.harness.editorial_policy import (
     TOPIC_SELECTION_POLICY_V5,
     TOPIC_SELECTION_POLICY_V6,
     TOPIC_SELECTION_POLICY_V7,
+    TOPIC_SELECTION_POLICY_V8,
 )
 from temnia_pipeline.harness.routes import estimate_cost
 from temnia_pipeline.harness.runtime_types import RunRef, RunSnapshot
@@ -311,6 +312,7 @@ class TopicSelectionActivities:
                 TOPIC_SELECTION_POLICY_V5,
                 TOPIC_SELECTION_POLICY_V6,
                 TOPIC_SELECTION_POLICY_V7,
+                TOPIC_SELECTION_POLICY_V8,
             }
             or run.evidence_artifact_id != context.evidence.id
         ):

@@ -1,0 +1,25 @@
+{
+  "$defs": {
+    "ChapterRunRoutePreferences": {
+      "$id": "#/$defs/ChapterRunRoutePreferences",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "verifier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false,
+      "title": "ChapterRunRoutePreferences"
+    }
+  },
+  "$id": "ChapterRunRoutePreferences.json",
+  "$ref": "#/$defs/ChapterRunRoutePreferences",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

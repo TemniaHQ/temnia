@@ -180,6 +180,12 @@ class HarnessModelDeps(BaseModel):
     dispatch_limit: Annotated[int, Field(gt=0)] | None
     cassette_mode: CassetteMode = CassetteMode.OFF
     synthetic_payload: dict[str, Any] | None = None
+    # The exact function-tool names this call may carry. None keeps the role-derived legacy
+    # sets; a tuple is authoritative and must be one of the gateway-admitted sets.
+    source_tools: tuple[str, ...] | None = None
+    # Whether every continuation must carry an application checkpoint. Window-based decisions
+    # keep their short history in one activity and publish no checkpoint chain.
+    checkpointed: bool = True
 
     @model_validator(mode="after")
     def _synthetic_route(self) -> HarnessModelDeps:  # noqa: C901
@@ -740,7 +746,7 @@ async def _persist_source_checkpoint(
     runtime: ModelRuntime, deps: HarnessModelDeps, messages: list[ModelMessage]
 ) -> artifacts.HarnessArtifact | None:
     """Publish the compact state before any paid continuation can be dispatched."""
-    if deps.source_index is None:
+    if deps.source_index is None or not deps.checkpointed:
         return None
     checkpoint = checkpoint_from_messages(messages)
     if checkpoint is None:
@@ -882,6 +888,16 @@ def _owner_token(runtime: ModelRuntime) -> str:
 
 def expected_source_tools(deps: HarnessModelDeps) -> frozenset[str]:
     """The one toolset a role may carry; the gateway body validator admits the same sets."""
+    if deps.source_tools is not None:
+        names = frozenset(deps.source_tools)
+        if names and names not in {
+            SOURCE_TOOL_NAMES,
+            SOURCE_REVIEW_TOOL_NAMES,
+            COLD_SOURCE_TOOL_NAMES,
+            EDITORIAL_REVIEW_TOOL_NAMES,
+        }:
+            raise ModelPersistenceError("model call declares an unqualified source toolset")
+        return names
     role = deps.source_tool_role
     if role is None:
         return frozenset()
@@ -1713,8 +1729,54 @@ topic_selection_source_v8 = _agent(
 topic_selection_patch_v7 = _agent(
     "topic_selection_patch_v7", TopicSelectionPatchV3, indexed_source=True
 )
+
+
 # The pinned plugin appends every workflow's agents without deduplicating them.
 # Keep registrations disjoint; chapter review reuses the chapter worker activities.
+def _decision_agent(
+    name: str, output_type: type[Any], *, tools: tuple[Any, ...]
+) -> Agent[HarnessModelDeps, Any]:
+    """A `standalone-topics/8` decision agent: one activity owns the whole short model loop.
+
+    It carries no Temporal durability capability because it never runs inside a workflow, and
+    no history processor because its history is bounded by construction (inline window plus a
+    few tool pages). The configured model still runs every request through the ledger.
+    """
+    return Agent(
+        model=MODEL_ALIAS,
+        defer_model_check=True,
+        output_type=NativeOutput(output_type, strict=True),
+        deps_type=HarnessModelDeps,
+        name=name,
+        retries={"tools": 3, "output": 3},
+        tools=list(tools),
+        capabilities=[ResolveModelId(resolve_configured_model)],
+    )
+
+
+SOURCE_TOOLS_V8: tuple[Any, ...] = (browse_source, search_source, read_source)
+topic_inventory_window_v8 = _decision_agent(
+    "topic_inventory_window_v8", TopicSelectionDraft, tools=()
+)
+topic_author_window_v8 = _decision_agent(
+    "topic_author_window_v8", TopicSelectionDraft, tools=SOURCE_TOOLS_V8
+)
+topic_cold_window_v8 = _decision_agent("topic_cold_window_v8", TopicSelectionColdReview, tools=())
+topic_review_window_v8 = _decision_agent(
+    "topic_review_window_v8", TopicPortfolioReviewV4, tools=SOURCE_TOOLS_V8
+)
+topic_repair_window_v8 = _decision_agent(
+    "topic_repair_window_v8", TopicSelectionPatchV3, tools=SOURCE_TOOLS_V8
+)
+DECISION_AGENTS_V8: dict[str, Agent[HarnessModelDeps, Any]] = {
+    "inventory": topic_inventory_window_v8,
+    "author": topic_author_window_v8,
+    "cold": topic_cold_window_v8,
+    "review": topic_review_window_v8,
+    "repair": topic_repair_window_v8,
+}
+
+
 TOPIC_SELECTION_AGENTS: tuple[Agent[HarnessModelDeps, Any], ...] = (
     topic_opportunity_inventory_v3,
     topic_selection_author_v3,

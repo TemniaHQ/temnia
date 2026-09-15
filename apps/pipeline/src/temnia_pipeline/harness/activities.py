@@ -90,6 +90,7 @@ from temnia_pipeline.harness.speech_evidence import (
     find_source_speech_coverage,
 )
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_decisions import TopicDecisionActivities
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
 from temnia_pipeline.harness.topic_review import TopicReviewActivities
@@ -1563,6 +1564,7 @@ class HarnessActivities:
             *TopicRenderActivities(self).activities(),
             *TopicReviewActivities(self).activities(),
             *TopicSelectionActivities(self).activities(),
+            *TopicDecisionActivities(self).activities(),
             *TopicEditorialPatchActivities(self).activities(),
             self.build_chapter_evidence,
             self.render_chapter_revision,

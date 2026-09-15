@@ -125,25 +125,30 @@ export type TopicSourceSearchPage = z.infer<typeof TopicSourceSearchPageSchema>;
 
 export const TopicSourceSentenceFragmentSchema = z
   .object({
+    endCharacter: z.int().positive(),
     id: identifier(),
     sentenceId: identifier(),
     startCharacter: z.int().nonnegative(),
-    endCharacter: z.int().positive(),
-    totalCharacters: z.int().positive(),
     text: z.string(),
+    totalCharacters: z.int().positive(),
   })
   .strict()
-  .meta({ id: "TopicSourceSentenceFragment", title: "TopicSourceSentenceFragment" });
-export type TopicSourceSentenceFragment = z.infer<typeof TopicSourceSentenceFragmentSchema>;
+  .meta({
+    id: "TopicSourceSentenceFragment",
+    title: "TopicSourceSentenceFragment",
+  });
+export type TopicSourceSentenceFragment = z.infer<
+  typeof TopicSourceSentenceFragmentSchema
+>;
 
 export const TopicSourceReadPageSchema = z
   .object({
     complete: z.boolean(),
+    fragments: z.array(TopicSourceSentenceFragmentSchema).default([]),
     indexSha256: sha256(),
+    nextCharacterOffset: z.int().nonnegative().nullable().default(null),
     nextSentenceId: identifier().nullable(),
     sentences: z.array(TopicSourceIndexSentenceSchema),
-    fragments: z.array(TopicSourceSentenceFragmentSchema).default([]),
-    nextCharacterOffset: z.int().nonnegative().nullable().default(null),
   })
   .strict()
   .meta({ id: "TopicSourceReadPage", title: "TopicSourceReadPage" });
