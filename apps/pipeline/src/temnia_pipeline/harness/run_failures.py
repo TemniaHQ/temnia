@@ -59,7 +59,7 @@ def outcome_unknown(error: Exception) -> bool:
     return error_type == "OutcomeUnknown"
 
 
-def known_failure_details(  # noqa: PLR0911
+def known_failure_details(  # noqa: C901, PLR0911
     error: Exception,
 ) -> tuple[Literal["failed", "budget_paused"], str]:
     """Map a stopped activity to the run status and the sentence its reader gets."""
@@ -88,6 +88,18 @@ def known_failure_details(  # noqa: PLR0911
         return "failed", (
             f"The {_failing_stage(error)} response was incomplete or invalid; "
             "the charge is retained and nothing was retried."
+        )
+    if error_type == "NoEligibleRoute":
+        detail = _cause_message(cause) or "No route is eligible for one editorial seat."
+        return "failed", (
+            f"{detail} Choose different author and reviewer models, or change the route "
+            "snapshot; nothing was charged for the refused request."
+        )
+    if error_type == "DecisionRoutesExhausted":
+        detail = _cause_message(cause) or "Every eligible route failed for one decision."
+        return "failed", (
+            f"{detail} Retry this run later or choose different models; settled work and "
+            "charges are retained and reused."
         )
     if error_type == "SeatRoutesExhausted":
         exhausted = _cause_message(cause) or "Every qualified route for one seat failed."

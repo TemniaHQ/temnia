@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import re
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -103,7 +104,6 @@ from temnia_pipeline.harness.topic_windows import (
     INVENTORY_PROMPT_VERSION,
     MAX_ROUNDS,
     REPAIR_PROMPT_VERSION,
-    RESERVED_OUTPUT_TOKENS,
     REVIEW_PROMPT_VERSION,
     TOOLS_BY_KIND,
     CoverageGap,
@@ -120,6 +120,7 @@ from temnia_pipeline.harness.topic_windows import (
     projection_sentence,
     read_sentence_ids,
     repair_window_prompt,
+    reserved_output_tokens,
     review_window_prompt,
     validate_claims,
 )
@@ -155,10 +156,17 @@ REPAIR_PLAN_FORMAT = "topic-repair-plan/1"
 # Attempts and fallbacks. One correction after a rejected answer, two same-route retries on a
 # transient failure, then the next route; three route positions per seat before the run stops.
 MAX_ATTEMPTS = 2
-SAME_ROUTE_ATTEMPTS = 2
 MAX_ROUTE_POSITIONS = 3
-TRANSIENT_BACKOFF_SECONDS = 20.0
+# Backoff ladder per route on throttling or a dropped stream; each step is at least the
+# provider's own Retry-After. After every route position failed, one long pause, then the
+# ladder runs once more before the decision is a typed stop. The activity heartbeats through.
+TRANSIENT_BACKOFF_SECONDS: tuple[float, ...] = (20.0, 40.0, 80.0, 160.0)
+POOL_PAUSE_SECONDS = 300.0
+MAX_POOL_PAUSES = 1
+# A cut-off answer doubles the output allowance and asks again this many times.
+MAX_TRUNCATION_RETRIES = 2
 HEARTBEAT_SECONDS = 15.0
+PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 TYPED_STOPS: tuple[type[Exception], ...] = (
     ledger.BudgetExceeded,
     ledger.DispatchLimitExceeded,
@@ -345,6 +353,12 @@ def _distinct(references: Sequence[HarnessArtifactRef]) -> tuple[HarnessArtifact
             seen.add(reference.id)
             ordered.append(reference)
     return tuple(ordered)
+
+
+def advised_pause(error: BaseException) -> float:
+    """The provider's Retry-After as carried in the failure sentence, or zero."""
+    match = PAUSE_ADVICE.search(str(error))
+    return float(match.group(1)) if match else 0.0
 
 
 def _sentence(error: BaseException) -> str:
@@ -1046,6 +1060,9 @@ class TopicDecisionActivities:
             same_route = 0
             retained: list[HarnessArtifactRef] = []
             base_stage = ""
+            pool_pauses = 0
+            truncations = 0
+            boost = 1
             while True:
                 try:
                     author, verifier = self._routes(run, context, shift=shift, seat=seat)
@@ -1054,6 +1071,12 @@ class TopicDecisionActivities:
                         raise ApplicationError(
                             _sentence(error), type="NoEligibleRoute", non_retryable=True
                         ) from error
+                    if pool_pauses < MAX_POOL_PAUSES:
+                        pool_pauses += 1
+                        shift = 0
+                        same_route = 0
+                        await asyncio.sleep(POOL_PAUSE_SECONDS)
+                        continue
                     raise ApplicationError(
                         f"Every eligible {seat} route failed for {kind} {request.item_id}: "
                         + _sentence(error),
@@ -1099,10 +1122,8 @@ class TopicDecisionActivities:
                             reused=True,
                         )
                 deps = self._build_deps(context, run, prepared.plan, kind)
-                reserved = min(
-                    RESERVED_OUTPUT_TOKENS[kind],
-                    route.max_output_tokens,
-                    run.config.maxOutputTokens,
+                reserved = reserved_output_tokens(
+                    kind, route, config_max=run.config.maxOutputTokens, boost=boost
                 )
                 agent = DECISION_AGENTS_V8[kind]
                 try:
@@ -1113,19 +1134,29 @@ class TopicDecisionActivities:
                         usage_limits=UsageLimits(request_limit=MAX_ROUNDS[kind]),
                     )
                 except TransientProviderFailure as error:
-                    same_route += 1
-                    if same_route >= SAME_ROUTE_ATTEMPTS:
-                        same_route = 0
-                        shift += 1
-                        if shift >= MAX_ROUTE_POSITIONS:
-                            raise ApplicationError(
-                                f"Every eligible {seat} route failed transiently for {kind} "
-                                f"{request.item_id}; last: {_sentence(error)}",
-                                type="DecisionRoutesExhausted",
-                                non_retryable=True,
-                            ) from error
+                    # Throttling and dropped streams: climb the backoff ladder on this route,
+                    # honouring the provider's own pause, then move to the next route. Only
+                    # after every route position and one long pool pause is this a stop.
+                    if same_route < len(TRANSIENT_BACKOFF_SECONDS):
+                        pause = max(TRANSIENT_BACKOFF_SECONDS[same_route], advised_pause(error))
+                        same_route += 1
+                        await asyncio.sleep(pause)
                         continue
-                    await asyncio.sleep(TRANSIENT_BACKOFF_SECONDS)
+                    same_route = 0
+                    shift += 1
+                    if shift >= MAX_ROUTE_POSITIONS:
+                        if pool_pauses < MAX_POOL_PAUSES:
+                            pool_pauses += 1
+                            shift = 0
+                            await asyncio.sleep(POOL_PAUSE_SECONDS)
+                            continue
+                        raise ApplicationError(
+                            f"Every eligible {seat} route failed transiently for {kind} "
+                            f"{request.item_id} across {pool_pauses + 1} rounds of the pool; "
+                            f"last: {_sentence(error)}",
+                            type="DecisionRoutesExhausted",
+                            non_retryable=True,
+                        ) from error
                     continue
                 except (KnownProviderRejection, ContextWindowExceeded, GatewayPolicyError) as error:
                     shift += 1
@@ -1158,6 +1189,29 @@ class TopicDecisionActivities:
                         family=route.family,
                     )
                 except UnexpectedModelBehavior as error:
+                    truncated = "did not finish successfully" in _sentence(error)
+                    if truncated and truncations < MAX_TRUNCATION_RETRIES:
+                        # The answer was cut off at the output allowance (reasoning models spend
+                        # thinking tokens inside it). Retain the attempt, double the allowance
+                        # and ask again; this is not a correction the model can act on.
+                        truncations += 1
+                        boost *= 2
+                        retained.append(
+                            await self._reject(
+                                request,
+                                prepared,
+                                output=None,
+                                diagnostics=(
+                                    (
+                                        f"The answer was cut off at {reserved} output tokens; "
+                                        "retrying with a larger allowance."
+                                    ),
+                                ),
+                                family=route.family,
+                                route_id=route.id,
+                            )
+                        )
+                        continue
                     diagnostic = f"The answer did not match the required schema: {_sentence(error)}"
                     retained.append(
                         await self._reject(

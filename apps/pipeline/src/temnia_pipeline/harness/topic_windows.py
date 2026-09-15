@@ -111,12 +111,15 @@ DecisionKind = Literal["inventory", "author", "cold", "review", "repair"]
 # Reserved output per decision kind, in tokens. These bound the ledger reservation and the
 # provider `max_tokens`; the largest typed answers (author packaging, repair patch) get the most.
 RESERVED_OUTPUT_TOKENS: dict[str, int] = {
-    "inventory": 8_192,
-    "author": 16_384,
-    "cold": 4_096,
-    "review": 8_192,
-    "repair": 16_384,
+    "inventory": 16_384,
+    "author": 32_768,
+    "cold": 8_192,
+    "review": 16_384,
+    "repair": 32_768,
 }
+# A route at high reasoning effort spends thinking tokens inside the same allowance; the first
+# staging run lost every DeepSeek answer to a 4,096-token ceiling. Double the base for those.
+HIGH_EFFORT_OUTPUT_MULTIPLIER = 2
 # Model rounds per decision kind: one for inline-only decisions, a bounded few for tool users.
 MAX_ROUNDS: dict[str, int] = {
     "inventory": 1,
@@ -462,6 +465,14 @@ def source_summary(index: TopicSourceIndex, *, index_sha256: str) -> dict[str, o
             "browse_source": "chronological section and region map",
         },
     }
+
+
+def reserved_output_tokens(kind: str, route: RouteEntry, *, config_max: int, boost: int = 1) -> int:
+    """The output allowance for one decision on one route: base, effort and boost, capped."""
+    base = RESERVED_OUTPUT_TOKENS[kind]
+    if str(getattr(route.reasoning_effort, "value", route.reasoning_effort)) == "high":
+        base *= HIGH_EFFORT_OUTPUT_MULTIPLIER
+    return max(256, min(base * max(1, boost), route.max_output_tokens, config_max))
 
 
 def fit_prompt(prompt: str, *, what: str) -> str:

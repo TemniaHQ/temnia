@@ -128,6 +128,8 @@ HTTP_SERVER_ERROR_MIN = 500
 # timeout, an upstream outage. No generation exists, so nothing was charged, and the same
 # request may be sent again (after backoff, then on the next qualified route).
 TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
+# A throttled route without a Retry-After header pauses this long for every caller.
+DEFAULT_THROTTLE_SECONDS = 20.0
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
 TOPIC_ID_NORMALIZATION_VERSION = "initial-topic-identifiers/1"
@@ -236,6 +238,7 @@ class _GateState:
     slots: asyncio.Semaphore
     pace: asyncio.Lock
     last_dispatch: float | None = None
+    cooldown_until: float = 0.0
 
 
 class RouteGate:
@@ -265,6 +268,21 @@ class RouteGate:
             self._states[loop] = state
         return state
 
+    def throttle(self, seconds: float) -> None:
+        """Hold every dispatch on this route until the provider's pause has passed.
+
+        A rate limit is per account, so one 429 should pause the siblings that share the key,
+        not only the decision that saw it. The cooldown never shortens an existing one.
+        """
+        state = self._state()
+        until = asyncio.get_running_loop().time() + max(0.0, seconds)
+        state.cooldown_until = max(state.cooldown_until, until)
+
+    def cooldown_remaining(self) -> float:
+        """Seconds until this route accepts a dispatch again; zero when it is open."""
+        state = self._state()
+        return max(0.0, state.cooldown_until - asyncio.get_running_loop().time())
+
     async def acquire(self) -> None:
         """Take a slot, then wait out the spacing since the previous dispatch."""
         state = self._state()
@@ -276,6 +294,9 @@ class RouteGate:
                     wait = state.last_dispatch + self.min_interval_seconds - loop.time()
                     if wait > 0:
                         await asyncio.sleep(wait)
+                cooldown = state.cooldown_until - loop.time()
+                if cooldown > 0:
+                    await asyncio.sleep(cooldown)
                 state.last_dispatch = loop.time()
         except BaseException:
             state.slots.release()
@@ -1336,6 +1357,11 @@ class BudgetedModel(WrapperModel):
             )
             if transient:
                 retry_after = getattr(error, "retry_after_seconds", None)
+                runtime.route_gate(self.deps.route.id).throttle(
+                    float(retry_after)
+                    if isinstance(retry_after, (int, float))
+                    else DEFAULT_THROTTLE_SECONDS
+                )
                 advice = (
                     f" The provider asked for a pause of {int(retry_after)} s."
                     if isinstance(retry_after, (int, float))
