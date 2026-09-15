@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from typing import TYPE_CHECKING
 
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.contrib.pydantic import pydantic_data_converter
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
@@ -49,12 +51,34 @@ from temnia_pipeline.workflows import (
     TranscribeWorkflow,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from temnia_pipeline.harness.runtime_types import WorkflowIdentity
+
 log = logging.getLogger("temnia.worker")
 
 # One ladder at a time per worker: the ladder is CPU-bound and two of them
 # only halve each other's speed while doubling the scratch disk in use.
 MAX_CONCURRENT_ACTIVITIES = 2
 MAX_CONCURRENT_CONTROL_ACTIVITIES = 4
+
+
+def execution_open_probe(client: Client) -> Callable[[WorkflowIdentity], Awaitable[bool]]:
+    """Whether a run's owning execution is still running; unreachable server counts as open."""
+
+    async def execution_open(identity: WorkflowIdentity) -> bool:
+        handle = client.get_workflow_handle(identity.workflow_id, run_id=identity.workflow_run_id)
+        try:
+            description = await handle.describe()
+        except RPCError as error:
+            if error.status == RPCStatusCode.NOT_FOUND:
+                return False
+            log.warning("execution %s could not be described: %s", identity.workflow_id, error)
+            return True
+        return description.status == WorkflowExecutionStatus.RUNNING
+
+    return execution_open
 
 
 async def assert_modal_deployment(ctx: Context) -> None:
@@ -161,7 +185,9 @@ async def run_worker(settings: TemporalSettings) -> None:
     reaper = Reaper(ctx)
     transcribe = Transcribe(ctx)
     speech = SpeechActivitiesV2(ctx)
-    harness = HarnessActivities(ctx, harness_settings, snapshot)
+    harness = HarnessActivities(
+        ctx, harness_settings, snapshot, execution_open=execution_open_probe(client)
+    )
     worker = Worker(
         client,
         task_queue=settings.task_queue,

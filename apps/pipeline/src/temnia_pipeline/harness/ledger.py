@@ -34,8 +34,9 @@ JsonObject = Mapping[str, Any]
 MAX_ERROR_LENGTH = 2000
 # An unknown outcome is a state the reader has to act on, so it owns a sentence.
 OUTCOME_UNKNOWN_RUN_MESSAGE = (
-    "A provider call ended without a confirmed outcome. Its reservation is retained until "
-    "reconciliation; nothing is retried automatically."
+    "A provider call ended without a confirmed outcome. Its reservation is retained while the "
+    "gateway receipt is awaited; the run resumes on its own once the charge is settled, and a "
+    "finished run becomes retryable."
 )
 _URL = re.compile(r"(?i)\b(?:https?|postgres(?:ql)?|s3)://[^\s]+")
 _SECRET = re.compile(

@@ -24,6 +24,7 @@ import hashlib
 import re
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
@@ -34,6 +35,7 @@ from temnia_pipeline import db
 from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
+    Scope,
     TopicAuthorPackagingPlan,
     TopicAuthorPackagingShard,
     TopicOpportunityInventoryPlan,
@@ -50,7 +52,7 @@ from temnia_pipeline.contracts import (
     TopicSourceReviewPlan,
     TopicSourceReviewShard,
 )
-from temnia_pipeline.harness import artifacts, ledger, runs
+from temnia_pipeline.harness import artifacts, ledger, receipts, runs
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8
 from temnia_pipeline.harness.gateway import GatewayPolicyError
 from temnia_pipeline.harness.models import (
@@ -59,6 +61,7 @@ from temnia_pipeline.harness.models import (
     KnownProviderRejection,
     ModelPersistenceError,
     TransientProviderFailure,
+    current_runtime,
 )
 from temnia_pipeline.harness.routes import ContextWindowExceeded, NoEligibleRoute, RouteEntry
 from temnia_pipeline.harness.topic_author_packaging import (
@@ -163,6 +166,10 @@ MAX_ROUTE_POSITIONS = 3
 TRANSIENT_BACKOFF_SECONDS: tuple[float, ...] = (20.0, 40.0, 80.0, 160.0)
 POOL_PAUSE_SECONDS = 300.0
 MAX_POOL_PAUSES = 1
+# After a stream ends without a conclusive outcome, the decision asks the gateway for the
+# receipt on this ladder (17.5 minutes in all, past the ten-minute receipt grace) before the
+# unconfirmed outcome is a typed stop. Each pass also settles a sibling decision's fence.
+RECEIPT_WAIT_SECONDS: tuple[float, ...] = (30.0, 60.0, 120.0, 240.0, 300.0, 300.0)
 # A cut-off answer doubles the output allowance and asks again this many times.
 MAX_TRUNCATION_RETRIES = 2
 HEARTBEAT_SECONDS = 15.0
@@ -509,6 +516,43 @@ class TopicDecisionActivities:
         while True:
             activity.heartbeat(label)
             await asyncio.sleep(HEARTBEAT_SECONDS)
+
+    async def _await_receipts(self, context: SelectionContext) -> bool:
+        """Wait for the run's unknown outcomes to settle from receipts; True once the fence lifts.
+
+        Every pass asks the gateway about each unknown attempt of the run (this decision's or
+        a sibling's) and settles what it answers through the ledger's owned recovery. An
+        attempt with no generation handle cannot be asked about and ends the wait at once.
+        """
+        runtime = current_runtime()
+        if runtime is None or runtime.gateway is None:
+            return False
+        run = context.run
+        scope = Scope(organizationId=run.scope_organization_id, userId=run.scope_user_id)
+        url = self.owner.ctx.settings.database_url
+        for pause in RECEIPT_WAIT_SECONDS:
+            await asyncio.sleep(pause)
+            if runtime.lookup_client is not None:
+                report = await receipts.recover_unknown_attempts(
+                    url,
+                    scope=scope,
+                    run_id=run.run_id,
+                    config=runtime.gateway,
+                    client=runtime.lookup_client,
+                )
+            else:
+                async with httpx.AsyncClient() as client:
+                    report = await receipts.recover_unknown_attempts(
+                        url, scope=scope, run_id=run.run_id, config=runtime.gateway, client=client
+                    )
+            snapshot = await runs.find_run(
+                url, scope=scope, source_id=run.source_id, run_id=run.run_id
+            )
+            if snapshot is not None and snapshot.status.value != "outcome_unknown":
+                return True
+            if report.pending == 0 and report.unresolvable > 0:
+                return False
+        return False
 
     # ------------------------------------------------------------------ planning
 
@@ -1236,6 +1280,22 @@ class TopicDecisionActivities:
                             seat=seat,
                             family=route.family,
                         )
+                    continue
+                except ledger.OutcomeUnknown as error:
+                    # A stream ended without a conclusive outcome, this call's or a sibling's.
+                    # Only the gateway receipt settles it: wait for it here, bounded, then go
+                    # on as after a dropped stream. Only an unsettled receipt is a stop.
+                    if not await self._await_receipts(context):
+                        raise ApplicationError(
+                            f"{_sentence(error)}; the gateway receipt did not settle it within "
+                            f"{int(sum(RECEIPT_WAIT_SECONDS) // 60)} minutes",
+                            type="OutcomeUnknown",
+                            non_retryable=True,
+                        ) from error
+                    same_route += 1
+                    if same_route >= len(TRANSIENT_BACKOFF_SECONDS):
+                        same_route = 0
+                        shift += 1
                     continue
                 except TYPED_STOPS as error:
                     raise ApplicationError(

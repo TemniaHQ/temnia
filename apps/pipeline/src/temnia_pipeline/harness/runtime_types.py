@@ -166,13 +166,44 @@ class ClaimRepairRequest(BaseModel):
     repair_base_count: int = Field(default=0, ge=0)
 
 
+class ReconcileRunRequest(BaseModel):
+    """Settle a run's unknown outcomes from receipts for the execution that is ending."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    run: RunRef
+    workflow: WorkflowIdentity
+
+
 class ReconcileRunResult(BaseModel):
     """What the gateway receipts settled after an unconfirmed provider outcome."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     looked_up: int = 0
     settled: int = 0
+    released: int = 0
+    pending: int = 0
     resolved: bool = False
+
+
+class ReconcileSweepResult(BaseModel):
+    """What one reaper pass over fenced runs settled."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    runs: int = 0
+    skipped_live: int = 0
+    settled: int = 0
+    released: int = 0
+    parked: int = 0
+    pending: int = 0
+
+
+class ReaperSweepResult(BaseModel):
+    """One reaper tick: abandoned uploads aborted and fenced runs reconciled."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    uploads: int = 0
+    reconciliation: ReconcileSweepResult = ReconcileSweepResult()
 
 
 class MarkRunFailedRequest(BaseModel):

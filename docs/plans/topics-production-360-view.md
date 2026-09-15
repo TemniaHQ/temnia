@@ -142,7 +142,7 @@ model, and did the call stay inside its authority?
 
 Genuine terminal reasons, the only ones allowed: `budget_exhausted` (projection or spend),
 `provider_refused` (401, 402, policy, account), `outcome_unknown` (paid request without a
-conclusive receipt; reconciled, then retryable), `source_invalid` (evidence mismatch, no words),
+conclusive receipt; settled from the gateway receipt by the worker, then resumed or retryable), `source_invalid` (evidence mismatch, no words),
 `cancelled`, and `needs_review` (the normal end: videos or findings waiting for a person).
 
 Everything else is handled, in this order:

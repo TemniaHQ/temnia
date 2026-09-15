@@ -49,6 +49,7 @@ from temnia_pipeline.harness.runtime_types import (
     StageUpdate,
     StartRunRequest,
     StartRunResult,
+    WorkflowIdentity,
 )
 from temnia_pipeline.harness.topic_editorial import EDITORIAL_BRIEF
 
@@ -627,8 +628,17 @@ async def claim_repair(
         return _snapshot(updated)
 
 
-async def settle_reconciled_run(database_url: str, *, run: RunRef, message: str) -> bool:
-    """Lift the unknown-outcome fence once no attempt's charge is unknown any more."""
+async def park_reconciled_run(
+    database_url: str, *, run: RunRef, workflow: WorkflowIdentity | None, message: str
+) -> bool:
+    """Leave a run whose execution has ended retryable once no charge is unknown.
+
+    Receipt recovery lifts the fence to `running` when the last unknown attempt
+    settles, which is right while the owning execution is alive and wrong once it has
+    finished. The caller that knows the execution has ended names it; only that
+    execution's row is moved, so a Retry that already claimed the run is never
+    overwritten. Without an execution only the `outcome_unknown` fence itself is moved.
+    """
     scope = Scope(organizationId=run.scope_organization_id, userId=run.scope_user_id)
     async with db.scoped(database_url, scope) as conn:
         remaining = await (
@@ -640,17 +650,38 @@ async def settle_reconciled_run(database_url: str, *, run: RunRef, message: str)
         ).fetchone()
         if remaining is None or int(remaining["value"]) != 0:
             return False
-        updated = await (
-            await conn.execute(
-                """
-                UPDATE harness_run
-                   SET status = 'failed', error_message = %s, updated_at = now()
-                 WHERE id = %s AND source_id = %s AND status = 'outcome_unknown'
-                 RETURNING id
-                """,
-                (message, run.run_id, run.source_id),
-            )
-        ).fetchone()
+        if workflow is None:
+            updated = await (
+                await conn.execute(
+                    """
+                    UPDATE harness_run
+                       SET status = 'failed', error_message = %s, updated_at = now()
+                     WHERE id = %s AND source_id = %s AND status = 'outcome_unknown'
+                     RETURNING id
+                    """,
+                    (message, run.run_id, run.source_id),
+                )
+            ).fetchone()
+        else:
+            updated = await (
+                await conn.execute(
+                    """
+                    UPDATE harness_run
+                       SET status = 'failed', error_message = %s, updated_at = now()
+                     WHERE id = %s AND source_id = %s
+                       AND status IN ('outcome_unknown', 'running')
+                       AND workflow_id = %s AND workflow_run_id = %s
+                     RETURNING id
+                    """,
+                    (
+                        message,
+                        run.run_id,
+                        run.source_id,
+                        workflow.workflow_id,
+                        workflow.workflow_run_id,
+                    ),
+                )
+            ).fetchone()
         return updated is not None
 
 

@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
     from temnia_pipeline.harness.run_failures import known_failure_details, outcome_unknown
     from temnia_pipeline.harness.runtime_types import (
         MarkRunFailedRequest,
+        ReconcileRunRequest,
         ReconcileRunResult,
         RenderRevisionRequest,
         RunRef,
@@ -66,13 +67,18 @@ class TopicRunWorkflow(PydanticAIWorkflow):
                     result_type=bool,
                 )
             if outcome_unknown(error):
-                # Ask the gateway for the receipt now, so the run is retryable without a
-                # human reading the ledger; a pending receipt keeps the fence.
+                # Ask the gateway for the receipts now and leave the run retryable if they
+                # settle; a pending receipt keeps the fence for the reaper's next pass.
                 with contextlib.suppress(Exception):
                     await workflow.execute_activity(
                         "reconcile_chapter_run_costs",
-                        self.ref(request),
-                        start_to_close_timeout=timedelta(seconds=90),
+                        ReconcileRunRequest(
+                            run=self.ref(request),
+                            workflow=WorkflowIdentity(
+                                workflow_id=info.workflow_id, workflow_run_id=info.run_id
+                            ),
+                        ),
+                        start_to_close_timeout=timedelta(seconds=120),
                         retry_policy=RETRY,
                         task_queue=control_task_queue(info.task_queue),
                         result_type=ReconcileRunResult,
