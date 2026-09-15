@@ -80,7 +80,7 @@ INVENTORY_PROMPT_VERSION = "topic-inventory-window/1"
 AUTHOR_PROMPT_VERSION = "topic-author-window/1"
 COLD_PROMPT_VERSION = "topic-selection-cold/3"
 REVIEW_PROMPT_VERSION = "topic-review-window/1"
-REPAIR_PROMPT_VERSION = "topic-repair-window/2"
+REPAIR_PROMPT_VERSION = "topic-repair-window/4"
 INVENTORY_MANIFEST_FORMAT = "topic-inventory-manifest/2"
 AUTHOR_MANIFEST_FORMAT = "topic-author-manifest/2"
 REVIEW_MANIFEST_FORMAT = "topic-review-manifest/2"
@@ -112,15 +112,41 @@ DecisionKind = Literal["inventory", "author", "cold", "review", "repair"]
 # staging run on frontier models lost every repair to `repair operation ID is outside its
 # work-item namespace` because only the candidate namespace was stated.
 REPAIR_INSTRUCTIONS = """Repair exactly this connected finding component. Every required finding's evidence and the
-affected candidates' speech are supplied inline with surrounding context. Use search_source and
-read_source only when a replacement candidate needs speech outside the windows, and never cite a
-sentence you have not seen. Return one complete typed patch for this component: cite every
-assigned finding ID at least once, change only assigned candidates and opportunity mappings, give
-every operation an ID beginning with `<workItemId>:operation:` and every replacement candidate an
-ID beginning with `<workItemId>:candidate:` (workItemId is workItem.workItemId below). Immutable
-opportunity definitions cannot change; only candidateIds, disposition and dispositionReason may.
-A patch that would leave the audience without the discussion's setup, answer or meaning-changing
-follow-up is worse than none: prefer dropping a candidate to keeping an incoherent one. """
+affected candidates' speech are supplied inline with surrounding context, and that inline speech
+is the whole authorized extent for this component: a replacement candidate whose first or last
+sentence lies outside the supplied windows is rejected. Use search_source and read_source to
+understand what surrounds the windows, not to extend a candidate beyond them; when the coherent
+extent needs speech outside the windows, drop the candidate and say so in the reason instead of
+extending into unauthorized source. A patch that would leave the audience without the
+discussion's setup, answer or meaning-changing follow-up is worse than none: prefer dropping a
+candidate to keeping an incoherent one.
+
+Return one complete typed patch for this component. The validator enforces these rules and
+rejects the whole patch on the first one broken, so follow every one exactly (workItemId is
+workItem.workItemId below):
+1. One to sixteen operations; every operation has a nonblank reason and cites at least one
+   finding ID. Across the patch, cite every assigned finding ID at least once and no other
+   finding; a component with required findings cannot return an empty patch.
+2. Every operation ID begins with `<workItemId>:operation:`.
+3. extend_start, extend_end, replace_extent, replace_candidate and retitle name exactly one
+   affected candidate and return exactly one replacement carrying that same existing candidate
+   ID; the ID is the candidate's identity and never changes on an edit.
+4. extend_start keeps the ending and moves the opening earlier; extend_end keeps the opening and
+   moves the ending later; replace_extent must change at least one edge; none of the three may
+   change the title or viewer purpose.
+5. retitle changes only the title and requires an unsupported_title finding. replace_candidate
+   must change title, purpose or content: a title change requires an unsupported_title finding,
+   a purpose change a weak_viewer_value or unfocused_extent finding, a content change an
+   extent-related finding.
+6. drop names one or more affected candidates and no replacement. merge names two or more
+   affected candidates and one new replacement; split names one affected candidate and two or
+   more new replacements; add_opportunity names only its new candidates as affected and requires
+   a missed_opportunity finding. New candidate IDs begin with `<workItemId>:candidate:` and must
+   not reuse an existing ID.
+7. Change only the assigned candidates and opportunity mappings. Immutable opportunity
+   definitions cannot change; only candidateIds, disposition and dispositionReason may, each
+   opportunity at most once per patch, and never rewrite opportunity evidence to satisfy a
+   finding. """
 
 # Reserved output per decision kind, in tokens. These bound the ledger reservation and the
 # provider `max_tokens`; the largest typed answers (author packaging, repair patch) get the most.

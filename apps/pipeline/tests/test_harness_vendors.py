@@ -491,7 +491,21 @@ async def test_the_request_hook_marks_the_dispatch_as_sent() -> None:
     mark_request_sent()  # outside a tracked dispatch: nothing to record, nothing raised
 
 
-def test_repair_instructions_name_both_identifier_namespaces() -> None:
-    assert "`<workItemId>:operation:`" in REPAIR_INSTRUCTIONS
-    assert "`<workItemId>:candidate:`" in REPAIR_INSTRUCTIONS
-    assert REPAIR_PROMPT_VERSION == "topic-repair-window/2"
+def test_repair_instructions_state_every_model_facing_admission_rule() -> None:
+    text = " ".join(REPAIR_INSTRUCTIONS.split())
+    # Each phrase is one rule the validator refuses on; the first two frontier runs lost every
+    # repair patch to rules the instruction had not stated.
+    for rule in (
+        "`<workItemId>:operation:`",
+        "`<workItemId>:candidate:`",
+        "carrying that same existing candidate ID",
+        "outside the supplied windows is rejected",
+        "One to sixteen operations",
+        "cannot return an empty patch",
+        "requires an unsupported_title finding",
+        "requires a missed_opportunity finding",
+        "must not reuse an existing ID",
+        "each opportunity at most once per patch",
+    ):
+        assert rule in text, rule
+    assert REPAIR_PROMPT_VERSION == "topic-repair-window/4"
