@@ -2,6 +2,34 @@
 
 ## Decisions
 
+**2026-09-15 — `standalone-topics/8` is the one product program: inline windows, one activity
+per decision, no self-inflicted stops.** Rajesh, after Fable's review of the indexed batch: no
+grilling, implement end to end, testable on staging after merge, allowance and models chosen in
+the UI, deploy on merge, no version qualification gate. The program (`TopicSelectionWorkflowV8`,
+`topic_windows.py`, `topic_decisions.py`, `topic_windows_workflow.py`) gives every coverage
+decision its exact source window inline and answers in one call (inventory per section, cold
+review per candidate, omission scan per region, relationship pairs); author, local review and
+repair keep `search_source`/`read_source` for a bounded number of rounds. Each decision is one
+Temporal activity that runs the short model loop through the unchanged ledger, admits the answer
+by claims (every cited sentence was supplied inline or read), retains a rejected answer and
+corrects once with the exact diagnostic, then records a coverage gap. Assemblies are
+complete-with-gaps: nine good sections are never discarded for one. The parent workflow holds
+only plans, references and gaps. The run stops only for the allowance, a provider that refuses
+or fails on every eligible route, an unconfirmed paid outcome, an invalid source or
+cancellation; those are typed on the run row. `ChapterRunInput.routes` freezes the user's author
+and reviewer route preference (validated against the snapshot pools, reviewer reserved before
+the first author call); `budgetMicros` is the user's allowance up to the deployment file's
+maximum (staging: $100, default $20); the pre-spend projection is written to the run row and
+shown in the panel; a paused run's allowance can be raised from the panel. Prompt size is bounded
+by construction (128,000 characters, asserted on the four-hour fixture) and total tokens scale
+with duration. Evidence: `test_topic_windows.py` (fit proof, gap assembly, claims),
+`test_topic_decisions.py` (one decision end to end through the ledger against Postgres:
+projection, dispatch, admission, reuse, correction then gap), `test_topic_windows_workflow.py`
+(stage order, gap tolerance, typed-stop propagation). V3–V7 stay registered on the worker so
+already-running histories drain and the recorded regression suites keep their meaning; the web
+starts only V8 and lists only V8 runs. Deleting V3–V7 is the next PR after Rajesh's first
+staging runs, not this one. No real provider call, editorial or playback measurement is claimed.
+
 **2026-09-15 — Codex's indexed batch is stopped; the topics pipeline goes to production through
 bounded windows and one activity per decision.** Rajesh stopped Codex after Fable's review of
 `cd48459` found that the model-side request validator refused the V7 cold and paged-review
