@@ -135,6 +135,9 @@ TOOLS_BY_KIND: dict[str, tuple[str, ...]] = {
 # A conservative bytes-per-token figure for cost projection only; admission still reserves
 # with the route's declared floor.
 PROJECTION_BYTES_PER_TOKEN = 3.5
+# Typical answers use a fraction of the reserved output; the first staging run (Karma, 52
+# calls, $0.63) put the full-reservation projection about eight times too high.
+PROJECTION_OUTPUT_FRACTION = 0.15
 
 
 class WindowFitError(HarnessValidationError):
@@ -1278,8 +1281,14 @@ def assemble_repair_v8(
 
 
 def _cost_micros(route: RouteEntry, *, prompt_characters: int, output_tokens: int) -> int:
+    """Price a typical answer, not the reservation.
+
+    The ledger reserves the full output allowance per request; a projection at that figure
+    was eight times the observed spend on the first staging run.
+    """
     input_tokens = math.ceil(prompt_characters / PROJECTION_BYTES_PER_TOKEN)
-    numerator = input_tokens * route.prices.input + output_tokens * route.prices.output
+    expected_output = math.ceil(output_tokens * PROJECTION_OUTPUT_FRACTION)
+    numerator = input_tokens * route.prices.input + expected_output * route.prices.output
     return math.ceil(numerator / 1_000_000) + route.prices.request_surcharge
 
 
@@ -1354,13 +1363,16 @@ def project_run(
         ),
         StageProjection(
             kind="review",
-            calls=section_count + region_count + expected_candidates,
+            # Two local batches per section (candidates, opportunities), one omission scan per
+            # region, and about one relationship pair per candidate.
+            calls=2 * section_count + region_count + expected_candidates,
             promptCharacters=section_count * average_inventory
             + region_count * 12_000
             + expected_candidates * 8_000,
             routeId=verifier_route.id,
             costMicros=(
-                section_count
+                2
+                * section_count
                 * _cost_micros(
                     verifier_route,
                     prompt_characters=average_inventory + 8_000,
@@ -1411,15 +1423,15 @@ def projection_sentence(projection: RunProjection) -> str:
     """One sentence for the run row and the panel."""
     dollars = projection.projectedCostMicros / 1_000_000
     allowance = projection.budgetMicros / 1_000_000
-    verdict = (
-        "within the allowance"
-        if projection.projectedCostMicros <= projection.budgetMicros
-        else "above the allowance; the run will stop when the allowance is spent unless it is raised"
-    )
-    return (
+    head = (
         f"Projected about {projection.projectedCalls} model calls and ${dollars:.2f} for "
-        f"{projection.sectionCount} sections and {projection.regionCount} regions, "
-        f"{verdict} of ${allowance:.2f}."
+        f"{projection.sectionCount} sections and {projection.regionCount} regions"
+    )
+    if projection.projectedCostMicros <= projection.budgetMicros:
+        return f"{head}; the ${allowance:.2f} allowance covers it."
+    return (
+        f"{head}; that is above the ${allowance:.2f} allowance, so the run will stop when the "
+        "allowance is spent unless it is raised."
     )
 
 

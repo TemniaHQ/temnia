@@ -167,6 +167,8 @@ export function TopicPanel({
         if (settled.startDone) {
           remember(startKey, null);
           setPendingStart(null);
+          // The "dispatched, waiting for the run record" line has served its purpose.
+          setMessage(null);
         }
         if (settled.reviewDone) {
           remember(reviewKey, null);
