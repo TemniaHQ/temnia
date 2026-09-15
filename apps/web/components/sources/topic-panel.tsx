@@ -167,6 +167,8 @@ export function TopicPanel({
         if (settled.startDone) {
           remember(startKey, null);
           setPendingStart(null);
+          // The "dispatched, waiting for the run record" line has served its purpose.
+          setMessage(null);
         }
         if (settled.reviewDone) {
           remember(reviewKey, null);
@@ -983,7 +985,7 @@ function TopicRunStatus({
             <p>Recorded test run; no live editorial judgment.</p>
           )}
           {!!run.errorMessage && <p>{run.errorMessage}</p>}
-          {["failed", "budget_paused"].includes(run.status) && (
+          {["failed", "budget_paused", "pending"].includes(run.status) && (
             <Button disabled={retryBlocked} onClick={onRetry} size="sm">
               Retry this run
             </Button>

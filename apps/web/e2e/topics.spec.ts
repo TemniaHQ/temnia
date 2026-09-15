@@ -34,9 +34,9 @@ async function artifact(page: Page, view: ChapterView, id: string) {
 }
 
 /**
- * One button, one program: the panel starts `standalone-topics/3` and nothing else.
- * The recorded fixture is a discovery case: inventory, author, source review, one
- * repair, then the cold and source review of the recovered treatment.
+ * One button, one program: the panel starts `standalone-topics/8` and nothing else.
+ * The recorded fixture drives one inline-window decision per planned item: a section
+ * inventory, an author work item, a cold review and three bounded review items.
  */
 const EXPECTED_DISPATCHES = 6;
 const INSTRUCTIONS = "Keep the speaker's original language in every title.";
@@ -82,6 +82,11 @@ test(`${TOPIC_POLICY} generation, human correction and exact accepted exports`, 
   });
   await expect(instructions).toBeVisible();
   await instructions.fill(`  ${INSTRUCTIONS} `);
+  const allowance = panel.getByLabel("Run allowance in dollars", {
+    exact: true,
+  });
+  await expect(allowance).toBeVisible();
+  await allowance.fill("5.00");
   await panel
     .getByRole("button", { exact: true, name: "Find topic videos" })
     .click();
@@ -95,10 +100,15 @@ test(`${TOPIC_POLICY} generation, human correction and exact accepted exports`, 
     )
     .toBe("needs_review");
 
+  await expect(panel.getByTestId("topic-projection")).toContainText(
+    "Projected about"
+  );
   const view = await readView(page, sourceId);
   expect(view.run?.brief).toBe(INSTRUCTIONS);
   expect(view.run?.synthetic).toBe(true);
   expect(view.run?.dispatchCount).toBe(EXPECTED_DISPATCHES);
+  expect(view.run?.budgetMicros).toBe(5_000_000);
+  expect(view.run?.projection?.projectedCalls).toBeGreaterThan(0);
   expect(view.run?.acceptedRevision).toBeNull();
   const edit = TopicEditSpecSchema.parse(
     await artifact(page, view, view.currentEdit?.id ?? "")

@@ -365,3 +365,47 @@ def test_projection_scales_with_sections_and_names_the_allowance() -> None:
     assert by_kind["review"].calls >= 75
     assert projection.projectedCalls == sum(stage.calls for stage in projection.stages)
     assert 0 < projection.projectedCostMicros < 100_000_000
+
+
+def test_repair_assembly_applies_admitted_components_and_names_the_rest() -> None:
+    from temnia_pipeline.harness.topic_repair import admit_repair_shard  # noqa: PLC0415
+    from temnia_pipeline.harness.topic_selection import content_hash  # noqa: PLC0415
+    from temnia_pipeline.harness.topic_windows import assemble_repair_v8  # noqa: PLC0415
+    from test_topic_repair import _garden_patch, _index_case, _reference  # noqa: PLC0415
+
+    evidence, _, record, assessment, plan = _index_case()
+    item = plan.workItems[0]
+    patch = _garden_patch(record, item)
+    response = _reference(patch, "response", "model_response")
+    claims = _reference(patch, "claims")
+    shard = admit_repair_shard(
+        evidence,
+        record,
+        assessment,
+        plan,
+        item,
+        patch,
+        index_sha256="c" * 64,
+        assessment_sha256=content_hash(assessment),
+        response_artifact=response,
+        inspection_artifact=claims,
+        author_family="synthetic-author",
+    )
+    manifest = assemble_repair_v8(
+        evidence,
+        record,
+        assessment,
+        plan,
+        shards={
+            item.workItemId: (shard.patch, "synthetic-author", _reference(shard, "shard"), response)
+        },
+        gaps=[],
+    )
+    assert manifest.complete
+    assert manifest.aggregatePatch == patch
+    assert "Regular watering and garden roots" in {
+        candidate.title for candidate in manifest.draft.proposal.candidates
+    }
+    gap = CoverageGap(kind="repair", itemId=item.workItemId, reason="no answer", stage="s")
+    with pytest.raises(HarnessValidationError, match="no repair component was admitted"):
+        assemble_repair_v8(evidence, record, assessment, plan, shards={}, gaps=[gap])

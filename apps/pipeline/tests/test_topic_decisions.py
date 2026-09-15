@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from obstore.store import MemoryStore
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from temporalio.exceptions import ApplicationError
 
 from qualification_fixtures import (
     _FixtureEncoder,  # pyright: ignore[reportPrivateUsage]
@@ -28,7 +30,7 @@ from temnia_pipeline.contracts import (
     HarnessArtifactRef,
     HarnessEvidence,
 )
-from temnia_pipeline.harness import artifacts, models, runs
+from temnia_pipeline.harness import artifacts, models, runs, topic_decisions
 from temnia_pipeline.harness.activities import HarnessActivities
 from temnia_pipeline.harness.cassettes import CassetteStore
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8
@@ -394,3 +396,203 @@ def test_route_preferences_must_name_a_pool_member(seat: str) -> None:
     ordered = runs.apply_route_preferences(routes, {"author": author.id, "verifier": verifier.id})
     assert ordered.seats["propose"].route_ids[0] == author.id
     assert ordered.seats["verify"].route_ids[0] == verifier.id
+
+
+async def _v8_run(
+    url: str,
+    tmp_path: Path,
+    routes: Any,  # noqa: ANN401
+    factory: Any,  # noqa: ANN401
+    *,
+    request_routes: ChapterRunRoutePreferences | None = None,
+) -> tuple[TopicDecisionActivities, SelectionContext, uuid.UUID, uuid.UUID]:
+    """One planned v8 run against the database: evidence, index, rubric and inventory plan."""
+    configuration = replace(settings(routes), backend="gateway", max_run_budget_micros=50_000_000)
+    source_id = await ready_source(url)
+    run_id = uuid.uuid4()
+    request = ChapterRunInput(
+        brief="Fixture brief.",
+        budgetMicros=5_000_000,
+        config=configuration.allowed_config(),
+        requestKey=uuid.uuid4(),
+        runId=run_id,
+        scope=SEEDED,
+        sourceId=source_id,
+        **({"routes": request_routes} if request_routes is not None else {}),
+    )
+    start = StartRunRequest(
+        request=request,
+        editorial_policy=TOPIC_SELECTION_POLICY_V8,
+        workflow=WorkflowIdentity(workflow_id=f"decision-{run_id}", workflow_run_id="run-1"),
+    )
+    await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
+    store = cast("S3Store", MemoryStore())
+    evidence_ref, _, _ = await _published_reviewer_refs(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, store=store
+    )
+    index_ref = await _reusable_index(
+        url, source_id=source_id, store=store, evidence_ref=evidence_ref
+    )
+    await runs.attach_evidence(
+        url, scope=SEEDED, source_id=source_id, run_id=run_id, artifact_id=evidence_ref.id
+    )
+    ctx = SimpleNamespace(settings=SimpleNamespace(database_url=url), store=store)
+    owner = HarnessActivities(cast("Any", ctx), configuration, routes)
+    selection = TopicSelectionActivities(owner)
+    decisions = TopicDecisionActivities(owner)
+    context = SelectionContext(
+        run=RunRef(
+            scope_organization_id=SEEDED.organizationId,
+            scope_user_id=SEEDED.userId,
+            source_id=source_id,
+            run_id=run_id,
+        ),
+        evidence=evidence_ref,
+        program_version=TOPIC_SELECTION_POLICY_V8,
+    )
+    rubric = await selection.rubric(context)
+    context = context.model_copy(update={"rubric": rubric, "source_index": index_ref})
+    models.configure_model_runtime(
+        ModelRuntime(
+            database_url=url,
+            store=store,
+            cassette_store=CassetteStore(tmp_path),
+            model_factory=factory,
+            allow_outside_activity=True,
+        )
+    )
+    planned = await decisions.prepare_plan(context)
+    context = context.model_copy(update={"inventory_plan": planned.inventory_plan})
+    return decisions, context, source_id, run_id
+
+
+async def test_throttled_route_is_retried_then_replaced_by_the_next_eligible_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = pipeline_url()
+    author = _route("fb-author", "family-author")
+    throttled = _route("fb-throttled", "family-throttled")
+    fallback = _route("fb-fallback", "family-fallback")
+    routes = snapshot(
+        (author, throttled, fallback),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(throttled.id, fallback.id)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    good = _draft("section-0001:fixture", evidence.sentences[0].id, evidence.sentences[1].id)
+    calls: list[str] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = messages, info
+            calls.append(route.id)
+            if route.id == throttled.id:
+                raise ModelHTTPError(status_code=429, model_name=route.gateway_model, body=None)
+            return ModelResponse(
+                parts=[TextPart(json.dumps(good))], model_name="fixture", provider_name="fixture"
+            )
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", 0.0)
+    try:
+        decisions, context, source_id, run_id = await _v8_run(url, tmp_path, routes, factory)
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.gap is None
+        assert result.artifact is not None
+        assert result.family == fallback.family
+        assert result.verifier_index == 1
+        assert calls == [throttled.id, throttled.id, fallback.id]
+        row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
+        assert row.status.value == "running"
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def test_every_route_throttled_is_a_typed_stop_not_a_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = pipeline_url()
+    author = _route("ex-author", "family-author")
+    first = _route("ex-first", "family-first")
+    second = _route("ex-second", "family-second")
+    routes = snapshot(
+        (author, first, second),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(first.id, second.id)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    calls: list[str] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = messages, info
+            calls.append(route.id)
+            raise ModelHTTPError(status_code=503, model_name=route.gateway_model, body=None)
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", 0.0)
+    try:
+        decisions, context, _, _ = await _v8_run(url, tmp_path, routes, factory)
+        with pytest.raises(ApplicationError) as raised:
+            await decisions.run_decision(
+                DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+            )
+        assert raised.value.type == "DecisionRoutesExhausted"
+        assert calls == [first.id, first.id, second.id, second.id]
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def test_a_conclusive_provider_rejection_moves_to_the_next_route_once(
+    tmp_path: Path,
+) -> None:
+    url = pipeline_url()
+    author = _route("rj-author", "family-author")
+    rejecting = _route("rj-rejecting", "family-rejecting")
+    fallback = _route("rj-fallback", "family-fallback")
+    routes = snapshot(
+        (author, rejecting, fallback),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(rejecting.id, fallback.id)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    good = _draft("section-0001:fixture", evidence.sentences[0].id, evidence.sentences[1].id)
+    calls: list[str] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = messages, info
+            calls.append(route.id)
+            if route.id == rejecting.id:
+                raise ModelHTTPError(status_code=400, model_name=route.gateway_model, body=None)
+            return ModelResponse(
+                parts=[TextPart(json.dumps(good))], model_name="fixture", provider_name="fixture"
+            )
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    try:
+        decisions, context, _, _ = await _v8_run(url, tmp_path, routes, factory)
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.artifact is not None
+        assert result.family == fallback.family
+        assert calls == [rejecting.id, fallback.id]
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
