@@ -29,7 +29,7 @@ from temnia_pipeline.harness.routes import (
     VendorAccountTerms,
 )
 from temnia_pipeline.harness.topic_decisions import DecisionRequest
-from temnia_pipeline.harness.vendors import VendorKeys
+from temnia_pipeline.harness.vendors import VendorKeys, mark_request_sent
 from test_harness_runs import SEEDED, pipeline_url
 from test_topic_decisions import _draft, _v8_run
 
@@ -146,9 +146,14 @@ async def test_inventory_runs_on_its_seat_and_settles_from_usage(tmp_path: Path)
         await db.close_pool()
 
 
+@pytest.mark.parametrize(
+    ("sent", "error_code", "settlement"),
+    [(True, "transport-dropped", "estimate"), (False, "transport-unsent", "unsent")],
+)
 async def test_a_dropped_stream_settles_at_the_estimate_and_retries_without_a_fence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, sent: bool, error_code: str, settlement: str
 ) -> None:
+    """A request the vendor may have served holds its estimate; one never sent costs nothing."""
     url = pipeline_url()
     snapshot, _, _, inventory = _direct_snapshot()
     evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
@@ -160,6 +165,8 @@ async def test_a_dropped_stream_settles_at_the_estimate_and_retries_without_a_fe
             _ = messages, info
             calls.append(route.id)
             if len(calls) == 1:
+                if sent:
+                    mark_request_sent()
                 raise ModelAPIError(model_name=route.gateway_model, message="stream ended")
             return ModelResponse(
                 parts=[TextPart(json.dumps(good))],
@@ -181,9 +188,13 @@ async def test_a_dropped_stream_settles_at_the_estimate_and_retries_without_a_fe
         attempts = await _attempts(url, run_id)
         assert [item["state"] for item in attempts] == ["failed_known", "succeeded"]
         dropped = attempts[0]
-        assert dropped["error_code"] == "transport-dropped"
-        assert dropped["actual_cost_micros"] == dropped["estimated_cost_micros"] > 0
-        assert dropped["usage"]["settlement"] == "estimate"
+        assert dropped["error_code"] == error_code
+        assert dropped["usage"]["settlement"] == settlement
+        assert dropped["usage"]["requestSent"] is sent
+        if sent:
+            assert dropped["actual_cost_micros"] == dropped["estimated_cost_micros"] > 0
+        else:
+            assert dropped["actual_cost_micros"] == 0
         row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
         assert row.status.value == "running"
         assert row.reserved_micros == 0

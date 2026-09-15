@@ -2,6 +2,17 @@
 
 ## Decisions
 
+**2026-09-15 — A vendor request that never left the process settles at zero; one the vendor may
+have served settles at its estimate.** From the first Karma run on the frontier seats (`ba09a55d`):
+fifteen instant failures on a closed HTTP client were settled at about $0.95 each, $14.37 of an
+$18.81 row against $4.44 the vendors billed. Rule: the vendor model rebuilds its HTTP client on every
+request context and closes it on exit (the same instance serves every round of a decision); an HTTP
+request hook marks the dispatch as sent, and a failure before that mark is `transport-unsent` at
+zero, after it `transport-dropped` at the estimate. Second rule from the same run: a prompt must
+state every identifier namespace its admission enforces; the repair instruction now names
+`<workItemId>:operation:` as well as `<workItemId>:candidate:` (`topic-repair-window/2`), after
+every repair patch of that run was rejected on the operation id and no candidate was ever repaired.
+
 **2026-09-15 — Vendor routes call Anthropic, OpenAI and Google directly; a run is never fenced on an
 unconfirmed outcome; account retention terms are recorded, not probed.** Step 1 of the
 simplification plan, built by Fable on `feat/topics-simplification-1` (design:
