@@ -1,5 +1,7 @@
 """Direct vendor routes: schema, keys, settings, usage settlement and header pacing."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import asyncio
@@ -31,18 +33,22 @@ from temnia_pipeline.harness.routes import (
 )
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_editorial import inventory_route
+from temnia_pipeline.harness.topic_windows import REPAIR_INSTRUCTIONS, REPAIR_PROMPT_VERSION
 from temnia_pipeline.harness.vendors import (
     LOW_WATER_TOKENS,
     RateLimitReading,
     VendorKeys,
     VendorPolicyError,
+    _mark_vendor_request,  # pyright: ignore[reportPrivateUsage]
     build_vendor_model,
     duration_seconds,
     is_spend_cap,
+    mark_request_sent,
     read_rate_limits,
     retry_after_seconds,
     rfc3339_seconds_from,
     settle_usage,
+    track_dispatch,
     vendor_settings,
 )
 
@@ -457,3 +463,35 @@ async def test_each_vendor_builds_its_adapter_with_sdk_retries_off(
 def test_missing_key_is_a_sentence_naming_the_variable() -> None:
     with pytest.raises(VendorPolicyError, match="GEMINI_API_KEY is not set"):
         build_vendor_model(vendor_route("flash", "google"), VendorKeys(anthropic="a"))
+
+
+async def test_the_vendor_client_is_rebuilt_for_every_request_context() -> None:
+    """The budgeted model enters the context once per round; a closed client is never reused."""
+    model = build_vendor_model(vendor_route("opus", "anthropic"), KEYS)
+    async with model:
+        first = model._owned_http_client  # noqa: SLF001
+        assert first is not None
+        assert not first.is_closed
+        assert _mark_vendor_request in first.event_hooks["request"]
+    assert first.is_closed
+    async with model:
+        second = model._owned_http_client  # noqa: SLF001
+        assert second is not None
+        assert second is not first
+        assert not second.is_closed
+        assert cast("Any", model.wrapped).client._client is second  # noqa: SLF001
+    assert second.is_closed
+
+
+async def test_the_request_hook_marks_the_dispatch_as_sent() -> None:
+    with track_dispatch() as trace:
+        assert trace.sent is False
+        await _mark_vendor_request(cast("Any", object()))
+        assert trace.sent is True
+    mark_request_sent()  # outside a tracked dispatch: nothing to record, nothing raised
+
+
+def test_repair_instructions_name_both_identifier_namespaces() -> None:
+    assert "`<workItemId>:operation:`" in REPAIR_INSTRUCTIONS
+    assert "`<workItemId>:candidate:`" in REPAIR_INSTRUCTIONS
+    assert REPAIR_PROMPT_VERSION == "topic-repair-window/2"

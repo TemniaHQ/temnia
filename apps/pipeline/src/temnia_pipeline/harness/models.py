@@ -116,6 +116,7 @@ from temnia_pipeline.harness.source_progress import (
 )
 from temnia_pipeline.harness.topic_selection_runtime import SourceToolRole
 from temnia_pipeline.harness.vendors import (
+    DispatchTrace,
     RateLimitReading,
     VendorKeys,
     VendorPolicyError,
@@ -124,6 +125,7 @@ from temnia_pipeline.harness.vendors import (
     observe_rate_limits,
     retry_after_seconds,
     settle_usage,
+    track_dispatch,
 )
 from temnia_pipeline.harness.vendors import dispatch_payload_bytes as vendor_dispatch_bytes
 
@@ -1160,14 +1162,17 @@ class BudgetedModel(WrapperModel):
         estimated_micros: int,
         error_code: str,
         error_message: str,
+        sent: bool = True,
     ) -> None:
-        """Settle a vendor attempt that ended without a response at its estimate.
+        """Settle a vendor attempt that ended without a response.
 
-        The vendor bills what it served, and a request that produced no response is at most
-        the reservation: the estimate is held as spent, the attempt is a known failure, and
-        a fresh attempt may be dispatched at once. Persisted even while the caller is
-        cancelled, exactly as the legacy fence was.
+        A request the vendor may have served is held at its estimate: the vendor bills what
+        it served, and the reservation is the most it can be. A request that never left the
+        process (`sent` is False) cost nothing and settles at zero. Either way the attempt is
+        a known failure and a fresh attempt may be dispatched at once. Persisted even while
+        the caller is cancelled, exactly as the legacy fence was.
         """
+        settled_micros = estimated_micros if sent else 0
         cleanup = asyncio.create_task(
             ledger.fail_attempt(
                 runtime.database_url,
@@ -1178,11 +1183,12 @@ class BudgetedModel(WrapperModel):
                 attempt_id=attempt.id,
                 owner_token=owner_token,
                 outcome_known=True,
-                actual_cost_micros=estimated_micros,
+                actual_cost_micros=settled_micros,
                 usage={
-                    "settlement": "estimate",
+                    "settlement": "estimate" if sent else "unsent",
                     "reason": error_code,
                     "estimatedMicros": estimated_micros,
+                    "requestSent": sent,
                 },
                 error_code=error_code,
                 error_message=error_message,
@@ -1209,6 +1215,7 @@ class BudgetedModel(WrapperModel):
         estimated_micros: int,
         error_code: str,
         error_message: str,
+        sent: bool = True,
     ) -> None:
         """A vendor route settles at the estimate; a gateway route keeps its unknown fence."""
         if self.deps.route.vendor is not None:
@@ -1220,6 +1227,7 @@ class BudgetedModel(WrapperModel):
                 estimated_micros=estimated_micros,
                 error_code=error_code,
                 error_message=error_message,
+                sent=sent,
             )
             return
         await self._record_unknown(
@@ -1536,12 +1544,14 @@ class BudgetedModel(WrapperModel):
 
         vendor_route = self.deps.route.vendor is not None
         readings: list[RateLimitReading] = []
+        trace = DispatchTrace()
         try:
             with (
                 observe_gateway_generation(remember_generation),
                 dispatch_payload_bytes(payload_bytes),
                 vendor_dispatch_bytes(payload_bytes),
                 observe_rate_limits() as readings,
+                track_dispatch() as trace,
             ):
                 response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
@@ -1606,6 +1616,7 @@ class BudgetedModel(WrapperModel):
                 estimated_micros=estimated_micros,
                 error_code="transport-cancelled",
                 error_message="provider transport was cancelled without a conclusive outcome",
+                sent=trace.sent,
             )
             raise
         except (ModelAPIError, httpx.TimeoutException, TimeoutError) as error:
@@ -1622,19 +1633,27 @@ class BudgetedModel(WrapperModel):
                         error_message="provider transport ended without a conclusive outcome",
                     )
                     raise ledger.OutcomeUnknown("provider outcome is unknown") from error
-                dropped = (
-                    f"Route {self.deps.route.id}: the {self.deps.stage} request ended without a "
-                    f"response ({type(error).__name__}); its estimate of {estimated_micros} "
-                    "micros is settled and a fresh attempt is allowed."
-                )
+                if trace.sent:
+                    dropped = (
+                        f"Route {self.deps.route.id}: the {self.deps.stage} request ended "
+                        f"without a response ({type(error).__name__}); its estimate of "
+                        f"{estimated_micros} micros is settled and a fresh attempt is allowed."
+                    )
+                else:
+                    dropped = (
+                        f"Route {self.deps.route.id}: the {self.deps.stage} request was not "
+                        f"sent ({type(error).__name__}: {str(error)[:200]}); nothing was "
+                        "charged and a fresh attempt is allowed."
+                    )
                 await self._settle_at_estimate(
                     runtime=runtime,
                     operation_id=acquired.operation.id,
                     attempt=attempt,
                     owner_token=owner_token,
                     estimated_micros=estimated_micros,
-                    error_code="transport-dropped",
+                    error_code="transport-dropped" if trace.sent else "transport-unsent",
                     error_message=dropped,
+                    sent=trace.sent,
                 )
                 raise TransientProviderFailure(dropped) from error
             settled = await self._settle_failed_dispatch(
@@ -1670,6 +1689,7 @@ class BudgetedModel(WrapperModel):
                     estimated_micros=estimated_micros,
                     error_code="unexpected-after-dispatch",
                     error_message=unexpected,
+                    sent=trace.sent,
                 )
                 raise TransientProviderFailure(unexpected) from error
             await self._record_unknown(

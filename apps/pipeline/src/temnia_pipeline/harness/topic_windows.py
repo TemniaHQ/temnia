@@ -80,7 +80,7 @@ INVENTORY_PROMPT_VERSION = "topic-inventory-window/1"
 AUTHOR_PROMPT_VERSION = "topic-author-window/1"
 COLD_PROMPT_VERSION = "topic-selection-cold/3"
 REVIEW_PROMPT_VERSION = "topic-review-window/1"
-REPAIR_PROMPT_VERSION = "topic-repair-window/1"
+REPAIR_PROMPT_VERSION = "topic-repair-window/2"
 INVENTORY_MANIFEST_FORMAT = "topic-inventory-manifest/2"
 AUTHOR_MANIFEST_FORMAT = "topic-author-manifest/2"
 REVIEW_MANIFEST_FORMAT = "topic-review-manifest/2"
@@ -107,6 +107,20 @@ WINDOW_NOTE = (
 )
 
 DecisionKind = Literal["inventory", "author", "cold", "review", "repair"]
+
+# The repair instruction names both identifier namespaces the admission enforces. The first
+# staging run on frontier models lost every repair to `repair operation ID is outside its
+# work-item namespace` because only the candidate namespace was stated.
+REPAIR_INSTRUCTIONS = """Repair exactly this connected finding component. Every required finding's evidence and the
+affected candidates' speech are supplied inline with surrounding context. Use search_source and
+read_source only when a replacement candidate needs speech outside the windows, and never cite a
+sentence you have not seen. Return one complete typed patch for this component: cite every
+assigned finding ID at least once, change only assigned candidates and opportunity mappings, give
+every operation an ID beginning with `<workItemId>:operation:` and every replacement candidate an
+ID beginning with `<workItemId>:candidate:` (workItemId is workItem.workItemId below). Immutable
+opportunity definitions cannot change; only candidateIds, disposition and dispositionReason may.
+A patch that would leave the audience without the discussion's setup, answer or meaning-changing
+follow-up is worse than none: prefer dropping a candidate to keeping an incoherent one. """
 
 # Reserved output per decision kind, in tokens. These bound the ledger reservation and the
 # provider `max_tokens`; the largest typed answers (author packaging, repair patch) get the most.
@@ -771,17 +785,7 @@ def repair_window_prompt(
         for offset, (start, end) in enumerate(_runs(selected))
     ]
     prompt = _prompt(
-        """Repair exactly this connected finding component. Every required finding's evidence and the
-affected candidates' speech are supplied inline with surrounding context. Use search_source and
-read_source only when a replacement candidate needs speech outside the windows, and never cite a
-sentence you have not seen. Return one complete typed patch for this component: cite every
-assigned finding ID at least once, change only assigned candidates and opportunity mappings, and
-give every replacement candidate an ID beginning with `<workItemId>:candidate:`. Immutable
-opportunity definitions cannot change; only candidateIds, disposition and dispositionReason may.
-A patch that would leave the audience without the discussion's setup, answer or meaning-changing
-follow-up is worse than none: prefer dropping a candidate to keeping an incoherent one. """
-        + WINDOW_NOTE
-        + "\n",
+        REPAIR_INSTRUCTIONS + WINDOW_NOTE + "\n",
         {
             "rubric": record.rubric.model_dump(mode="json"),
             "source": source_summary(index, index_sha256=index_sha256),

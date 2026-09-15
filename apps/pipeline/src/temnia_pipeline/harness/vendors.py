@@ -21,7 +21,7 @@ from collections.abc import AsyncGenerator, Generator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field
@@ -224,6 +224,44 @@ def read_rate_limits(
     return RateLimitReading(vendor=vendor, retry_after_seconds=retry_after, headers=kept)
 
 
+@dataclass(slots=True)
+class DispatchTrace:
+    """Whether the current dispatch reached the wire; set by the HTTP request hook."""
+
+    sent: bool = False
+
+
+_dispatch: ContextVar[DispatchTrace | None] = ContextVar("vendor_dispatch_trace", default=None)
+
+
+@contextlib.contextmanager
+def track_dispatch() -> Generator[DispatchTrace]:
+    """Observe whether the vendor request in this block was ever sent.
+
+    A request that fails before any byte leaves the process (a closed client, a DNS failure,
+    a refused connection) cost nothing at the vendor; the ledger settles it at zero rather
+    than at the estimate it holds for a request the vendor may have served.
+    """
+    trace = DispatchTrace()
+    token = _dispatch.set(trace)
+    try:
+        yield trace
+    finally:
+        _dispatch.reset(token)
+
+
+def mark_request_sent() -> None:
+    """Record that the current dispatch reached the wire; the request hook and fakes call it."""
+    trace = _dispatch.get()
+    if trace is not None:
+        trace.sent = True
+
+
+async def _mark_vendor_request(request: httpx2.Request) -> None:
+    _ = request
+    mark_request_sent()
+
+
 _readings: ContextVar[list[RateLimitReading] | None] = ContextVar(
     "vendor_rate_limit_readings", default=None
 )
@@ -392,8 +430,15 @@ def _http_client() -> httpx2.AsyncClient:
     client = httpx2.AsyncClient(
         timeout=httpx2.Timeout(timeout=VENDOR_IDLE_TIMEOUT_SECONDS, connect=10.0)
     )
-    client.event_hooks["response"].append(_observe_vendor_response)
+    _install_hooks(client)
     return client
+
+
+def _install_hooks(client: httpx2.AsyncClient) -> None:
+    if _mark_vendor_request not in client.event_hooks["request"]:
+        client.event_hooks["request"].append(_mark_vendor_request)
+    if _observe_vendor_response not in client.event_hooks["response"]:
+        client.event_hooks["response"].append(_observe_vendor_response)
 
 
 def _adapter(route: RouteEntry, key: str, http_client: httpx2.AsyncClient) -> Model:
@@ -451,13 +496,32 @@ class VendorModel(WrapperModel):
                 f"{vendor_key_variable(route.vendor)} is not set on the pipeline service, so "
                 f"route {route.id} cannot be called"
             )
-        self._owned_http_client = _http_client() if http_client is None else None
-        client = http_client if http_client is not None else self._owned_http_client
-        assert client is not None  # noqa: S101 - one of the two branches assigned it
-        if _observe_vendor_response not in client.event_hooks["response"]:
-            client.event_hooks["response"].append(_observe_vendor_response)
+        self._key = key
+        self._external_http_client = http_client
+        self._owned_http_client: httpx2.AsyncClient | None = None
+        if http_client is not None:
+            _install_hooks(http_client)
+            client = http_client
+        else:
+            self._owned_http_client = _http_client()
+            client = self._owned_http_client
         super().__init__(_adapter(route, key, client))
         self.route = route
+
+    async def __aenter__(self) -> Self:
+        """Open a fresh transport client for this request when the previous one was closed.
+
+        The budgeted model enters this context once per request and the same instance serves
+        every round of one decision, so the client must outlive no more than one context: a
+        client closed by the previous exit is replaced, never reused (a reused closed client
+        fails instantly and was settled as a dropped stream on the first staging run).
+        """
+        if self._external_http_client is None and (
+            self._owned_http_client is None or self._owned_http_client.is_closed
+        ):
+            self._owned_http_client = _http_client()
+            self.wrapped = _adapter(self.route, self._key, self._owned_http_client)
+        return await super().__aenter__()
 
     async def __aexit__(
         self,
@@ -465,11 +529,11 @@ class VendorModel(WrapperModel):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        """Close only the transport client this wrapper created."""
+        """Close only the transport client this wrapper created for this context."""
         try:
             return await super().__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            if self._owned_http_client is not None:
+            if self._owned_http_client is not None and not self._owned_http_client.is_closed:
                 await self._owned_http_client.aclose()
 
     async def request(
