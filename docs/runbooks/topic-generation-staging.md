@@ -95,16 +95,15 @@ between dispatches (the worker's admission per route; the vendors' headers pace 
 
 `tests/test_harness_config_file.py` boots every committed configuration in the gate: the
 snapshot ID, the two-family rule per pool, the inventory seat and the output ceilings are
-checked before a merge, not on the box. After setting the keys, run once from a shell with
-them in the environment:
+checked before a merge, not on the box. A Karma run is the test of the keys: a missing or
+wrong key stops the run with the variable in its sentence, and a model the vendor does not
+recognise shifts the seat to its fallback. Optional, when a number is wanted without a run
+(the answering model, the usage, the settled micros and the account's rate-limit tier per
+route), from inside the pipeline container where the keys already are:
 
 ```bash
-uv run --frozen temnia-harness vendors probe apps/pipeline/harness/topic-routes-staging-0a40fd58.json
+ssh temnia-vps 'docker exec $(docker ps -q -f name=temnia-staging-pipeline) temnia-harness vendors probe /app/harness/topic-routes-staging-0a40fd58.json'
 ```
-
-It sends one strict-schema request per route and prints the model that answered, the usage,
-the settled micros and the rate-limit headers, so a wrong key, a renamed model or a Start-tier
-limit is found before a run spends anything.
 
 ## Merge, deploy, click
 
