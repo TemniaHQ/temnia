@@ -156,6 +156,12 @@ before, and caches the result for later runs. Rendering still fetches the master
 
 ## What each stop means
 
+A throttled route (HTTP 429) pauses every dispatch on that route in the worker for the
+provider's Retry-After (20 s without one), so sibling decisions wait instead of burning their own
+attempts. An answer cut off at its output allowance is retried up to twice with the allowance
+doubled; routes at high reasoning effort start with twice the base allowance because thinking
+tokens count against it.
+
 | Run status and message | Cause | Do |
 | --- | --- | --- |
 | `needs_review`, videos present | the cycle completed or hit a limit named in the message | review, accept, correct |
@@ -163,7 +169,7 @@ before, and caches the result for later runs. Rendering still fetches the master
 | `budget_paused` | the next call would exceed the run allowance | raise the allowance in the panel, then **Retry this run**; admitted decisions are reused |
 | `needs_review`, message names coverage gaps | one or more bounded decisions produced no admitted answer after a correction; the rest of the run continued | review; the gap's retained answers and diagnostics are on the run's artifacts |
 | `failed`, "No route is eligible for one editorial seat …" | the chosen author and reviewer are the same family, or the snapshot has no independent reviewer | choose different models, new run |
-| `failed`, "Every eligible … route failed for … " | every route position for one decision failed or refused the request | wait or choose different models, then **Retry this run** |
+| `failed`, "Every eligible … route failed transiently for … across 2 rounds of the pool" | throttling or dropped streams on every eligible route through a 20/40/80/160 s ladder per route, a five-minute pool pause, and the ladder again | wait, then **Retry this run**; admitted decisions are reused, only the unfinished ones are paid again |
 | `outcome_unknown` | a provider call ended without a confirmed outcome and the gateway receipt is still pending | wait; the run becomes `failed` and retryable once the receipt settles; never replay by hand |
 | `failed`, "Every qualified … route failed transiently for the … call (…); last: …" | every route in that seat's pool was throttled or down, each retried after a pause | wait, then **Retry this run**; the retained work is reused |
 | `failed`, "… HTTP 402 … insufficient credits or … spending limit" | the gateway account or key | top up or raise the limit, then **Retry this run** |

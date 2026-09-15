@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import replace
@@ -34,6 +35,7 @@ from temnia_pipeline.harness import artifacts, models, runs, topic_decisions
 from temnia_pipeline.harness.activities import HarnessActivities
 from temnia_pipeline.harness.cassettes import CassetteStore
 from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V8
+from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy
 from temnia_pipeline.harness.models import ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
     topic_selection_qualification_case,
@@ -407,7 +409,12 @@ async def _v8_run(
     request_routes: ChapterRunRoutePreferences | None = None,
 ) -> tuple[TopicDecisionActivities, SelectionContext, uuid.UUID, uuid.UUID]:
     """One planned v8 run against the database: evidence, index, rubric and inventory plan."""
-    configuration = replace(settings(routes), backend="gateway", max_run_budget_micros=50_000_000)
+    configuration = replace(
+        settings(routes),
+        backend="gateway",
+        max_run_budget_micros=50_000_000,
+        max_output_tokens=65_536,
+    )
     source_id = await ready_source(url)
     run_id = uuid.uuid4()
     request = ChapterRunInput(
@@ -497,7 +504,9 @@ async def test_throttled_route_is_retried_then_replaced_by_the_next_eligible_rou
 
         return FunctionModel(answer, model_name=f"fixture:{route.id}")
 
-    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", (0.0, 0.0, 0.0, 0.0))
+    monkeypatch.setattr(topic_decisions, "POOL_PAUSE_SECONDS", 0.0)
+    monkeypatch.setattr(models, "DEFAULT_THROTTLE_SECONDS", 0.0)
     try:
         decisions, context, source_id, run_id = await _v8_run(url, tmp_path, routes, factory)
         result = await decisions.run_decision(
@@ -507,7 +516,8 @@ async def test_throttled_route_is_retried_then_replaced_by_the_next_eligible_rou
         assert result.artifact is not None
         assert result.family == fallback.family
         assert result.verifier_index == 1
-        assert calls == [throttled.id, throttled.id, fallback.id]
+        # One attempt plus the four-step ladder on the throttled route, then the fallback.
+        assert calls == [throttled.id] * 5 + [fallback.id]
         row = await runs.get_run(url, scope=SEEDED, source_id=source_id, run_id=run_id)
         assert row.status.value == "running"
     finally:
@@ -540,7 +550,9 @@ async def test_every_route_throttled_is_a_typed_stop_not_a_loop(
 
         return FunctionModel(answer, model_name=f"fixture:{route.id}")
 
-    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", 0.0)
+    monkeypatch.setattr(topic_decisions, "TRANSIENT_BACKOFF_SECONDS", (0.0, 0.0, 0.0, 0.0))
+    monkeypatch.setattr(topic_decisions, "POOL_PAUSE_SECONDS", 0.0)
+    monkeypatch.setattr(models, "DEFAULT_THROTTLE_SECONDS", 0.0)
     try:
         decisions, context, _, _ = await _v8_run(url, tmp_path, routes, factory)
         with pytest.raises(ApplicationError) as raised:
@@ -548,7 +560,8 @@ async def test_every_route_throttled_is_a_typed_stop_not_a_loop(
                 DecisionRequest(context=context, kind="inventory", item_id="section-0001")
             )
         assert raised.value.type == "DecisionRoutesExhausted"
-        assert calls == [first.id, first.id, second.id, second.id]
+        # Five attempts per route, both routes, then one pool pause and the same again.
+        assert calls == ([first.id] * 5 + [second.id] * 5) * 2
     finally:
         models.clear_model_runtime()
         await db.close_pool()
@@ -596,3 +609,77 @@ async def test_a_conclusive_provider_rejection_moves_to_the_next_route_once(
     finally:
         models.clear_model_runtime()
         await db.close_pool()
+
+
+async def test_a_cut_off_answer_gets_a_larger_allowance_and_is_then_admitted(
+    tmp_path: Path,
+) -> None:
+    url = pipeline_url()
+    author = _route("tr-author", "family-author")
+    verifier = _route("tr-verifier", "family-verifier").model_copy(
+        update={
+            "max_output_tokens": 65_536,
+            "provider_accounting_name": "fixture",
+            "accounting_model": "family-verifier/model-20260911",
+            "transport": GatewayTransportPolicy(
+                version="gateway-transport/2",
+                gateway="openrouter",
+                mode="streaming",
+                request_timeout_seconds=300.0,
+                total_timeout_seconds=540.0,
+                output_token_parameter="max_tokens",  # noqa: S106
+            ),
+        }
+    )
+    routes = snapshot(
+        (author, verifier),
+        {
+            "propose": SeatRoutePool(route_ids=(author.id,)),
+            "verify": SeatRoutePool(route_ids=(verifier.id,)),
+            "summary": SeatRoutePool(route_ids=(author.id,)),
+        },
+    )
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    good = _draft("section-0001:fixture", evidence.sentences[0].id, evidence.sentences[1].id)
+    allowances: list[int | None] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = messages
+            allowances.append((info.model_settings or {}).get("max_tokens"))
+            finish = "length" if len(allowances) == 1 else "stop"
+            return ModelResponse(
+                parts=[TextPart(json.dumps(good))],
+                model_name="fixture",
+                provider_name="fixture",
+                finish_reason=finish,
+            )
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    try:
+        decisions, context, _, _ = await _v8_run(url, tmp_path, routes, factory)
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.artifact is not None
+        assert result.gap is None
+        assert len(allowances) == 2
+        first_allowance, second_allowance = allowances
+        assert first_allowance is not None
+        assert second_allowance == 2 * first_allowance
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
+
+
+async def test_route_cooldown_holds_every_dispatch_on_that_route() -> None:
+    gate = models.RouteGate(max_in_flight=2, min_interval_seconds=0.0)
+    loop = asyncio.get_running_loop()
+    gate.throttle(0.3)
+    assert gate.cooldown_remaining() > 0.2
+    started = loop.time()
+    await gate.acquire()
+    gate.release()
+    assert loop.time() - started >= 0.25
+    assert gate.cooldown_remaining() == 0.0

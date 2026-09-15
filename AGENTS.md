@@ -29,6 +29,12 @@ projection, dispatch, admission, reuse, correction then gap), `test_topic_window
 already-running histories drain and the recorded regression suites keep their meaning; the web
 starts only V8 and lists only V8 runs. Deleting V3–V7 is the next PR after Rajesh's first
 staging runs, not this one. No real provider call, editorial or playback measurement is claimed.
+The first staging run (`12b9c920`, Karma) failed on bounded review: bursts of HTTP 429 on both
+reviewer routes plus DeepSeek answers cut off at a 4,096-token allowance exhausted the pool in a
+minute. Rule from it: a throttled route pauses every caller in the worker for its Retry-After, a
+decision climbs a 20/40/80/160 s ladder per route and one five-minute pool pause before a typed
+stop, output allowances are 16k/32k/8k/16k/32k and doubled at high reasoning effort, and a cut-off
+answer is retried with the allowance doubled rather than treated as a schema error.
 
 **2026-09-15 — Codex's indexed batch is stopped; the topics pipeline goes to production through
 bounded windows and one activity per decision.** Rajesh stopped Codex after Fable's review of
