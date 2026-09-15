@@ -213,7 +213,7 @@ rows in `outcome_unknown` are moved to `failed` with the reconciled message by t
 
 Each step is one PR, gate green, deploys on merge, and leaves staging runnable.
 
-1. **Vendors and usage** (2 days). Direct adapters, price table, settle from usage, retries
+1. **Vendors and usage** (2 days; built 2026-09-15, [design record](../design/topics-vendors-and-usage-2026-09-15.md)). Direct adapters, price table, settle from usage, retries
    with the reservation held, pacing from headers, cache markers, Logfire. Route snapshot with
    the D2 seats. The unknown-outcome fence is removed from the V8 path. Karma runs end to end
    on frontier models. This is the run Rajesh wants to see first.

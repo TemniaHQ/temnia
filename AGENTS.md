@@ -2,6 +2,28 @@
 
 ## Decisions
 
+**2026-09-15 — Vendor routes call Anthropic, OpenAI and Google directly; a run is never fenced on an
+unconfirmed outcome; account retention terms are recorded, not probed.** Step 1 of the
+simplification plan, built by Fable on `feat/topics-simplification-1` (design:
+[docs/design/topics-vendors-and-usage-2026-09-15.md](docs/design/topics-vendors-and-usage-2026-09-15.md)).
+Rules from it: a `RouteEntry` with `vendor` set names the vendor's own model id, carries the
+account's retention terms once (`account`) and no transport, probe or accounting alias; a
+production seat pool needs two model families, not three, and no open-weight candidate (the
+reviewer's family is still excluded from the author's at selection); the optional `inventory`
+seat inventories sections and falls back to the reviewer's route when absent; every vendor call
+settles from the usage in its response at the route's prices (uncached input, cache reads, cache
+writes, output), a dropped stream, cancellation or unexpected failure after dispatch settles at the
+reservation's estimate and is retried on the existing ladder, and a dead execution's in-flight
+attempt is abandoned at its estimate by the next execution (`ledger.abandon_attempt`) rather than
+fencing the run; the worker paces each route from `anthropic-ratelimit-*` and `x-ratelimit-*`
+headers and treats Anthropic's spend-cap 429 as conclusive; Anthropic routes send the automatic
+cache breakpoint. A missing vendor key is a boot warning and a typed stop naming the variable,
+never a boot refusal, because the worker also ingests and transcribes. Zero data retention is a
+per-account grant the vendors give on request: the snapshot records `false` until Rajesh has it,
+the boot log lists the routes waiting, and the harness no longer refuses on it (sources are the
+operator's own recordings until Temnia is live). The gateway transports, receipts, reconciliation
+and the `outcome_unknown` fence remain for the legacy programs until step 2 deletes them.
+
 **2026-09-15 — Simplify the topics pipeline to production, frontier models first; the vendor rule
 of 2026-09-07 is reversed for the primary tier.** Rajesh, after run `12b9c920` stopped three times
 (routes exhausted, truncated answers, an unconfirmed outcome) and after Fable's assessment that
