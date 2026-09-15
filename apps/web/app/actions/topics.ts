@@ -15,6 +15,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scoped } from "@/lib/db";
+import type { RouteOption } from "@/lib/harness/config";
 import { harnessSettings } from "@/lib/harness/config";
 import {
   EARLY_FAILURE_WINDOW_MS,
@@ -133,6 +134,25 @@ function topicRoutes(instructions: {
   return Object.keys(routes).length ? routes : undefined;
 }
 
+/**
+ * The reviewer must be independent of the author. The worker refuses the same-family
+ * pairing before any paid call; saying so here saves the round trip and the run row.
+ */
+function sameFamily(
+  routes: { author?: string; verifier?: string } | undefined,
+  pools: { propose: RouteOption[]; verify: RouteOption[] }
+): string | null {
+  if (!(routes?.author && routes.verifier)) {
+    return null;
+  }
+  const author = pools.propose.find((route) => route.id === routes.author);
+  const verifier = pools.verify.find((route) => route.id === routes.verifier);
+  if (author && verifier && author.family === verifier.family) {
+    return "The reviewer model must be a different family from the author model.";
+  }
+  return null;
+}
+
 function intentSha256(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
 }
@@ -231,6 +251,10 @@ export async function startTopicRun(
     availability.settings
   );
   const routes = topicRoutes(parsed.data);
+  const familyClash = sameFamily(routes, availability.settings.routes);
+  if (familyClash) {
+    return { message: familyClash, ok: false };
+  }
   const prepared = await scoped(async (tx, scope) => {
     const [existing] = await tx
       .select()
@@ -383,7 +407,8 @@ function frozenRoutes(
 }
 
 const RetrySchema = z.object({ runId: z.uuid(), sourceId: z.uuid() });
-const RESUMABLE_STATUSES = new Set(["failed", "budget_paused"]);
+// A raised allowance moves a paused run to `pending`; Retry resumes it from there.
+const RESUMABLE_STATUSES = new Set(["failed", "budget_paused", "pending"]);
 
 /**
  * Resume a stopped run on its retained work: the worker replays settled responses by
@@ -418,7 +443,7 @@ export async function retryTopicRun(
         error:
           run.status === "outcome_unknown"
             ? "This run still has an unconfirmed provider charge; it is reconciled automatically and becomes retryable once the receipt arrives."
-            : "Only a failed or budget-paused run can be retried.",
+            : "Only a failed, budget-paused or pending run can be retried.",
       } as const;
     }
     return {

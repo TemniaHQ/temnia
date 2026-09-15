@@ -983,7 +983,7 @@ function TopicRunStatus({
             <p>Recorded test run; no live editorial judgment.</p>
           )}
           {!!run.errorMessage && <p>{run.errorMessage}</p>}
-          {["failed", "budget_paused"].includes(run.status) && (
+          {["failed", "budget_paused", "pending"].includes(run.status) && (
             <Button disabled={retryBlocked} onClick={onRetry} size="sm">
               Retry this run
             </Button>

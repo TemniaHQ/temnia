@@ -1,6 +1,6 @@
 # Topics pipeline to production: bounded windows, one activity per decision, no self-inflicted stops
 
-15 September 2026. Written after the review of `feat/indexed-editorial-evidence` at `cd48459`
+15 September 2026. Implemented the same day on `feat/topics-production` (PR #49); §7 records what each step delivered. Written after the review of `feat/indexed-editorial-evidence` at `cd48459`
 (Codex's last commit before Rajesh stopped it) and two measurements on the 2,400-sentence
 four-hour fixture. Branch: `feat/topics-production`, which starts from that commit and already
 carries two corrections: the model-side toolset validator now admits every registered role
