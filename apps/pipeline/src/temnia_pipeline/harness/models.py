@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import functools
 import hashlib
+import math
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -114,6 +115,17 @@ from temnia_pipeline.harness.source_progress import (
     compact_source_history,
 )
 from temnia_pipeline.harness.topic_selection_runtime import SourceToolRole
+from temnia_pipeline.harness.vendors import (
+    RateLimitReading,
+    VendorKeys,
+    VendorPolicyError,
+    build_vendor_model,
+    is_spend_cap,
+    observe_rate_limits,
+    retry_after_seconds,
+    settle_usage,
+)
+from temnia_pipeline.harness.vendors import dispatch_payload_bytes as vendor_dispatch_bytes
 
 if TYPE_CHECKING:
     from obstore.store import S3Store
@@ -130,6 +142,10 @@ HTTP_SERVER_ERROR_MIN = 500
 TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
 # A throttled route without a Retry-After header pauses this long for every caller.
 DEFAULT_THROTTLE_SECONDS = 20.0
+# A vendor route settles from the usage in the response, so it reserves the typical answer
+# rather than the whole output allowance: half the cap covers every answer the staging runs
+# produced, and the settlement corrects the rest either way.
+RESERVATION_OUTPUT_FRACTION = 0.5
 MAX_SUMMARY_ID_LENGTH = 256
 SUMMARY_SCHEMA_VERSION = "hierarchical-summary/1"
 TOPIC_ID_NORMALIZATION_VERSION = "initial-topic-identifiers/1"
@@ -283,6 +299,17 @@ class RouteGate:
         state = self._state()
         return max(0.0, state.cooldown_until - asyncio.get_running_loop().time())
 
+    def pace(self, reading: RateLimitReading) -> float:
+        """Hold the route until the vendor's reset when its headers say capacity is nearly gone.
+
+        Returns the pause applied, zero when the reading leaves the route open. This is the
+        adaptive part of pacing: the fixed slot count bounds bursts, the headers bound rate.
+        """
+        pause = reading.pause_seconds()
+        if pause > 0:
+            self.throttle(pause)
+        return pause
+
     async def acquire(self) -> None:
         """Take a slot, then wait out the spacing since the previous dispatch."""
         state = self._state()
@@ -321,6 +348,7 @@ class ModelRuntime:
     store: S3Store
     cassette_store: CassetteStore
     gateway: GatewayConfig | None = None
+    vendor_keys: VendorKeys | None = None
     model_factory: ModelFactory | None = None
     lookup_client: httpx.AsyncClient | None = None
     failure_hook: FailureHook | None = None
@@ -719,6 +747,13 @@ class LazyConfiguredModel(WrapperModel):
             model = synthetic_function_model(self.deps.synthetic_payload)
         elif runtime.model_factory is not None:
             model = runtime.model_factory(self.deps.route)
+        elif self.deps.route.vendor is not None:
+            if runtime.vendor_keys is None:
+                raise ModelPersistenceError("vendor keys are required for a direct vendor route")
+            try:
+                model = build_vendor_model(self.deps.route, runtime.vendor_keys)
+            except VendorPolicyError as error:
+                raise ModelPersistenceError(str(error)) from error
         elif runtime.gateway is None:
             raise ModelPersistenceError(
                 "gateway configuration is required for a live harness route"
@@ -860,6 +895,11 @@ def _normalize_response(deps: HarnessModelDeps, response: ModelResponse) -> Mode
         not in ({"stop", "tool_call"} if deps.source_tool_role is not None else {"stop"})
     ):
         raise UnexpectedModelBehavior("streamed model response did not finish successfully")
+    if deps.route.vendor is not None and response.finish_reason == "length":
+        # The decision doubles the allowance and asks again on this exact sentence.
+        raise UnexpectedModelBehavior(
+            "model response did not finish successfully: cut off at the output allowance"
+        )
     return response
 
 
@@ -965,10 +1005,28 @@ def _validate_route_settings(deps: HarnessModelDeps, settings: ModelSettings | N
         not isinstance(requested_max, int) or requested_max > deps.route.max_output_tokens
     ):
         raise ModelPersistenceError("model max_tokens exceeds the qualified route")
-    if deps.route.cache_enabled:
+    if deps.route.cache_enabled and deps.route.vendor is None:
         raise ModelPersistenceError(
             "cache transport remains disabled until its request shape is probed"
         )
+
+
+def _settlement_from_response(
+    deps: HarnessModelDeps, response: ModelResponse, estimated_micros: int
+) -> tuple[int, dict[str, Any]]:
+    """Price a vendor response from its usage; a response without usage settles at the estimate."""
+    usage = TypeAdapter(type(response.usage)).dump_python(response.usage, mode="json")
+    detail = cast("dict[str, Any]", usage)
+    settled = settle_usage(deps.route, response.usage)
+    if settled is None:
+        detail["settlement"] = {
+            "settlement": "estimate",
+            "reason": "response-without-usage",
+            "estimatedMicros": estimated_micros,
+        }
+        return estimated_micros, detail
+    detail["settlement"] = dict(settled.components)
+    return settled.amount_micros, detail
 
 
 class BudgetedModel(WrapperModel):
@@ -1092,6 +1150,102 @@ class BudgetedModel(WrapperModel):
             except ledger.LostOwnership:
                 return
 
+    async def _settle_at_estimate(  # noqa: PLR0913
+        self,
+        *,
+        runtime: ModelRuntime,
+        operation_id: UUID,
+        attempt: ledger.Attempt,
+        owner_token: str,
+        estimated_micros: int,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        """Settle a vendor attempt that ended without a response at its estimate.
+
+        The vendor bills what it served, and a request that produced no response is at most
+        the reservation: the estimate is held as spent, the attempt is a known failure, and
+        a fresh attempt may be dispatched at once. Persisted even while the caller is
+        cancelled, exactly as the legacy fence was.
+        """
+        cleanup = asyncio.create_task(
+            ledger.fail_attempt(
+                runtime.database_url,
+                scope=self.deps.scope,
+                source_id=self.deps.source_id,
+                run_id=self.deps.run_id,
+                operation_id=operation_id,
+                attempt_id=attempt.id,
+                owner_token=owner_token,
+                outcome_known=True,
+                actual_cost_micros=estimated_micros,
+                usage={
+                    "settlement": "estimate",
+                    "reason": error_code,
+                    "estimatedMicros": estimated_micros,
+                },
+                error_code=error_code,
+                error_message=error_message,
+            )
+        )
+        try:
+            try:
+                await asyncio.shield(cleanup)
+            except ledger.LostOwnership:
+                return
+        except asyncio.CancelledError:
+            try:
+                await cleanup
+            except ledger.LostOwnership:
+                return
+
+    async def _after_dispatch_failure(  # noqa: PLR0913
+        self,
+        *,
+        runtime: ModelRuntime,
+        operation_id: UUID,
+        attempt: ledger.Attempt,
+        owner_token: str,
+        estimated_micros: int,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        """A vendor route settles at the estimate; a gateway route keeps its unknown fence."""
+        if self.deps.route.vendor is not None:
+            await self._settle_at_estimate(
+                runtime=runtime,
+                operation_id=operation_id,
+                attempt=attempt,
+                owner_token=owner_token,
+                estimated_micros=estimated_micros,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            return
+        await self._record_unknown(
+            runtime=runtime,
+            operation_id=operation_id,
+            attempt=attempt,
+            owner_token=owner_token,
+            error_code=error_code,
+            error_message=error_message,
+        )
+
+    async def _settled_cost(
+        self, runtime: ModelRuntime, response: ModelResponse, estimated_micros: int
+    ) -> tuple[int | None, dict[str, Any]]:
+        """The charge to record for a response: from usage on a vendor route, else the receipt."""
+        if self.deps.route.vendor is not None and self.deps.synthetic_payload is None:
+            return _settlement_from_response(self.deps, response, estimated_micros)
+        try:
+            observation = await _observe_cost(runtime, self.deps, response)
+        except (GatewayError, httpx.HTTPError, ValueError):
+            observation = None
+        return (
+            observation.actual_cost_micros if observation is not None else None,
+            _usage(response, observation),
+        )
+
     async def request(  # noqa: C901, PLR0912, PLR0915
         self,
         messages: list[ModelMessage],
@@ -1110,10 +1264,18 @@ class BudgetedModel(WrapperModel):
             _cassette_metadata(self.deps),
         )
         requested_max = (model_settings or {}).get("max_tokens")
+        expected_output: int | None = None
+        if self.deps.route.vendor is not None:
+            cap = requested_max if isinstance(requested_max, int) else None
+            expected_output = max(
+                1,
+                math.ceil((cap or self.deps.route.max_output_tokens) * RESERVATION_OUTPUT_FRACTION),
+            )
         estimated = estimate_cost(
             self.deps.route,
             payload_bytes=payload_bytes,
             max_output_tokens=requested_max,
+            expected_output_tokens=expected_output,
         )
         if (
             self.deps.synthetic_payload is not None
@@ -1207,10 +1369,9 @@ class BudgetedModel(WrapperModel):
                 artifact_id=persisted.id,
             )
             response = _response_from_artifact(stored)
-            try:
-                observation = await _observe_cost(runtime, self.deps, response)
-            except (GatewayError, httpx.HTTPError, ValueError):
-                observation = None
+            settled_micros, settled_usage = await self._settled_cost(
+                runtime, response, estimated_micros
+            )
             await ledger.complete_attempt(
                 runtime.database_url,
                 scope=self.deps.scope,
@@ -1220,17 +1381,56 @@ class BudgetedModel(WrapperModel):
                 attempt_id=attempt.id,
                 owner_token=attempt.owner_token,
                 result_artifact_id=persisted.id,
-                usage=_usage(response, observation),
-                actual_cost_micros=(
-                    observation.actual_cost_micros if observation is not None else None
-                ),
+                usage=settled_usage,
+                actual_cost_micros=settled_micros,
             )
             if self.deps.cassette_mode == CassetteMode.RECORD:
                 runtime.cassette_store.record(request_hash, _cassette_metadata(self.deps), response)
             return _normalize_response(self.deps, response)
         if recovery_attempt is not None:
-            raise ledger.OutcomeUnknown(
-                "a prior dispatched attempt has no durable response and cannot be repeated"
+            if self.deps.route.vendor is None:
+                raise ledger.OutcomeUnknown(
+                    "a prior dispatched attempt has no durable response and cannot be repeated"
+                )
+            # The execution that dispatched it is gone and the vendor left nothing to look up:
+            # hold its estimate as spent and make a fresh attempt rather than fence the run.
+            await ledger.abandon_attempt(
+                runtime.database_url,
+                scope=self.deps.scope,
+                source_id=self.deps.source_id,
+                run_id=self.deps.run_id,
+                operation_id=acquired.operation.id,
+                attempt_id=recovery_attempt.id,
+                error_code="abandoned-after-dispatch",
+                error_message=(
+                    f"Route {self.deps.route.id}: a previous execution dispatched the "
+                    f"{self.deps.stage} request and ended without a response; its estimate is "
+                    "settled and a fresh attempt follows."
+                ),
+            )
+            attempt = await ledger.reserve_attempt(
+                runtime.database_url,
+                scope=self.deps.scope,
+                source_id=self.deps.source_id,
+                run_id=self.deps.run_id,
+                operation_id=acquired.operation.id,
+                owner_token=owner_token,
+                provider=self.deps.route.provider,
+                model=self.deps.route.gateway_model,
+                family=self.deps.route.family,
+                route=self.deps.route.model_dump(mode="json"),
+                request_hash=request_hash,
+                estimated_cost_micros=estimated_micros,
+                dispatch_limit=self.deps.dispatch_limit,
+            )
+            response_fingerprint = artifacts.fingerprint_for(
+                kind="model_response",
+                inputs={"attemptId": str(attempt.id), "requestHash": request_hash},
+                config={
+                    "operationId": str(acquired.operation.id),
+                    "route": self.deps.route.model_dump(mode="json"),
+                    "runId": str(self.deps.run_id),
+                },
             )
         try:
             if self.deps.cassette_mode != CassetteMode.REPLAY:
@@ -1334,15 +1534,22 @@ class BudgetedModel(WrapperModel):
                 await save
                 raise
 
+        vendor_route = self.deps.route.vendor is not None
+        readings: list[RateLimitReading] = []
         try:
             with (
                 observe_gateway_generation(remember_generation),
                 dispatch_payload_bytes(payload_bytes),
+                vendor_dispatch_bytes(payload_bytes),
+                observe_rate_limits() as readings,
             ):
                 response = await super().request(messages, model_settings, model_request_parameters)
         except ModelHTTPError as error:
             status = error.status_code
             transient = status in TRANSIENT_HTTP_STATUSES or status >= HTTP_SERVER_ERROR_MIN
+            if vendor_route and is_spend_cap(error):
+                # The account's monthly cap: no pause lifts it, so the next route is the answer.
+                transient = False
             conclusive = HTTP_CLIENT_ERROR_MIN <= status < HTTP_CLIENT_ERROR_MAX and not transient
             await ledger.fail_attempt(
                 runtime.database_url,
@@ -1361,7 +1568,11 @@ class BudgetedModel(WrapperModel):
                 error_message="provider request ended with an HTTP error",
             )
             if transient:
-                retry_after = getattr(error, "retry_after_seconds", None)
+                retry_after = (
+                    retry_after_seconds(error)
+                    if vendor_route
+                    else getattr(error, "retry_after_seconds", None)
+                )
                 runtime.route_gate(self.deps.route.id).throttle(
                     float(retry_after)
                     if isinstance(retry_after, (int, float))
@@ -1387,16 +1598,45 @@ class BudgetedModel(WrapperModel):
                 raise KnownProviderRejection(rejection) from error
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
         except asyncio.CancelledError:
-            await self._record_unknown(
+            await self._after_dispatch_failure(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
                 attempt=attempt,
                 owner_token=owner_token,
+                estimated_micros=estimated_micros,
                 error_code="transport-cancelled",
                 error_message="provider transport was cancelled without a conclusive outcome",
             )
             raise
-        except (ModelAPIError, httpx.TimeoutException) as error:
+        except (ModelAPIError, httpx.TimeoutException, TimeoutError) as error:
+            if vendor_route or isinstance(error, TimeoutError):
+                if not vendor_route:
+                    # A gateway route never raised a bare TimeoutError here before; keep its
+                    # fence for the one unexpected case rather than settle a charge blindly.
+                    await self._record_unknown(
+                        runtime=runtime,
+                        operation_id=acquired.operation.id,
+                        attempt=attempt,
+                        owner_token=owner_token,
+                        error_code="transport-ambiguous",
+                        error_message="provider transport ended without a conclusive outcome",
+                    )
+                    raise ledger.OutcomeUnknown("provider outcome is unknown") from error
+                dropped = (
+                    f"Route {self.deps.route.id}: the {self.deps.stage} request ended without a "
+                    f"response ({type(error).__name__}); its estimate of {estimated_micros} "
+                    "micros is settled and a fresh attempt is allowed."
+                )
+                await self._settle_at_estimate(
+                    runtime=runtime,
+                    operation_id=acquired.operation.id,
+                    attempt=attempt,
+                    owner_token=owner_token,
+                    estimated_micros=estimated_micros,
+                    error_code="transport-dropped",
+                    error_message=dropped,
+                )
+                raise TransientProviderFailure(dropped) from error
             settled = await self._settle_failed_dispatch(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
@@ -1416,6 +1656,22 @@ class BudgetedModel(WrapperModel):
             )
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
         except Exception as error:
+            if vendor_route:
+                unexpected = (
+                    f"Route {self.deps.route.id}: the {self.deps.stage} request failed after "
+                    f"dispatch ({type(error).__name__}); its estimate of {estimated_micros} "
+                    "micros is settled and a fresh attempt is allowed."
+                )
+                await self._settle_at_estimate(
+                    runtime=runtime,
+                    operation_id=acquired.operation.id,
+                    attempt=attempt,
+                    owner_token=owner_token,
+                    estimated_micros=estimated_micros,
+                    error_code="unexpected-after-dispatch",
+                    error_message=unexpected,
+                )
+                raise TransientProviderFailure(unexpected) from error
             await self._record_unknown(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
@@ -1427,6 +1683,9 @@ class BudgetedModel(WrapperModel):
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error
         finally:
             release_gate()
+            if vendor_route:
+                for reading in readings:
+                    runtime.route_gate(self.deps.route.id).pace(reading)
         try:
             accepted = await self._accept_response(
                 runtime=runtime,
@@ -1438,26 +1697,36 @@ class BudgetedModel(WrapperModel):
                 response=response,
                 max_output_tokens=requested_max,
                 source_checkpoint=source_checkpoint,
+                estimated_micros=estimated_micros,
             )
         except asyncio.CancelledError:
-            await self._record_unknown(
+            await self._after_dispatch_failure(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
                 attempt=attempt,
                 owner_token=owner_token,
+                estimated_micros=estimated_micros,
                 error_code="cancelled-during-response-acceptance",
                 error_message="response acceptance was interrupted after provider dispatch",
             )
             raise
         except Exception as error:
-            await self._record_unknown(
+            await self._after_dispatch_failure(
                 runtime=runtime,
                 operation_id=acquired.operation.id,
                 attempt=attempt,
                 owner_token=owner_token,
+                estimated_micros=estimated_micros,
                 error_code="response-persistence-ambiguous",
                 error_message="response acceptance did not reach a durable terminal state",
             )
+            if vendor_route:
+                unretained = (
+                    f"Route {self.deps.route.id}: the {self.deps.stage} response could not be "
+                    f"retained ({type(error).__name__}); its estimate is settled and a fresh "
+                    "attempt is allowed."
+                )
+                raise TransientProviderFailure(unretained) from error
             raise ledger.OutcomeUnknown("response persistence outcome is unknown") from error
         return _normalize_response(self.deps, accepted)
 
@@ -1473,6 +1742,7 @@ class BudgetedModel(WrapperModel):
         response: ModelResponse,
         max_output_tokens: int | None,
         source_checkpoint: artifacts.HarnessArtifact | None,
+        estimated_micros: int = 0,
     ) -> ModelResponse:
         """Persist the paid response before optional recording and settlement."""
         if response.provider_response_id is not None:
@@ -1527,10 +1797,9 @@ class BudgetedModel(WrapperModel):
             runtime.cassette_store.record(request_hash, _cassette_metadata(self.deps), response)
         if runtime.failure_hook is not None:
             await runtime.failure_hook("after_publication_before_settlement")
-        try:
-            observation = await _observe_cost(runtime, self.deps, response)
-        except (GatewayError, httpx.HTTPError, ValueError):
-            observation = None
+        settled_micros, settled_usage = await self._settled_cost(
+            runtime, response, estimated_micros
+        )
         await ledger.complete_attempt(
             runtime.database_url,
             scope=self.deps.scope,
@@ -1540,10 +1809,8 @@ class BudgetedModel(WrapperModel):
             attempt_id=attempt.id,
             owner_token=owner_token,
             result_artifact_id=published.id,
-            usage=_usage(response, observation),
-            actual_cost_micros=(
-                observation.actual_cost_micros if observation is not None else None
-            ),
+            usage=settled_usage,
+            actual_cost_micros=settled_micros,
         )
         return response
 

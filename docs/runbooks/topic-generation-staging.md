@@ -31,31 +31,44 @@ by reserving the reviewer before the first author call). The run row shows the p
 projection (calls and dollars, from the actual section prompts) once planning has run, and a
 paused run can have its allowance raised from the panel and then be retried.
 
-## The roster (settled 13 September on technical reliability)
+## The roster (frontier vendors, direct, since 15 September)
 
-Author and repair: Kimi K3/Fireworks (five completed full-source runs, no transport failure
-in that seat); alternate author: DeepSeek V4 Pro 0813/Fireworks (two completed). Inventory,
-cold and source review: Gemini 3.8 Flash/Vertex at medium effort (the only reviewer that has
-finished this call shape on Karma, five times). Astra is excluded. Gemini's two known failure
-modes are handled: an upstream rate limit inside a stream is settled against the receipt and
-retried twice, and the output allowance is Gemini's route maximum, 65,536. This is a
-reliability selection, not an editorial winner.
+Decision record: the 2026-09-15 entries in `AGENTS.md`; design:
+[topics-vendors-and-usage-2026-09-15.md](../design/topics-vendors-and-usage-2026-09-15.md).
+The seats come from the 2026-08-26 audition evidence and are re-auditioned per seat once the
+pipeline is proven on three held-out recordings.
 
-A production seat pool must name at least three model families, so every pool lists all
-three routes; only the order differs. The reviewer is chosen from the verify pool excluding
-the author's family, so Gemini reviews whatever Kimi or DeepSeek authored.
+| Seat | Order |
+| --- | --- |
+| `propose` (author, repair) | Claude Opus 5 (high), then GPT-5.6 Sol (high) |
+| `verify` (cold, local, omission, pairs) | GPT-5.6 Terra (high), then Gemini 3.8 Flash (medium) |
+| `inventory` (per-section inventory) | Claude Sonnet 5 (medium), then Gemini 3.8 Flash (medium) |
+
+Every route calls its vendor directly through PydanticAI's adapter with the SDK's retries off;
+there is no gateway on the path. The reviewer is chosen excluding the author's family, so Terra
+or Gemini reviews whatever Opus or Sol authored. Prices in the snapshot are the vendors'
+published rates on 2026-09-15 (cache reads and writes included where the vendor charges them);
+each call settles from the usage in its response, so a run's spend is exact when the call ends.
+Anthropic routes send the automatic cache breakpoint, so a decision's later rounds pay a tenth
+for the prefix. The worker paces each route from the vendor's rate-limit headers and honours
+`retry-after` on the same ladder as before; a dropped stream settles at its estimate and is
+retried, and no run is ever fenced on an unconfirmed outcome.
 
 ## Where the configuration lives
 
 One committed file per deployment is the whole harness configuration:
 [`apps/pipeline/harness/staging.json`](../../apps/pipeline/harness/staging.json)
-(`harness-config/1`), next to its route snapshot
-[`topic-routes-staging-0df7f78d.json`](../../apps/pipeline/harness/topic-routes-staging-0df7f78d.json)
-(ID `0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c`). Both images copy
+(`harness-config/1`, `gateway: direct`), next to its route snapshot
+[`topic-routes-staging-0a40fd58.json`](../../apps/pipeline/harness/topic-routes-staging-0a40fd58.json)
+(ID `0a40fd581f1f966cfb05842d171192331b224a8eda59fd264f64d2246e7262b2`). Both images copy
 that directory to `/app/harness/` and bake `HARNESS_CONFIG_PATH=/app/harness/staging.json`,
 so the worker and the web read the same file from the same commit: the run config the web
-sends equals the worker's by construction. The only value that stays in Dokploy is the
-secret `OPENROUTER_API_KEY` on `pipeline`, which is already there.
+sends equals the worker's by construction. What stays in Dokploy, on `pipeline`, set once:
+the three vendor keys `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY`, and
+optionally `LOGFIRE_TOKEN` for tracing. A missing key does not stop the worker (it also
+ingests and transcribes): the boot log names the variable, the routes at that vendor are
+skipped, and a run that has no route left stops with the variable in its sentence.
+`OPENROUTER_API_KEY` is no longer read by this configuration.
 
 While `HARNESS_CONFIG_PATH` is set, every other `HARNESS_*` entry in a service's environment
 is ignored and the worker's boot log lists the ignored names; stale entries from earlier
@@ -75,41 +88,40 @@ whose old run config differs from current worker settings can be refused. The or
 committed-file workflow below remains the default; no mounts or settings are changed by
 this documentation.
 
-The snapshot is the r25 experiment catalogue without Astra, `gateway-transport/2` through
-OpenRouter. A production seat pool must name at least three model families, so every pool
-lists all three routes; only the order differs, and the reviewer is chosen excluding the
-author's family:
-
-| Seat | Order |
-| --- | --- |
-| `propose` (author, repair) | Kimi K3/Fireworks, DeepSeek V4 Pro 0813/Fireworks, Gemini 3.8 Flash/Vertex |
-| `verify` (inventory, cold, source review) | Gemini 3.8 Flash/Vertex, Kimi K3/Fireworks, DeepSeek V4 Pro 0813/Fireworks |
-| `summary` (unused by topics, required by the schema) | as `propose` |
-
-Limits in the file: output 65,536 (Gemini's route maximum; the config ceiling was raised to
-it), 64 dispatches, 3 repairs, $20 run budget, render concurrency 2, evidence window 80
-sentences, `scdet` shot detector, at most 2 calls in flight per route with 1 s between
-dispatches (the worker's admission per route; providers throttle the account, not the run).
+Limits in the file: output 65,536 (the config ceiling; every route allows more), no dispatch
+ceiling, 3 repairs, $20 default allowance and $100 maximum, render concurrency 2, evidence
+window 80 sentences, `scdet` shot detector, at most 3 calls in flight per route with 0.5 s
+between dispatches (the worker's admission per route; the vendors' headers pace the rest).
 
 `tests/test_harness_config_file.py` boots every committed configuration in the gate: the
-snapshot ID, the three-family rule and the output ceilings are checked before a merge, not
-on the box.
+snapshot ID, the two-family rule per pool, the inventory seat and the output ceilings are
+checked before a merge, not on the box. A Karma run is the test of the keys: a missing or
+wrong key stops the run with the variable in its sentence, and a model the vendor does not
+recognise shifts the seat to its fallback. Optional, when a number is wanted without a run
+(the answering model, the usage, the settled micros and the account's rate-limit tier per
+route), from inside the pipeline container where the keys already are:
+
+```bash
+ssh temnia-vps 'docker exec $(docker ps -q -f name=temnia-staging-pipeline) temnia-harness vendors probe /app/harness/topic-routes-staging-0a40fd58.json'
+```
 
 ## Merge, deploy, click
 
 1. Merge the PR. Dokploy builds and deploys both images from `main` (each application's
    Deployments tab shows the merge SHA green). Do not deploy while a topic run is active;
-   a model call in flight becomes `outcome_unknown` (the reaper settles it within fifteen minutes
-   of the receipt; then **Retry this run**).
+   a model call in flight is settled at its estimate by the next execution and dispatched again
+   (then **Retry this run** if the run had stopped).
 2. Read the `pipeline` boot log: one line
-   `harness enabled from /app/harness/staging.json: backend gateway, gateway openrouter, route snapshot 0df7f78d…`,
+   `harness enabled from /app/harness/staging.json: backend gateway, gateway direct, route snapshot 0a40fd58…`
+   (and no `is not set` warning above it),
    then the Temporal pollers on `temnia-pipeline` and `temnia-pipeline-control`.
 3. Open a Ready source on staging.temnia.dev, Topics tab. Leave the instructions box empty
    (the single default brief applies), keep or change the allowance and models, and press
    **Find topic videos**. The run row shows the projection after planning.
 
-First run: Karma. Expect `needs_review`, nine to eleven videos, about $1, the run's
-`route_snapshot` naming the author and reviewer above. Play every video, accept or correct,
+First run: Karma. Expect `needs_review`, nine to eleven videos, about $4 to $7 on the
+frontier seats, the run's `route_snapshot` naming the author, reviewer and inventory routes
+above. Play every video, accept or correct,
 export. Second run: World Order (151 min); note each full-source call's duration against the
 payload-scaled deadline. Record the run IDs, cost and durations in the day log.
 

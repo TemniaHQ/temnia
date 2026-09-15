@@ -25,7 +25,8 @@
           "type": "string",
           "enum": [
             "vercel",
-            "openrouter"
+            "openrouter",
+            "direct"
           ]
         },
         "limits": {

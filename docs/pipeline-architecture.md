@@ -1,5 +1,13 @@
 # Temnia pipeline architecture
 
+**September 15 transport amendment:** the `standalone-topics/8` decision path calls Anthropic,
+OpenAI and Google directly through PydanticAI's adapters and settles every call from the usage in
+its response; no gateway, receipt, cost lookup or unconfirmed-outcome fence is on that path. The
+gateway seam, reconciliation and the `outcome_unknown` state described below remain for the legacy
+programs until the deletion step removes them. Design record:
+[topics-vendors-and-usage-2026-09-15.md](design/topics-vendors-and-usage-2026-09-15.md); plan:
+[topics-simplification-360-view.md](plans/topics-simplification-360-view.md).
+
 **September 10 editorial direction:** Rajesh clarified that the current output goal is interesting,
 independently publishable topic videos, with reused context permitted. A separate `TopicRunWorkflow`
 and independent-span portfolio now implement that contract over the existing evidence, ledger,

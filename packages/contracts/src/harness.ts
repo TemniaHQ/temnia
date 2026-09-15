@@ -564,7 +564,7 @@ export const HarnessConfigSchema = z
     backend: z.enum(["recorded", "gateway"]),
     enabled: z.boolean(),
     format: z.literal("harness-config/1"),
-    gateway: z.enum(["vercel", "openrouter"]),
+    gateway: z.enum(["vercel", "openrouter", "direct"]),
     limits: z
       .object({
         // The allowance the web offers by default; a user may raise it up to the maximum.

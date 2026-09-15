@@ -3,17 +3,17 @@
   "backend": "gateway",
   "enabled": true,
   "format": "harness-config/1",
-  "gateway": "openrouter",
+  "gateway": "direct",
   "limits": {
+    "defaultRunBudgetMicros": 20000000,
     "evidenceWindowSentences": 80,
     "maxDispatches": null,
-    "maxInFlightPerRoute": 2,
+    "maxInFlightPerRoute": 3,
     "maxOutputTokens": 65536,
     "maxRenderConcurrency": 2,
     "maxRepairs": 3,
     "maxRunBudgetMicros": 100000000,
-    "defaultRunBudgetMicros": 20000000,
-    "minDispatchIntervalSeconds": 1
+    "minDispatchIntervalSeconds": 0.5
   },
   "recordedFixturePath": null,
   "render": {
@@ -21,8 +21,8 @@
     "encoder": "h264_nvenc"
   },
   "routeSnapshot": {
-    "id": "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",
-    "path": "topic-routes-staging-0df7f78d.json"
+    "id": "0a40fd581f1f966cfb05842d171192331b224a8eda59fd264f64d2246e7262b2",
+    "path": "topic-routes-staging-0a40fd58.json"
   },
   "topicShotDetector": "scdet"
 }

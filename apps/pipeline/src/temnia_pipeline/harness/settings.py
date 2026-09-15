@@ -8,31 +8,34 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from temnia_pipeline.contracts import Backend, ChapterRunConfig, HarnessConfig
 from temnia_pipeline.harness.routes import (
     ContextWindowExceeded,
+    ProviderPath,
     RouteSnapshot,
     estimate_cost,
     load_route_snapshot,
     snapshot_gateway,
+    vendor_key_variable,
 )
 from temnia_pipeline.harness.topic_selection_runtime import effective_topic_output_tokens
+from temnia_pipeline.harness.vendors import VendorKeys
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-    from temnia_pipeline.harness.gateway_policy import GatewayName
 
 HarnessBackend = Literal["gateway", "recorded"]
 RenderBackend = Literal["local", "modal"]
 RenderEncoder = Literal["libx264", "h264_nvenc"]
 TopicShotDetector = Literal["pyscenedetect-adaptive", "scdet"]
 DEFAULT_MAX_RUN_BUDGET_MICROS = 10_000_000
-REQUIRED_ROUTE_SEATS = frozenset({"propose", "summary", "verify"})
+# The author (propose) and reviewer (verify) pools every program needs; the `inventory` seat
+# is optional and falls back to the verify pool, and `summary` is a legacy seat no longer read.
+REQUIRED_ROUTE_SEATS = frozenset({"propose", "verify"})
 # Every recorded output the standalone-topic program can ask for, so a fixture that is
 # missing one fails at settings load rather than mid-run.
 RECORDED_TOPIC_OUTPUTS = (
@@ -48,7 +51,18 @@ MAX_RECORDED_FIXTURE_BYTES = 1024 * 1024
 # (the gate, local development, the experiment operator) means the environment is the
 # configuration, as before.
 CONFIG_PATH_VARIABLE = "HARNESS_CONFIG_PATH"
-SECRET_VARIABLES = frozenset({"OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY"})
+SECRET_VARIABLES = frozenset(
+    {
+        "OPENROUTER_API_KEY",
+        "AI_GATEWAY_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "LOGFIRE_TOKEN",
+    }
+)
+PROVIDER_PATHS = frozenset({"vercel", "openrouter", "direct"})
 log = logging.getLogger("temnia.harness.settings")
 
 
@@ -62,6 +76,15 @@ def _render_encoder(value: str) -> RenderEncoder:
     if value not in {"libx264", "h264_nvenc"}:
         raise ValueError("HARNESS_RENDER_ENCODER must be libx264 or h264_nvenc")
     return cast("RenderEncoder", value)
+
+
+def _gateway_api_key(env: Mapping[str, str], gateway: str) -> str | None:
+    """The one gateway secret the legacy transports read; the direct path has vendor keys."""
+    if gateway == "direct":
+        return None
+    return (
+        env.get("OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY") or None
+    )
 
 
 def _flag(env: Mapping[str, str], name: str, default: bool = False) -> bool:
@@ -97,7 +120,8 @@ class HarnessSettings:
     evidence_window_sentences: int
     max_render_concurrency: int
     gateway_api_key: str | None
-    gateway: GatewayName = "vercel"
+    gateway: ProviderPath = "vercel"
+    vendor_keys: VendorKeys = field(default_factory=VendorKeys)
     recorded_fixture_path: Path | None = None
     topic_shot_detector: TopicShotDetector = "scdet"
     config_path: Path | None = None
@@ -118,8 +142,8 @@ class HarnessSettings:
         if raw_backend not in {None, "gateway", "recorded"}:
             raise ValueError("HARNESS_BACKEND must be gateway or recorded")
         raw_gateway = values.get("HARNESS_GATEWAY", "vercel")
-        if raw_gateway not in {"vercel", "openrouter"}:
-            raise ValueError("HARNESS_GATEWAY must be vercel or openrouter")
+        if raw_gateway not in PROVIDER_PATHS:
+            raise ValueError("HARNESS_GATEWAY must be vercel, openrouter or direct")
         raw_shot_detector = values.get("HARNESS_TOPIC_SHOT_DETECTOR", "scdet")
         if raw_shot_detector not in {"pyscenedetect-adaptive", "scdet"}:
             raise ValueError("HARNESS_TOPIC_SHOT_DETECTOR must be pyscenedetect-adaptive or scdet")
@@ -152,11 +176,9 @@ class HarnessSettings:
             render_backend=_render_backend(values.get("HARNESS_RENDER_BACKEND", "local")),
             render_encoder=_render_encoder(values.get("HARNESS_RENDER_ENCODER", "libx264")),
             render_progress_dict=values.get("MODAL_RENDER_PROGRESS_DICT", "temnia-render-progress"),
-            gateway=cast("GatewayName", raw_gateway),
-            gateway_api_key=values.get(
-                "OPENROUTER_API_KEY" if raw_gateway == "openrouter" else "AI_GATEWAY_API_KEY"
-            )
-            or None,
+            gateway=cast("ProviderPath", raw_gateway),
+            gateway_api_key=_gateway_api_key(values, raw_gateway),
+            vendor_keys=VendorKeys.from_env(values),
             recorded_fixture_path=(
                 Path(values["HARNESS_RECORDED_FIXTURE_PATH"])
                 if values.get("HARNESS_RECORDED_FIXTURE_PATH")
@@ -184,7 +206,7 @@ class HarnessSettings:
             candidate = Path(value)
             return candidate if candidate.is_absolute() else base / candidate
 
-        gateway = cast("GatewayName", str(config.gateway))
+        gateway = cast("ProviderPath", str(config.gateway))
         return cls(
             enabled=config.enabled,
             backend=cast("HarnessBackend", str(config.backend)),
@@ -203,10 +225,8 @@ class HarnessSettings:
             render_encoder=_render_encoder(str(config.render.encoder)),
             render_progress_dict=env.get("MODAL_RENDER_PROGRESS_DICT", "temnia-render-progress"),
             gateway=gateway,
-            gateway_api_key=env.get(
-                "OPENROUTER_API_KEY" if gateway == "openrouter" else "AI_GATEWAY_API_KEY"
-            )
-            or None,
+            gateway_api_key=_gateway_api_key(env, gateway),
+            vendor_keys=VendorKeys.from_env(env),
             recorded_fixture_path=(
                 resolve(config.recordedFixturePath) if config.recordedFixturePath else None
             ),
@@ -238,7 +258,7 @@ class HarnessSettings:
             raise RuntimeError(
                 "HARNESS_ROUTE_SNAPSHOT_ID and HARNESS_ROUTE_SNAPSHOT_PATH are required"
             )
-        if self.backend == "gateway" and self.gateway_api_key is None:
+        if self.backend == "gateway" and self.gateway != "direct" and self.gateway_api_key is None:
             key_name = (
                 "OPENROUTER_API_KEY" if self.gateway == "openrouter" else "AI_GATEWAY_API_KEY"
             )
@@ -290,6 +310,27 @@ class HarnessSettings:
             raise RuntimeError("gateway backend requires a production route snapshot")
         if self.backend == "gateway" and snapshot_gateway(snapshot) != self.gateway:
             raise RuntimeError("loaded route transport differs from HARNESS_GATEWAY")
+        if self.backend == "gateway" and self.gateway == "direct":
+            # The worker also serves ingest and transcription, so a missing model key is a
+            # loud boot line and a typed stop on the run that reaches it, not a refusal to boot.
+            for vendor in sorted(self.vendor_keys.missing(snapshot.vendors())):
+                log.warning(
+                    "%s is not set; routes at %s are skipped until it is set on the pipeline "
+                    "service",
+                    vendor_key_variable(vendor),
+                    vendor,
+                )
+            retained = [
+                route.id
+                for route in snapshot.routes
+                if route.account is not None and not route.account.zero_data_retention
+            ]
+            if retained:
+                log.warning(
+                    "routes %s are not yet on zero-data-retention terms; request it from the "
+                    "vendor and record it in the snapshot",
+                    ", ".join(retained),
+                )
         missing_seats = REQUIRED_ROUTE_SEATS - snapshot.seats.keys()
         if missing_seats:
             raise RuntimeError(

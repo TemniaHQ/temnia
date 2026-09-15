@@ -37,6 +37,7 @@ from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflowV7,
 )
 from temnia_pipeline.harness.topic_windows_workflow import TopicSelectionWorkflowV8
+from temnia_pipeline.harness.tracing import tracing_plugins
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
@@ -152,6 +153,7 @@ async def run_worker(settings: TemporalSettings) -> None:
             )
             if harness_settings.gateway_api_key is not None
             and harness_settings.backend == "gateway"
+            and harness_settings.gateway != "direct"
             else None
         )
         synthetic = harness_settings.backend == "recorded" and harness_settings.allow_recorded
@@ -163,6 +165,7 @@ async def run_worker(settings: TemporalSettings) -> None:
                     ctx.settings.work_root / "harness-cassettes", allow_synthetic=synthetic
                 ),
                 gateway=gateway,
+                vendor_keys=harness_settings.vendor_keys,
                 allow_synthetic=synthetic,
                 max_in_flight_per_route=harness_settings.max_in_flight_per_route,
                 min_dispatch_interval_seconds=harness_settings.min_dispatch_interval_seconds,
@@ -174,7 +177,7 @@ async def run_worker(settings: TemporalSettings) -> None:
         data_converter=pydantic_data_converter,
         # Worker inherits client plugins. Registering it again on Worker would
         # run its transformation twice (Temporal's worker emits a warning).
-        plugins=[harness_pydantic_ai_plugin()],
+        plugins=[harness_pydantic_ai_plugin(), *tracing_plugins()],
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
