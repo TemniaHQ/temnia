@@ -2,6 +2,18 @@
 
 ## Decisions
 
+**2026-09-15 — Every authored candidate renders; a finding repair could not clear is a note on the
+video, and "withheld" means dropped by repair with its reason.** Rajesh, after the first two
+frontier-seat Karma runs showed an empty page with twelve and thirteen candidates withheld behind
+required findings that the repair stage had not admitted. Rule: the reviewer and repair are the
+automation and run to completion first; the compiled edit then carries every candidate the repair
+stage kept, with any unresolved finding attached as a review note per video, and lists the
+candidates repair dropped with the model's reason. The human step is accept or reject of rendered
+cuts, informed by the pipeline's own verdicts, never boundary work the pipeline should have done.
+Rajesh's framing: build for intelligent automation first, not for human intervention, and the
+repair stage comes first: this rendering rule is built only once repair admits patches on a
+staging run, so revision 1 is the pipeline's finished work, not its draft.
+
 **2026-09-15 — A vendor request that never left the process settles at zero; one the vendor may
 have served settles at its estimate.** From the first Karma run on the frontier seats (`ba09a55d`):
 fifteen instant failures on a closed HTTP client were settled at about $0.95 each, $14.37 of an
