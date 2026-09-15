@@ -2,6 +2,28 @@
 
 ## Decisions
 
+**2026-09-15 — Simplify the topics pipeline to production, frontier models first; the vendor rule
+of 2026-09-07 is reversed for the primary tier.** Rajesh, after run `12b9c920` stopped three times
+(routes exhausted, truncated answers, an unconfirmed outcome) and after Fable's assessment that
+the causes were the OpenRouter route pool chosen by the no-default-vendor rules, OpenRouter's
+lookup-based billing (the reason for receipts and fences) and audit-era ledger rules in
+production. Decision: keep Temporal, PydanticAI and the `standalone-topics/8` shape (index, inline
+windows, one activity per decision, claim admission, complete-with-gaps); call frontier vendors
+directly through PydanticAI's adapters (Anthropic, OpenAI, Google), price from a table with usage
+read from the response, retry with the reservation held and no unknown-outcome fence, pace from the
+vendors' rate-limit headers, cache the shared section window, trace with Logfire; add a
+hierarchical author above twelve sections and continue-as-new per stage; delete V3 to V7, the
+qualification and experiment code, both gateway transports, receipts and the reaper
+reconciliation. Seats from the audition evidence: Opus 5 author and repair, GPT-5.6 Terra
+reviewer, Sonnet 5 inventory, Sol and Gemini 3.8 Flash as fallbacks. OpenRouter leaves the
+primary path; a gateway returns only as Vercel AI Gateway with BYOK for an open-weight lane, if a
+single key is ever wanted again. Open-weight models return as a per-seat audition on
+cost-per-correct against the frontier baseline once three held-out recordings finish without a
+code-caused stop. Frontier-first is development spend bounded by the per-run allowance; the
+bottom-up unit cost is about $1.50 to $2.20 per hour of source before batch, caching and the
+cheap-model phase. Plan and delivery order:
+[docs/plans/topics-simplification-360-view.md](docs/plans/topics-simplification-360-view.md).
+
 **2026-09-15 — `standalone-topics/8` is the one product program: inline windows, one activity
 per decision, no self-inflicted stops.** Rajesh, after Fable's review of the indexed batch: no
 grilling, implement end to end, testable on staging after merge, allowance and models chosen in
