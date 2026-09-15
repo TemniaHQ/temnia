@@ -6,10 +6,30 @@ plan: [topic-generation-staging-360-view.md](../plans/topic-generation-staging-3
 
 ## What runs
 
-`standalone-topics/3` on `TopicSelectionWorkflow`, queue `temnia-pipeline`, the same worker
-that ingests and transcribes. No chapter lane exists. No qualification manifest exists; a
-route that refuses a request ends the run with a message naming the route, stage and HTTP
-status.
+`standalone-topics/8` on `TopicSelectionWorkflowV8`, queue `temnia-pipeline`, the same worker
+that ingests and transcribes. Decision record: the 2026-09-15 entry in `AGENTS.md`; plan:
+[topics-production-360-view.md](../plans/topics-production-360-view.md). No chapter lane
+exists. No qualification manifest or version gate exists: the button starts the program on
+the frozen route snapshot, and every stop is a typed reason on the run row.
+
+The program builds the source index once (episode → sections of at most eight regions →
+regions of at most 32 sentences), then runs one bounded decision per planned item, each as
+one Temporal activity: an inventory per section with that section's speech inline; author
+packaging per section batch of at most twelve opportunities; a cold review per candidate;
+bounded source review items per section (candidate batches, opportunity batches, one omission
+scan per region, overlap and handoff pairs); and connected-component repairs, up to the repair
+allowance. A decision that cannot be admitted after one correction becomes a coverage gap: the
+run records it, continues around it, and names it in the finish message. The run stops only for
+money (the allowance), a provider that refuses or fails on every eligible route, an unconfirmed
+paid outcome, an invalid source, or cancellation.
+
+The panel offers three inputs before **Find topic videos**: optional instructions, the run
+allowance in dollars (default from the deployment file, at most its maximum), and the author
+and reviewer models chosen from the snapshot's pools ("Server default" keeps the snapshot's
+own order; the reviewer must be a different family from the author, which the worker enforces
+by reserving the reviewer before the first author call). The run row shows the pre-spend
+projection (calls and dollars, from the actual section prompts) once planning has run, and a
+paused run can have its allowance raised from the panel and then be retried.
 
 ## The roster (settled 13 September on technical reliability)
 
@@ -83,8 +103,9 @@ on the box.
 2. Read the `pipeline` boot log: one line
    `harness enabled from /app/harness/staging.json: backend gateway, gateway openrouter, route snapshot 0df7f78d…`,
    then the Temporal pollers on `temnia-pipeline` and `temnia-pipeline-control`.
-3. Open a Ready source on staging.temnia.dev, Topics tab, **Find topic videos**. Leave the
-   instructions box empty (the single default brief applies) and press it.
+3. Open a Ready source on staging.temnia.dev, Topics tab. Leave the instructions box empty
+   (the single default brief applies), keep or change the allowance and models, and press
+   **Find topic videos**. The run row shows the projection after planning.
 
 First run: Karma. Expect `needs_review`, nine to eleven videos, about $1, the run's
 `route_snapshot` naming the author and reviewer above. Play every video, accept or correct,
@@ -118,6 +139,13 @@ never edit an existing snapshot) and the file's `routeSnapshot` block points at 
 refuses a configuration that does not boot. Merge, deploy; nothing to set on the box.
 Production gets its own file and sets `HARNESS_CONFIG_PATH` to it in Dokploy, once.
 
+Two limits are the user's, not the file's: `limits.maxRunBudgetMicros` is the most a run may
+be given (staging: $100) and `limits.defaultRunBudgetMicros` is what the allowance box
+proposes (staging: $20). `maxDispatches` is null: the allowance is the only ceiling. Without a
+deployment file, the web reads `HARNESS_DEFAULT_RUN_BUDGET_MICROS` and lists models from
+`HARNESS_ROUTE_SNAPSHOT_PATH`; an unreadable snapshot leaves the model selects hidden and the
+run on the snapshot's own order.
+
 ## What a run does before its first model call
 
 Nothing heavy. Ingest measured the master's timeline, shot boundaries and speech coverage
@@ -132,8 +160,10 @@ before, and caches the result for later runs. Rendering still fetches the master
 | --- | --- | --- |
 | `needs_review`, videos present | the cycle completed or hit a limit named in the message | review, accept, correct |
 | `failed`, "Route X rejected the … request (HTTP …)" | the route does not accept this request shape | change the snapshot, new run |
-| `failed`, "… exceeds the context window of route X" | source too large for that route | a larger-window route, or wait for the topic hierarchy |
-| `budget_paused` | the next call would exceed the run budget | cancel; new run with a larger budget |
+| `budget_paused` | the next call would exceed the run allowance | raise the allowance in the panel, then **Retry this run**; admitted decisions are reused |
+| `needs_review`, message names coverage gaps | one or more bounded decisions produced no admitted answer after a correction; the rest of the run continued | review; the gap's retained answers and diagnostics are on the run's artifacts |
+| `failed`, "No route is eligible for one editorial seat …" | the chosen author and reviewer are the same family, or the snapshot has no independent reviewer | choose different models, new run |
+| `failed`, "Every eligible … route failed for … " | every route position for one decision failed or refused the request | wait or choose different models, then **Retry this run** |
 | `outcome_unknown` | a provider call ended without a confirmed outcome and the gateway receipt is still pending | wait; the run becomes `failed` and retryable once the receipt settles; never replay by hand |
 | `failed`, "Every qualified … route failed transiently for the … call (…); last: …" | every route in that seat's pool was throttled or down, each retried after a pause | wait, then **Retry this run**; the retained work is reused |
 | `failed`, "… HTTP 402 … insufficient credits or … spending limit" | the gateway account or key | top up or raise the limit, then **Retry this run** |

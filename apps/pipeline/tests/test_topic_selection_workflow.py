@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+import numpy as np
 import pytest
 
 from harness_fixtures import EVIDENCE_REF, SOURCE_ID, _request, _settings, _snapshot
@@ -19,6 +20,7 @@ from temnia_pipeline.contracts import (
     HarnessArtifactKind,
     HarnessArtifactRef,
     HarnessEvidence,
+    TopicAuthorPackagingManifest,
     TopicEditorialRubric,
     TopicOpportunity,
     TopicPortfolioReview,
@@ -28,23 +30,50 @@ from temnia_pipeline.contracts import (
     TopicSelectionDraft,
     TopicSelectionPatchV3,
     TopicSelectionRecord,
+    TopicSourceIndex,
 )
 from temnia_pipeline.harness import artifacts
+from temnia_pipeline.harness import topic_selection_activities as activities_module
 from temnia_pipeline.harness import topic_selection_workflow as module
-from temnia_pipeline.harness.editorial_policy import TOPIC_SELECTION_POLICY_V3
+from temnia_pipeline.harness.editorial_policy import (
+    TOPIC_SELECTION_POLICY_V3,
+    TOPIC_SELECTION_POLICY_V4,
+    TOPIC_SELECTION_POLICY_V5,
+    TOPIC_SELECTION_POLICY_V6,
+    TOPIC_SELECTION_POLICY_V7,
+)
 from temnia_pipeline.harness.gateway import parse_retry_after
 from temnia_pipeline.harness.ledger import BudgetExceeded, OutcomeUnknown, operation_identity
 from temnia_pipeline.harness.routes import select_route
 from temnia_pipeline.harness.runtime_types import EvidenceResult, RunSnapshot, StartRunResult
+from temnia_pipeline.harness.source_index import (
+    build_topic_source_index,
+    validate_topic_source_index,
+)
+from temnia_pipeline.harness.source_progress import (
+    SourceProgressCheckpoint,
+    SourceProgressLimitExceeded,
+)
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_editorial import editorial_routes
 from temnia_pipeline.harness.topic_runtime import TopicCompilation, TopicContext, TopicRenderResult
 from temnia_pipeline.harness.topic_selection import (
     content_hash,
     make_rubric,
 )
 from temnia_pipeline.harness.topic_selection_activities import TopicSelectionActivities
+from temnia_pipeline.harness.topic_selection_runtime import (
+    SelectionContext,
+    SourceCheckpointLoadResult,
+    SourceIndexBuildResult,
+    TopicSourceIndexUseRecord,
+)
 from temnia_pipeline.harness.topic_selection_workflow import (
     TopicSelectionWorkflow,
+    TopicSelectionWorkflowV4,
+    TopicSelectionWorkflowV5,
+    TopicSelectionWorkflowV6,
+    TopicSelectionWorkflowV7,
 )
 from temnia_pipeline.harness.validators import HarnessValidationError
 from test_topic_compiler import _candidate, _case, _span
@@ -59,13 +88,20 @@ if TYPE_CHECKING:
     from temnia_pipeline.harness.models import HarnessModelDeps
     from temnia_pipeline.harness.topic_selection_runtime import (
         SelectionCallPlan,
-        SelectionContext,
         SelectionRejection,
     )
 
 
 EVIDENCE = augment_topic_evidence(_case().model_copy(update={"sourceId": SOURCE_ID}))
 CANDIDATE = _candidate("discussion", 0, 3)
+
+
+class _FixtureEncoder:
+    def encode(
+        self, sentences: list[str], *, normalize_embeddings: bool = True, batch_size: int = 32
+    ) -> object:
+        _ = normalize_embeddings, batch_size
+        return np.ones((len(sentences), 1), dtype=np.float64)
 
 
 class UnexpectedModelBehavior(Exception):  # noqa: N818
@@ -183,18 +219,33 @@ class AgentDouble:
         self.calls: list[HarnessModelDeps] = []
         self.prompts: list[str] = []
         self.call_order = call_order
+        self.objects: dict[UUID, BaseModel] = {}
 
-    async def run(self, prompt: str, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+    async def run(self, prompt: str | None, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
         self.call_order.append(self.name)
         self.calls.append(kwargs["deps"])
-        self.prompts.append(prompt)
+        self.prompts.append(prompt or "")
         assert self.outputs, "unexpected extra editorial call"
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output
         if callable(output):
-            output = output(json.loads(prompt.split("SOURCE DATA\n", 1)[1]))
-        return SimpleNamespace(output=output)
+            assert prompt is not None
+            marker = "SOURCE DATA\n" if "SOURCE DATA\n" in prompt else "INPUT:\n"
+            payload = json.loads(prompt.split(marker, 1)[1])
+            if payload.get("editorialContext") is not None:
+                ref = kwargs["deps"].editorial_context
+                records = self.objects[ref.id].model_dump(mode="json")["records"]
+                candidates = [row["value"] for row in records if row["kind"] == "candidate"]
+                opportunities = [row["value"] for row in records if row["kind"] == "opportunity"]
+                payload["contextCandidatesWithoutAuthorRationale"] = candidates
+                payload["contextOpportunitiesWithoutAuthorRationale"] = opportunities
+                payload["workItem"]["inspectionCandidateIds"] = [item["id"] for item in candidates]
+                payload["workItem"]["contextOpportunityIds"] = [
+                    item["id"] for item in opportunities
+                ]
+            output = output(payload)
+        return SimpleNamespace(output=output, all_messages=list)
 
 
 class Program:
@@ -240,20 +291,32 @@ class Program:
         self.cold = AgentDouble("cold", colds if colds is not None else [cold()], self.call_order)
         self.source = AgentDouble("source", sources, self.call_order)
         self.patch = AgentDouble("patch", patches, self.call_order)
+        self.source.objects = self.objects
+        self.work_results: dict[str, module.EditorialWorkResult] = {}
+        self.progress: module.EditorialProgress | None = None
         self.activities = TopicSelectionActivities(
             cast(
                 "HarnessActivities",
                 SimpleNamespace(
                     _recorded_output=lambda _name: None,  # pyright: ignore[reportUnknownLambdaType]
                     _artifact_ref=lambda record: record.ref,  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
-                    ctx=SimpleNamespace(settings=SimpleNamespace(database_url="test-database")),
+                    ctx=SimpleNamespace(
+                        settings=SimpleNamespace(database_url="test-database"),
+                        store=object(),
+                    ),
                 ),
             )
         )
         monkeypatch.setattr(self.activities, "load", self.load)
         monkeypatch.setattr(self.activities, "read", self.read)
+        monkeypatch.setattr(self.activities, "source_index", self.source_index)
         monkeypatch.setattr(artifacts, "_artifact_for_read", self.artifact_for_read)
         monkeypatch.setattr(self.activities, "response_ref", self.response_ref)
+        monkeypatch.setattr(
+            self.activities,
+            "inspection_ref",
+            self.inspection_ref,
+        )
         monkeypatch.setattr(self.activities.topics, "publish", self.publish)
         monkeypatch.setattr(workflow_type, "author_agent", self.author)
         monkeypatch.setattr(workflow_type, "cold_agent", self.cold)
@@ -261,7 +324,10 @@ class Program:
         monkeypatch.setattr(workflow_type, "patch_agent", self.patch)
         if workflow_type is TopicSelectionWorkflow:
             monkeypatch.setattr(module, "topic_opportunity_inventory_v3", self.inventory)
+        else:
+            monkeypatch.setattr(workflow_type, "inventory_agent", self.inventory)
         monkeypatch.setattr(module.workflow, "execute_activity", self.execute)
+        monkeypatch.setattr(module.workflow, "execute_child_workflow", self.execute_child)
         monkeypatch.setattr(
             module.workflow,
             "info",
@@ -269,6 +335,12 @@ class Program:
                 workflow_id="selection", run_id="run", task_queue="selection-tests"
             ),
         )
+
+    async def execute_child(
+        self, name: str, value: module.EditorialWorkInput, **_kwargs: object
+    ) -> module.EditorialWorkResult:
+        assert name == "TopicEditorialWorkWorkflow"
+        return await module.TopicEditorialWorkWorkflow().run(value)
 
     async def load(
         self, context: SelectionContext
@@ -291,6 +363,12 @@ class Program:
 
     async def read(self, _context: SelectionContext, ref: HarnessArtifactRef) -> object:
         return self.objects[ref.id].model_dump(mode="json")
+
+    async def source_index(self, context: SelectionContext) -> TopicSourceIndex:
+        assert context.source_index is not None
+        index = cast("TopicSourceIndex", self.objects[context.source_index.id])
+        validate_topic_source_index(EVIDENCE, index, evidence_sha256=EVIDENCE_REF.sha256)
+        return index
 
     async def artifact_for_read(
         self, _database_url: str, *, artifact_id: UUID, **_kwargs: object
@@ -335,7 +413,43 @@ class Program:
             format_name="test-paid-response",
         )
 
-    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, PLR0911
+    async def inspection_ref(
+        self,
+        context: SelectionContext,
+        plan: SelectionCallPlan,
+        _inspection: object,
+        response: HarnessArtifactRef,
+        _required_sentence_ids: object,
+    ) -> HarnessArtifactRef | None:
+        if plan.source_tool_role != "repair":
+            return None
+        return await self.publish(
+            TopicContext(run=context.run, evidence=context.evidence),
+            content=make_rubric(plan.stage),
+            kind="checks",
+            format_name="test-source-inspection",
+            dependencies=(response,),
+        )
+
+    async def execute(self, name: str, value: Any, **_kwargs: object) -> object:  # noqa: ANN401, C901, PLR0911, PLR0912
+        if name == "load_topic_editorial_work":
+            return module.EditorialWorkLookup(result=self.work_results.get(value.identity()))
+        if name == "save_topic_editorial_work":
+            self.work_results[value.work.identity()] = value.result
+            return None
+        if name == "save_topic_editorial_progress":
+            self.progress = value
+            return None
+        if name == "load_topic_editorial_progress":
+            if self.progress is None:
+                return module.EditorialResumeLookup()
+            assert self.progress.context.selection is not None
+            record = cast("TopicSelectionRecord", self.objects[self.progress.context.selection.id])
+            return module.EditorialResumeLookup(
+                resume=module.EditorialResumeLookup.model_validate(
+                    {"resume": {"progress": self.progress, "draft": record.draft}}
+                ).resume
+            )
         if name == "start_chapter_run":
             assert value.editorial_policy == self.policy
             return StartRunResult(run=self.run, created=True)
@@ -347,13 +461,70 @@ class Program:
                 duration_ms=4000,
                 lexical_state="present",
             )
+        if name == "build_topic_source_index":
+            index = build_topic_source_index(
+                EVIDENCE,
+                evidence_sha256=EVIDENCE_REF.sha256,
+                encoder=_FixtureEncoder(),
+                embedding_model="test/encoder",
+                embedding_revision="a" * 40,
+            )
+            index_ref = await self.publish(
+                TopicContext(run=value.run, evidence=value.evidence),
+                content=index,
+                format_name=index.format,
+                kind="checks",
+                dependencies=(value.evidence,),
+            )
+            use_record = TopicSourceIndexUseRecord(
+                run_id=value.run.run_id,
+                source_id=value.run.source_id,
+                evidence=value.evidence,
+                source_index=index_ref,
+                reused=False,
+            )
+            use_ref = await self.publish(
+                TopicContext(run=value.run, evidence=value.evidence),
+                content=use_record,
+                format_name=use_record.format,
+                kind="checks",
+                dependencies=(value.evidence, index_ref),
+            )
+            return SourceIndexBuildResult(
+                artifact=index_ref,
+                use_record=use_ref,
+                reused=False,
+            )
         if name == "claim_chapter_repair":
             self.run = self.run.model_copy(update={"repair_count": self.run.repair_count + 1})
             return self.run
+        if name == "load_topic_source_checkpoint":
+            assert value.plan.source_index is not None
+            assert value.plan.source_tool_role is not None
+            checkpoint = SourceProgressCheckpoint(
+                index_sha256=value.plan.source_index.sha256,
+                role=value.plan.source_tool_role,
+                stage=value.plan.stage,
+                request_sequence=0,
+            )
+            return SourceCheckpointLoadResult(checkpoint=checkpoint.model_dump(mode="json"))
         operations: dict[str, Callable[..., Any]] = {
             "prepare_topic_selection_rubric": self.activities.rubric,
+            "prepare_topic_inventory_plan_v4": self.activities.prepare_inventory_plan,
+            "prepare_topic_author_plan_v5": self.activities.prepare_author_packaging_plan,
+            "prepare_topic_source_review_plan_v6": self.activities.prepare_source_review_plan,
+            "prepare_topic_repair_plan_v7": self.activities.prepare_repair_plan,
             "prepare_topic_selection_call": self.activities.prepare,
             "save_topic_opportunity_inventory_v3": self.activities.save_inventory,
+            "save_topic_inventory_shard_v4": self.activities.save_inventory_shard,
+            "assemble_topic_inventory_v4": self.activities.assemble_inventory,
+            "save_topic_author_shard_v5": self.activities.save_author_shard,
+            "assemble_topic_author_v5": self.activities.assemble_author,
+            "save_topic_source_review_shard_v6": self.activities.save_source_review_shard,
+            "save_topic_cold_review_v7": self.activities.save_cold_review,
+            "assemble_topic_source_review_v6": self.activities.assemble_source_review,
+            "save_topic_repair_shard_v7": self.activities.save_repair_shard,
+            "assemble_topic_repair_v7": self.activities.assemble_repair,
             "save_topic_selection": self.activities.save,
             "save_topic_selection_assessment": self.activities.save_assessment,
             "stop_topic_selection": self.activities.stop,
@@ -367,7 +538,7 @@ class Program:
             self.compiled = await self.activities.compile(value)
             return self.compiled
         if name == "accept_initial_chapter_revision":
-            self.run = self.run.model_copy(update={"current_revision": 1})
+            self.run = self.run.model_copy(update={"current_revision": value.base_revision + 1})
             return self.run
         if name == "render_topic_revision":
             assert self.compiled is not None
@@ -376,7 +547,9 @@ class Program:
                 count=self.render_count, technical_passed=True, descriptor=self.compiled.artifact
             )
         if name == "update_chapter_run_stage":
-            self.run = self.run.model_copy(update={"status": value.status})
+            self.run = self.run.model_copy(
+                update={"status": value.status, "stage": value.next_stage}
+            )
             return self.run
         message = f"unexpected activity: {name}"
         raise AssertionError(message)
@@ -429,6 +602,559 @@ async def test_empty_author_is_challenged_then_missing_discussion_is_added(
         for call in (*run.author.calls, *run.source.calls)
     )
     assert run.author.calls[0].route.family != run.source.calls[0].route.family
+    use_refs = [ref for format_name, ref in run.saved if format_name == "topic-source-index-use/1"]
+    assert len(use_refs) == 1
+    use_record = cast("TopicSourceIndexUseRecord", run.objects[use_refs[0].id])
+    assert use_record.run_id == run.run.id
+    assert use_record.source_id == run.run.source_id
+    assert use_record.evidence == EVIDENCE_REF
+    assert use_record.reused is False
+
+
+async def test_v4_assembles_every_planned_inventory_shard_before_authoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=True)],
+        patches=[],
+        inventory=draft(selected=False),
+        policy=TOPIC_SELECTION_POLICY_V4,
+        workflow_type=TopicSelectionWorkflowV4,
+    )
+
+    result = await TopicSelectionWorkflowV4().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "cold", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-opportunity-inventory-plan/1") == 1
+    assert saved_formats.count("topic-opportunity-inventory-shard/1") == 1
+    assert saved_formats.count("topic-opportunity-inventory-manifest/1") == 1
+    inventory_contexts = [
+        context for context in run.prepared_contexts if context.inventory_section_id is not None
+    ]
+    assert [context.inventory_section_id for context in inventory_contexts] == ["section-0001"]
+    assert run.author.calls[0].program_version == TOPIC_SELECTION_POLICY_V4
+
+
+async def test_v4_refuses_partial_inventory_before_authoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid_shard = TopicSelectionDraft(
+        opportunities=[opportunity(selected=False)],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[],
+        patches=[],
+        inventory=invalid_shard,
+        policy=TOPIC_SELECTION_POLICY_V4,
+        workflow_type=TopicSelectionWorkflowV4,
+    )
+
+    run.inventory.outputs.extend([invalid_shard, invalid_shard])
+    result = await TopicSelectionWorkflowV4().program(run.request)
+
+    assert result.revision is None
+    assert str(result.status) == "needs_review"
+    assert run.call_order == ["inventory"] * 3
+    assert "RECOVERY:" in run.inventory.prompts[-1]
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-opportunity-inventory-shard-rejection/1" in saved_formats
+    assert "topic-opportunity-inventory-manifest/1" not in saved_formats
+
+
+async def test_v5_assembles_every_author_work_item_before_source_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    author = TopicSelectionDraft(
+        opportunities=[
+            TopicOpportunity.model_validate(
+                {
+                    **inventory_opportunity.model_dump(mode="json"),
+                    "disposition": "not_useful_for_audience",
+                    "dispositionReason": "This fixture exercises bounded packaging without video.",
+                }
+            )
+        ],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="The assigned opportunity is completely decided without a candidate.",
+        ),
+    )
+    source = TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "opportunities": [
+                {
+                    "opportunityId": inventory_opportunity.id,
+                    "candidateIds": [],
+                    "evidenceSpans": [_span(1)],
+                    "reason": "The bounded author left the opportunity explicitly declined.",
+                    "status": "not_useful_for_audience",
+                }
+            ],
+            "selection": [],
+            "summary": "The exact declined opportunity was independently reviewed.",
+            "overlaps": [],
+            "handoffs": [],
+        }
+    )
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[source],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-author-packaging-plan/1") == 1
+    assert saved_formats.count("topic-author-packaging-shard/1") == 1
+    assert saved_formats.count("topic-author-packaging-manifest/1") == 1
+    assert saved_formats.count("topic-selection/2") == 1
+    author_contexts = [
+        context for context in run.prepared_contexts if context.author_work_item_id is not None
+    ]
+    assert [context.author_work_item_id for context in author_contexts] == [
+        "section-0001:author-0001"
+    ]
+    assert run.author.calls[0].program_version == TOPIC_SELECTION_POLICY_V5
+
+
+async def test_v5_refuses_partial_author_packaging_before_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Packaging follows the complete independent inventory.",
+        ),
+    )
+    invalid_author = TopicSelectionDraft(
+        opportunities=[
+            TopicOpportunity.model_validate(
+                {
+                    **inventory_opportunity.model_dump(mode="json"),
+                    "candidateIds": [CANDIDATE.id],
+                    "disposition": "proposed",
+                    "dispositionReason": "The candidate lacks its required work-item namespace.",
+                }
+            )
+        ],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[CANDIDATE],
+            summary="An invalid bounded author answer retained for diagnosis.",
+        ),
+    )
+    run = Program(
+        monkeypatch,
+        initial=invalid_author,
+        sources=[],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    run.author.outputs.extend([invalid_author, invalid_author])
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision is None
+    assert str(result.status) == "needs_review"
+    assert run.call_order == ["inventory", "author", "author", "author"]
+    assert "RECOVERY:" in run.author.prompts[-1]
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-author-packaging-shard-rejection/1" in saved_formats
+    assert "topic-author-packaging-manifest/1" not in saved_formats
+    assert "topic-selection/2" not in saved_formats
+
+
+async def test_v5_empty_inventory_assembles_without_inventing_an_author_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=False)],
+        patches=[],
+        inventory=draft(selected=False),
+        policy=TOPIC_SELECTION_POLICY_V5,
+        workflow_type=TopicSelectionWorkflowV5,
+    )
+
+    result = await TopicSelectionWorkflowV5().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "source"]
+    assert not run.author.calls
+    manifest_refs = [ref for name, ref in run.saved if name == "topic-author-packaging-manifest/1"]
+    assert len(manifest_refs) == 1
+    manifest = cast("TopicAuthorPackagingManifest", run.objects[manifest_refs[0].id])
+    assert manifest.generatorFamilies == []
+    assert manifest.shardArtifacts == []
+
+
+def _bounded_source_review(payload: dict[str, Any]) -> TopicPortfolioReviewV4:
+    """Return the exact local decisions requested by one connected v6 prompt."""
+    work_item = payload["workItem"]
+    candidates = {item["id"]: item for item in payload["contextCandidatesWithoutAuthorRationale"]}
+    opportunities = {
+        item["id"]: item for item in payload["contextOpportunitiesWithoutAuthorRationale"]
+    }
+    return TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "selection": [
+                {
+                    "candidateId": identifier,
+                    "disposition": "select",
+                    "evidenceSpans": candidates[identifier]["coreSpans"],
+                    "reason": "This is one complete focused discussion.",
+                }
+                for identifier in work_item["candidateIds"]
+            ],
+            "opportunities": [
+                {
+                    "opportunityId": identifier,
+                    "candidateIds": opportunities[identifier]["candidateIds"],
+                    "evidenceSpans": opportunities[identifier]["coreSpans"],
+                    "reason": "The exact selected candidate represents this opportunity.",
+                    "status": "represented",
+                }
+                for identifier in work_item["opportunityIds"]
+            ],
+            "overlaps": [
+                {
+                    **item,
+                    "classification": "unresolved",
+                    "reason": "The fixture preserves uncertainty.",
+                }
+                for item in work_item["overlaps"]
+            ],
+            "handoffs": [
+                {
+                    **item,
+                    "classification": "clean_handoff",
+                    "recommendedLeftLastSentenceId": None,
+                    "recommendedRightFirstSentenceId": None,
+                    "reason": "The exact adjacent extents have clean ownership.",
+                }
+                for item in work_item["handoffs"]
+            ],
+            "summary": f"Complete bounded review of {work_item['workItemId']}.",
+        }
+    )
+
+
+def _bounded_source_review_with_title_finding(
+    payload: dict[str, Any],
+) -> TopicPortfolioReviewV4:
+    """Require one title correction in the candidate-owning source shard."""
+    review = _bounded_source_review(payload)
+    work_item = payload["workItem"]
+    if not work_item["candidateIds"]:
+        return review
+    candidate_id = work_item["candidateIds"][0]
+    candidate = next(
+        item
+        for item in payload["contextCandidatesWithoutAuthorRationale"]
+        if item["id"] == candidate_id
+    )
+    finding = {
+        "id": f"{work_item['workItemId']}:finding:title",
+        "kind": "unsupported_title",
+        "severity": "required",
+        "affectedCandidateIds": [candidate_id],
+        "opportunityIds": work_item["contextOpportunityIds"][:1],
+        "evidenceSpans": candidate["coreSpans"],
+        "reason": "The candidate title is broader than the exact source explanation.",
+    }
+    return TopicPortfolioReviewV4.model_validate(
+        {**review.model_dump(mode="json"), "findings": [finding]}
+    )
+
+
+def _bounded_title_repair(payload: dict[str, Any]) -> TopicSelectionPatchV3:
+    """Return one work-item-scoped title correction for the v7 workflow fixture."""
+    work_item = payload["workItem"]
+    candidate = payload["affectedCandidates"][0]
+    candidate["title"] = "A focused source explanation"
+    return TopicSelectionPatchV3.model_validate(
+        {
+            "baseSelectionSha256": payload["baseSelectionSha256"],
+            "evidenceSha256": payload["evidenceSha256"],
+            "rubricSha256": payload["rubricSha256"],
+            "summary": "Narrow the candidate title to the source claim.",
+            "operations": [
+                {
+                    "id": f"{work_item['workItemId']}:operation:title",
+                    "kind": "retitle",
+                    "affectedCandidateIds": work_item["candidateIds"],
+                    "findingIds": work_item["findingIds"],
+                    "opportunities": [],
+                    "replacementCandidates": [candidate],
+                    "reason": "The replacement title matches the exact source explanation.",
+                }
+            ],
+        }
+    )
+
+
+def _v6_inputs() -> tuple[TopicSelectionDraft, TopicSelectionDraft]:
+    inventory_opportunity = TopicOpportunity.model_validate(
+        {
+            **opportunity(selected=False).model_dump(mode="json"),
+            "id": "section-0001:useful-discussion",
+        }
+    )
+    inventory = TopicSelectionDraft(
+        opportunities=[inventory_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[],
+            summary="Independent bounded inventory.",
+        ),
+    )
+    candidate = CANDIDATE.model_copy(update={"id": "section-0001:author-0001:candidate:discussion"})
+    packaged_opportunity = TopicOpportunity.model_validate(
+        {
+            **inventory_opportunity.model_dump(mode="json"),
+            "candidateIds": [candidate.id],
+            "disposition": "proposed",
+            "dispositionReason": "The complete discussion has one bounded candidate.",
+        }
+    )
+    author = TopicSelectionDraft(
+        opportunities=[packaged_opportunity],
+        proposal=TopicProposal(
+            version=1,
+            candidates=[candidate],
+            summary="Complete bounded author package.",
+        ),
+    )
+    return inventory, author
+
+
+async def test_v6_requires_every_source_review_shard_before_assessment_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[_bounded_source_review, _bounded_source_review, _bounded_source_review],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V6,
+        workflow_type=TopicSelectionWorkflowV6,
+    )
+
+    result = await TopicSelectionWorkflowV6().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == ["inventory", "author", "cold", "source", "source", "source"]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-source-review-plan/1") == 1
+    assert saved_formats.count("topic-source-review-shard/1") == 3
+    assert saved_formats.count("topic-source-review-manifest/1") == 1
+    review_contexts = [
+        context
+        for context in run.prepared_contexts
+        if context.source_review_work_item_id is not None
+    ]
+    assert [context.source_review_work_item_id for context in review_contexts] == [
+        "section-0001:source-local-0001",
+        "section-0001:source-local-0002",
+        "section-0001:source-omission-0001",
+    ]
+    assert all(call.allowed_browse_parent_ids == ("section-0001",) for call in run.source.calls)
+    assert run.patch.calls == []
+
+
+async def test_v6_rejected_review_shard_cannot_authorize_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    invalid = TopicPortfolioReviewV4.model_validate(
+        {
+            "candidates": [],
+            "findings": [],
+            "missingOpportunities": [],
+            "selection": [],
+            "opportunities": [],
+            "overlaps": [],
+            "handoffs": [],
+            "summary": "This deliberately omits an assigned opportunity decision.",
+        }
+    )
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[_bounded_source_review, invalid, invalid, invalid, _bounded_source_review],
+        patches=[],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V6,
+        workflow_type=TopicSelectionWorkflowV6,
+    )
+
+    result = await TopicSelectionWorkflowV6().program(run.request)
+
+    assert result.revision == 1
+    assert str(result.status) == "needs_review"
+    assert run.patch.calls == []
+    saved_formats = [name for name, _ in run.saved]
+    assert "topic-source-review-shard-rejection/1" in saved_formats
+    assert "topic-source-review-manifest/1" not in saved_formats
+    assert run.final_context is not None
+    assessment = await run.activities.assessment(run.final_context)
+    assert assessment is not None
+    assert assessment.portfolioReview is None
+    assert any("no partial shard finding" in reason for reason in assessment.reasons)
+
+
+async def test_v7_assembles_every_repair_component_before_one_selection_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        sources=[
+            _bounded_source_review_with_title_finding,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+            _bounded_source_review,
+        ],
+        patches=[_bounded_title_repair],
+        colds=[
+            cold().model_copy(update={"candidateId": author.proposal.candidates[0].id}),
+            cold().model_copy(update={"candidateId": author.proposal.candidates[0].id}),
+        ],
+        inventory=inventory,
+        policy=TOPIC_SELECTION_POLICY_V7,
+        workflow_type=TopicSelectionWorkflowV7,
+    )
+
+    result = await TopicSelectionWorkflowV7().program(run.request)
+
+    assert result.revision == 1
+    assert run.call_order == [
+        "inventory",
+        "author",
+        "cold",
+        "source",
+        "source",
+        "source",
+        "patch",
+        "cold",
+        "source",
+        "source",
+        "source",
+    ]
+    saved_formats = [name for name, _ in run.saved]
+    assert saved_formats.count("topic-repair-plan/1") == 1
+    assert saved_formats.count("topic-repair-shard/1") == 1
+    assert saved_formats.count("topic-repair-manifest/1") == 1
+    assert saved_formats.count("topic-selection/2") == 2
+    repair_contexts = [
+        context for context in run.prepared_contexts if context.repair_work_item_id is not None
+    ]
+    assert [context.repair_work_item_id for context in repair_contexts] == ["repair-component-0001"]
+    assert run.patch.calls[0].allowed_browse_parent_ids == ("section-0001",)
+    # A later execution resumes editorial work despite the existing review render.
+    # Exact successful work items are reused, including independent review; no author rerun.
+    assert run.progress is not None
+    run.progress = run.progress.model_copy(update={"phase": "review"})
+    call_order = list(run.call_order)
+    resumed = await TopicSelectionWorkflowV7().program(run.request)
+    assert resumed.revision == 2
+    assert run.call_order == call_order
+
+
+async def test_build_index_records_the_exact_verified_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=False),
+        sources=[v3_portfolio(selected=False)],
+        patches=[],
+    )
+    index = build_topic_source_index(
+        EVIDENCE,
+        evidence_sha256=EVIDENCE_REF.sha256,
+        encoder=_FixtureEncoder(),
+        embedding_model="test/encoder",
+        embedding_revision="a" * 40,
+    )
+    run_ref = TopicSelectionWorkflow.ref(run.request)
+    index_ref = await run.publish(
+        TopicContext(run=run_ref, evidence=EVIDENCE_REF),
+        content=index,
+        format_name=index.format,
+        kind="checks",
+        dependencies=(EVIDENCE_REF,),
+    )
+
+    async def reuse(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(artifact=SimpleNamespace(ref=index_ref), reused=True)
+
+    monkeypatch.setattr(activities_module, "build_or_reuse_topic_source_index", reuse)
+    context = SelectionContext(run=run_ref, evidence=EVIDENCE_REF)
+    result = await run.activities.build_index(context)
+
+    assert result.artifact == index_ref
+    assert result.reused is True
+    use_record = cast("TopicSourceIndexUseRecord", run.objects[result.use_record.id])
+    assert use_record.source_index == index_ref
+    assert use_record.evidence == EVIDENCE_REF
+    assert use_record.reused is True
+    assert run.records[result.use_record.id].dependency_ids == [EVIDENCE_REF.id, index_ref.id]
 
 
 async def test_empty_source_assessment_can_confirm_abstention(
@@ -741,6 +1467,41 @@ async def test_review_execution_limit_preserves_unknown_not_false_pass(
     assert not run.patch.calls
 
 
+async def test_inventory_progress_limit_is_visible_to_the_author(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=draft(selected=True),
+        sources=[v3_portfolio(selected=True)],
+        patches=[],
+        inventory=SourceProgressLimitExceeded("bounded progress exhausted"),
+    )
+    await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == ["inventory", "author", "cold", "source"]
+    assert (
+        "Execution capacity prevented independent source opportunity inventory"
+        in (run.author.prompts[0])
+    )
+
+
+async def test_author_progress_limit_admits_no_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Program(
+        monkeypatch,
+        initial=cast("Any", SourceProgressLimitExceeded("bounded progress exhausted")),
+        sources=[],
+        patches=[],
+    )
+    output = await TopicSelectionWorkflow().program(run.request)
+    assert run.call_order == ["inventory", "author"]
+    assert run.compiled is None
+    assert output.editArtifact is None
+    assert output.errorMessage is not None
+    assert "durable progress checkpoints are retained" in output.errorMessage
+
+
 async def test_unknown_provider_outcome_never_continues_to_render(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -905,3 +1666,62 @@ async def test_a_transient_failure_on_one_route_moves_the_seat_to_the_next_route
     assert run.final_context is not None
     assert run.final_context.verifier_index == 1
     assert run.compiled is not None
+
+
+def test_author_fallback_keeps_one_reviewer_family_out_of_every_contributor() -> None:
+    _, snapshot = _settings()
+    first, reserved = editorial_routes(snapshot, reserve_reviewer=True)
+    fallback, reviewer = editorial_routes(
+        snapshot, author_index=1, author_families=(first.family,), reserve_reviewer=True
+    )
+    assert fallback.family != first.family
+    assert reserved.family not in {first.family, fallback.family}
+    assert reviewer.family == reserved.family
+
+
+async def test_indexed_sdk_quantum_continues_same_work_without_spending_an_admission_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, author = _v6_inputs()
+    run = Program(
+        monkeypatch,
+        initial=author,
+        inventory=inventory,
+        sources=[_bounded_source_review] * 3,
+        patches=[],
+        colds=[cold().model_copy(update={"candidateId": author.proposal.candidates[0].id})],
+        policy=TOPIC_SELECTION_POLICY_V7,
+        workflow_type=TopicSelectionWorkflowV7,
+    )
+    run.inventory.outputs.insert(0, module.UsageLimitExceeded("request quantum exhausted"))
+    continuations: list[module.EditorialWorkInput] = []
+
+    class ContinueRequested(BaseException):
+        def __init__(self, work: module.EditorialWorkInput) -> None:
+            self.work = work
+
+    def continue_as_new(work: module.EditorialWorkInput) -> None:
+        raise ContinueRequested(work)
+
+    async def execute_child(
+        name: str, value: module.EditorialWorkInput, **kwargs: object
+    ) -> module.EditorialWorkResult:
+        try:
+            return await run.execute_child(name, value, **kwargs)
+        except ContinueRequested as continuation:
+            resumed = continuation.work
+            assert resumed.identity() == value.identity()
+            assert resumed.resumed_context is not None
+            assert resumed.resumed_context.resume_indexed
+            assert resumed.resumed_context.request_attempt == value.context.request_attempt
+            continuations.append(resumed)
+            return await run.execute_child(name, resumed, **kwargs)
+
+    monkeypatch.setattr(module.workflow, "continue_as_new", continue_as_new)
+    monkeypatch.setattr(module.workflow, "execute_child_workflow", execute_child)
+    result = await TopicSelectionWorkflowV7().program(run.request)
+    assert result.revision == 1
+    assert len(continuations) == 1
+    assert run.call_order.count("inventory") == 2
+    assert run.call_order.count("author") == 1
+    assert run.render_count == 1

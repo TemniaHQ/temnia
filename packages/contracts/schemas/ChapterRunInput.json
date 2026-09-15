@@ -18,10 +18,13 @@
           "maximum": 512
         },
         "maxDispatches": {
-          "default": 32,
-          "type": "integer",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
-          "maximum": 128
+          "maximum": 9007199254740991
         },
         "maxOutputTokens": {
           "default": 8192,
@@ -79,6 +82,9 @@
           "type": "string",
           "format": "uuid"
         },
+        "routes": {
+          "$ref": "#/$defs/ChapterRunRoutePreferences"
+        },
         "runId": {
           "type": "string",
           "format": "uuid"
@@ -101,6 +107,24 @@
       ],
       "additionalProperties": false,
       "title": "ChapterRunInput"
+    },
+    "ChapterRunRoutePreferences": {
+      "$id": "#/$defs/ChapterRunRoutePreferences",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "verifier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false,
+      "title": "ChapterRunRoutePreferences"
     },
     "Scope": {
       "$id": "#/$defs/Scope",

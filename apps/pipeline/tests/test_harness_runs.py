@@ -1949,8 +1949,8 @@ async def test_a_stopped_run_resumes_after_a_deploy_but_not_after_a_programme_ch
             )
         original = topic_program.current_program
 
-        def reprompted() -> object:
-            manifest = original()
+        def reprompted(program_version: str = "standalone-topics/3") -> object:
+            manifest = original(cast("Any", program_version))
             stage = manifest.stages["topic_patch"]
             return manifest.model_copy(
                 update={

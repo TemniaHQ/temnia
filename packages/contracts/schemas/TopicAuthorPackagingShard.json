@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "TopicAuthorPackagingShard": {
+      "$id": "#/$defs/TopicAuthorPackagingShard",
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/TopicSelectionDraft"
+        },
+        "format": {
+          "type": "string",
+          "const": "topic-author-packaging-shard/1"
+        },
+        "generatorFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "indexSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "inventorySha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "planSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "workItem": {
+          "$ref": "#/$defs/TopicAuthorWorkItem"
+        }
+      },
+      "required": [
+        "draft",
+        "format",
+        "generatorFamily",
+        "indexSha256",
+        "inventorySha256",
+        "planSha256",
+        "workItem"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorPackagingShard"
+    },
+    "TopicAuthorWorkItem": {
+      "$id": "#/$defs/TopicAuthorWorkItem",
+      "type": "object",
+      "properties": {
+        "batchOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "opportunityIds": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "batchOrdinal",
+        "opportunityIds",
+        "ordinal",
+        "sectionId",
+        "workItemId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicAuthorWorkItem"
+    },
+    "TopicCandidate": {
+      "$id": "#/$defs/TopicCandidate",
+      "type": "object",
+      "properties": {
+        "completionSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "completionSpans",
+        "coreSpans",
+        "firstSentenceId",
+        "id",
+        "lastSentenceId",
+        "meaningChangingFollowups",
+        "purpose",
+        "reason",
+        "requiredContextSpans",
+        "title"
+      ],
+      "additionalProperties": false,
+      "title": "TopicCandidate"
+    },
+    "TopicOpportunity": {
+      "$id": "#/$defs/TopicOpportunity",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completionSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "coreSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "proposed",
+            "not_useful_for_audience",
+            "not_contiguously_extractable",
+            "needs_evidence"
+          ]
+        },
+        "dispositionReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "meaningChangingFollowups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "requiredContextSpans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "valueEvidenceSpans": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicSentenceSpan"
+          }
+        },
+        "viewerPurpose": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "candidateIds",
+        "completionSpans",
+        "coreSpans",
+        "disposition",
+        "dispositionReason",
+        "id",
+        "meaningChangingFollowups",
+        "requiredContextSpans",
+        "valueEvidenceSpans",
+        "viewerPurpose"
+      ],
+      "additionalProperties": false,
+      "title": "TopicOpportunity"
+    },
+    "TopicProposal": {
+      "$id": "#/$defs/TopicProposal",
+      "type": "object",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicCandidate"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "candidates",
+        "summary",
+        "version"
+      ],
+      "additionalProperties": false,
+      "title": "TopicProposal"
+    },
+    "TopicSelectionDraft": {
+      "$id": "#/$defs/TopicSelectionDraft",
+      "type": "object",
+      "properties": {
+        "opportunities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicOpportunity"
+          }
+        },
+        "proposal": {
+          "$ref": "#/$defs/TopicProposal"
+        }
+      },
+      "required": [
+        "opportunities",
+        "proposal"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSelectionDraft"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicAuthorPackagingShard.json",
+  "$ref": "#/$defs/TopicAuthorPackagingShard",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

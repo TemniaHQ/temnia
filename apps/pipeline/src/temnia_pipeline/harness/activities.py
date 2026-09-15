@@ -42,10 +42,7 @@ from temnia_pipeline.contracts import (
     TranscriptV1,
 )
 from temnia_pipeline.harness import artifacts, ledger, runs
-from temnia_pipeline.harness.editorial_policy import (
-    TOPIC_SELECTION_POLICY_V3,
-    is_topic_policy,
-)
+from temnia_pipeline.harness.editorial_policy import is_topic_policy
 from temnia_pipeline.harness.evidence import build_evidence
 from temnia_pipeline.harness.rendering import (
     RenderSection,
@@ -93,6 +90,7 @@ from temnia_pipeline.harness.speech_evidence import (
     find_source_speech_coverage,
 )
 from temnia_pipeline.harness.topic_compiler import augment_topic_evidence
+from temnia_pipeline.harness.topic_decisions import TopicDecisionActivities
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchActivities
 from temnia_pipeline.harness.topic_render import TopicRenderActivities
 from temnia_pipeline.harness.topic_review import TopicReviewActivities
@@ -280,6 +278,7 @@ class HarnessActivities:
             run_id=ref.run_id,
             request_key=request.request_key,
             edit_artifact_id=request.edit_artifact_id,
+            base_revision=request.base_revision,
         )
 
     @activity.defn(name="commit_chapter_review")
@@ -487,7 +486,7 @@ class HarnessActivities:
                 ),
             },
         )
-        if run.editorial_policy == TOPIC_SELECTION_POLICY_V3:
+        if is_topic_policy(run.editorial_policy):
             evidence = augment_topic_evidence(evidence)
         fingerprint = artifacts.fingerprint_for(
             kind="evidence",
@@ -1565,6 +1564,7 @@ class HarnessActivities:
             *TopicRenderActivities(self).activities(),
             *TopicReviewActivities(self).activities(),
             *TopicSelectionActivities(self).activities(),
+            *TopicDecisionActivities(self).activities(),
             *TopicEditorialPatchActivities(self).activities(),
             self.build_chapter_evidence,
             self.render_chapter_revision,

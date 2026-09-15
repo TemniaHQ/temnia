@@ -45,7 +45,7 @@ class RecordedAgent:
         self.calls.append(deps)
         assert deps.synthetic_payload["synthetic"] is True
         output = self.output_type.model_validate(deps.synthetic_payload["output"])
-        return SimpleNamespace(output=output)
+        return SimpleNamespace(output=output, all_messages=list)
 
 
 async def test_recorded_selection_fixture_recovers_one_discussion_through_all_five_schemas(

@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceReviewOverlapTask": {
+      "$id": "#/$defs/TopicSourceReviewOverlapTask",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "overlapSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "overlapSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReviewOverlapTask"
+    }
+  },
+  "$id": "TopicSourceReviewOverlapTask.json",
+  "$ref": "#/$defs/TopicSourceReviewOverlapTask",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

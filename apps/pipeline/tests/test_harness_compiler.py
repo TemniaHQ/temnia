@@ -5,7 +5,6 @@ from uuid import UUID
 
 import pytest
 
-import temnia_pipeline.harness.evidence as evidence_module
 from temnia_pipeline.contracts import (
     ChapterEditSpec,
     ChapterProposal,
@@ -456,16 +455,16 @@ def test_duplicate_word_times_do_not_manufacture_silence() -> None:
     assert len([item for item in evidence.boundaries if item.timeMs == 100]) == 1
 
 
-def test_evidence_overflow_is_refused_without_truncation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_large_evidence_is_preserved_for_indexed_partitioning() -> None:
+    count = 10_001
     transcript = _transcript(
-        [_word("one", 0, 10), _word("two", 10, 20), _word("three", 20, 30)],
-        30,
+        [_word(f"word{index}", index * 10, (index + 1) * 10) for index in range(count)],
+        count * 10,
     )
-    monkeypatch.setattr(evidence_module, "MAX_EVIDENCE_WORDS", 2)
-    with pytest.raises(ValueError, match="build a hierarchy instead of truncating"):
-        _evidence(transcript, [(0, 2)])
+    evidence = _evidence(transcript, [(index, index) for index in range(count)])
+    assert len(evidence.sentences) == count
+    assert len(evidence.words) == count
+    assert evidence.sentences[-1].text == f"word{count - 1}"
 
 
 def test_validator_rejects_missing_references_and_nonfinite_values() -> None:

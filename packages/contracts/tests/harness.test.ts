@@ -53,6 +53,15 @@ const validReviewInput = {
 };
 
 describe("harness public contracts", () => {
+  it("allows source-scaled dispatching while retaining an explicit operator ceiling", () => {
+    for (const maxDispatches of [null, 256, 4]) {
+      const result = ChapterRunInputSchema.parse({
+        ...validRunInput,
+        config: { ...validRunInput.config, maxDispatches },
+      });
+      expect(result.config.maxDispatches).toBe(maxDispatches);
+    }
+  });
   it("accepts only an offset-bearing RFC 3339 export timestamp", () => {
     const valid = {
       chapters: [],

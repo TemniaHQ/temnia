@@ -12,8 +12,15 @@ import httpx2
 import pytest
 from obstore.store import MemoryStore
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
-from qualification_fixtures import _outputs_v3
+from qualification_fixtures import _outputs_v3, _published_source_index_ref
 from temnia_pipeline import db
 from temnia_pipeline.harness import models, runs
 from temnia_pipeline.harness.cassettes import CassetteStore
@@ -27,9 +34,15 @@ from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy
 from temnia_pipeline.harness.models import ModelRuntime
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
+    browse_source,
     topic_selection_qualification_prompts,
 )
 from temnia_pipeline.harness.routes import SeatRoutePool
+from temnia_pipeline.harness.source_progress import (
+    checkpoint_from_messages,
+    checkpoint_sha256,
+    compact_source_messages,
+)
 from temnia_pipeline.harness.topic_selection_runtime import SelectionCallPlan
 from temnia_pipeline.harness.topic_selection_workflow import selection_model_deps
 from test_harness_model_transport import snapshot
@@ -43,6 +56,101 @@ if TYPE_CHECKING:
     from obstore.store import S3Store
 
     from temnia_pipeline.harness.routes import RouteEntry
+
+
+async def test_indexed_checkpoint_artifacts_form_a_run_scoped_parent_chain(
+    tmp_path: Path,
+) -> None:
+    url = pipeline_url()
+    selected = openrouter_route()
+    routes = snapshot(
+        (selected,),
+        {
+            seat: SeatRoutePool(route_ids=(selected.id,))
+            for seat in ("propose", "verify", "summary")
+        },
+    )
+    configuration = replace(settings(routes), gateway="openrouter")
+    source_id = await ready_source(url)
+    original = start_request(source_id, routes)
+    start = original.model_copy(
+        update={
+            "editorial_policy": TOPIC_SELECTION_POLICY_V3,
+            "request": original.request.model_copy(
+                update={"config": configuration.allowed_config()}
+            ),
+        }
+    )
+    await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
+    store = cast("S3Store", MemoryStore())
+    source_index = await _published_source_index_ref(
+        url, scope=SEEDED, source_id=source_id, store=store
+    )
+    prompt, _, prompt_version = topic_selection_qualification_prompts()["topic_author"]
+    plan = SelectionCallPlan(
+        prompt=prompt,
+        stage="proposal:selection:0",
+        prompt_version=prompt_version,
+        schema_version=TOPIC_SELECTION_V3_SCHEMAS["topic_author"],
+        author=selected,
+        verifier=selected,
+        input_artifacts=(source_index,),
+        source_index=source_index,
+        source_tool_role="author",
+    )
+    deps = selection_model_deps(start.request, plan)
+    runtime = ModelRuntime(
+        database_url=url,
+        store=store,
+        cassette_store=CassetteStore(tmp_path),
+        allow_outside_activity=True,
+    )
+    first_messages = compact_source_messages(
+        [ModelRequest(parts=[UserPromptPart(prompt)])],
+        index_sha256=source_index.sha256,
+        role="author",
+        stage=plan.stage,
+    )
+    first_checkpoint = checkpoint_from_messages(first_messages)
+    assert first_checkpoint is not None
+    first = await models._persist_source_checkpoint(  # noqa: SLF001
+        runtime, deps, first_messages
+    )
+    assert first is not None
+
+    page = (await browse_source()).model_copy(update={"indexSha256": source_index.sha256})
+    second_messages = compact_source_messages(
+        [
+            *first_messages,
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "browse_source",
+                        {"parent_id": "episode", "cursor": 0, "limit": 8},
+                        tool_call_id="root",
+                    )
+                ],
+                finish_reason="tool_call",
+            ),
+            ModelRequest(parts=[ToolReturnPart("browse_source", page, tool_call_id="root")]),
+        ],
+        index_sha256=source_index.sha256,
+        role="author",
+        stage=plan.stage,
+    )
+    second_checkpoint = checkpoint_from_messages(second_messages)
+    assert second_checkpoint is not None
+    second = await models._persist_source_checkpoint(  # noqa: SLF001
+        runtime, deps, second_messages
+    )
+    assert second is not None
+    assert first.id in second.dependency_ids
+    assert source_index.id in first.dependency_ids
+    assert source_index.id in second.dependency_ids
+    assert second.metadata["runId"] == str(start.request.runId)
+    assert second.metadata["requestSequence"] == 1
+    assert second.metadata["parentCheckpointSha256"] == checkpoint_sha256(first_checkpoint)
+    await db.close_pool()
 
 
 @pytest.mark.parametrize("outcome", ["success", "timeout", "length"])
@@ -89,6 +197,10 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         }
     )
     await runs.start_or_refetch_run(url, start=start, settings=configuration, route_snapshot=routes)
+    store = cast("S3Store", MemoryStore())
+    source_index = await _published_source_index_ref(
+        url, scope=SEEDED, source_id=source_id, store=store
+    )
     requests = 0
     lookups = 0
     early_rows: list[dict[str, Any]] = []
@@ -136,6 +248,11 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         assert body[output_key] == 8192
         assert other_key not in body
         assert body["model"] == selected.gateway_model
+        assert {item["function"]["name"] for item in body["tools"]} == {
+            "browse_source",
+            "search_source",
+            "read_source",
+        }
         return httpx2.Response(
             200,
             request=request,
@@ -172,7 +289,7 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
         models.configure_model_runtime(
             ModelRuntime(
                 database_url=url,
-                store=cast("S3Store", MemoryStore()),
+                store=store,
                 cassette_store=CassetteStore(tmp_path),
                 gateway=gateway,
                 model_factory=factory,
@@ -188,7 +305,9 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
             schema_version=TOPIC_SELECTION_V3_SCHEMAS["topic_author"],
             author=selected,
             verifier=selected,
-            input_artifacts=(),
+            input_artifacts=(source_index,),
+            source_index=source_index,
+            source_tool_role="author",
         )
         deps = selection_model_deps(start.request, plan)
         agent = models.topic_selection_author_v3
@@ -217,7 +336,19 @@ async def test_stream_handle_and_settlement_use_existing_ledger(  # noqa: C901, 
                         (start.request.runId,),
                     )
                 ).fetchall()
+                checkpoints = await (
+                    await conn.execute(
+                        """SELECT metadata FROM harness_artifact
+                            WHERE source_id=%s AND kind='checks'
+                              AND metadata->>'format'='topic-agent-checkpoint/2'
+                              AND metadata->>'stage'='proposal:selection:0'""",
+                        (source_id,),
+                    )
+                ).fetchall()
             assert attempts
+            assert len(checkpoints) == 1
+            assert checkpoints[0]["metadata"]["requestSequence"] == 0
+            assert checkpoints[0]["metadata"]["indexSha256"] == source_index.sha256
             attempt = attempts[-1]
             assert all(row["remote_handle"] == "generation-ledger" for row in attempts)
             expected_requests = 2 if interrupted else 1

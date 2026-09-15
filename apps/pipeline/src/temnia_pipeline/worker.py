@@ -26,7 +26,15 @@ from temnia_pipeline.harness.queues import control_task_queue
 from temnia_pipeline.harness.settings import HarnessSettings
 from temnia_pipeline.harness.topic_patch_review import TopicEditorialPatchWorkflow
 from temnia_pipeline.harness.topic_review import TopicReviewWorkflow
-from temnia_pipeline.harness.topic_selection_workflow import TopicSelectionWorkflow
+from temnia_pipeline.harness.topic_selection_workflow import (
+    TopicEditorialWorkWorkflow,
+    TopicSelectionWorkflow,
+    TopicSelectionWorkflowV4,
+    TopicSelectionWorkflowV5,
+    TopicSelectionWorkflowV6,
+    TopicSelectionWorkflowV7,
+)
+from temnia_pipeline.harness.topic_windows_workflow import TopicSelectionWorkflowV8
 from temnia_pipeline.ingest import Context, Ingest
 from temnia_pipeline.reaper import Reaper, ensure_reaper_schedule
 from temnia_pipeline.settings import TemporalSettings
@@ -163,7 +171,13 @@ async def run_worker(settings: TemporalSettings) -> None:
             ReaperWorkflow,
             TranscribeWorkflow,
             TopicReviewWorkflow,
+            TopicEditorialWorkWorkflow,
             TopicSelectionWorkflow,
+            TopicSelectionWorkflowV4,
+            TopicSelectionWorkflowV5,
+            TopicSelectionWorkflowV6,
+            TopicSelectionWorkflowV7,
+            TopicSelectionWorkflowV8,
             TopicEditorialPatchWorkflow,
         ],
         activities=[

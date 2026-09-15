@@ -131,7 +131,7 @@ test("an upload whose first part is already stored resumes from it", async ({
   // Half one: a browser started this upload and put exactly one part in the
   // store before it went away. Done through the real endpoints from the page,
   // the way Uppy's signRequest does it, with a File whose identity is fixed.
-  await page.evaluate(
+  const seeded = await page.evaluate(
     async ({
       projectId: project,
       name: fileName,
@@ -186,6 +186,7 @@ test("an upload whose first part is already stored resumes from it", async ({
       if (!put.ok) {
         throw new Error(`part 1 PUT failed with ${put.status}`);
       }
+      return session;
     },
     {
       lastModified: FIXED_LAST_MODIFIED,
@@ -209,6 +210,25 @@ test("an upload whose first part is already stored resumes from it", async ({
   });
   await page.reload();
   await pickGenerated(page, { name, size });
+  // Refresh the first browser's liveness immediately before the second browser
+  // starts. Uploading the seeded part can itself outlast the gate's short grace
+  // window on a busy or cold machine, which used to make this transient-state
+  // assertion race with successful immediate adoption.
+  await page.evaluate(async (session) => {
+    const response = await fetch(`/api/uploads/${session.uploadId}/sign`, {
+      body: JSON.stringify({
+        key: session.key,
+        method: "PUT",
+        partNumber: 2,
+        uploadId: session.multipartUploadId,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(`liveness refresh failed with ${response.status}`);
+    }
+  }, seeded);
   await clickUpload(page);
   await expect(page.getByTestId("upload-waiting")).toBeVisible({
     timeout: 10_000,

@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "TopicInventorySection": {
+      "$id": "#/$defs/TopicInventorySection",
+      "type": "object",
+      "properties": {
+        "nextSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ownershipSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "previousSectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "nextSectionId",
+        "ordinal",
+        "ownershipSpan",
+        "previousSectionId",
+        "sectionId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicInventorySection"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicInventorySection.json",
+  "$ref": "#/$defs/TopicInventorySection",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

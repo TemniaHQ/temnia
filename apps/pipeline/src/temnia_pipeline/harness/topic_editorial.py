@@ -52,7 +52,12 @@ def _refuse(message: str) -> Never:
 
 
 def editorial_routes(
-    snapshot: RouteSnapshot, *, author_index: int = 0, verifier_index: int = 0
+    snapshot: RouteSnapshot,
+    *,
+    author_index: int = 0,
+    verifier_index: int = 0,
+    author_families: tuple[str, ...] = (),
+    reserve_reviewer: bool = False,
 ) -> tuple[RouteEntry, RouteEntry]:
     """Choose the author by pool order, then a reviewer from another family by pool order.
 
@@ -60,13 +65,22 @@ def editorial_routes(
     transiently moves to the next qualified route in its pool. The reviewer's pool is
     filtered by the author's family first, so independence holds at every position.
     """
-    author = select_route(snapshot, "propose", candidate_index=author_index)
+    reserved: frozenset[str] = frozenset()
+    if reserve_reviewer:
+        first_author = select_route(snapshot, "propose")
+        first_reviewer = select_route(
+            snapshot, "verify", excluded_families=frozenset({first_author.family})
+        )
+        reserved = frozenset({first_reviewer.family})
+    author = select_route(
+        snapshot, "propose", candidate_index=author_index, excluded_families=reserved
+    )
     try:
         verifier = select_route(
             snapshot,
             "verify",
             candidate_index=verifier_index,
-            excluded_families=frozenset({author.family}),
+            excluded_families=frozenset({author.family, *author_families}),
         )
     except NoEligibleRoute as error:
         message = "standalone planning requires a reserved independent reviewer"

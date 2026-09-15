@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -94,6 +94,9 @@ class RunSnapshot(BaseModel):
     current_revision: Annotated[int, Field(ge=0)]
     accepted_revision: Annotated[int | None, Field(gt=0)]
     evidence_artifact_id: UUID | None
+    # Frozen seat preferences (route IDs by seat) and the published work projection.
+    route_preferences: dict[str, str] = {}
+    projection: dict[str, Any] | None = None
     error_message: str | None
     source: PinnedSource
     transcript: PinnedTranscript
@@ -160,6 +163,7 @@ class ClaimRepairRequest(BaseModel):
     run: RunRef
     workflow: WorkflowIdentity
     expected_repair_count: Annotated[int, Field(ge=0)]
+    repair_base_count: int = Field(default=0, ge=0)
 
 
 class ReconcileRunResult(BaseModel):
@@ -213,6 +217,7 @@ class AcceptInitialRevisionRequest(BaseModel):
     run: RunRef
     request_key: UUID
     edit_artifact_id: UUID
+    base_revision: int = Field(default=0, ge=0)
 
 
 class RenderRevisionRequest(BaseModel):

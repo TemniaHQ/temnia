@@ -55,7 +55,13 @@ from temnia_pipeline.settings import TemporalSettings
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 Nonempty = Annotated[str, Field(min_length=1)]
-WORKFLOW_TYPES = {"standalone-topics/3": "TopicSelectionWorkflow"}
+WORKFLOW_TYPES = {
+    "standalone-topics/3": "TopicSelectionWorkflow",
+    "standalone-topics/4": "TopicSelectionWorkflowV4",
+    "standalone-topics/5": "TopicSelectionWorkflowV5",
+    "standalone-topics/6": "TopicSelectionWorkflowV6",
+    "standalone-topics/7": "TopicSelectionWorkflowV7",
+}
 WORKFLOW_TYPE = WORKFLOW_TYPES["standalone-topics/3"]
 MEMO_KEY = "temniaExperimentSha256"
 INTENT_MEMO_KEY = "temniaIntentSha256"
@@ -115,7 +121,13 @@ class ExperimentSpec(EvaluationModel):
     temporal_address: Nonempty
     temporal_namespace: Nonempty
     topic_shot_detector: TopicShotDetector = "scdet"
-    program_version: Literal["standalone-topics/3"] = "standalone-topics/3"
+    program_version: Literal[
+        "standalone-topics/3",
+        "standalone-topics/4",
+        "standalone-topics/5",
+        "standalone-topics/6",
+        "standalone-topics/7",
+    ] = "standalone-topics/3"
     sources: Annotated[tuple[SourceCase, ...], Field(min_length=1)]
     arms: Annotated[tuple[ArmSpec, ...], Field(min_length=1)]
 
@@ -279,7 +291,9 @@ def worker_environment(spec: ExperimentSpec, arm: FrozenArm) -> dict[str, str]:
         "HARNESS_ROUTE_SNAPSHOT_ID": config.routeSnapshotId,
         "HARNESS_ROUTE_SNAPSHOT_PATH": arm.snapshot_file.path,
         "HARNESS_MAX_RUN_BUDGET_MICROS": str(spec.worker_max_run_budget_micros),
-        "HARNESS_MAX_DISPATCHES": str(config.maxDispatches),
+        "HARNESS_MAX_DISPATCHES": str(config.maxDispatches)
+        if config.maxDispatches is not None
+        else "",
         "HARNESS_MAX_REPAIRS": str(config.maxRepairs),
         "HARNESS_MAX_OUTPUT_TOKENS": str(config.maxOutputTokens),
         "HARNESS_EVIDENCE_WINDOW_SENTENCES": str(config.evidenceWindowSentences),

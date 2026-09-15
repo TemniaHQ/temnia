@@ -8,7 +8,7 @@
 from __future__ import annotations
 from typing import Annotated, Any, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, constr
-from enum import StrEnum
+from enum import Enum, StrEnum
 from uuid import UUID
 from typing_extensions import TypeAliasType
 
@@ -137,11 +137,19 @@ class ChapterRunConfig(BaseModel):
     )
     backend: Backend
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
-    maxDispatches: Annotated[int, Field(ge=1, le=128)]
+    maxDispatches: Annotated[int | None, Field(ge=1, le=9007199254740991)]
     maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
     maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
     maxRepairs: Annotated[int, Field(ge=0, le=3)]
     routeSnapshotId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class ChapterRunRoutePreferences(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    author: Annotated[str | None, Field(max_length=256, min_length=1)] = None
+    verifier: Annotated[str | None, Field(max_length=256, min_length=1)] = None
 
 
 class ReviewState(StrEnum):
@@ -225,8 +233,11 @@ class HarnessConfigLimits(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    defaultRunBudgetMicros: Annotated[int | None, Field(gt=0, le=9007199254740991)] = (
+        None
+    )
     evidenceWindowSentences: Annotated[int, Field(ge=1, le=512)]
-    maxDispatches: Annotated[int, Field(ge=1, le=128)]
+    maxDispatches: Annotated[int | None, Field(ge=1, le=9007199254740991)]
     maxInFlightPerRoute: Annotated[int, Field(ge=1, le=8)]
     maxOutputTokens: Annotated[int, Field(ge=256, le=65536)]
     maxRenderConcurrency: Annotated[int, Field(ge=1, le=4)]
@@ -433,6 +444,29 @@ class Status2(StrEnum):
     rejected = "rejected"
 
 
+class GeneratorFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class WorkItemId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class OpportunityId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicAuthorWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    batchOrdinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=12, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class Edge(StrEnum):
     opening = "opening"
     ending = "ending"
@@ -466,6 +500,32 @@ class Classification1(StrEnum):
     unresolved = "unresolved"
 
 
+class Relation(StrEnum):
+    same_extent = "same_extent"
+    inside_candidate = "inside_candidate"
+    covers_candidate = "covers_candidate"
+    opening_overlap = "opening_overlap"
+    closing_overlap = "closing_overlap"
+
+
+class TopicCandidateRegionHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
+    preview: str
+    relation: Relation
+    selectedFirstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    selectedLastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
 class Status3(StrEnum):
     pass_ = "pass"
     fail = "fail"
@@ -495,11 +555,62 @@ class TopicEditorialRubric(BaseModel):
     viewerGoals: list[str]
 
 
+class BoundaryKind(Enum):
+    edge = "edge"
+    sentence = "sentence"
+    turn = "turn"
+    pause = "pause"
+    shot = "shot"
+
+
+class Kind4(StrEnum):
+    sentence = "sentence"
+    boundary = "boundary"
+    pause = "pause"
+    shot = "shot"
+    speech_interval = "speech_interval"
+
+
+class RelatedId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicMediaEvidenceEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    alignedWordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    boundaryKind: BoundaryKind | None
+    clearanceMs: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    endMs: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    interpolatedWordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    kind: Kind4
+    minimumConfidence: Annotated[float | None, Field(ge=0.0, le=1.0)]
+    reasons: list[str]
+    relatedIds: list[RelatedId]
+    requiresReview: bool | None
+    score: float | None
+    sentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    timeMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    wordCount: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+
+
+class SpeechCoverageStatus(StrEnum):
+    unknown = "unknown"
+    clear = "clear"
+    needs_review = "needs_review"
+
+
 class Disposition(StrEnum):
     proposed = "proposed"
     not_useful_for_audience = "not_useful_for_audience"
     not_contiguously_extractable = "not_contiguously_extractable"
     needs_evidence = "needs_evidence"
+
+
+class SectionId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
 
 
 class Status4(StrEnum):
@@ -530,6 +641,34 @@ class TopicRenders(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class AuthorFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class BrowseParentId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class CandidateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class FindingId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicRepairWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    browseParentIds: Annotated[list[BrowseParentId], Field(max_length=8, min_length=1)]
+    candidateIds: Annotated[list[CandidateId], Field(max_length=8)]
+    findingIds: Annotated[list[FindingId], Field(max_length=12, min_length=1)]
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=24)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
 class ExecutionStatus(StrEnum):
     complete = "complete"
     needs_review = "needs_review"
@@ -542,7 +681,7 @@ class Disposition1(StrEnum):
     unresolved = "unresolved"
 
 
-class Kind4(StrEnum):
+class Kind5(StrEnum):
     missing_setup = "missing_setup"
     missing_qualification = "missing_qualification"
     unfinished_discussion = "unfinished_discussion"
@@ -561,7 +700,7 @@ class Severity(StrEnum):
     unknown = "unknown"
 
 
-class Kind5(StrEnum):
+class Kind6(StrEnum):
     extend_start = "extend_start"
     extend_end = "extend_end"
     replace_extent = "replace_extent"
@@ -585,6 +724,147 @@ class TopicSentenceSpan(BaseModel):
     )
     firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
     lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class ChildId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class Kind7(StrEnum):
+    episode = "episode"
+    section = "section"
+    region = "region"
+
+
+class TopicSourceIndexNode(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    childIds: list[ChildId]
+    embedding: list[float]
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    kind: Kind7
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    parentId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    preview: str
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class TopicSourceIndexSentence(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    speakers: list[str]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    text: str
+
+
+class Kind8(StrEnum):
+    section = "section"
+    region = "region"
+
+
+class TopicSourceNodeHit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    childCount: Annotated[int, Field(ge=0, le=9007199254740991)]
+    endMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+    firstSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    keywords: list[str]
+    kind: Kind8
+    lastSentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
+    preview: str
+    score: float | None
+    sentenceCount: Annotated[int, Field(gt=0, le=9007199254740991)]
+    startMs: Annotated[int, Field(ge=0, le=9007199254740991)]
+
+
+class TopicSourceReviewHandoffTask(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[CandidateId], Field(max_length=2, min_length=2)]
+    leftContextSpan: TopicSentenceSpan
+    rightContextSpan: TopicSentenceSpan
+
+
+class ReviewerFamily(RootModel[str]):
+    root: Annotated[str, Field(min_length=1)]
+
+
+class TopicSourceReviewOverlapTask(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateIds: Annotated[list[CandidateId], Field(max_length=2, min_length=2)]
+    overlapSpan: TopicSentenceSpan
+
+
+class ContextOpportunityId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class InspectionCandidateId(RootModel[str]):
+    root: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class Kind9(StrEnum):
+    local = "local"
+    omission = "omission"
+    overlap = "overlap"
+    handoff = "handoff"
+
+
+class TopicSourceReviewWorkItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    batchOrdinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    candidateIds: Annotated[list[CandidateId], Field(max_length=4)]
+    contextOpportunityIds: list[ContextOpportunityId]
+    discoverMissingOpportunities: bool
+    handoffs: Annotated[list[TopicSourceReviewHandoffTask], Field(max_length=2)]
+    inspectionCandidateIds: list[InspectionCandidateId]
+    kind: Kind9
+    opportunityIds: Annotated[list[OpportunityId], Field(max_length=12)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    overlaps: Annotated[list[TopicSourceReviewOverlapTask], Field(max_length=2)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+    sourceSpan: TopicSentenceSpan | None
+    workItemId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicSourceSearchPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    query: Annotated[str, Field(min_length=1)]
+    regions: list[TopicSourceNodeHit]
+
+
+class TopicSourceSentenceFragment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    endCharacter: Annotated[int, Field(gt=0, le=9007199254740991)]
+    id: Annotated[str, Field(max_length=256, min_length=1)]
+    sentenceId: Annotated[str, Field(max_length=256, min_length=1)]
+    startCharacter: Annotated[int, Field(ge=0, le=9007199254740991)]
+    text: str
+    totalCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
 
 
 class TranscribeInput(BaseModel):
@@ -912,6 +1192,7 @@ class ChapterRunInput(BaseModel):
     budgetMicros: Annotated[int, Field(ge=1, le=9007199254740991)]
     config: ChapterRunConfig
     requestKey: UUID
+    routes: ChapterRunRoutePreferences | None = None
     runId: UUID
     scope: Scope
     sourceId: UUID
@@ -1013,6 +1294,17 @@ class SpeechCoverage(BaseModel):
     warnings: list[str]
 
 
+class TopicAuthorPackagingPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-author-packaging-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxOpportunitiesPerWorkItem: Literal[12]
+    workItems: list[TopicAuthorWorkItem]
+
+
 class TopicCandidate(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1040,6 +1332,18 @@ class TopicCandidateHandoffJudgment(BaseModel):
     recommendedLeftLastSentenceId: str | None
     recommendedRightFirstSentenceId: str | None
     rightContextSpan: TopicSentenceSpan
+
+
+class TopicCandidateInspectionPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    candidateId: Annotated[str, Field(max_length=256, min_length=1)]
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    regions: list[TopicCandidateRegionHit]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
 
 
 class TopicCandidateOverlapJudgment(BaseModel):
@@ -1105,6 +1409,33 @@ class TopicExport(BaseModel):
     videos: list[TopicRenderedVideo]
 
 
+class TopicInventorySection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    nextSectionId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    ordinal: Annotated[int, Field(ge=0, le=9007199254740991)]
+    ownershipSpan: TopicSentenceSpan
+    previousSectionId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    sectionId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicMediaEvidencePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    detector: str | None
+    detectorRevision: str | None
+    events: list[TopicMediaEvidenceEvent]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    sourceId: UUID
+    span: TopicSentenceSpan
+    speechCoverageStatus: SpeechCoverageStatus
+    warnings: list[str]
+
+
 class TopicOpportunity(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1119,6 +1450,15 @@ class TopicOpportunity(BaseModel):
     requiredContextSpans: list[TopicSentenceSpan]
     valueEvidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
     viewerPurpose: Annotated[str, Field(min_length=1)]
+
+
+class TopicOpportunityInventoryPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-opportunity-inventory-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    sections: Annotated[list[TopicInventorySection], Field(min_length=1)]
 
 
 class TopicOpportunityJudgment(BaseModel):
@@ -1139,6 +1479,20 @@ class TopicProposal(BaseModel):
     candidates: list[TopicCandidate]
     summary: Annotated[str, Field(min_length=1)]
     version: Literal[1]
+
+
+class TopicRepairPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-repair-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxCandidatesPerWorkItem: Literal[8]
+    maxFindingsPerWorkItem: Literal[12]
+    maxOpportunitiesPerWorkItem: Literal[24]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItems: Annotated[list[TopicRepairWorkItem], Field(min_length=1)]
 
 
 class TopicSelectionDecision(BaseModel):
@@ -1166,7 +1520,7 @@ class TopicSelectionFinding(BaseModel):
     affectedCandidateIds: list[str]
     evidenceSpans: Annotated[list[TopicSentenceSpan], Field(min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind4
+    kind: Kind5
     opportunityIds: list[str]
     reason: Annotated[str, Field(min_length=1)]
     severity: Severity
@@ -1179,7 +1533,7 @@ class TopicSelectionPatchOperationV3(BaseModel):
     affectedCandidateIds: list[str]
     findingIds: Annotated[list[str], Field(min_length=1)]
     id: Annotated[str, Field(max_length=256, min_length=1)]
-    kind: Kind5
+    kind: Kind6
     opportunities: list[TopicOpportunity]
     reason: Annotated[str, Field(min_length=1)]
     replacementCandidates: list[TopicCandidate]
@@ -1210,6 +1564,37 @@ class TopicSelectionRecord(BaseModel):
     runId: UUID
 
 
+class TopicSourceBrowsePage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCursor: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    nodes: list[TopicSourceNodeHit]
+    parentId: Annotated[str, Field(max_length=256, min_length=1)]
+
+
+class TopicSourceIndex(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    embeddingDimensions: Annotated[int, Field(gt=0, le=9007199254740991)]
+    embeddingModel: Annotated[str, Field(max_length=256, min_length=1)]
+    embeddingRevision: Annotated[str, Field(max_length=256, min_length=1)]
+    evidenceSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    format: Literal["topic-source-index/2"]
+    nodes: Annotated[list[TopicSourceIndexNode], Field(min_length=3)]
+    regionMaxCharacters: Annotated[int, Field(gt=0, le=9007199254740991)]
+    regionMaxSentences: Annotated[int, Field(gt=0, le=9007199254740991)]
+    rootNodeId: Annotated[str, Field(max_length=256, min_length=1)]
+    sectionMaxRegions: Annotated[int, Field(gt=0, le=9007199254740991)]
+    sentences: Annotated[list[TopicSourceIndexSentence], Field(min_length=1)]
+    sourceId: UUID
+    transcriptId: UUID
+    transcriptRevision: Annotated[int, Field(gt=0, le=9007199254740991)]
+
+
 class TopicSourceJudgment(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1220,12 +1605,37 @@ class TopicSourceJudgment(BaseModel):
     faithfulMeaning: TopicCriterion
 
 
+class TopicSourceReadPage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: bool
+    fragments: list[TopicSourceSentenceFragment]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    nextCharacterOffset: Annotated[int | None, Field(ge=0, le=9007199254740991)]
+    nextSentenceId: Annotated[str | None, Field(max_length=256, min_length=1)]
+    sentences: list[TopicSourceIndexSentence]
+
+
 class TopicSourceReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     candidates: list[TopicSourceJudgment]
     summary: Annotated[str, Field(min_length=1)]
+
+
+class TopicSourceReviewPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-source-review-plan/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    maxCandidatesPerLocalWorkItem: Literal[4]
+    maxOpportunitiesPerLocalWorkItem: Literal[12]
+    maxPairsPerRelationshipWorkItem: Literal[2]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItems: Annotated[list[TopicSourceReviewWorkItem], Field(min_length=1)]
 
 
 class TopicValueReview(BaseModel):
@@ -1325,6 +1735,34 @@ class HarnessEvidence(BaseModel):
     words: list[HarnessEvidenceWord]
 
 
+class TopicAuthorPackagingManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-author-packaging-manifest/1"]
+    generatorFamilies: list[GeneratorFamily]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    selection: TopicSelectionDraft
+    shardArtifacts: list[HarnessArtifactRef]
+    workItemIds: list[WorkItemId]
+
+
+class TopicAuthorPackagingShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    draft: TopicSelectionDraft
+    format: Literal["topic-author-packaging-shard/1"]
+    generatorFamily: Annotated[str, Field(min_length=1)]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventorySha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicAuthorWorkItem
+
+
 class TopicColdReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1355,6 +1793,30 @@ class TopicEditorialPatchInput(BaseModel):
     version: Literal[1]
 
 
+class TopicOpportunityInventoryManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-opportunity-inventory-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventory: TopicSelectionDraft
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    sectionIds: Annotated[list[SectionId], Field(min_length=1)]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+
+
+class TopicOpportunityInventoryShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-opportunity-inventory-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inventory: TopicSelectionDraft
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    section: TopicInventorySection
+
+
 class TopicPortfolioReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1381,6 +1843,40 @@ class TopicPortfolioReviewV4(BaseModel):
     overlaps: list[TopicCandidateOverlapJudgment]
 
 
+class TopicRepairManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    aggregatePatch: TopicSelectionPatchV3
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    authorFamilies: Annotated[list[AuthorFamily], Field(min_length=1)]
+    complete: Literal[True]
+    format: Literal["topic-repair-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    workItemIds: Annotated[list[WorkItemId], Field(min_length=1)]
+
+
+class TopicRepairShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    assessmentSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    authorFamily: Annotated[str, Field(min_length=1)]
+    format: Literal["topic-repair-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifact: HarnessArtifactRef
+    patch: TopicSelectionPatchV3
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifact: HarnessArtifactRef
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicRepairWorkItem
+
+
 class TopicSelectionColdReview(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1391,6 +1887,38 @@ class TopicSelectionColdReview(BaseModel):
     intelligibleBeginning: TopicCriterion
     titleFaithful: TopicCriterion
     value: TopicValueReview
+
+
+class TopicSourceReviewManifest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    complete: Literal[True]
+    format: Literal["topic-source-review-manifest/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifacts: list[HarnessArtifactRef]
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    review: TopicPortfolioReviewV4
+    reviewerFamilies: Annotated[list[ReviewerFamily], Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    shardArtifacts: Annotated[list[HarnessArtifactRef], Field(min_length=1)]
+    workItemIds: Annotated[list[WorkItemId], Field(min_length=1)]
+
+
+class TopicSourceReviewShard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["topic-source-review-shard/1"]
+    indexSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    inspectionArtifact: HarnessArtifactRef | None
+    planSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    responseArtifact: HarnessArtifactRef
+    review: TopicPortfolioReviewV4
+    reviewerFamily: Annotated[str, Field(min_length=1)]
+    selectionSha256: Annotated[str, Field(pattern="^[a-fA-F0-9]{64}$")]
+    workItem: TopicSourceReviewWorkItem
 
 
 class TranscriptCorrectionMetadata(BaseModel):

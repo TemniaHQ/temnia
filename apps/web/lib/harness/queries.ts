@@ -42,7 +42,17 @@ export interface ChapterView {
     errorMessage: string | null;
     evidenceTranscriptRevision: number | null;
     id: string;
+    /** The pre-spend work projection the worker attached, once planning ran. */
+    projection: {
+      projectedCalls: number;
+      projectedCostMicros: number;
+      sentence: string;
+      authorRouteId: string | null;
+      verifierRouteId: string | null;
+    } | null;
     reservedMicros: number;
+    /** Seat preferences the run froze at start, if any. */
+    routes: { author: string | null; verifier: string | null };
     spentMicros: number;
     stage: string | null;
     status: string;
@@ -50,6 +60,49 @@ export interface ChapterView {
     currentTranscriptRevision: number | null;
   } | null;
   runs: Array<{ createdAt: string; id: string; status: string }>;
+}
+
+/** The projection block the worker writes onto the run row before its first paid call. */
+export function runProjection(routeSnapshot: Record<string, unknown>): {
+  projectedCalls: number;
+  projectedCostMicros: number;
+  sentence: string;
+  authorRouteId: string | null;
+  verifierRouteId: string | null;
+} | null {
+  const raw = routeSnapshot.projection;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  const calls = Number(value.projectedCalls);
+  const cost = Number(value.projectedCostMicros);
+  if (!(Number.isFinite(calls) && Number.isFinite(cost))) {
+    return null;
+  }
+  return {
+    authorRouteId:
+      typeof value.authorRouteId === "string" ? value.authorRouteId : null,
+    projectedCalls: calls,
+    projectedCostMicros: cost,
+    sentence: typeof value.sentence === "string" ? value.sentence : "",
+    verifierRouteId:
+      typeof value.verifierRouteId === "string" ? value.verifierRouteId : null,
+  };
+}
+
+/** Seat preferences frozen on the run row; absent means the snapshot's own order. */
+export function runRoutes(routeSnapshot: Record<string, unknown>): {
+  author: string | null;
+  verifier: string | null;
+} {
+  const raw = routeSnapshot.routePreferences;
+  const value =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    author: typeof value.author === "string" ? value.author : null,
+    verifier: typeof value.verifier === "string" ? value.verifier : null,
+  };
 }
 
 export function artifactIdsForRevisionPointers(
@@ -405,7 +458,9 @@ function getHarnessView(
         evidenceTranscriptRevision:
           evidenceArtifact?.transcriptRevision ?? null,
         id: selected.id,
+        projection: runProjection(selected.routeSnapshot),
         reservedMicros: selected.reservedMicros,
+        routes: runRoutes(selected.routeSnapshot),
         spentMicros: selected.spentMicros,
         stage: selected.stage,
         status: selected.status,

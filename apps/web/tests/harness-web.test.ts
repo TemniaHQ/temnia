@@ -39,7 +39,7 @@ describe("topic server configuration", () => {
       available: true,
       settings: {
         config: {
-          maxDispatches: 32,
+          maxDispatches: null,
           maxRepairs: 3,
           routeSnapshotId: "snapshot-v1",
         },
@@ -86,15 +86,24 @@ describe("topic server configuration", () => {
       settings: {
         config: {
           backend: "gateway",
-          maxDispatches: 64,
+          maxDispatches: null,
           maxOutputTokens: 65_536,
           routeSnapshotId:
             "0df7f78dc6dccf978d976ee7e4d94d672d304b65f8d75db9bee6906b0008886c",
         },
-        maxRunBudgetMicros: 20_000_000,
+        defaultRunBudgetMicros: 20_000_000,
+        maxRunBudgetMicros: 100_000_000,
         synthetic: false,
       },
     });
+    if (result.available) {
+      expect(result.settings.routes.propose.map((route) => route.id)).toEqual([
+        "openrouter-kimi-k3-fireworks-v2-high",
+        "openrouter-deepseek-v4-pro-fireworks-v2-high",
+        "openrouter-gemini-3.8-flash-vertex-global-v2-medium",
+      ]);
+      expect(result.settings.routes.verify[0]?.family).toBe("google");
+    }
   });
 
   it("refuses a deployment file that is disabled, recorded without approval, or invalid", () => {

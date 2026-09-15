@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "TopicSourceIndexNode": {
+      "$id": "#/$defs/TopicSourceIndexNode",
+      "type": "object",
+      "properties": {
+        "childIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "embedding": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "episode",
+            "section",
+            "region"
+          ]
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "parentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "preview": {
+          "type": "string"
+        },
+        "sentenceCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "childIds",
+        "embedding",
+        "endMs",
+        "firstSentenceId",
+        "id",
+        "keywords",
+        "kind",
+        "lastSentenceId",
+        "ordinal",
+        "parentId",
+        "preview",
+        "sentenceCount",
+        "startMs"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndexNode"
+    }
+  },
+  "$id": "TopicSourceIndexNode.json",
+  "$ref": "#/$defs/TopicSourceIndexNode",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

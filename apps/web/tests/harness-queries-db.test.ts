@@ -3,6 +3,7 @@ import { SEEDED_SCOPE, sourcePrefix } from "@temnia/contracts";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getTopicView } from "@/lib/harness/queries";
+import { TOPIC_POLICY } from "@/lib/harness/topic-defaults";
 
 const ownerUrl = process.env.TEST_DATABASE_URL;
 if (process.env.LOCAL_CI === "1" && !ownerUrl) {
@@ -115,8 +116,15 @@ suite("chapter view Postgres dependency ownership", () => {
           current_revision)
        VALUES ($1, $2, $3, 'chapters', 'needs_review', 'fixture', $4,
                1000000, '{"backend":"recorded"}'::jsonb,
-               '{"editorialPolicy":"standalone-topics/3"}'::jsonb, $5, 1)`,
-      [runId, SEEDED_SCOPE.organizationId, sourceId, randomUUID(), evidenceId]
+               jsonb_build_object('editorialPolicy', $6::text), $5, 1)`,
+      [
+        runId,
+        SEEDED_SCOPE.organizationId,
+        sourceId,
+        randomUUID(),
+        evidenceId,
+        TOPIC_POLICY,
+      ]
     );
     await owner.query(
       `INSERT INTO chapter_revision
@@ -231,7 +239,7 @@ suite("chapter view Postgres dependency ownership", () => {
     await Promise.all(
       (
         [
-          [topicRunId, "standalone-topics/3"],
+          [topicRunId, TOPIC_POLICY],
           [foreignRunId, "standalone-topics/1"],
         ] as const
       ).map(([id, policy]) =>

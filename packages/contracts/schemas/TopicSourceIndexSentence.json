@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "TopicSourceIndexSentence": {
+      "$id": "#/$defs/TopicSourceIndexSentence",
+      "type": "object",
+      "properties": {
+        "endMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "speakers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endMs",
+        "id",
+        "speakers",
+        "startMs",
+        "text"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceIndexSentence"
+    }
+  },
+  "$id": "TopicSourceIndexSentence.json",
+  "$ref": "#/$defs/TopicSourceIndexSentence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

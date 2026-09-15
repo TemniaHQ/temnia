@@ -10,24 +10,166 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import httpx2
+import numpy as np
 
+from temnia_pipeline import db
+from temnia_pipeline.contracts import (
+    HarnessArtifactKind,
+    HarnessArtifactRef,
+    Scope,
+)
+from temnia_pipeline.harness import artifacts
 from temnia_pipeline.harness.qualification import (
     CandidateRoute,
     QualificationLimits,
     _provisional_route,
     run_qualification,
 )
+from temnia_pipeline.harness.qualification_fixture import synthetic_qualification_evidence
 from temnia_pipeline.harness.qualification_topic_selection import (
     topic_selection_qualification_case,
     topic_selection_qualification_inventory,
+    topic_selection_v4_qualification_inventory,
 )
+from temnia_pipeline.harness.source_index import build_topic_source_index
 from temnia_pipeline.harness.topic_selection import candidate_handoff_rows, content_hash
 from test_harness_settings import snapshot
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from obstore.store import S3Store
+
+    from temnia_pipeline.harness.artifacts import HarnessArtifact
     from temnia_pipeline.harness.routes import RouteSnapshot
 
 API_KEY = "qualification-test-key-marker"
+
+
+class _FixtureEncoder:
+    def encode(
+        self, sentences: list[str], *, normalize_embeddings: bool = True, batch_size: int = 32
+    ) -> object:
+        _ = normalize_embeddings, batch_size
+        return np.ones((len(sentences), 1), dtype=np.float64)
+
+
+async def _published_source_index_ref(
+    database_url: str, *, scope: Scope, source_id: UUID, store: S3Store
+) -> HarnessArtifactRef:
+    """Publish one valid scoped synthetic index for model-transport integration tests."""
+    evidence = synthetic_qualification_evidence().model_copy(update={"sourceId": source_id})
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256="e" * 64,
+        encoder=_FixtureEncoder(),
+        embedding_revision="1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    )
+    accepted = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="checks", fingerprint="f" * 64),
+        content=index.model_dump(mode="json"),
+        metadata={"format": index.format},
+    )
+    return HarnessArtifactRef(
+        id=accepted.id,
+        kind=HarnessArtifactKind.checks,
+        fingerprint=accepted.fingerprint,
+        sha256=accepted.sha256,
+        sizeBytes=accepted.size_bytes,
+        storageKey=accepted.storage_key,
+    )
+
+
+async def _published_reviewer_refs(
+    database_url: str,
+    *,
+    scope: Scope,
+    source_id: UUID,
+    run_id: UUID,
+    store: S3Store,
+) -> tuple[HarnessArtifactRef, HarnessArtifactRef, HarnessArtifactRef]:
+    """Publish one coherent evidence/index/selection authority set for source review."""
+
+    def reference(accepted: HarnessArtifact, kind: HarnessArtifactKind) -> HarnessArtifactRef:
+        return HarnessArtifactRef(
+            id=accepted.id,
+            kind=kind,
+            fingerprint=accepted.fingerprint,
+            sha256=accepted.sha256,
+            sizeBytes=accepted.size_bytes,
+            storageKey=accepted.storage_key,
+        )
+
+    async with db.scoped(database_url, scope) as conn:
+        transcript = await (
+            await conn.execute(
+                "SELECT id, current_revision FROM transcript WHERE source_id = %s",
+                (source_id,),
+            )
+        ).fetchone()
+    assert transcript is not None
+    evidence, selection, _ = topic_selection_qualification_case(combined_patch=True)
+    evidence = evidence.model_copy(
+        update={
+            "sourceId": source_id,
+            "transcriptId": transcript["id"],
+            "transcriptRevision": transcript["current_revision"],
+        }
+    )
+    accepted_evidence = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(
+            kind="evidence",
+            fingerprint="d" * 64,
+            transcript_id=evidence.transcriptId,
+            transcript_revision=evidence.transcriptRevision,
+        ),
+        content=evidence.model_dump(mode="json"),
+        metadata={"format": "harness-evidence/1", "runId": str(run_id)},
+    )
+    evidence_ref = reference(accepted_evidence, HarnessArtifactKind.evidence)
+    index = build_topic_source_index(
+        evidence,
+        evidence_sha256=evidence_ref.sha256,
+        encoder=_FixtureEncoder(),
+        embedding_revision="1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    )
+    accepted_index = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="checks", fingerprint="c" * 64),
+        content=index.model_dump(mode="json"),
+        metadata={"format": index.format, "runId": str(run_id)},
+        dependency_ids=(evidence_ref.id,),
+    )
+    index_ref = reference(accepted_index, HarnessArtifactKind.checks)
+    selection = selection.model_copy(
+        update={"runId": run_id, "evidenceSha256": evidence_ref.sha256}
+    )
+    accepted_selection = await artifacts.publish_json(
+        database_url,
+        scope=scope,
+        source_id=source_id,
+        store=store,
+        identity=artifacts.ArtifactIdentity(kind="proposal", fingerprint="b" * 64),
+        content=selection.model_dump(mode="json"),
+        metadata={"format": selection.format, "runId": str(run_id)},
+        dependency_ids=(evidence_ref.id, index_ref.id),
+    )
+    return (
+        evidence_ref,
+        index_ref,
+        reference(accepted_selection, HarnessArtifactKind.proposal),
+    )
 
 
 def _candidate_payload(*, price: int = 1, count: int = 1) -> dict[str, Any]:
@@ -267,6 +409,54 @@ def _outputs_v3() -> list[dict[str, Any]]:
         for row in candidate_handoff_rows(evidence, record.draft)
     ]
     return [topic_selection_qualification_inventory().model_dump(mode="json"), *outputs]
+
+
+def _outputs_v4() -> list[dict[str, Any]]:
+    """Match the bounded shard ownership ID while retaining later independent fixtures."""
+    outputs = _outputs_v3()
+    author = outputs[1]
+    for item in author["opportunities"]:
+        item["id"] = f"section-0001:{item['id']}"
+    return [topic_selection_v4_qualification_inventory().model_dump(mode="json"), *outputs[1:]]
+
+
+def _outputs_v5() -> list[dict[str, Any]]:
+    """Namespace every bounded author candidate to its exact qualification work item."""
+    outputs = _outputs_v4()
+    author = outputs[1]
+    replacements = {
+        candidate["id"]: f"section-0001:author-0001:candidate:{ordinal + 1:04d}"
+        for ordinal, candidate in enumerate(author["proposal"]["candidates"])
+    }
+    for candidate in author["proposal"]["candidates"]:
+        candidate["id"] = replacements[candidate["id"]]
+    for opportunity in author["opportunities"]:
+        opportunity["candidateIds"] = [
+            replacements[identifier] for identifier in opportunity["candidateIds"]
+        ]
+    return outputs
+
+
+def _outputs_v6() -> list[dict[str, Any]]:
+    """Restrict source output to the exact local candidate work item used by v6."""
+    outputs = _outputs_v5()
+    source = outputs[3]
+    source["candidates"] = []
+    source["selection"] = source["selection"][:1]
+    source["opportunities"] = []
+    source["missingOpportunities"] = []
+    source["findings"] = []
+    source["overlaps"] = []
+    source["handoffs"] = []
+    source["summary"] = "The exact bounded candidate assignment was reviewed."
+    return outputs
+
+
+def _outputs_v7() -> list[dict[str, Any]]:
+    """Use the connected-component operation namespace required by v7 repair."""
+    outputs = _outputs_v6()
+    outputs[4]["operations"][0]["id"] = "repair-component-0001:operation:garden"
+    return outputs
 
 
 def _three_candidate_lookup_transport(

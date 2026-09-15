@@ -2,6 +2,197 @@
 
 ## Decisions
 
+**2026-09-15 — `standalone-topics/8` is the one product program: inline windows, one activity
+per decision, no self-inflicted stops.** Rajesh, after Fable's review of the indexed batch: no
+grilling, implement end to end, testable on staging after merge, allowance and models chosen in
+the UI, deploy on merge, no version qualification gate. The program (`TopicSelectionWorkflowV8`,
+`topic_windows.py`, `topic_decisions.py`, `topic_windows_workflow.py`) gives every coverage
+decision its exact source window inline and answers in one call (inventory per section, cold
+review per candidate, omission scan per region, relationship pairs); author, local review and
+repair keep `search_source`/`read_source` for a bounded number of rounds. Each decision is one
+Temporal activity that runs the short model loop through the unchanged ledger, admits the answer
+by claims (every cited sentence was supplied inline or read), retains a rejected answer and
+corrects once with the exact diagnostic, then records a coverage gap. Assemblies are
+complete-with-gaps: nine good sections are never discarded for one. The parent workflow holds
+only plans, references and gaps. The run stops only for the allowance, a provider that refuses
+or fails on every eligible route, an unconfirmed paid outcome, an invalid source or
+cancellation; those are typed on the run row. `ChapterRunInput.routes` freezes the user's author
+and reviewer route preference (validated against the snapshot pools, reviewer reserved before
+the first author call); `budgetMicros` is the user's allowance up to the deployment file's
+maximum (staging: $100, default $20); the pre-spend projection is written to the run row and
+shown in the panel; a paused run's allowance can be raised from the panel. Prompt size is bounded
+by construction (128,000 characters, asserted on the four-hour fixture) and total tokens scale
+with duration. Evidence: `test_topic_windows.py` (fit proof, gap assembly, claims),
+`test_topic_decisions.py` (one decision end to end through the ledger against Postgres:
+projection, dispatch, admission, reuse, correction then gap), `test_topic_windows_workflow.py`
+(stage order, gap tolerance, typed-stop propagation). V3–V7 stay registered on the worker so
+already-running histories drain and the recorded regression suites keep their meaning; the web
+starts only V8 and lists only V8 runs. Deleting V3–V7 is the next PR after Rajesh's first
+staging runs, not this one. No real provider call, editorial or playback measurement is claimed.
+
+**2026-09-15 — Codex's indexed batch is stopped; the topics pipeline goes to production through
+bounded windows and one activity per decision.** Rajesh stopped Codex after Fable's review of
+`cd48459` found that the model-side request validator refused the V7 cold and paged-review
+toolsets on the physical path (fixed in `471cbb5` with a test that drives every registered agent
+through validation), that the web had been switched to that program unverified (restored to V3 in
+`9e11f7d`), and that the design's coverage-by-tool-loop produced a 200 KB per-round checkpoint of
+which 56% is audit data, 4.7 MB of prompt for one whole-source inventory call, a request payload
+carrying the checkpoint twice, and most of the stop conditions in the refusal matrix. The plan is
+[topics-production-360-view.md](docs/plans/topics-production-360-view.md): inline section windows
+for coverage roles, tools only for cross-window lookups, one Temporal activity per decision with a
+flat parent, claim-based admission, complete-with-gaps manifests, a closed list of genuine stop
+reasons with a fault-injection suite, projection before spend, and deletion of V3–V6 once the new
+program passes real 44-minute, two-hour and four-hour runs. Work continues on
+`feat/topics-production` from `../temnia-topics`; the plan awaits Rajesh's review before
+implementation.
+
+**2026-09-15 — Close the current indexed recovery batch, then stop.** Rajesh explicitly narrowed
+the active work to finishing the batch, making pipeline tests green and committing. The
+[batch record](docs/design/indexed-harness-recovery-2026-09-15.md) documents paged structured
+review context, exact long-sentence fragments, segmented inspection audit chains, per-decision
+Temporal children with 32-request continuation, admitted-work reuse, editorial resume after a
+review render and reviewer-family reservation. The web action is wired to V7; its new image/browser
+journey and live request qualification have not been verified. Connected-repair staging was removed
+from this batch: existing repair-component bounds remain. Parent history scale, typed internal
+topic decisions, cross-section reconciliation and real provider/editorial/playback evaluation
+remain open. Complete evidence delivery is not complete model comprehension. The
+[completion ledger](docs/plans/indexed-harness-production-completion.md) is paused at this explicit
+user boundary, not marked complete. Do not call this batch production-ready or push/deploy it as
+part of the stopping request.
+
+**2026-09-14 — Reliability recovery must preserve bounded prompts.** Rajesh authorized changing
+technical limits and retry behavior so long recordings receive an attempt rather than an arbitrary
+size refusal. The [recovery record](docs/design/indexed-harness-recovery-2026-09-14.md) distinguishes
+cumulative exact-speech delivery from prompt retention. Checkpoint `/2` preserves bounded tool
+observations and notes; inspection `/3` accepts delivered speech after eviction. Bounded work items
+receive three diagnostic correction attempts, tool errors receive SDK corrections, and dispatched
+siblings settle before error propagation. V7 cold review now pages only selected speech through a
+restricted read tool. Global dispatch count is optional; source-count refusal is removed, while
+budget, unknown-expense and source authority remain. This is implementation progress, not unlimited
+scale or publication acceptance. The web's V3 path, oversized work-unit subdivision, workflow-history
+continuation and real long-source measurement remain open. Do not equate complete evidence access
+with complete comprehension, or replace Temporal/PydanticAI to hide application-level failures.
+The clean exact-commit gate passed for `fb67422` at `2026-09-14T18:15:07.219Z`: 1,272 pipeline tests
+with one skip, both production images and all 18 browser workflows. Browser topic execution is
+still V3; this result does not establish a live V7 tool loop or long-source editorial acceptance.
+
+**2026-09-14 — Indexed harness review found functional blockers beyond the green gate.**
+Rajesh requested the entire implementation review and all production stop conditions. The
+[review](docs/design/indexed-harness-production-review-2026-09-14.md) examines `2140fbd` and records
+seven actionable findings. Compaction drops browse/search/candidate descriptions and media values
+before the next model turn; candidate source-review admission accepted an 80-sentence candidate
+after one exact sentence read; the final 320-sentence retention ceiling makes larger cited unions
+impossible; the committed 64-dispatch setting cannot cover the four-hour fixture's 75 omission
+calls; reviewer selection excludes only the current author rather than all contributing families;
+review planning refusals lose their actionable reason; and an implicit SDK limit ends an agent
+invocation at 50 model requests. The earlier gate establishes tested mechanics, not production
+readiness. In particular, the earlier claim of an explicit internal-structure decision is only a
+general selection decision plus prompt language, without a typed decomposition or mandatory internal
+read coverage. The record includes the full refusal/termination matrix and distinguishes retained
+checkpoints, editorial continuation, review renders and human acceptance. No application fix or
+live/provider evaluation was performed in this review.
+
+**2026-09-14 — Indexed source evidence and tools are a foundation for the editorial roles.**
+Rajesh's direction after reviewing PR #48: repeatedly supplying a whole transcript to an author
+or source reviewer, with intermittent success on 44-minute Karma, is not a demonstrated solution
+for two- or four-hour recordings. Develop a reusable source index and tool-based evidence access
+for discovery, authoring and source review together. Treat this as a foundational design change,
+superseding PR #48's late author-only W4 placement and deferred source-review conversion. The
+initial design is [indexed-editorial-evidence-2026-09-14.md](docs/design/indexed-editorial-evidence-2026-09-14.md):
+bounded chronological coverage plus targeted lexical/semantic retrieval and exact source reads;
+summaries and relationship links are hypotheses, and coverage records do not prove comprehension.
+Cold review remains isolated to the selected speech. Bounded working context, source-bound
+identities, independent judgments, repair authority and the run-level unknown-expense fence
+remain part of the design. Internal discussion structure must be observable; an index alone
+does not prove the compound-candidate problem solved. The first vertical slice is implemented on
+`feat/indexed-editorial-evidence`: a source-bound `topic-source-index/2` episode → section → region
+hierarchy, bounded chronological browse, BM25/MiniLM leaf search and exact sentence reads replace
+transcript bodies in the inventory, author and source-review prompts. Every indexed answer must
+retain a complete root-then-sections browse/search/read trace and must have read every sentence in
+every span it returns. Code re-derives the hierarchy's exact ownership, deterministic descriptors
+and bottom-up vectors. Each tool continuation is a separately accounted model request. Inventory
+and author requests admit only the exact three source tools; source review adds mandatory paginated
+`inspect_candidate` and optional measured `read_media_evidence` under immutable selection/evidence
+authority, with exact checkpoint and admission replay. The gateway admits only the complete
+role-specific three- or five-tool set. A 2,400-sentence synthetic four-hour source produces 10
+sections and 75 leaves and proves bounded initial prompt shape and pagination, not editorial
+quality. New indexed calls rebuild every continuation from the unchanged prompt plus one bounded
+`topic-agent-checkpoint/1`; old assistant/tool messages are removed. The checkpoint retains progress
+facts without source text and a bounded LRU set of exact sentences, is published before dispatch in a
+run/stage/role/index-bound parent chain, and is loaded unchanged after a known provider failure so a
+route retry or fallback does not repeat settled discovery. Final `topic-source-inspection/2`
+admission requires every cited sentence to remain in the response's exact checkpoint dependency.
+Contract and limits: [indexed-agent-checkpoints-2026-09-14.md](docs/design/indexed-agent-checkpoints-2026-09-14.md).
+Reviewer tool contract:
+[candidate-media-evidence-tools-2026-09-14.md](docs/design/candidate-media-evidence-tools-2026-09-14.md).
+The index now has a policy-neutral producer identity bound to exact accepted evidence, source,
+transcript revision, immutable encoder, partition constants and relevant runtime versions. A later
+run in the same organization/source scope can reuse it only after exact reference, lineage, stored
+hash and full structural validation; each run publishes `topic-source-index-use/1` with its observed
+build/reuse result. Contract:
+[source-index-reuse-2026-09-14.md](docs/design/source-index-reuse-2026-09-14.md). Bounded portfolio
+reconciliation now starts with a separately versioned bounded opportunity inventory. In
+`standalone-topics/4` / `TopicSelectionWorkflowV4`, code derives one immutable work item per source
+section, assigns an opportunity to the section containing its earliest core sentence, permits exact
+setup/completion reads across the edge, and runs at most three section calls concurrently. Every
+settled call becomes an admitted `topic-opportunity-inventory-shard/1` or an exact rejection. Only
+the complete ordered shard set can produce `topic-opportunity-inventory-manifest/1`; otherwise the
+author is not called and the run ends visibly with its partial shards and checkpoints retained. V3
+history and its whole-source inventory stay unchanged. The V4 experiment and pre-flight paths are
+implemented, but the web keeps starting V3 until the exact V4 request suite is qualified and real
+44-minute/two-hour/four-hour editorial evidence is reviewed. Contract:
+[bounded-opportunity-inventory-2026-09-14.md](docs/design/bounded-opportunity-inventory-2026-09-14.md).
+The clean exact-commit gate passed for `0ca907d` at `2026-09-14T14:08:41.556Z`, including both cold
+production images and all 18 Playwright workflow tests.
+Author packaging is separately versioned in `standalone-topics/5` / `TopicSelectionWorkflowV5`.
+Code groups each section's inventory into immutable work items of at most 12 opportunities. Each
+author call sees one item, must browse its section and ground every cited span, can cross the section
+edge for a complete discussion, and owns candidate IDs under its work-item prefix. A complete
+ordered `topic-author-packaging-manifest/1` is required before the ordinary accepted selection is
+published; missing, invalid, foreign or reordered shards stop before review and retain their exact
+responses/checkpoints. Mixed fallback families are recorded, and a participating author family
+cannot independently review the result. Historical V3/V4 requests remain unchanged; the web stays
+on V3. Contract:
+[bounded-author-packaging-2026-09-14.md](docs/design/bounded-author-packaging-2026-09-14.md).
+The clean exact-commit gate passed for `d354517` at `2026-09-14T14:43:09.646Z`, including 1,247
+pipeline tests with one intentional skip, both cold production images and all 18 Playwright
+workflow tests.
+Independent source review is separately bounded in `standalone-topics/6` /
+`TopicSelectionWorkflowV6`. Code freezes candidate decisions in batches of four, opportunity
+judgments in batches of 12, exact overlap/handoff pairs in batches of two, and one omission scan per
+source-index leaf. An omission scan sees every intersecting candidate and connected opportunity
+under explicit 16/48 context bounds; if the local representation exceeds them, planning refuses
+instead of hiding coverage. Each call can browse only its assigned section and inspect only its
+assigned candidates, while source-wide search and exact reads remain available for dependencies.
+Every candidate therefore receives one explicit internal-structure decision, which makes the
+measured compound-candidate failure observable. Only a complete ordered
+`topic-source-review-manifest/1` gives an assessment repair authority. Partial findings cannot
+authorize changes; settled responses, checkpoints, shards and rejections remain visible. Historical
+programs and the web's V3 default stay unchanged. Contract:
+[bounded-source-review-2026-09-14.md](docs/design/bounded-source-review-2026-09-14.md).
+The clean exact-commit gate passed for `234cd99` at `2026-09-14T15:29:51.984Z`, including 1,256
+pipeline tests with one intentional skip, both cold production images and all 18 Playwright
+workflow tests. Real route/editorial evaluation remains open. Repair is the next unbounded
+final-answer stage identified by the V6 milestone. It is now bounded separately in
+`standalone-topics/7` /
+`TopicSelectionWorkflowV7`. Code groups required findings by shared candidate and opportunity
+authority, refuses a coupled component above 12 findings, eight candidates, 24 opportunities or
+eight source sections, and runs at most three components concurrently. Each component receives the
+three indexed source tools under the `repair` checkpoint role, must cite every assigned finding,
+and owns existing and new candidate IDs through explicit work-item namespaces. A settled result is
+an admitted shard or retained rejection. Only every exact shard in plan order can form
+`topic-repair-manifest/1`; assembly proves actual candidate and opportunity writes disjoint, replays
+the full patch validator and applies one aggregate selection revision. Missing, invalid or
+conflicting components change nothing. A successful revision receives fresh cold and bounded source
+review, and repair families join the reviewer-exclusion set. Historical workflows and the web's V3
+default stay unchanged. Contract:
+[bounded-atomic-repair-2026-09-14.md](docs/design/bounded-atomic-repair-2026-09-14.md).
+The optional V7 pre-flight and local four-hour shape test are implemented. The clean exact-commit
+gate passed for `e04e56d` at `2026-09-14T16:12:26.345Z`, including 1,268 pipeline tests with one
+intentional skip, both cold production images and all 18 Playwright workflow tests. No real provider,
+latency, recovery or quality result follows, and no new model arm or paid run is authorized by this
+record.
+
 **2026-09-14 — A stopped run resumes under any build that speaks its editorial programme;
 the build that resumed it is recorded; a refused retry is reported to the reader.** Rajesh
 pressed Retry on the run that #46 fixed and it failed in three seconds: the run's frozen

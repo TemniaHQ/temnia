@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "TopicMediaEvidenceEvent": {
+      "$id": "#/$defs/TopicMediaEvidenceEvent",
+      "type": "object",
+      "properties": {
+        "alignedWordCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "boundaryKind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "edge",
+            "sentence",
+            "turn",
+            "pause",
+            "shot"
+          ]
+        },
+        "clearanceMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "interpolatedWordCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sentence",
+            "boundary",
+            "pause",
+            "shot",
+            "speech_interval"
+          ]
+        },
+        "minimumConfidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relatedIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "requiresReview": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sentenceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "wordCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "alignedWordCount",
+        "boundaryKind",
+        "clearanceMs",
+        "endMs",
+        "id",
+        "interpolatedWordCount",
+        "kind",
+        "minimumConfidence",
+        "reasons",
+        "relatedIds",
+        "requiresReview",
+        "score",
+        "sentenceId",
+        "timeMs",
+        "wordCount"
+      ],
+      "additionalProperties": false,
+      "title": "TopicMediaEvidenceEvent"
+    },
+    "TopicMediaEvidencePage": {
+      "$id": "#/$defs/TopicMediaEvidencePage",
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "detector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectorRevision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TopicMediaEvidenceEvent"
+          }
+        },
+        "evidenceSha256": {
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "type": "string"
+        },
+        "nextCursor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "span": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "speechCoverageStatus": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "clear",
+            "needs_review"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "complete",
+        "detector",
+        "detectorRevision",
+        "events",
+        "evidenceSha256",
+        "nextCursor",
+        "sourceId",
+        "span",
+        "speechCoverageStatus",
+        "warnings"
+      ],
+      "additionalProperties": false,
+      "title": "TopicMediaEvidencePage"
+    },
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    }
+  },
+  "$id": "TopicMediaEvidencePage.json",
+  "$ref": "#/$defs/TopicMediaEvidencePage",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -21,13 +21,15 @@ export const TopicReviewIntentSchema = z
   })
   .refine(
     (command) =>
-      ["accept", "reject", "cancel"].includes(command.action) &&
+      ["accept", "reject", "cancel", "raise_budget"].includes(command.action) &&
       command.boundaryId === null &&
       command.otherSectionId === null &&
-      command.budgetMicros === null &&
+      (command.action === "raise_budget"
+        ? command.budgetMicros !== null
+        : command.budgetMicros === null) &&
       command.targetRevision === null &&
       command.targetTimeMs === null &&
-      (command.action === "cancel"
+      (command.action === "cancel" || command.action === "raise_budget"
         ? command.sectionId === null
         : command.sectionId !== null)
   );

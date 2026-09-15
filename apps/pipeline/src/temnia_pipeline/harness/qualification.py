@@ -19,6 +19,7 @@ import httpx
 import httpx2
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import Agent, ModelResponse, NativeOutput
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models.wrapper import WrapperModel
 
@@ -42,8 +43,26 @@ from temnia_pipeline.harness.gateway_policy import GatewayTransportPolicy  # noq
 from temnia_pipeline.harness.qualification_topic_selection import (
     TOPIC_SELECTION_V3_SCHEMAS,
     TOPIC_SELECTION_V3_STAGES,
+    TOPIC_SELECTION_V4_SCHEMAS,
+    TOPIC_SELECTION_V4_STAGES,
+    TOPIC_SELECTION_V5_SCHEMAS,
+    TOPIC_SELECTION_V5_STAGES,
+    TOPIC_SELECTION_V6_SCHEMAS,
+    TOPIC_SELECTION_V6_STAGES,
+    TOPIC_SELECTION_V7_SCHEMAS,
+    TOPIC_SELECTION_V7_STAGES,
     topic_selection_qualification_prompts,
+    topic_selection_v4_qualification_prompts,
+    topic_selection_v5_qualification_prompts,
+    topic_selection_v6_qualification_prompts,
+    topic_selection_v7_qualification_prompts,
+    topic_source_progress_processor,
+    topic_source_qualification_tools,
     validate_topic_selection_qualification_output,
+    validate_topic_selection_v4_qualification_output,
+    validate_topic_selection_v5_qualification_output,
+    validate_topic_selection_v6_qualification_output,
+    validate_topic_selection_v7_qualification_output,
 )
 from temnia_pipeline.harness.routes import (
     UNPROVEN_ROUTE_PREFIX,
@@ -66,17 +85,36 @@ SHA256_PATTERN = r"^[a-f0-9]{64}$"
 _SENSITIVE_NAMES = frozenset(
     {"api_key", "apikey", "authorization", "credential", "password", "secret", "token"}
 )
-QualificationSuite = Literal["topic-selection-v3"]
+QualificationSuite = Literal[
+    "topic-selection-v3",
+    "topic-selection-v4",
+    "topic-selection-v5",
+    "topic-selection-v6",
+    "topic-selection-v7",
+]
 
 
 def _suite_stages(suite: QualificationSuite) -> tuple[str, ...]:
-    _ = suite
+    if suite == "topic-selection-v7":
+        return TOPIC_SELECTION_V7_STAGES
+    if suite == "topic-selection-v6":
+        return TOPIC_SELECTION_V6_STAGES
+    if suite == "topic-selection-v5":
+        return TOPIC_SELECTION_V5_STAGES
+    if suite == "topic-selection-v4":
+        return TOPIC_SELECTION_V4_STAGES
     return TOPIC_SELECTION_V3_STAGES
 
 
 def _schema_version(stage: str, limits: QualificationLimits) -> str:
-    _ = limits
-    return TOPIC_SELECTION_V3_SCHEMAS[stage]
+    schemas = {
+        "topic-selection-v3": TOPIC_SELECTION_V3_SCHEMAS,
+        "topic-selection-v4": TOPIC_SELECTION_V4_SCHEMAS,
+        "topic-selection-v5": TOPIC_SELECTION_V5_SCHEMAS,
+        "topic-selection-v6": TOPIC_SELECTION_V6_SCHEMAS,
+        "topic-selection-v7": TOPIC_SELECTION_V7_SCHEMAS,
+    }[limits.suite]
+    return schemas[stage]
 
 
 _RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
@@ -465,6 +503,28 @@ class _QualificationJournal:
             raise QualificationRefusal("qualification evidence contains the gateway credential")
         _private_replace(self.path, self.value)
 
+    @staticmethod
+    def _archive_round(call: dict[str, Any]) -> None:
+        """Retain each paid request inside one logical qualification stage."""
+        round_number = call.get("roundNumber")
+        if type(round_number) is not int:
+            return
+        rounds = cast("list[dict[str, Any]]", call.setdefault("rounds", []))
+        logical = {"candidateId", "stage", "suite", "promptVersion", "schemaVersion", "rounds"}
+        snapshot = {key: value for key, value in call.items() if key not in logical}
+        for offset, item in enumerate(rounds):
+            if item.get("roundNumber") == round_number:
+                rounds[offset] = snapshot
+                return
+        rounds.append(snapshot)
+
+    @staticmethod
+    def _clear_round(call: dict[str, Any]) -> None:
+        logical = {"candidateId", "stage", "suite", "promptVersion", "schemaVersion", "rounds"}
+        for key in tuple(call):
+            if key not in logical:
+                del call[key]
+
     def admit(
         self,
         candidate_id: str,
@@ -477,7 +537,10 @@ class _QualificationJournal:
         schema_version: str | None = None,
     ) -> None:
         call = self._call(candidate_id, stage)
-        if call["state"] != "planned":
+        if call["state"] == "cost_reported" and call.get("finishReason") == "tool_call":
+            self._archive_round(call)
+            self._clear_round(call)
+        elif call["state"] != "planned":
             raise QualificationRefusal("qualification call was already admitted")
         limits = cast("dict[str, Any]", self.value["limits"])
         dispatches = int(self.value["dispatchCount"])
@@ -489,6 +552,7 @@ class _QualificationJournal:
         call.update(
             {
                 "state": "admitted",
+                "roundNumber": len(cast("list[dict[str, Any]]", call.get("rounds", []))) + 1,
                 "admittedAt": _now(),
                 "requestHash": request_hash,
                 "payloadBytes": payload_bytes,
@@ -540,7 +604,8 @@ class _QualificationJournal:
                 code="credential-echo-refused",
             )
             raise QualificationRefusal("gateway response contained a credential marker")
-        path = self.receipts / f"{candidate_id}.{stage}.model-response.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / f"{candidate_id}.{stage}.round-{round_number}.model-response.json"
         try:
             _private_create(path, body)
         except Exception:
@@ -564,6 +629,7 @@ class _QualificationJournal:
                 "generationId": response.provider_response_id,
                 "responseModel": response.model_name,
                 "responseProvider": response.provider_name,
+                "finishReason": response.finish_reason,
             }
         )
         self.save()
@@ -590,7 +656,8 @@ class _QualificationJournal:
             raise QualificationRefusal("HTTP failure arrived without a sent request")
         detail = _sanitized_http_failure(error, forbidden=self.forbidden)
         raw = canonical_json(detail) + b"\n"
-        path = self.receipts / f"{candidate_id}.{stage}.http-failure.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / f"{candidate_id}.{stage}.round-{round_number}.http-failure.json"
         _private_create(path, detail)
         call["httpFailure"] = {
             "path": str(path),
@@ -609,7 +676,10 @@ class _QualificationJournal:
         if self.forbidden in raw:
             raise QualificationHalt("accounting receipt contains a credential marker")
         receipts = cast("list[dict[str, Any]]", call.setdefault("costReceipts", []))
-        path = self.receipts / f"{candidate_id}.{stage}.cost-{len(receipts) + 1}.json"
+        round_number = int(call.get("roundNumber", 1))
+        path = self.receipts / (
+            f"{candidate_id}.{stage}.round-{round_number}.cost-{len(receipts) + 1}.json"
+        )
         _private_create_raw(path, raw)
         receipts.append(
             {
@@ -650,11 +720,13 @@ class _QualificationJournal:
         call = self._call(candidate_id, stage)
         call["validation"] = {"passed": passed, "code": code}
         call["state"] = "passed" if passed else "failed"
+        self._archive_round(call)
         self.save()
 
     def failure(self, candidate_id: str, stage: str, *, state: str, code: str) -> None:
         call = self._call(candidate_id, stage)
         call.update({"state": state, "errorCode": code, "finishedAt": _now()})
+        self._archive_round(call)
         if state in {"outcome_unknown", "cost_unresolved", "identity_failed"}:
             self.value["status"] = "halted"
         self.save()
@@ -705,12 +777,28 @@ def qualification_prompts(
     suite: QualificationSuite = "topic-selection-v3",
 ) -> dict[str, tuple[str, type[Any], str]]:
     """Render the exact production prompts and output types for the topic seats."""
-    _ = suite
+    if suite == "topic-selection-v4":
+        return dict(topic_selection_v4_qualification_prompts())
+    if suite == "topic-selection-v5":
+        return dict(topic_selection_v5_qualification_prompts())
+    if suite == "topic-selection-v6":
+        return dict(topic_selection_v6_qualification_prompts())
+    if suite == "topic-selection-v7":
+        return dict(topic_selection_v7_qualification_prompts())
     return dict(topic_selection_qualification_prompts())
 
 
-def _validate_grounding(stage: str, output: object) -> None:
-    validate_topic_selection_qualification_output(stage, output)
+def _validate_grounding(stage: str, output: object, suite: QualificationSuite) -> None:
+    if suite == "topic-selection-v7":
+        validate_topic_selection_v7_qualification_output(stage, output)
+    elif suite == "topic-selection-v6":
+        validate_topic_selection_v6_qualification_output(stage, output)
+    elif suite == "topic-selection-v4":
+        validate_topic_selection_v4_qualification_output(stage, output)
+    elif suite == "topic-selection-v5":
+        validate_topic_selection_v5_qualification_output(stage, output)
+    else:
+        validate_topic_selection_qualification_output(stage, output)
 
 
 def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, Any]:
@@ -786,6 +874,19 @@ def _sanitized_request(request: httpx2.Request, route: RouteEntry) -> dict[str, 
         )
     if route.accounting_model is not None:
         result["accountingModel"] = route.accounting_model
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        result["functionTools"] = [
+            {
+                "name": cast("dict[str, Any]", cast("dict[str, Any]", item)["function"])["name"],
+                "schemaSha256": _sha(
+                    cast("dict[str, Any]", cast("dict[str, Any]", item)["function"])["parameters"]
+                ),
+            }
+            for item in cast("list[object]", tools)
+            if isinstance(item, dict)
+            and isinstance(cast("dict[str, Any]", item).get("function"), dict)
+        ]
     return result
 
 
@@ -992,7 +1093,12 @@ class _QualificationModel(WrapperModel):
         if (
             self.route.transport is not None
             and self.route.transport.mode == "streaming"
-            and response.finish_reason != "stop"
+            and response.finish_reason
+            not in (
+                {"stop", "tool_call"}
+                if topic_source_qualification_tools(self.stage, self.limits.suite)
+                else {"stop"}
+            )
         ):
             raise UnexpectedModelBehavior("streamed qualification did not finish successfully")
         return response
@@ -1104,11 +1210,18 @@ async def run_qualification(
                             limits=limits,
                             sleep=sleep,
                         )
+                        progress_processor = topic_source_progress_processor(stage, limits.suite)
                         agent = Agent(
                             model,
                             output_type=NativeOutput(output_type, strict=True),
                             retries=0,
+                            tools=topic_source_qualification_tools(stage, limits.suite),
                             model_settings={"max_tokens": limits.max_output_tokens},
+                            capabilities=(
+                                [ProcessHistory(progress_processor)]
+                                if progress_processor is not None
+                                else []
+                            ),
                         )
                         try:
                             result = await agent.run(prompt)
@@ -1124,7 +1237,7 @@ async def run_qualification(
                             candidate_failed = False
                         else:
                             try:
-                                _validate_grounding(stage, result.output)
+                                _validate_grounding(stage, result.output, limits.suite)
                             except ValueError:
                                 journal.validation(
                                     candidate.id,

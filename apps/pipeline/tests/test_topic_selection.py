@@ -238,12 +238,16 @@ def test_frozen_audience_refinements_reach_each_stage_without_author_leakage() -
     )
     record = _record(candidate)
     cold = json.loads(selection_cold_prompt(EVIDENCE, changed, rubric).split("SOURCE DATA\n", 1)[1])
-    author = json.loads(selection_prompt(EVIDENCE, rubric).split("SOURCE DATA\n", 1)[1])
+    index = {"indexSha256": "a" * 64, "regionCount": 1}
+    author = json.loads(selection_prompt(index, rubric).split("SOURCE DATA\n", 1)[1])
     source = json.loads(
-        selection_source_prompt(EVIDENCE, record.draft, rubric).split("SOURCE DATA\n", 1)[1]
+        selection_source_prompt(EVIDENCE, record.draft, rubric, index).split("SOURCE DATA\n", 1)[1]
     )
     assert rubric.originalInstructions == brief
     assert cold["rubric"] == author["rubric"] == source["rubric"] == rubric.model_dump(mode="json")
+    assert author["sourceIndex"] == source["sourceIndex"] == index
+    assert "sourceSentences" not in author
+    assert "sourceSentences" not in source
     assert set(cold) == {"candidateId", "title", "rubric", "clipSentences"}
     assert cold["clipSentences"] == [
         {"id": row.id, "text": row.text, "speakers": row.speakers}
@@ -268,6 +272,7 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
         EVIDENCE,
         record.draft,
         record.rubric,
+        {"indexSha256": "a" * 64, "regionCount": 1},
     )
     instruction, payload_text = prompt.split("SOURCE DATA\n", 1)
     payload = json.loads(payload_text)
@@ -292,7 +297,7 @@ def test_inventory_first_source_review_uses_compact_portfolio_contract() -> None
         record, assessment, require_complete_review=True
     ).candidates == [candidate]
     author_instruction = selection_prompt(
-        EVIDENCE,
+        {"indexSha256": "a" * 64, "regionCount": 1},
         record.rubric,
         source_inventory=record.draft,
     ).split("SOURCE DATA\n", 1)[0]
@@ -321,7 +326,12 @@ def test_inventory_first_review_must_classify_every_exact_candidate_overlap() ->
     record = _record(earlier, later)
     expected_overlap = _span(3, 4)
     prompt_payload = json.loads(
-        selection_source_prompt(EVIDENCE, record.draft, record.rubric).split("SOURCE DATA\n", 1)[1]
+        selection_source_prompt(
+            EVIDENCE,
+            record.draft,
+            record.rubric,
+            {"indexSha256": "a" * 64, "regionCount": 1},
+        ).split("SOURCE DATA\n", 1)[1]
     )
     assert prompt_payload["candidateOverlaps"] == [
         {
@@ -421,7 +431,12 @@ def test_inventory_first_review_must_classify_every_adjacent_handoff() -> None:
     record = _record(earlier, later)
     expected = candidate_handoff_rows(EVIDENCE, record.draft)
     prompt_payload = json.loads(
-        selection_source_prompt(EVIDENCE, record.draft, record.rubric).split("SOURCE DATA\n", 1)[1]
+        selection_source_prompt(
+            EVIDENCE,
+            record.draft,
+            record.rubric,
+            {"indexSha256": "a" * 64, "regionCount": 1},
+        ).split("SOURCE DATA\n", 1)[1]
     )
     assert prompt_payload["candidateHandoffs"] == expected
 

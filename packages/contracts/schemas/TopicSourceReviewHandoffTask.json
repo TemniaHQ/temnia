@@ -1,0 +1,58 @@
+{
+  "$defs": {
+    "TopicSentenceSpan": {
+      "$id": "#/$defs/TopicSentenceSpan",
+      "type": "object",
+      "properties": {
+        "firstSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lastSentenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "firstSentenceId",
+        "lastSentenceId"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSentenceSpan"
+    },
+    "TopicSourceReviewHandoffTask": {
+      "$id": "#/$defs/TopicSourceReviewHandoffTask",
+      "type": "object",
+      "properties": {
+        "candidateIds": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "leftContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        },
+        "rightContextSpan": {
+          "$ref": "#/$defs/TopicSentenceSpan"
+        }
+      },
+      "required": [
+        "candidateIds",
+        "leftContextSpan",
+        "rightContextSpan"
+      ],
+      "additionalProperties": false,
+      "title": "TopicSourceReviewHandoffTask"
+    }
+  },
+  "$id": "TopicSourceReviewHandoffTask.json",
+  "$ref": "#/$defs/TopicSourceReviewHandoffTask",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
