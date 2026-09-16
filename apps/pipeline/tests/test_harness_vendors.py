@@ -42,6 +42,7 @@ from temnia_pipeline.harness.vendors import (
     _mark_vendor_request,  # pyright: ignore[reportPrivateUsage]
     build_vendor_model,
     duration_seconds,
+    is_account_exhausted,
     is_spend_cap,
     mark_request_sent,
     read_rate_limits,
@@ -49,6 +50,7 @@ from temnia_pipeline.harness.vendors import (
     rfc3339_seconds_from,
     settle_usage,
     track_dispatch,
+    vendor_error_message,
     vendor_settings,
 )
 
@@ -370,6 +372,46 @@ async def test_gate_paces_from_a_reading() -> None:
     await gate.acquire()
     gate.release()
     assert loop.time() - started >= 0.04
+
+
+def test_openai_exhausted_credit_is_conclusive_and_the_vendor_sentence_is_kept() -> None:
+    exhausted = ModelHTTPError(
+        status_code=429,
+        model_name="gpt-5.6-terra",
+        body={
+            "message": "You have no credits remaining. Add credits to continue using the API.",
+            "type": "insufficient_quota",
+            "param": None,
+            "code": "credit_balance_exhausted",
+        },
+        headers={},
+    )
+    assert is_account_exhausted(exhausted)
+    assert vendor_error_message(exhausted) == (
+        "You have no credits remaining. Add credits to continue using the API."
+    )
+    overloaded = ModelHTTPError(
+        status_code=503,
+        model_name="gemini-3.8-flash",
+        body={
+            "error": {
+                "code": 503,
+                "message": "This model is  currently experiencing high demand.",
+                "status": "UNAVAILABLE",
+            }
+        },
+        headers={},
+    )
+    assert not is_account_exhausted(overloaded)
+    assert vendor_error_message(overloaded) == "This model is currently experiencing high demand."
+    assert vendor_error_message(ModelHTTPError(status_code=500, model_name="x", body=None)) is None
+    assert is_account_exhausted(
+        ModelHTTPError(
+            status_code=429,
+            model_name="claude-opus-5",
+            body={"error": {"details": {"error_code": "enforced_spend_limit_reached"}}},
+        )
+    )
 
 
 def test_spend_cap_and_retry_after_are_read_from_the_exception() -> None:

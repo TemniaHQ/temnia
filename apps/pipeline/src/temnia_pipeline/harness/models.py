@@ -121,11 +121,12 @@ from temnia_pipeline.harness.vendors import (
     VendorKeys,
     VendorPolicyError,
     build_vendor_model,
-    is_spend_cap,
+    is_account_exhausted,
     observe_rate_limits,
     retry_after_seconds,
     settle_usage,
     track_dispatch,
+    vendor_error_message,
 )
 from temnia_pipeline.harness.vendors import dispatch_payload_bytes as vendor_dispatch_bytes
 
@@ -1557,10 +1558,13 @@ class BudgetedModel(WrapperModel):
         except ModelHTTPError as error:
             status = error.status_code
             transient = status in TRANSIENT_HTTP_STATUSES or status >= HTTP_SERVER_ERROR_MIN
-            if vendor_route and is_spend_cap(error):
-                # The account's monthly cap: no pause lifts it, so the next route is the answer.
+            if vendor_route and is_account_exhausted(error):
+                # A spend cap or an empty credit balance: no pause lifts it, so the next route
+                # is the answer, and the sentence names the account the operator must fund.
                 transient = False
             conclusive = HTTP_CLIENT_ERROR_MIN <= status < HTTP_CLIENT_ERROR_MAX and not transient
+            vendor_said = vendor_error_message(error) if vendor_route else None
+            quoted = f" {self.deps.route.provider} said: {vendor_said}" if vendor_said else ""
             await ledger.fail_attempt(
                 runtime.database_url,
                 scope=self.deps.scope,
@@ -1575,7 +1579,7 @@ class BudgetedModel(WrapperModel):
                 actual_cost_micros=0 if conclusive or transient else None,
                 usage={},
                 error_code=f"http-{status}",
-                error_message="provider request ended with an HTTP error",
+                error_message=f"provider request ended with HTTP {status}.{quoted}",
             )
             if transient:
                 retry_after = (
@@ -1596,14 +1600,14 @@ class BudgetedModel(WrapperModel):
                 refusal = (
                     f"Route {self.deps.route.id} answered the {self.deps.stage} request with "
                     f"HTTP {status} before any response; nothing was charged and a fresh "
-                    f"attempt is allowed.{advice}"
+                    f"attempt is allowed.{advice}{quoted}"
                 )
                 raise TransientProviderFailure(refusal) from error
             if conclusive:
                 # The stop reason names the route, stage and code an operator has to act on.
                 rejection = (
                     f"Route {self.deps.route.id} rejected the {self.deps.stage} request "
-                    f"(HTTP {status})."
+                    f"(HTTP {status}).{quoted}"
                 )
                 raise KnownProviderRejection(rejection) from error
             raise ledger.OutcomeUnknown("provider outcome is unknown") from error

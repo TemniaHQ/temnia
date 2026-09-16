@@ -99,10 +99,25 @@ def test_payment_required_names_the_account_not_the_route() -> None:
     )
     assert status == "failed"
     assert message == (
-        "Route fixture-route rejected the proposal:selection:0 request (HTTP 402). The gateway "
-        "account has insufficient credits or the API key has a spending limit; top up or raise "
-        "the limit, then start a new run. Nothing was charged or retried."
+        "Route fixture-route rejected the proposal:selection:0 request (HTTP 402). The vendor "
+        "account is out of credit or at its spending limit; add credit or raise the limit, then "
+        "retry this run. Settled work and charges are retained and reused; nothing was charged "
+        "for the refused request."
     )
+
+
+def test_an_exhausted_vendor_account_names_the_credit_not_the_snapshot() -> None:
+    """The third Karma run: OpenAI's 429 said the balance was empty; the sentence must too."""
+    rejection = (
+        "Route openai-gpt-5.6-terra-high rejected the verify:selection:source:2:x request "
+        "(HTTP 429). openai said: You have no credits remaining. Add credits to continue using "
+        "the API at https://platform.openai.com/settings/organization/billing/."
+    )
+    status, message = known_failure_details(activity_error("KnownProviderRejection", rejection))
+    assert status == "failed"
+    assert message.startswith(rejection)
+    assert "add credit or raise the limit, then retry this run" in message
+    assert "Change the route snapshot" not in message
 
 
 def test_exhausted_seat_names_every_route_and_the_next_action() -> None:

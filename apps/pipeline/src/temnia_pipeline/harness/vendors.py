@@ -289,18 +289,52 @@ async def _observe_vendor_response(response: httpx2.Response) -> None:
     readings.append(read_rate_limits(vendor, response.headers))
 
 
-def is_spend_cap(error: ModelHTTPError) -> bool:
-    """Anthropic's monthly spend cap is a 429 with no retry-after and a named error code."""
+OPENAI_EXHAUSTED_TYPES = frozenset({"insufficient_quota"})
+OPENAI_EXHAUSTED_CODES = frozenset({"credit_balance_exhausted", "insufficient_quota"})
+MAX_VENDOR_MESSAGE_CHARS = 300
+
+
+def _error_object(error: ModelHTTPError) -> dict[str, Any]:
+    """The vendor's error object: Anthropic and Gemini wrap it in `error`, OpenAI may not."""
     body = error.body
     if not isinstance(body, dict):
-        return False
-    inner = cast("dict[str, Any]", body).get("error")
-    if not isinstance(inner, dict):
-        return False
-    details = cast("dict[str, Any]", inner).get("details")
+        return {}
+    outer = cast("dict[str, Any]", body)
+    inner = outer.get("error")
+    if isinstance(inner, dict):
+        return cast("dict[str, Any]", inner)
+    return outer
+
+
+def is_spend_cap(error: ModelHTTPError) -> bool:
+    """Anthropic's monthly spend cap is a 429 with no retry-after and a named error code."""
+    details = _error_object(error).get("details")
     return isinstance(details, dict) and (
         cast("dict[str, Any]", details).get("error_code") == ANTHROPIC_SPEND_CAP_CODE
     )
+
+
+def is_account_exhausted(error: ModelHTTPError) -> bool:
+    """A 429 that no pause lifts: Anthropic's spend cap, or OpenAI's exhausted credit balance.
+
+    The third Karma run spent 27 minutes on the retry ladder against OpenAI's
+    `insufficient_quota` before giving up; the next route is the only answer to it.
+    """
+    if is_spend_cap(error):
+        return True
+    inner = _error_object(error)
+    return (
+        inner.get("type") in OPENAI_EXHAUSTED_TYPES or inner.get("code") in OPENAI_EXHAUSTED_CODES
+    )
+
+
+def vendor_error_message(error: ModelHTTPError) -> str | None:
+    """The vendor's own sentence about a refused request, bounded; None when the body has none."""
+    message = _error_object(error).get("message")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    text = " ".join(message.split())
+    return text[:MAX_VENDOR_MESSAGE_CHARS]
 
 
 def retry_after_seconds(error: ModelHTTPError) -> float | None:
