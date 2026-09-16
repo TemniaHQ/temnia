@@ -299,3 +299,43 @@ async def test_a_keyless_vendor_is_skipped_then_named_when_no_route_remains(
     finally:
         models.clear_model_runtime()
         await db.close_pool()
+
+
+async def test_a_schema_failure_is_corrected_in_the_same_conversation(tmp_path: Path) -> None:
+    """The agent's own output retry needs a second request; the limit must allow it."""
+    url = pipeline_url()
+    snapshot, _, _, inventory = _direct_snapshot()
+    evidence, _, _ = topic_selection_qualification_case(combined_patch=True)
+    good = _draft("section-0001:fixture", evidence.sentences[0].id, evidence.sentences[1].id)
+    calls: list[str] = []
+
+    def factory(route: RouteEntry) -> FunctionModel:
+        async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            _ = info
+            calls.append(route.id)
+            body = json.dumps(good) if len(calls) > 1 else json.dumps({"not": "a draft"})
+            if len(calls) > 1:
+                # The correction arrives as a retry prompt carrying the validator's message.
+                assert any(type(part).__name__ == "RetryPromptPart" for part in messages[-1].parts)
+            return ModelResponse(
+                parts=[TextPart(body)],
+                model_name="fixture",
+                provider_name="fixture",
+                usage=RequestUsage(input_tokens=10, output_tokens=10),
+            )
+
+        return FunctionModel(answer, model_name=f"fixture:{route.id}")
+
+    try:
+        decisions, context, _, run_id = await _v8_run(url, tmp_path, snapshot, factory)
+        result = await decisions.run_decision(
+            DecisionRequest(context=context, kind="inventory", item_id="section-0001")
+        )
+        assert result.gap is None, result.gap
+        assert result.artifact is not None
+        assert calls == [inventory.id, inventory.id]
+        attempts = await _attempts(url, run_id)
+        assert [item["state"] for item in attempts] == ["succeeded", "succeeded"]
+    finally:
+        models.clear_model_runtime()
+        await db.close_pool()
