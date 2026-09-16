@@ -176,6 +176,11 @@ MAX_POOL_PAUSES = 1
 RECEIPT_WAIT_SECONDS: tuple[float, ...] = (30.0, 60.0, 120.0, 240.0, 300.0, 300.0)
 # A cut-off answer doubles the output allowance and asks again this many times.
 MAX_TRUNCATION_RETRIES = 2
+# The agent corrects an answer that fails its schema in the same conversation, with the
+# validator's message, before the decision sees it; each correction is one more request. The
+# request limit must leave room for them: at one round per inventory call it did not, and the
+# third Karma run lost a whole section's inventory to a paid answer it was not allowed to fix.
+OUTPUT_CORRECTION_REQUESTS = 3
 HEARTBEAT_SECONDS = 15.0
 PAUSE_ADVICE = re.compile(r"pause of (\d+) s")
 TYPED_STOPS: tuple[type[Exception], ...] = (
@@ -1212,7 +1217,9 @@ class TopicDecisionActivities:
                         prepared.plan.prompt,
                         deps=deps,
                         model_settings={"max_tokens": reserved},
-                        usage_limits=UsageLimits(request_limit=MAX_ROUNDS[kind]),
+                        usage_limits=UsageLimits(
+                            request_limit=MAX_ROUNDS[kind] + OUTPUT_CORRECTION_REQUESTS
+                        ),
                     )
                 except TransientProviderFailure as error:
                     # Throttling and dropped streams: climb the backoff ladder on this route,

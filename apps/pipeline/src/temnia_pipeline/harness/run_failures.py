@@ -52,6 +52,14 @@ RECONCILED_RUN_MESSAGE = (
 )
 
 
+_EXHAUSTED_MARKERS = ("no credits remaining", "insufficient_quota", "credit balance", "spend limit")
+
+
+def _account_exhausted(sentence: str) -> bool:
+    lowered = sentence.lower()
+    return any(marker in lowered for marker in _EXHAUSTED_MARKERS)
+
+
 def outcome_unknown(error: Exception) -> bool:
     """The run is fenced on an unconfirmed provider outcome."""
     cause = failure_cause(error)
@@ -71,11 +79,11 @@ def known_failure_details(  # noqa: C901, PLR0911
         return "failed", "The run reached its configured physical dispatch limit."
     if error_type == "KnownProviderRejection":
         rejection = _cause_message(cause) or "A route rejected the request."
-        if "(HTTP 402)" in rejection:
+        if "(HTTP 402)" in rejection or _account_exhausted(rejection):
             return "failed", (
-                f"{rejection} The gateway account has insufficient credits or the API key has "
-                "a spending limit; top up or raise the limit, then start a new run. Nothing "
-                "was charged or retried."
+                f"{rejection} The vendor account is out of credit or at its spending limit; "
+                "add credit or raise the limit, then retry this run. Settled work and charges "
+                "are retained and reused; nothing was charged for the refused request."
             )
         return "failed", (
             f"{rejection} Change the route snapshot and start a new run; nothing was retried."
